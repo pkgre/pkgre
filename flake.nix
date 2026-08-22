@@ -69,7 +69,7 @@
             meta = {
               description = "Deterministic renderer for curated Cargo sparse registries";
               homepage = "https://github.com/pkgre/pkgre";
-              license = pkgs.lib.licenses.mit;
+              license = pkgs.lib.licenses.asl20;
               mainProgram = "pkgre-indexer";
             };
           };
