@@ -1,25 +1,23 @@
 # pkgre-indexer
 
-Deterministic validator/materializer/renderer for the fixed pkg.re Cargo registry topology.
+Transactional declarative reconciler + deterministic renderer for the fixed pkg.re Cargo registry topology.
 
 ## Interface
 
 ```text
-pkgre-indexer check <catalog> [artifact-map]
-pkgre-indexer render <catalog> <artifact-map> <output>
-pkgre-indexer verify <catalog> <artifact-map> <output>
+pkgre-indexer lock <catalog>
+pkgre-indexer check <catalog>
+pkgre-indexer render <catalog> <output>
+pkgre-indexer verify <catalog> <output>
 pkgre-indexer verify-monotonic <previous-site> <next-site>
-pkgre-indexer candidate-crates-io <proposal> <output>
-pkgre-indexer candidate-git <proposal> <cargo-version> <output>
-pkgre-indexer package-git <catalog> <package> <version> <output>
 ```
 
-- `check`: validate catalog policy; optional artifact map adds exact file/hash/index-row verification.
-- `render`: create a new complete sparse-registry Pages tree; refuses overwrite.
-- `verify`: re-render + require exact tree/file equality.
-- `verify-monotonic`: reject removal/mutation of published package identities; `yanked` may change.
-- `candidate-crates-io`: download exact crates.io row/archive into a non-approved candidate tree.
-- `candidate-git`: package one proposed immutable Git tag twice with pinned Cargo + emit a non-approved candidate.
-- `package-git`: independently reproduce one approved Git-tag package + require both approved hashes.
+- `lock`: preflight existing locks/objects locally; resolve only newly desired crates.io versions + first-party Git tags; route dependency rows; build, strictly reload, verify, test-render, and transactionally install a complete replacement catalog.
+- `check`: local-only strict schema, policy, lock, object, checksum, source-row, and routed-row validation; does not fetch crates.io or reproduce Git tags.
+- `render`: write a new complete sparse-registry Pages tree; output path must be absent.
+- `verify`: re-render + require exact entry/byte equality with an existing site.
+- `verify-monotonic`: permit additions + `active→removed`; reject release identity removal, immutable mutation, or reactivation.
+
+`<catalog>` is an exclusive managed-state directory containing only one `<registry>.toml` human declaration + adjacent generated `<registry>.lock` per registry and `objects/{crates,rows}/`. Retain every approved package key even when its desired version/tag list becomes empty; deletion of a key or source-class change fails closed.
 
 Documentation: [`catalog schema`](../docs/catalog.md) | [`curator workflows`](../docs/workflows.md) | [`security model`](../docs/security.md).
