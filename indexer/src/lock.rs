@@ -1369,8 +1369,7 @@ mod tests {
     fn fake_dependencies(name: &str) -> &'static [&'static str] {
         match name {
             "matrix-middle" => &["leaf-core"],
-            "pkgre-tool" => &["matrix-middle"],
-            "core-invalid" => &["matrix-middle"],
+            "pkgre-tool" | "core-invalid" => &["matrix-middle"],
             _ => &[],
         }
     }

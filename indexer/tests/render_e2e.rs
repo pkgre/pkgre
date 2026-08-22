@@ -1,42 +1,37 @@
-//! Deterministic renderer integration test across the three registry layers.
+//! Deterministic schema-v2 renderer integration test across the three registry layers.
 
-use std::fmt::Write as _;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pkgre_indexer::artifact::{ArtifactMap, sha256_bytes};
-use pkgre_indexer::index::index_path;
+use pkgre_indexer::index::{IndexRecord, index_path};
 use pkgre_indexer::render;
-use pkgre_indexer::schema::Catalog;
+use pkgre_indexer::schema::{
+    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, NameSource, PackageState,
+    RegistryLock, SCHEMA_VERSION, serialize_lock,
+};
+use semver::Version;
 use serde_json::{Value, json};
 
+const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn renderer_routes_dependencies_and_reproduces_exact_site() {
     let temporary = TemporaryDirectory::new("pkgre-render-e2e");
     let catalog_root = temporary.path().join("catalog");
-    fs::create_dir_all(catalog_root.join("approvals")).unwrap();
-    fs::write(
-        catalog_root.join("registries.toml"),
-        "schema = 1\ncname = \"rust.pkg.re\"\ndownload = \"https://rust.pkg.re/crates/{sha256-checksum}.crate\"\ncargo-version = \"1.95.0\"\n\n[[registries]]\nname = \"core\"\nindex = \"sparse+https://rust.pkg.re/core/\"\nmay-depend-on = [\"core\"]\n\n[[registries]]\nname = \"matrix\"\nindex = \"sparse+https://rust.pkg.re/matrix/\"\nmay-depend-on = [\"core\", \"matrix\"]\n\n[[registries]]\nname = \"pkgre\"\nindex = \"sparse+https://rust.pkg.re/pkgre/\"\nmay-depend-on = [\"core\", \"matrix\", \"pkgre\"]\n",
-    )
-    .unwrap();
-    fs::write(
-        catalog_root.join("homes.toml"),
-        "schema = 1\n\n[homes]\nleaf-core = \"core\"\nmatrix-middle = \"matrix\"\npkgre-top = \"pkgre\"\n",
-    )
-    .unwrap();
+    fs::create_dir(&catalog_root).unwrap();
+    write_human_files(&catalog_root);
 
     let core = add_artifact(&catalog_root, "core", "leaf-core", None);
     let matrix = add_artifact(&catalog_root, "matrix", "matrix-middle", Some("leaf-core"));
     let pkgre = add_artifact(&catalog_root, "pkgre", "pkgre-top", Some("matrix-middle"));
-    write_approvals(&catalog_root, &core, &matrix, &pkgre);
-    write_artifact_map(&catalog_root, [&core, &matrix, &pkgre]);
+    write_locks(&catalog_root, [&core, &matrix, &pkgre]);
 
     let catalog = Catalog::load(&catalog_root).unwrap();
-    let artifacts = ArtifactMap::load(catalog_root.join("artifacts.toml")).unwrap();
+    let artifacts = ArtifactMap::load(&catalog).unwrap();
     let site = temporary.path().join("site");
     render::render(&catalog, &artifacts, &site).unwrap();
     render::verify(&catalog, &artifacts, &site).unwrap();
@@ -80,8 +75,7 @@ struct TestArtifact {
     name: &'static str,
     archive_hash: String,
     record_hash: String,
-    archive_path: PathBuf,
-    record_path: PathBuf,
+    record_bytes: Vec<u8>,
     archive_bytes: Vec<u8>,
 }
 
@@ -93,8 +87,12 @@ fn add_artifact(
 ) -> TestArtifact {
     let archive_bytes = format!("synthetic archive for {name} 1.0.0\n").into_bytes();
     let archive_hash = sha256_bytes(&archive_bytes);
-    let archive_path = PathBuf::from("archives").join(format!("{archive_hash}.crate"));
-    write_file(&root.join(&archive_path), &archive_bytes);
+    write_file(
+        &root
+            .join("objects/crates")
+            .join(format!("{archive_hash}.crate")),
+        &archive_bytes,
+    );
     let dependencies = dependency.map_or_else(Vec::new, |dependency| {
         vec![json!({
             "name": dependency,
@@ -114,75 +112,142 @@ fn add_artifact(
         "deps": dependencies,
         "cksum": archive_hash,
         "features": {},
-        "yanked": false,
+        "yanked": true,
     }))
     .unwrap();
     record_bytes.push(b'\n');
     let record_hash = sha256_bytes(&record_bytes);
-    let record_path = if registry == "pkgre" {
-        PathBuf::from("records").join(format!("{record_hash}.json"))
-    } else {
-        PathBuf::from("upstream")
-            .join(registry)
-            .join(index_path(name))
-            .join("1.0.0.json")
-    };
-    write_file(&root.join(&record_path), &record_bytes);
+    write_file(
+        &root
+            .join("objects/rows")
+            .join(format!("{record_hash}.json")),
+        &record_bytes,
+    );
     TestArtifact {
         registry,
         name,
         archive_hash,
         record_hash,
-        archive_path,
-        record_path,
+        record_bytes,
         archive_bytes,
     }
 }
 
-fn write_approvals(root: &Path, core: &TestArtifact, matrix: &TestArtifact, pkgre: &TestArtifact) {
-    for artifact in [core, matrix] {
-        fs::write(
-            root.join("approvals")
-                .join(format!("{}.toml", artifact.registry)),
-            format!(
-                "schema = 1\nregistry = {:?}\n\n[[packages]]\nname = {:?}\nversion = \"1.0.0\"\narchive_sha256 = {:?}\nindex_record_sha256 = {:?}\nyanked = false\n\n[packages.source]\nkind = \"crates-io\"\nindex_record = {:?}\n",
-                artifact.registry,
-                artifact.name,
-                artifact.archive_hash,
-                artifact.record_hash,
-                artifact.record_path.to_string_lossy()
-            ),
-        )
-        .unwrap();
-    }
+fn write_human_files(root: &Path) {
+    write_registry(
+        root,
+        "core",
+        &["core"],
+        "[mirror]\nleaf-core = [\"1.0.0\"]\n",
+    );
+    write_registry(
+        root,
+        "matrix",
+        &["core", "matrix"],
+        "[mirror]\nmatrix-middle = [\"1.0.0\"]\n",
+    );
+    write_registry(
+        root,
+        "pkgre",
+        &["core", "matrix", "pkgre"],
+        "[publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
+    );
+}
+
+fn write_registry(root: &Path, name: &str, layers: &[&str], packages: &str) {
+    let layers = layers
+        .iter()
+        .map(|layer| format!("\"{layer}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     fs::write(
-        root.join("approvals/pkgre.toml"),
+        root.join(format!("{name}.toml")),
         format!(
-            "schema = 1\nregistry = \"pkgre\"\n\n[[packages]]\nname = {:?}\nversion = \"1.0.0\"\narchive_sha256 = {:?}\nindex_record_sha256 = {:?}\nyanked = false\n\n[packages.source]\nkind = \"git-tag\"\nrepository = \"https://github.com/pkgre/pkgre\"\ntag = \"test/v1.0.0\"\ncommit = \"{}\"\npackage = {:?}\nsubdir = \".\"\n",
-            pkgre.name,
-            pkgre.archive_hash,
-            pkgre.record_hash,
-            "01".repeat(20),
-            pkgre.name
+            "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {DOWNLOAD:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{packages}"
         ),
     )
     .unwrap();
 }
 
-fn write_artifact_map<'a>(root: &Path, artifacts: impl IntoIterator<Item = &'a TestArtifact>) {
-    let mut contents = String::from("schema = 1\n");
-    for artifact in artifacts {
-        write!(
-            contents,
-            "\n[[artifacts]]\nregistry = {:?}\nname = {:?}\nversion = \"1.0.0\"\narchive = {:?}\nindex_record = {:?}\n",
-            artifact.registry,
-            artifact.name,
-            artifact.archive_path.to_string_lossy(),
-            artifact.record_path.to_string_lossy()
+fn write_locks<'a>(root: &Path, artifacts: impl IntoIterator<Item = &'a TestArtifact>) {
+    let artifacts = artifacts
+        .into_iter()
+        .map(|artifact| (artifact.registry, artifact))
+        .collect::<BTreeMap<_, _>>();
+    let homes = BTreeMap::from([
+        ("leaf-core".to_owned(), "core".to_owned()),
+        ("matrix-middle".to_owned(), "matrix".to_owned()),
+        ("pkgre-top".to_owned(), "pkgre".to_owned()),
+    ]);
+    let registry_urls = ["core", "matrix", "pkgre"]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_owned(),
+                format!("sparse+https://rust.pkg.re/{name}/"),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    for (registry, artifact) in artifacts {
+        let source = if registry == "pkgre" {
+            LockedSource::GitTag {
+                git: "https://github.com/pkgre/pkgre".to_owned(),
+                tag: "test/v1.0.0".to_owned(),
+                tag_oid: "01".repeat(20),
+                commit: "02".repeat(20),
+                package: artifact.name.to_owned(),
+                path: PathBuf::from("."),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+            }
+        } else {
+            LockedSource::CratesIo {}
+        };
+        let source_class = if registry == "pkgre" {
+            NameSource::Publish
+        } else {
+            NameSource::Mirror
+        };
+        let lock = RegistryLock {
+            schema: SCHEMA_VERSION,
+            registry: LockedRegistry {
+                name: registry.to_owned(),
+                index: registry_urls[registry].clone(),
+                download: DOWNLOAD.to_owned(),
+            },
+            names: vec![LockedName {
+                name: artifact.name.to_owned(),
+                source: source_class,
+            }],
+            packages: vec![LockedPackage {
+                name: artifact.name.to_owned(),
+                version: Version::parse("1.0.0").unwrap(),
+                state: PackageState::Active,
+                crate_sha256: artifact.archive_hash.clone(),
+                source_row_sha256: artifact.record_hash.clone(),
+                index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
+                source,
+            }],
+        };
+        fs::write(
+            root.join(format!("{registry}.lock")),
+            serialize_lock(&lock).unwrap(),
         )
         .unwrap();
     }
-    fs::write(root.join("artifacts.toml"), contents).unwrap();
+}
+
+fn routed_hash(
+    artifact: &TestArtifact,
+    homes: &BTreeMap<String, String>,
+    registry_urls: &BTreeMap<String, String>,
+) -> String {
+    let mut record = IndexRecord::parse(&artifact.record_bytes).unwrap();
+    record.set_yanked(false);
+    record
+        .route_dependencies(artifact.registry, homes, registry_urls)
+        .unwrap();
+    sha256_bytes(&record.to_json_line().unwrap())
 }
 
 fn assert_dependency_registry(site: &Path, registry: &str, name: &str, expected: Option<&str>) {
@@ -194,6 +259,7 @@ fn assert_dependency_registry(site: &Path, registry: &str, name: &str, expected:
         .first()
         .map(|dependency| dependency["registry"].as_str().unwrap());
     assert_eq!(actual, expected);
+    assert_eq!(row["yanked"], false);
 }
 
 fn write_file(path: &Path, contents: &[u8]) {
