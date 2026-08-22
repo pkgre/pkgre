@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::artifact::{require_absent, sha256_bytes};
-use crate::policy::{validate_package_name, validate_relative_path};
+use crate::policy::{REGISTRIES, validate_package_name, validate_relative_path};
 use crate::schema::{Approval, SCHEMA_VERSION, Source};
 
 const REGISTRY: &str = "pkgre";
@@ -87,6 +87,31 @@ struct MetadataDependency {
     features: Vec<String>,
     target: Option<String>,
     registry: Option<String>,
+}
+
+#[derive(Serialize)]
+struct IsolatedCargoConfig<'a> {
+    registries: BTreeMap<&'static str, CargoRegistry<'static>>,
+    registry: CargoDefaultRegistry,
+    source: BTreeMap<&'static str, CargoSource<'a>>,
+}
+
+#[derive(Serialize)]
+struct CargoRegistry<'a> {
+    index: &'a str,
+}
+
+#[derive(Serialize)]
+struct CargoDefaultRegistry {
+    default: &'static str,
+}
+
+#[derive(Serialize)]
+struct CargoSource<'a> {
+    #[serde(rename = "replace-with", skip_serializing_if = "Option::is_none")]
+    replace_with: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    directory: Option<&'a Path>,
 }
 
 #[derive(Debug, Serialize)]
@@ -309,8 +334,7 @@ fn materialize(
 
     let cargo = pinned_cargo(cargo_version)?;
     let cargo_home = temporary.path().join("cargo-home");
-    fs::create_dir(&cargo_home)
-        .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+    prepare_cargo_home(&cargo_home)?;
     let metadata = cargo_metadata(&cargo, &cargo_home, &manifest_path, proposal)?;
     let archive_one = run_cargo_package(
         &cargo,
@@ -536,13 +560,32 @@ fn checked_subdirectory(repository: &Path, subdir: &Path) -> Result<PathBuf> {
 }
 
 fn pinned_cargo(version: &Version) -> Result<PathBuf> {
-    let mut command = Command::new("rustup");
-    command.args(["which", "--toolchain", &version.to_string(), "cargo"]);
-    let path = command_stdout(command, "locate pinned Cargo")?;
-    let path = PathBuf::from(path);
+    let path = if let Some(configured) = std::env::var_os("PKGRE_CARGO") {
+        let configured = PathBuf::from(configured);
+        ensure!(
+            configured.is_absolute(),
+            "PKGRE_CARGO must be an absolute path"
+        );
+        fs::canonicalize(&configured)
+            .with_context(|| format!("canonicalize PKGRE_CARGO {}", configured.display()))?
+    } else {
+        let mut command = Command::new("rustup");
+        command.args(["which", "--toolchain", &version.to_string(), "cargo"]);
+        let path = command_stdout(command, "locate pinned Cargo")?;
+        let path = PathBuf::from(path);
+        ensure!(
+            path.is_absolute(),
+            "rustup returned a non-absolute Cargo path"
+        );
+        path
+    };
     ensure!(
-        path.is_absolute(),
-        "rustup returned a non-absolute Cargo path"
+        fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect pinned Cargo {}", path.display()))?
+            .file_type()
+            .is_file(),
+        "pinned Cargo is not a regular file: {}",
+        path.display()
     );
     let mut version_command = Command::new(&path);
     version_command.arg("--version");
@@ -555,6 +598,41 @@ fn pinned_cargo(version: &Version) -> Result<PathBuf> {
     Ok(path)
 }
 
+fn prepare_cargo_home(cargo_home: &Path) -> Result<()> {
+    fs::create_dir(cargo_home)
+        .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+    let disabled = cargo_home.join("disabled-crates-io");
+    fs::create_dir(&disabled)
+        .with_context(|| format!("create disabled Cargo source {}", disabled.display()))?;
+    let registries = REGISTRIES
+        .iter()
+        .map(|(name, index, _)| (*name, CargoRegistry { index }))
+        .collect();
+    let source = BTreeMap::from([
+        (
+            "crates-io",
+            CargoSource {
+                replace_with: Some("disabled"),
+                directory: None,
+            },
+        ),
+        (
+            "disabled",
+            CargoSource {
+                replace_with: None,
+                directory: Some(disabled.as_path()),
+            },
+        ),
+    ]);
+    let config = IsolatedCargoConfig {
+        registries,
+        registry: CargoDefaultRegistry { default: REGISTRY },
+        source,
+    };
+    let contents = toml::to_string_pretty(&config).context("serialize isolated Cargo config")?;
+    write_new(&cargo_home.join("config.toml"), contents.as_bytes())
+}
+
 fn cargo_metadata(
     cargo: &Path,
     cargo_home: &Path,
@@ -562,7 +640,7 @@ fn cargo_metadata(
     proposal: &GitProposal,
 ) -> Result<MetadataPackage> {
     let mut command = isolated_cargo(cargo, cargo_home);
-    command.args([
+    command.current_dir(cargo_home).args([
         OsStr::new("metadata"),
         OsStr::new("--format-version"),
         OsStr::new("1"),
@@ -606,17 +684,29 @@ fn cargo_metadata(
         "Cargo selected a package manifest outside the declared subdirectory"
     );
     ensure!(
-        package
-            .publish
-            .as_ref()
-            .is_some_and(|registries| registries.iter().any(|value| value == REGISTRY)),
-        "first-party package must explicitly allow publication to {REGISTRY:?}"
+        package.publish.as_deref() == Some(&[REGISTRY.to_owned()]),
+        "first-party package must set publish = [{REGISTRY:?}] exactly"
     );
+    let registry_indexes = REGISTRIES
+        .iter()
+        .map(|(_, index, _)| *index)
+        .collect::<Vec<_>>();
     for dependency in &package.dependencies {
         let source = dependency.source.as_deref().unwrap_or("path");
+        let expected_source = source
+            .strip_prefix("registry+")
+            .is_some_and(|index| registry_indexes.contains(&index));
         ensure!(
-            source.starts_with("registry+"),
-            "first-party package dependency {} uses unsupported source {source:?}; use an approved registry dependency",
+            expected_source,
+            "first-party package dependency {} uses unsupported source {source:?}; use core, matrix, or pkgre explicitly",
+            dependency.name
+        );
+        ensure!(
+            dependency
+                .registry
+                .as_deref()
+                .is_some_and(|index| registry_indexes.contains(&index)),
+            "first-party package dependency {} does not declare a canonical curated registry",
             dependency.name
         );
     }
@@ -632,7 +722,7 @@ fn run_cargo_package(
     version: &Version,
 ) -> Result<PathBuf> {
     let mut command = isolated_cargo(cargo, cargo_home);
-    command.args([
+    command.current_dir(cargo_home).args([
         OsStr::new("package"),
         OsStr::new("--no-verify"),
         OsStr::new("--locked"),

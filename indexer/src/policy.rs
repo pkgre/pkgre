@@ -10,8 +10,8 @@ use crate::schema::{Approval, Catalog, Source};
 
 const CNAME: &str = "rust.pkg.re";
 const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
-const CARGO_VERSION: &str = "1.95.0";
-const REGISTRIES: [(&str, &str, &[&str]); 3] = [
+pub(crate) const CARGO_VERSION: &str = "1.95.0";
+pub(crate) const REGISTRIES: [(&str, &str, &[&str]); 3] = [
     ("core", "sparse+https://rust.pkg.re/core/", &["core"]),
     (
         "matrix",
