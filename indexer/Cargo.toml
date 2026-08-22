@@ -1,6 +1,6 @@
 [package]
 name = "pkgre-indexer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Deterministic renderer for curated Cargo sparse registries"
 edition.workspace = true
 rust-version.workspace = true

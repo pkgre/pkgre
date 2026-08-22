@@ -96,7 +96,7 @@
           };
           indexer = rustPlatform.buildRustPackage {
             pname = "pkgre-indexer";
-            version = "0.1.0";
+            version = "0.1.1";
             src = source;
             postPatch = ''
               cp ${vendorLock} Cargo.lock
