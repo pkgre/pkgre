@@ -10,10 +10,10 @@ use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use crate::artifact::{ArtifactMap, require_absent};
+use crate::artifact::{ArtifactMap, require_absent, sha256_bytes};
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{Policy, validate_catalog};
-use crate::schema::{Approval, Catalog, SCHEMA_VERSION, Source};
+use crate::schema::{Approval, Catalog, RELEASE_SCHEMA_VERSION, Source};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -118,7 +118,7 @@ fn render_into(
             )
         })?;
         let mut record = IndexRecord::parse(&source)?;
-        record.set_yanked(approval.yanked);
+        record.set_yanked(false);
         let routed = record.route_dependencies(
             &approval.registry,
             &catalog.homes.homes,
@@ -133,11 +133,21 @@ fn render_into(
                 approval.registry
             );
         }
+        let canonical_active_row = record.to_json_line()?;
+        let routed_hash = sha256_bytes(&canonical_active_row);
+        ensure!(
+            routed_hash == approval.index_row_sha256,
+            "routed index-row hash mismatch for {} {}: expected {}, got {routed_hash}",
+            approval.name,
+            approval.version,
+            approval.index_row_sha256
+        );
+        record.set_yanked(approval.is_removed());
         rows.entry((approval.registry.clone(), index_path(&approval.name)))
             .or_default()
             .push((approval.version.clone(), record.to_json_line()?));
 
-        if copied_archives.insert(approval.archive_sha256.clone()) {
+        if !approval.is_removed() && copied_archives.insert(approval.archive_sha256.clone()) {
             copy_new(
                 &artifact.archive,
                 &output
@@ -186,7 +196,7 @@ pub fn verify_monotonic(previous_site: &Path, next_site: &Path) -> Result<()> {
     let previous = load_release(&previous_site.join(RELEASE_MANIFEST))?;
     let next = load_release(&next_site.join(RELEASE_MANIFEST))?;
     ensure!(
-        previous.schema == SCHEMA_VERSION && next.schema == SCHEMA_VERSION,
+        previous.schema == RELEASE_SCHEMA_VERSION && next.schema == RELEASE_SCHEMA_VERSION,
         "unsupported release manifest schema"
     );
     ensure!(
@@ -207,6 +217,13 @@ pub fn verify_monotonic(previous_site: &Path, next_site: &Path) -> Result<()> {
         ensure!(
             same_immutable_package(prior, current),
             "immutable release identity changed for {} {} in {}",
+            prior.name,
+            prior.version,
+            prior.registry
+        );
+        ensure!(
+            !prior.yanked || current.yanked,
+            "removed package {} {} in {} was reactivated",
             prior.name,
             prior.version,
             prior.registry
@@ -235,15 +252,16 @@ fn release_from_catalog(catalog: &Catalog) -> Release {
             version: approval.version.clone(),
             archive_sha256: approval.archive_sha256.clone(),
             index_record_sha256: approval.index_record_sha256.clone(),
-            yanked: approval.yanked,
+            yanked: approval.is_removed(),
             source: match &approval.source {
-                Source::CratesIo { .. } => ReleaseSource::CratesIo,
+                Source::CratesIo => ReleaseSource::CratesIo,
                 Source::GitTag {
                     repository,
                     tag,
                     commit,
                     package,
                     subdir,
+                    ..
                 } => ReleaseSource::GitTag {
                     repository: repository.clone(),
                     tag: tag.clone(),
@@ -255,7 +273,7 @@ fn release_from_catalog(catalog: &Catalog) -> Release {
         })
         .collect();
     Release {
-        schema: SCHEMA_VERSION,
+        schema: RELEASE_SCHEMA_VERSION,
         cname: catalog.registries.cname.clone(),
         download: catalog.registries.download.clone(),
         registries,

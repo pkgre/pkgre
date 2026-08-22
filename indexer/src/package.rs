@@ -307,6 +307,7 @@ fn package_approved_git_from(
         commit,
         package,
         subdir,
+        ..
     } = &approval.source
     else {
         bail!(

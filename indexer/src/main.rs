@@ -13,7 +13,7 @@ use pkgre_indexer::schema::Catalog;
 use semver::Version;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer check <catalog> [artifact-map]\n  pkgre-indexer render <catalog> <artifact-map> <output>\n  pkgre-indexer verify <catalog> <artifact-map> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer candidate-crates-io <proposal> <output>\n  pkgre-indexer candidate-git <proposal> <cargo-version> <output>\n  pkgre-indexer package-git <catalog> <package> <version> <output>";
+const USAGE: &str = "usage:\n  pkgre-indexer check <catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer candidate-crates-io <proposal> <output>\n  pkgre-indexer candidate-git <proposal> <cargo-version> <output>\n  pkgre-indexer package-git <catalog> <package> <version> <output>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -48,32 +48,29 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
 }
 
 fn check(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 1, 2)?;
+    ensure_arity(arguments, 1, 1)?;
     let catalog = load_catalog(&arguments[0])?;
     validate_catalog(&catalog)?;
-    if let Some(path) = arguments.get(1) {
-        let artifacts = ArtifactMap::load(path)?;
-        artifacts.verify(&catalog)?;
-    }
+    ArtifactMap::load(&catalog)?;
     info!(approvals = catalog.approvals.len(), "catalog is valid");
     Ok(())
 }
 
 fn render_site(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 3, 3)?;
+    ensure_arity(arguments, 2, 2)?;
     let catalog = load_catalog(&arguments[0])?;
-    let artifacts = ArtifactMap::load(&arguments[1])?;
-    let output = Path::new(&arguments[2]);
+    let artifacts = ArtifactMap::load(&catalog)?;
+    let output = Path::new(&arguments[1]);
     render::render(&catalog, &artifacts, output)?;
     info!(path = %output.display(), "rendered registry site");
     Ok(())
 }
 
 fn verify_site(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 3, 3)?;
+    ensure_arity(arguments, 2, 2)?;
     let catalog = load_catalog(&arguments[0])?;
-    let artifacts = ArtifactMap::load(&arguments[1])?;
-    let output = Path::new(&arguments[2]);
+    let artifacts = ArtifactMap::load(&catalog)?;
+    let output = Path::new(&arguments[1]);
     render::verify(&catalog, &artifacts, output)?;
     info!(path = %output.display(), "registry site is reproducible");
     Ok(())
