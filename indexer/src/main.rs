@@ -1,10 +1,8 @@
-use anyhow::Result;
 use tracing::info;
 
-fn main() -> Result<()> {
+fn main() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .init();
     info!("pkgre-indexer initialized");
-    Ok(())
 }
