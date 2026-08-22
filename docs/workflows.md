@@ -3,121 +3,139 @@
 ## Commands
 
 ```text
-pkgre-indexer check <catalog> [artifact-map]
-pkgre-indexer render <catalog> <artifact-map> <new-output>
-pkgre-indexer verify <catalog> <artifact-map> <existing-output>
+pkgre-indexer lock <catalog>
+pkgre-indexer check <catalog>
+pkgre-indexer render <catalog> <new-output>
+pkgre-indexer verify <catalog> <existing-output>
 pkgre-indexer verify-monotonic <previous-site> <next-site>
-pkgre-indexer candidate-crates-io <proposal> <new-output>
-pkgre-indexer candidate-git <proposal> <cargo-version> <new-output>
-pkgre-indexer package-git <catalog> <package> <version> <new-output>
 ```
 
-All materialization/render output paths must be absent. Failures remove partially created output where possible. Candidate commands never mutate approved catalogs.
+`lock` is the only catalog-mutating command. `check` is local-only and never re-fetches crates.io or Git tags. Render output must be absent; no command overwrites a site tree. Use the registry directory itself as `<catalog>` (for example `registry`), never its repository parent.
 
-## Import crates.io versions
+## Add mirrored versions
 
-1. Prepare a provenance-free exact proposal; no consuming-project name/path/manifest/lockfile belongs in public inputs:
+1. Determine the complete exact versions required without copying consumer names/paths/manifests/lockfiles into the public repository.
+2. Add versions under `[mirror]` in `core.toml` or `matrix.toml`:
 
 ```toml
-schema = 1
-
-[[packages]]
-registry = "core"
-name = "serde"
-version = "1.0.229"
-
-[[packages]]
-registry = "matrix"
-name = "matrix-sdk"
-version = "0.16.0"
+[mirror]
+serde = ["1.0.228", "1.0.229"]
+matrix-sdk = ["0.16.0"]
 ```
 
-2. Materialize candidates:
+3. Run reconciliation from outside the managed catalog directory:
 
 ```console
-$ pkgre-indexer candidate-crates-io proposal.toml candidate
+$ pkgre-indexer lock registry
 ```
 
-3. The importer fetches the exact crates.io sparse row + archive over HTTPS, selects exactly one name/version row, validates Cargo metadata, checks archive SHA-256 against upstream `cksum`, then writes only candidate files:
+4. Reconciler validates all existing history locally before fetching each new exact crates.io sparse row + `.crate`; it rejects missing/duplicate/yanked/malformed rows and checksum mismatch, routes dependencies, generates lock entries, stores content-addressed objects, test-renders staging, then transactionally replaces `registry/`.
+5. Review the complete diff before commit: declaration, generated lock identity/provenance/hashes, new source-row object, exact archive contents, dependency routes/layers, build-time capability, proc macros, native/unsafe code, features/targets, and licensing. Generated success is integrity evidence, not approval.
+6. Verify locally and prove convergence:
 
-```text
-candidate/
-├── approvals/{core,matrix}.toml
-├── homes.toml
-├── artifacts.toml
-├── archives/<sha256>.crate
-└── upstream/<registry>/<index path>/<version>.json
+```console
+$ pkgre-indexer check registry
+$ git status --short
+$ pkgre-indexer lock registry
+$ git status --short
 ```
 
-4. Audit exact archive contents, build-time behavior, proc macros, native code, repository/release correspondence, maintainer provenance, row dependency changes, and licensing. Importer verification is integrity evidence, not a safety judgment.
-5. Merge approved homes, approval stanzas, snapshots, archives, and artifact entries into the committed public catalog/artifact tree. Do not copy private discovery provenance.
-6. Run `check`, render to a new directory, verify byte identity, and compare monotonically with the prior published site.
+The second `lock` must produce no diff. Any unexpected changed/deleted object or lock entry blocks approval.
 
-## Publish first-party Git tag
+## Publish a first-party Git tag
 
-Release preconditions:
+Tagged source preconditions:
 
-- committed HTTPS repository + immutable release tag;
-- declared tag peels to a recorded full commit ID;
-- no submodules, symlinks, special files, unsafe paths, or dirty generated changes;
-- selected package has exact name/version + `publish = ["pkgre"]`;
-- every dependency explicitly names one of `core`, `matrix`, `pkgre` in `Cargo.toml`;
+- committed credential-free HTTPS repository + immutable release tag;
+- selected package version equals the tag's final component with optional `v` prefix;
+- selected manifest declares exactly `publish = ["pkgre"]`;
+- every dependency explicitly names `registry = "core"|"matrix"|"pkgre"`; path/Git/crates.io/unknown sources fail, including optional/dev/build/target-specific edges;
 - lockfile present + compatible with isolated curated registries;
-- pinned Cargo version equals catalog `cargo-version`.
+- no submodules, symlinks, special files, unsafe paths, ambiguous package names, or generated dirty checkout state;
+- package can be reproducibly archived by Cargo `1.95.0`.
 
-Proposal:
+Workflow:
+
+1. Review + merge the release commit through protected `main`; create + push the immutable tag only after merge.
+2. Add the tag to the retained `pkgre.toml` declaration:
 
 ```toml
-schema = 1
-registry = "pkgre"
-name = "pkgre-indexer"
-version = "0.1.0"
-repository = "https://github.com/pkgre/pkgre"
-tag = "indexer/v0.1.0"
-commit = "<full peeled commit>"
-package = "pkgre-indexer"
-subdir = "indexer"
+[publish.pkgre-indexer]
+git = "https://github.com/pkgre/pkgre"
+tags = ["indexer/v0.2.0"]
 ```
 
-Candidate:
+3. Select pinned Cargo: set `PKGRE_CARGO=/absolute/path/to/cargo` or install rustup toolchain `1.95.0`. The executable must report a version beginning `cargo 1.95.0 `.
+4. Run `pkgre-indexer lock registry`. It fetches only the exact tag, records tag object + peeled commit, discovers the package version + repository-relative path, runs isolated locked metadata, packages twice into distinct targets, requires byte-identical archives, generates the source row, routes dependencies, and locks every identity/hash.
+5. Confirm the locked Git URL/tag/tag object/commit/package/path/Cargo version match the reviewed release; inspect the exact `.crate` + source row; compare archive contents with the tagged tree and normalized manifest.
+6. Run local `check` + a second no-op `lock`, then commit declaration, lock, and objects together.
 
-```console
-$ pkgre-indexer candidate-git proposal.toml 1.95.0 candidate
+Pinned Cargo selection order:
+
+1. `PKGRE_CARGO`: must be absolute, canonicalizable, and a regular file.
+2. `rustup which --toolchain <cargo-version> cargo`: returned path must be absolute.
+
+Nix builds set `PKGRE_CARGO` to the flake-pinned toolchain. `check` validates retained bytes/provenance locally but deliberately does not contact/reproduce a locked Git tag.
+
+Self-publication rule: normally reconcile a new indexer tag with the prior immutable indexer release. A schema/bootstrap release that cannot be read by its predecessor must use a reviewed build from the exact merged/tagged release commit, then lock that same immutable tag and retain the resulting provenance.
+
+## Remove a version/tag
+
+1. Remove the exact version/tag from its array; never delete the package key.
+
+```toml
+[mirror]
+obsolete-mirror = []
+
+[publish.obsolete-first-party]
+git = "https://github.com/pkgre/example"
+tags = []
 ```
 
-Materializer behavior:
+2. Run `pkgre-indexer lock registry`.
+3. Review that only the intended lock entries transitioned `state = "active"` → `state = "removed"`; source-row evidence remains; an archive object disappears only if no active identity shares its hash.
+4. Rendered history retains the row with `yanked = true` and omits an unshared archive. Reactivation is permanently rejected; restoring functionality requires a new version/tag.
+5. Run `check`, a second no-op `lock`, render, and `verify-monotonic` before commit/deploy.
 
-1. Create fresh isolated checkout; fetch exact tag; require tag peel = declared commit.
-2. Reject submodules, symlinks, special files, unsafe path components, unexpected VCS state, or manifest mismatch.
-3. Create isolated Cargo home defining only the three canonical registries; replace crates.io with an empty directory.
-4. Run pinned `cargo metadata`; require every dependency to declare a canonical curated registry.
-5. Run pinned `cargo package --no-verify --locked` twice in separate target directories; require byte-identical archives.
-6. Generate un-routed Cargo index row; emit archive, row, hashes, artifact map, and approval candidate.
-
-Review candidate; copy approved declaration/artifacts into catalog. Reproduce an approved release independently:
-
-```console
-$ pkgre-indexer package-git catalog pkgre-indexer 0.1.0 reproduced
-```
-
-The command re-fetches the declared tag, checks the peeled commit, repeats deterministic packaging, and fails unless archive + un-routed-row hashes equal the approval.
-
-## Pinned Cargo selection
-
-`candidate-git` + `package-git` select Cargo in this order:
-
-1. `PKGRE_CARGO=/absolute/path/to/cargo` if set; path must be absolute.
-2. `rustup run <version> cargo` fallback.
-
-Exact `cargo --version` must begin with declared `cargo <version> `. Nix builds set `PKGRE_CARGO` to the flake-pinned toolchain.
+Removing a package key, changing its home/source class, changing a locked publisher Git URL, or re-adding a removed identity fails before network access.
 
 ## Release gate
 
+Prepare candidate at an absent path:
+
 ```console
-$ pkgre-indexer check catalog artifacts/artifacts.toml
-$ pkgre-indexer render catalog artifacts/artifacts.toml site-next
-$ pkgre-indexer verify catalog artifacts/artifacts.toml site-next
+$ pkgre-indexer check registry
+$ pkgre-indexer render registry site-next
+$ pkgre-indexer verify registry site-next
 $ pkgre-indexer verify-monotonic site-current site-next
 ```
 
-Deploy only `site-next`; never serve the source catalog as a sparse registry. After deployment, test all `config.json` endpoints, representative index rows, content-addressed archives, and one clean-cache `cargo build --locked` spanning every registry layer.
+Required review:
+
+- `git diff --check`; generated lock/object diff fully explained; second `lock` exact no-op;
+- tooling format/build/test/lint/Nix checks pass with locked inputs;
+- prior `release.json` package identities all retained; additions/removals intentional; immutable fields unchanged;
+- rendered site contains only `.nojekyll`, `CNAME`, `release.json`, canonical registry configs/rows, and active content-addressed archives;
+- branch protection/required CI passes; merge normally with no force/bypass.
+
+Deploy only the rendered site, never `registry/`. A release workflow should independently run `check`, `render`, `verify`, fetch/build the prior released site, run `verify-monotonic`, and publish with read-only source permissions plus only the minimum Pages permissions.
+
+## Post-deployment verification
+
+- Fetch `https://rust.pkg.re/{core,matrix,pkgre}/config.json`; require the canonical content-addressed `dl` template.
+- Fetch representative package rows in every registry; validate expected checksum/routes/yank state.
+- Fetch representative content-addressed archives; recompute SHA-256; confirm removed unshared archives return not found.
+- Compare live `release.json` with the committed candidate.
+- Use a fresh Cargo home/cache and committed failure-closed `.cargo/config.toml`; run metadata/build/install with `--locked`/`--frozen` across every layer.
+- Capture network/source evidence that no crates.io index/archive, Git dependency, or unknown registry was contacted.
+
+Keep consumer validation results private: public commits/logs/issues must not include consumer repository names, filesystem paths, manifests, lockfiles, dependency-discovery output, tokens, or credentials.
+
+## Interrupted reconciliation recovery
+
+A normal failure removes its sibling guard/staging tree and leaves the original catalog exact; installation failure attempts rollback. A killed process can leave `.registry.pkgre-lock`, staging, or backup siblings beside `registry/`.
+
+1. Confirm no indexer process is active.
+2. Inspect `registry/` + siblings; preserve/restore the last reviewed complete catalog if installation was interrupted.
+3. Remove only verified stale `.registry.pkgre-lock` and disposable `.registry.pkgre-stage-*`/`.registry.pkgre-render-*`; treat `.registry.pkgre-backup-*` as recovery evidence until integrity is confirmed.
+4. Run `pkgre-indexer check registry`, compare source control, then retry `lock`.
