@@ -209,8 +209,24 @@ pub fn candidate_git(
     cargo_version: &Version,
     output: &Path,
 ) -> Result<GitMaterialization> {
+    candidate_git_from(proposal, cargo_version, output, &proposal.repository, false)
+}
+
+fn candidate_git_from(
+    proposal: &GitProposal,
+    cargo_version: &Version,
+    output: &Path,
+    fetch_repository: &str,
+    allow_file: bool,
+) -> Result<GitMaterialization> {
     validate_proposal(proposal)?;
-    let materialization = materialize(proposal, cargo_version, output)?;
+    let materialization = materialize(
+        proposal,
+        cargo_version,
+        output,
+        fetch_repository,
+        allow_file,
+    )?;
     let approval = CandidateApproval {
         schema: SCHEMA_VERSION,
         registry: REGISTRY,
@@ -265,6 +281,23 @@ pub fn package_approved_git(
     cargo_version: &Version,
     output: &Path,
 ) -> Result<GitMaterialization> {
+    let Source::GitTag { repository, .. } = &approval.source else {
+        bail!(
+            "{} {} is not an approved Git-tag package",
+            approval.name,
+            approval.version
+        );
+    };
+    package_approved_git_from(approval, cargo_version, output, repository, false)
+}
+
+fn package_approved_git_from(
+    approval: &Approval,
+    cargo_version: &Version,
+    output: &Path,
+    fetch_repository: &str,
+    allow_file: bool,
+) -> Result<GitMaterialization> {
     let Source::GitTag {
         repository,
         tag,
@@ -291,7 +324,13 @@ pub fn package_approved_git(
         subdir: subdir.clone(),
     };
     validate_proposal(&proposal)?;
-    let materialization = materialize(&proposal, cargo_version, output)?;
+    let materialization = materialize(
+        &proposal,
+        cargo_version,
+        output,
+        fetch_repository,
+        allow_file,
+    )?;
     ensure!(
         materialization.archive_sha256 == approval.archive_sha256,
         "approved archive hash mismatch for {} {}: expected {}, got {}",
@@ -315,11 +354,13 @@ fn materialize(
     proposal: &GitProposal,
     cargo_version: &Version,
     output: &Path,
+    fetch_repository: &str,
+    allow_file: bool,
 ) -> Result<GitMaterialization> {
     require_absent(output)?;
     let temporary = TemporaryDirectory::new("pkgre-git-package")?;
     let repository = temporary.path().join("repository");
-    fetch_tag(proposal, &repository)?;
+    fetch_tag(proposal, &repository, fetch_repository, allow_file)?;
     ensure_clean_checkout(&repository)?;
     let package_directory = checked_subdirectory(&repository, &proposal.subdir)?;
     let manifest_path = package_directory.join("Cargo.toml");
@@ -449,7 +490,12 @@ fn validate_git_ref_component(tag: &str) -> Result<()> {
     Ok(())
 }
 
-fn fetch_tag(proposal: &GitProposal, repository: &Path) -> Result<()> {
+fn fetch_tag(
+    proposal: &GitProposal,
+    repository: &Path,
+    fetch_repository: &str,
+    allow_file: bool,
+) -> Result<()> {
     run_git(
         None,
         [
@@ -464,26 +510,25 @@ fn fetch_tag(proposal: &GitProposal, repository: &Path) -> Result<()> {
             OsString::from("remote"),
             OsString::from("add"),
             OsString::from("origin"),
-            OsString::from(&proposal.repository),
+            OsString::from(fetch_repository),
         ],
     )?;
     let source = OsString::from(format!("refs/tags/{}", proposal.tag));
     let destination = OsString::from(format!("refs/tags/{}", proposal.tag));
-    run_git(
-        Some(repository),
-        [
-            OsString::from("fetch"),
-            OsString::from("--quiet"),
-            OsString::from("--no-tags"),
-            OsString::from("--depth=1"),
-            OsString::from("origin"),
-            OsString::from(format!(
-                "{}:{}",
-                source.to_string_lossy(),
-                destination.to_string_lossy()
-            )),
-        ],
-    )?;
+    let fetch_arguments = [
+        OsString::from("fetch"),
+        OsString::from("--quiet"),
+        OsString::from("--no-tags"),
+        OsString::from("--depth=1"),
+        OsString::from("origin"),
+        OsString::from(format!(
+            "{}:{}",
+            source.to_string_lossy(),
+            destination.to_string_lossy()
+        )),
+    ];
+    let fetch_command = git_command_with_file_policy(Some(repository), fetch_arguments, allow_file);
+    run_command(fetch_command, "fetch exact Git tag")?;
     let peeled = command_stdout(
         git_command(
             Some(repository),
@@ -834,13 +879,30 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    git_command_with_file_policy(current_dir, arguments, false)
+}
+
+fn git_command_with_file_policy<I, S>(
+    current_dir: Option<&Path>,
+    arguments: I,
+    allow_file: bool,
+) -> Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let file_policy = if allow_file { "always" } else { "never" };
     let mut command = Command::new("git");
     command
         .args([
             OsStr::new("-c"),
             OsStr::new("core.hooksPath=/dev/null"),
             OsStr::new("-c"),
-            OsStr::new("protocol.file.allow=never"),
+            OsStr::new("protocol.allow=never"),
+            OsStr::new("-c"),
+            OsStr::new("protocol.https.allow=always"),
+            OsStr::new("-c"),
+            OsStr::new(&format!("protocol.file.allow={file_policy}")),
         ])
         .args(arguments)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -968,6 +1030,183 @@ mod tests {
         assert_eq!(value["deps"][0]["name"], "alias");
         assert_eq!(value["deps"][0]["package"], "actual");
         assert_eq!(value["deps"][0]["kind"], "normal");
+    }
+
+    const TEST_TAG: &str = "release/pkgre-demo/v1.2.3";
+
+    #[test]
+    fn git_tag_candidate_is_reproducible_and_commit_bound() {
+        let temporary = TemporaryDirectory::new("pkgre-git-e2e").unwrap();
+        let (source, proposal) = create_test_release(&temporary);
+        let source_url = source.to_str().unwrap();
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let candidate_path = temporary.path().join("candidate");
+        let candidate =
+            candidate_git_from(&proposal, &cargo_version, &candidate_path, source_url, true)
+                .unwrap();
+        assert_candidate(&candidate_path, &candidate, &proposal);
+
+        let approval = test_approval(&proposal, &candidate);
+        let approved = package_approved_git_from(
+            &approval,
+            &cargo_version,
+            &temporary.path().join("approved"),
+            source_url,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(candidate.archive).unwrap(),
+            fs::read(approved.archive).unwrap()
+        );
+        assert_eq!(
+            fs::read(candidate.index_record).unwrap(),
+            fs::read(approved.index_record).unwrap()
+        );
+
+        move_test_tag(&source);
+        let moved_output = temporary.path().join("moved-candidate");
+        let error = candidate_git_from(&proposal, &cargo_version, &moved_output, source_url, true)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("not declared commit"));
+        assert!(!moved_output.exists());
+    }
+
+    fn create_test_release(temporary: &TemporaryDirectory) -> (PathBuf, GitProposal) {
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/demo\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/Cargo.toml"),
+            "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = [\"pkgre\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(&source)
+                .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
+                .arg("generate-lockfile"),
+        );
+        test_git(&source, &["add", "Cargo.lock"]);
+        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        let commit = test_git(&source, &["rev-parse", "HEAD"]);
+        let proposal = GitProposal {
+            schema: SCHEMA_VERSION,
+            registry: REGISTRY.to_owned(),
+            name: "pkgre-demo".to_owned(),
+            version: Version::parse("1.2.3").unwrap(),
+            repository: "https://example.invalid/pkgre-demo".to_owned(),
+            tag: TEST_TAG.to_owned(),
+            commit,
+            package: "pkgre-demo".to_owned(),
+            subdir: PathBuf::from("crates/demo"),
+        };
+        (source, proposal)
+    }
+
+    fn assert_candidate(
+        candidate_path: &Path,
+        candidate: &GitMaterialization,
+        proposal: &GitProposal,
+    ) {
+        assert_eq!(
+            sha256_bytes(&fs::read(&candidate.archive).unwrap()),
+            candidate.archive_sha256
+        );
+        assert_eq!(
+            sha256_bytes(&fs::read(&candidate.index_record).unwrap()),
+            candidate.index_record_sha256
+        );
+        let record =
+            crate::index::IndexRecord::parse(&fs::read(&candidate.index_record).unwrap()).unwrap();
+        record.validate_structure().unwrap();
+        assert_eq!(record.name().unwrap(), proposal.name);
+        assert_eq!(record.version().unwrap(), proposal.version);
+        assert!(candidate_path.join("approval.toml").is_file());
+        crate::artifact::ArtifactMap::load(candidate_path.join("artifacts.toml")).unwrap();
+        let vcs_info = test_command_stdout(
+            Command::new("tar")
+                .arg("-xOf")
+                .arg(&candidate.archive)
+                .arg("pkgre-demo-1.2.3/.cargo_vcs_info.json"),
+        );
+        let vcs: serde_json::Value = serde_json::from_str(&vcs_info).unwrap();
+        assert_eq!(vcs["git"]["sha1"], proposal.commit);
+    }
+
+    fn test_approval(proposal: &GitProposal, candidate: &GitMaterialization) -> Approval {
+        Approval {
+            registry: REGISTRY.to_owned(),
+            name: proposal.name.clone(),
+            version: proposal.version.clone(),
+            archive_sha256: candidate.archive_sha256.clone(),
+            index_record_sha256: candidate.index_record_sha256.clone(),
+            yanked: false,
+            source: Source::GitTag {
+                repository: proposal.repository.clone(),
+                tag: proposal.tag.clone(),
+                commit: proposal.commit.clone(),
+                package: proposal.package.clone(),
+                subdir: proposal.subdir.clone(),
+            },
+            declared_in: PathBuf::from("approvals/pkgre.toml"),
+        }
+    }
+
+    fn move_test_tag(source: &Path) {
+        fs::write(source.join("moved"), "different commit\n").unwrap();
+        test_git(source, &["add", "moved"]);
+        test_git(source, &["commit", "--quiet", "-m", "move tag target"]);
+        test_git(source, &["tag", "--force", "-a", TEST_TAG, "-m", "moved"]);
+    }
+
+    fn test_git(repository: &Path, arguments: &[&str]) -> String {
+        test_command_stdout(
+            Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=pkgre-test",
+                    "-c",
+                    "user.email=test@invalid",
+                ])
+                .arg("-C")
+                .arg(repository)
+                .args(arguments),
+        )
+    }
+
+    fn run_test_command(command: &mut Command) {
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "test command failed: {command:?}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn test_command_stdout(command: &mut Command) -> String {
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "test command failed: {command:?}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
 
     #[test]
