@@ -419,6 +419,15 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
     let Some(lock) = &input.lock else {
         return Ok(());
     };
+    validate_registry_identity(input, lock)?;
+    let desired_names = desired_names(&input.file)?;
+    let locked_names = validate_locked_names(input, lock, &desired_names)?;
+    validate_locked_packages(input, lock, &locked_names)?;
+    validate_desired_mirrors(input, lock)?;
+    validate_desired_tags(input, lock)
+}
+
+fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
     ensure!(
         lock.registry.name == input.file.registry.name
             && lock.registry.index == input.file.registry.index
@@ -427,26 +436,39 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
         input.lock_path.display(),
         input.path.display()
     );
+    Ok(())
+}
 
-    let desired_names = desired_names(&input.file)?;
+fn validate_locked_names(
+    input: &RegistryInput,
+    lock: &RegistryLock,
+    desired_names: &BTreeMap<String, NameSource>,
+) -> Result<BTreeMap<String, NameSource>> {
     let mut locked_names = BTreeMap::new();
     for name in &lock.names {
         ensure!(
             locked_names
-                .insert(name.name.as_str(), name.source)
+                .insert(name.name.clone(), name.source)
                 .is_none(),
             "duplicate locked package name {:?} in {}",
             name.name,
             input.lock_path.display()
         );
         ensure!(
-            desired_names.get(name.name.as_str()) == Some(&name.source),
+            desired_names.get(&name.name) == Some(&name.source),
             "locked package name {:?} was removed or changed source class in {}; retain the key with an empty version/tag list",
             name.name,
             input.path.display()
         );
     }
+    Ok(locked_names)
+}
 
+fn validate_locked_packages(
+    input: &RegistryInput,
+    lock: &RegistryLock,
+    locked_names: &BTreeMap<String, NameSource>,
+) -> Result<()> {
     let mut identities = BTreeSet::new();
     let mut tags = BTreeSet::new();
     for package in &lock.packages {
@@ -461,7 +483,7 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
             package.version,
             input.lock_path.display()
         );
-        let source_class = locked_names.get(package.name.as_str()).with_context(|| {
+        let source_class = locked_names.get(&package.name).with_context(|| {
             format!(
                 "locked package {} {} has no permanent name anchor in {}",
                 package.name,
@@ -469,48 +491,63 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
                 input.lock_path.display()
             )
         })?;
-        match &package.source {
-            LockedSource::CratesIo {} => ensure!(
-                *source_class == NameSource::Mirror,
-                "locked crates.io package {} has non-mirror name anchor",
+        validate_locked_source(input, package, *source_class, &mut tags)?;
+    }
+    Ok(())
+}
+
+fn validate_locked_source<'a>(
+    input: &'a RegistryInput,
+    package: &'a LockedPackage,
+    source_class: NameSource,
+    tags: &mut BTreeSet<(&'a str, &'a str)>,
+) -> Result<()> {
+    match &package.source {
+        LockedSource::CratesIo {} => ensure!(
+            source_class == NameSource::Mirror,
+            "locked crates.io package {} has non-mirror name anchor",
+            package.name
+        ),
+        LockedSource::GitTag {
+            git,
+            tag,
+            package: source_package,
+            ..
+        } => {
+            ensure!(
+                source_class == NameSource::Publish,
+                "locked Git package {} has non-publish name anchor",
                 package.name
-            ),
-            LockedSource::GitTag {
-                git,
-                tag,
-                package: source_package,
-                ..
-            } => {
-                ensure!(
-                    *source_class == NameSource::Publish,
-                    "locked Git package {} has non-publish name anchor",
-                    package.name
-                );
-                ensure!(
-                    source_package == &package.name,
-                    "locked Git source package {:?} differs from identity {:?}",
-                    source_package,
-                    package.name
-                );
-                let declaration = input
-                    .file
-                    .publish
-                    .get(&package.name)
-                    .expect("locked name source class was checked");
-                ensure!(
-                    declaration.git == *git,
-                    "Git repository for locked package {} changed",
-                    package.name
-                );
-                ensure!(
-                    tags.insert((package.name.as_str(), tag.as_str())),
-                    "Git tag {tag:?} is locked more than once for {}",
-                    package.name
-                );
-            }
+            );
+            ensure!(
+                source_package == &package.name,
+                "locked Git source package {:?} differs from identity {:?}",
+                source_package,
+                package.name
+            );
+            let declaration = input.file.publish.get(&package.name).with_context(|| {
+                format!(
+                    "locked Git package {:?} has no publish declaration in {}",
+                    package.name,
+                    input.path.display()
+                )
+            })?;
+            ensure!(
+                declaration.git == *git,
+                "Git repository for locked package {} changed",
+                package.name
+            );
+            ensure!(
+                tags.insert((package.name.as_str(), tag.as_str())),
+                "Git tag {tag:?} is locked more than once for {}",
+                package.name
+            );
         }
     }
+    Ok(())
+}
 
+fn validate_desired_mirrors(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
     for (name, versions) in &input.file.mirror {
         for version in versions {
             if let Some(package) = lock.packages.iter().find(|package| {
@@ -528,6 +565,10 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn validate_desired_tags(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
     for (name, declaration) in &input.file.publish {
         for tag in &declaration.tags {
             if let Some(package) = lock.packages.iter().find(|package| {
