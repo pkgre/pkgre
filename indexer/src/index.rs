@@ -159,7 +159,7 @@ impl IndexRecord {
         Ok(())
     }
 
-    /// Replaces curator-owned yank state.
+    /// Sets lifecycle-derived yank state.
     pub fn set_yanked(&mut self, yanked: bool) {
         self.value.insert("yanked".to_owned(), Value::Bool(yanked));
     }
