@@ -102,10 +102,8 @@ impl ArtifactMap {
                 "artifact index record must have a .json suffix: {}",
                 entry.index_record.display()
             );
-            let archive = root.join(&entry.archive);
-            let index_record = root.join(&entry.index_record);
-            require_regular_file(&archive)?;
-            require_regular_file(&index_record)?;
+            let archive = regular_file_beneath(root, &entry.archive)?;
+            let index_record = regular_file_beneath(root, &entry.index_record)?;
             let key = (
                 entry.registry.clone(),
                 entry.name.clone(),
@@ -224,7 +222,7 @@ fn verify_artifact(approval: &Approval, artifact: &Artifact, catalog: &Catalog) 
     );
 
     if let Source::CratesIo { index_record } = &approval.source {
-        let declared = catalog.root.join(index_record);
+        let declared = regular_file_beneath(&catalog.root, index_record)?;
         let declared_hash = sha256_file(&declared).with_context(|| {
             format!(
                 "verify declared crates.io index snapshot {}",
@@ -240,6 +238,31 @@ fn verify_artifact(approval: &Approval, artifact: &Artifact, catalog: &Catalog) 
         );
     }
     Ok(())
+}
+
+fn regular_file_beneath(root: &Path, relative: &Path) -> Result<PathBuf> {
+    let mut current = root.to_path_buf();
+    let components = relative.components().collect::<Vec<_>>();
+    ensure!(!components.is_empty(), "materialized path is empty");
+    for (position, component) in components.iter().enumerate() {
+        current.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&current)
+            .with_context(|| format!("inspect materialized path {}", current.display()))?;
+        if position + 1 == components.len() {
+            ensure!(
+                metadata.file_type().is_file(),
+                "materialized path is not a regular file: {}",
+                current.display()
+            );
+        } else {
+            ensure!(
+                metadata.file_type().is_dir(),
+                "materialized path parent is not a real directory: {}",
+                current.display()
+            );
+        }
+    }
+    Ok(current)
 }
 
 fn require_regular_file(path: &Path) -> Result<()> {
@@ -298,6 +321,20 @@ pub fn require_absent(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn materialized_paths_reject_symlink_components() {
+        let root =
+            std::env::temp_dir().join(format!("pkgre-artifact-symlink-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("real")).unwrap();
+        fs::write(root.join("real/file.crate"), "crate").unwrap();
+        std::os::unix::fs::symlink("real", root.join("linked")).unwrap();
+        let error = regular_file_beneath(&root, Path::new("linked/file.crate")).unwrap_err();
+        assert!(format!("{error:#}").contains("not a real directory"));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn byte_hash_matches_known_vector() {

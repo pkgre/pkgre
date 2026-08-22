@@ -145,6 +145,14 @@ impl Catalog {
         check_schema(homes.schema, &root.join("homes.toml"))?;
 
         let approvals_dir = root.join("approvals");
+        let approvals_metadata = fs::symlink_metadata(&approvals_dir)
+            .with_context(|| format!("inspect {}", approvals_dir.display()))?;
+        if !approvals_metadata.file_type().is_dir() {
+            bail!(
+                "approval path is not a real directory: {}",
+                approvals_dir.display()
+            );
+        }
         let mut paths = fs::read_dir(&approvals_dir)
             .with_context(|| format!("read {}", approvals_dir.display()))?
             .map(|entry| entry.map(|value| value.path()))
@@ -156,6 +164,11 @@ impl Catalog {
         for path in paths {
             if path.extension().and_then(|value| value.to_str()) != Some("toml") {
                 bail!("unexpected non-TOML approval input: {}", path.display());
+            }
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("inspect {}", path.display()))?;
+            if !metadata.file_type().is_file() {
+                bail!("approval input is not a regular file: {}", path.display());
             }
             let file: ApprovalsFile = load_toml(&path)?;
             check_schema(file.schema, &path)?;
@@ -181,6 +194,11 @@ impl Catalog {
 }
 
 fn load_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("inspect {}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!("catalog input is not a regular file: {}", path.display());
+    }
     let contents = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     toml::from_str(&contents).with_context(|| format!("parse {}", path.display()))
 }
