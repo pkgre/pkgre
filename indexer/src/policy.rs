@@ -174,8 +174,6 @@ fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -
 
 fn validate_approvals(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -> Result<()> {
     let mut identities = BTreeSet::new();
-    let mut source_rows = BTreeSet::new();
-    let mut git_tags = BTreeSet::new();
     for approval in &catalog.approvals {
         validate_approval(approval, catalog, registry_urls)?;
         let identity = (
@@ -188,20 +186,6 @@ fn validate_approvals(catalog: &Catalog, registry_urls: &BTreeMap<String, String
             approval.name,
             approval.version
         );
-        ensure!(
-            source_rows.insert(approval.index_record_sha256.as_str()),
-            "source-row hash {} is used by more than one package identity",
-            approval.index_record_sha256
-        );
-        if let Source::GitTag {
-            repository, tag, ..
-        } = &approval.source
-        {
-            ensure!(
-                git_tags.insert((repository.as_str(), tag.as_str())),
-                "Git tag {tag:?} from {repository:?} is used by more than one package identity"
-            );
-        }
     }
     Ok(())
 }
