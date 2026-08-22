@@ -34,6 +34,9 @@ pub struct RegistriesFile {
     pub cname: String,
     /// Download URL template shared by all registries.
     pub download: String,
+    /// Pinned Cargo version used to package first-party Git tags.
+    #[serde(rename = "cargo-version")]
+    pub cargo_version: Version,
     /// Registry declarations.
     pub registries: Vec<Registry>,
 }

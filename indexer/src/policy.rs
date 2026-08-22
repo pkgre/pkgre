@@ -10,6 +10,7 @@ use crate::schema::{Approval, Catalog, Source};
 
 const CNAME: &str = "rust.pkg.re";
 const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
+const CARGO_VERSION: &str = "1.95.0";
 const REGISTRIES: [(&str, &str, &[&str]); 3] = [
     ("core", "sparse+https://rust.pkg.re/core/", &["core"]),
     (
@@ -53,6 +54,10 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     ensure!(
         catalog.registries.download == DOWNLOAD,
         "download template must be {DOWNLOAD:?}"
+    );
+    ensure!(
+        catalog.registries.cargo_version.to_string() == CARGO_VERSION,
+        "cargo-version must be {CARGO_VERSION}"
     );
     ensure!(
         catalog.registries.registries.len() == REGISTRIES.len(),
@@ -447,6 +452,7 @@ mod tests {
                 schema: crate::schema::SCHEMA_VERSION,
                 cname: CNAME.to_owned(),
                 download: DOWNLOAD.to_owned(),
+                cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                 registries: REGISTRIES
                     .iter()
                     .map(|(name, index, layers)| crate::schema::Registry {
