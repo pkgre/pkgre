@@ -23,6 +23,8 @@ pub struct Catalog {
     pub registries: RegistriesFile,
     /// Package-name-to-registry routing table derived from human declarations.
     pub homes: HomesFile,
+    /// Permanent source class for every reserved package name.
+    pub name_sources: BTreeMap<String, NameSource>,
     /// Every active or removed package identity retained by generated locks.
     pub approvals: Vec<Approval>,
 }
@@ -623,6 +625,7 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
 pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Result<Catalog> {
     ensure!(!inputs.is_empty(), "catalog has no registry declarations");
     let mut homes = BTreeMap::new();
+    let mut name_sources = BTreeMap::new();
     let mut approvals = Vec::new();
     let mut registries = Vec::new();
     let mut downloads = BTreeSet::new();
@@ -633,12 +636,16 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
             .with_context(|| format!("generated lock is missing: {}", input.lock_path.display()))?;
         registries.push(input.file.registry.clone());
         downloads.insert(input.file.registry.download.clone());
-        for name in input.file.mirror.keys().chain(input.file.publish.keys()) {
+        for (name, source) in desired_names(&input.file)? {
             ensure!(
                 homes
                     .insert(name.clone(), input.file.registry.name.clone())
                     .is_none(),
                 "package {name:?} is declared in more than one registry"
+            );
+            ensure!(
+                name_sources.insert(name.clone(), source).is_none(),
+                "package {name:?} has more than one source class"
             );
         }
         approvals.extend(lock.packages.iter().map(|package| Approval {
@@ -691,6 +698,7 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
             schema: SCHEMA_VERSION,
             homes,
         },
+        name_sources,
         approvals,
     })
 }

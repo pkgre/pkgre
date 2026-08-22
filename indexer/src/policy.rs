@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 
-use crate::schema::{Approval, Catalog, Source};
+use crate::schema::{Approval, Catalog, NameSource, Source};
 
 const CNAME: &str = "rust.pkg.re";
 const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
@@ -139,6 +139,20 @@ fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -
             registry_urls.contains_key(registry),
             "package {package:?} has unknown home {registry:?}"
         );
+        let source = catalog
+            .name_sources
+            .get(package)
+            .with_context(|| format!("package {package:?} has no permanent source class"))?;
+        match source {
+            NameSource::Mirror => ensure!(
+                registry != "pkgre",
+                "mirrored package {package:?} cannot use the pkgre registry"
+            ),
+            NameSource::Publish => ensure!(
+                registry == "pkgre",
+                "first-party package {package:?} must use the pkgre registry"
+            ),
+        }
         let key = package_collision_key(package);
         if let Some(previous) = collision_keys.insert(key, package) {
             ensure!(
@@ -147,6 +161,14 @@ fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -
             );
         }
     }
+    ensure!(
+        catalog.name_sources.len() == catalog.homes.homes.len()
+            && catalog
+                .name_sources
+                .keys()
+                .all(|name| catalog.homes.homes.contains_key(name)),
+        "permanent source classes differ from package homes"
+    );
     Ok(())
 }
 
@@ -498,6 +520,7 @@ mod tests {
                 schema: crate::schema::SCHEMA_VERSION,
                 homes: BTreeMap::from([("pkgre-indexer".to_owned(), "pkgre".to_owned())]),
             },
+            name_sources: BTreeMap::from([("pkgre-indexer".to_owned(), NameSource::Publish)]),
             approvals: vec![Approval {
                 registry: "pkgre".to_owned(),
                 name: "pkgre-indexer".to_owned(),
