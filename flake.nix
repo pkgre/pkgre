@@ -96,7 +96,7 @@
           };
           indexer = rustPlatform.buildRustPackage {
             pname = "pkgre-indexer";
-            version = "0.1.1";
+            version = "0.2.0";
             src = source;
             postPatch = ''
               cp ${vendorLock} Cargo.lock
@@ -119,7 +119,7 @@
               runHook postCheck
             '';
             meta = {
-              description = "Deterministic renderer for curated Cargo sparse registries";
+              description = "Declarative reconciler and renderer for curated Cargo sparse registries";
               homepage = "https://github.com/pkgre/pkgre";
               license = pkgs.lib.licenses.asl20;
               mainProgram = "pkgre-indexer";

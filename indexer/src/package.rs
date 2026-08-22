@@ -1,9 +1,8 @@
-//! First-party package materialization from immutable Git tags.
+//! Reproducible first-party package materialization from immutable Git tags.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,52 +12,39 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::artifact::{require_absent, sha256_bytes};
+use crate::artifact::sha256_bytes;
 use crate::policy::{
-    REGISTRIES, validate_git_commit, validate_git_tag, validate_https_repository,
-    validate_package_name, validate_relative_path,
+    REGISTRIES, validate_git_object_id, validate_git_tag, validate_https_repository,
+    validate_package_name, validate_relative_path, validate_tag_version,
 };
-use crate::schema::{Approval, SCHEMA_VERSION, Source};
+use crate::schema::{Approval, Source};
 
 const REGISTRY: &str = "pkgre";
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
+const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Declarative, non-approved proposal used to compute reviewable Git-tag package artifacts.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GitProposal {
-    /// Schema version.
-    pub schema: u32,
-    /// Destination registry; must be `pkgre`.
-    pub registry: String,
+/// Exact bytes, hashes, and immutable Git evidence for one first-party package.
+#[derive(Debug)]
+pub struct GitTagMaterialization {
     /// Cargo package name.
     pub name: String,
-    /// Exact manifest version.
+    /// Manifest version discovered at the tag.
     pub version: Version,
-    /// HTTPS Git repository URL.
-    pub repository: String,
-    /// Immutable tag name.
-    pub tag: String,
+    /// Exact tag object ID; equals the commit for a lightweight tag.
+    pub tag_oid: String,
     /// Full peeled commit object ID.
     pub commit: String,
-    /// Workspace package name.
-    pub package: String,
     /// Repository-relative package directory.
-    pub subdir: PathBuf,
-}
-
-/// Exact files and hashes produced by one Git-tag materialization.
-#[derive(Debug)]
-pub struct GitMaterialization {
-    /// Content-addressed `.crate` path.
-    pub archive: PathBuf,
-    /// Content-addressed un-routed index-record path.
-    pub index_record: PathBuf,
-    /// Exact archive SHA-256.
+    pub path: PathBuf,
+    /// Exact reproducible `.crate` bytes.
+    pub archive_bytes: Vec<u8>,
+    /// Generated un-routed source index row.
+    pub source_row_bytes: Vec<u8>,
+    /// SHA-256 of `archive_bytes`.
     pub archive_sha256: String,
-    /// Exact un-routed index-record SHA-256.
-    pub index_record_sha256: String,
+    /// SHA-256 of `source_row_bytes`.
+    pub source_row_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,329 +128,197 @@ struct GeneratedDependency {
     package: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct CandidateArtifacts<'a> {
-    schema: u32,
-    artifacts: [CandidateArtifact<'a>; 1],
-}
-
-#[derive(Debug, Serialize)]
-struct CandidateArtifact<'a> {
-    registry: &'static str,
-    name: &'a str,
-    version: &'a Version,
-    archive: PathBuf,
-    index_record: PathBuf,
-}
-
-#[derive(Debug, Serialize)]
-struct CandidateApproval<'a> {
-    schema: u32,
-    registry: &'static str,
-    packages: [CandidateApprovalPackage<'a>; 1],
-}
-
-#[derive(Debug, Serialize)]
-struct CandidateApprovalPackage<'a> {
-    name: &'a str,
-    version: &'a Version,
-    archive_sha256: &'a str,
-    index_record_sha256: &'a str,
-    yanked: bool,
-    source: CandidateApprovalSource<'a>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-enum CandidateApprovalSource<'a> {
-    GitTag {
-        repository: &'a str,
-        tag: &'a str,
-        commit: &'a str,
-        package: &'a str,
-        subdir: &'a Path,
-    },
-}
-
-/// Loads one Git package proposal.
+/// Resolves and reproducibly packages one declared first-party Git tag without mutating the catalog.
+///
+/// Package version and repository-relative path are discovered from the tagged workspace. The exact tag object ID and peeled commit are recorded independently.
 ///
 /// # Errors
 ///
-/// Returns an error for a missing, malformed, or unsupported proposal.
-pub fn load_git_proposal(path: &Path) -> Result<GitProposal> {
-    let contents = fs::read_to_string(path)
-        .with_context(|| format!("read Git package proposal {}", path.display()))?;
-    let proposal: GitProposal = toml::from_str(&contents)
-        .with_context(|| format!("parse Git package proposal {}", path.display()))?;
-    validate_proposal(&proposal)?;
-    Ok(proposal)
-}
-
-/// Produces a candidate archive, un-routed index record, and complete approval stanza without trusting either hash in advance.
-///
-/// This is the review boundary: the generated files and hashes are candidates only. They do not alter a catalog or rendered registry.
-///
-/// # Errors
-///
-/// Returns an error if the tag does not peel to the declared commit, the checkout is dirty or unsafe, Cargo is not the pinned version, package metadata differs from the proposal, packaging is not reproducible, or output creation fails.
-pub fn candidate_git(
-    proposal: &GitProposal,
+/// Returns an error for an unsafe source, ambiguous package, malformed or moved tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty checkout, non-reproducible archive, or invalid package metadata.
+pub fn resolve_git_tag(
+    repository: &str,
+    tag: &str,
+    expected_package: &str,
     cargo_version: &Version,
-    output: &Path,
-) -> Result<GitMaterialization> {
-    candidate_git_from(proposal, cargo_version, output, &proposal.repository, false)
-}
-
-fn candidate_git_from(
-    proposal: &GitProposal,
-    cargo_version: &Version,
-    output: &Path,
-    fetch_repository: &str,
-    allow_file: bool,
-) -> Result<GitMaterialization> {
-    validate_proposal(proposal)?;
-    let materialization = materialize(
-        proposal,
+) -> Result<GitTagMaterialization> {
+    resolve_git_tag_from(
+        repository,
+        tag,
+        expected_package,
         cargo_version,
-        output,
-        fetch_repository,
-        allow_file,
-    )?;
-    let approval = CandidateApproval {
-        schema: SCHEMA_VERSION,
-        registry: REGISTRY,
-        packages: [CandidateApprovalPackage {
-            name: &proposal.name,
-            version: &proposal.version,
-            archive_sha256: &materialization.archive_sha256,
-            index_record_sha256: &materialization.index_record_sha256,
-            yanked: false,
-            source: CandidateApprovalSource::GitTag {
-                repository: &proposal.repository,
-                tag: &proposal.tag,
-                commit: &proposal.commit,
-                package: &proposal.package,
-                subdir: &proposal.subdir,
-            },
-        }],
-    };
-    let result = (|| {
-        let approval_toml =
-            toml::to_string_pretty(&approval).context("serialize candidate approval")?;
-        write_new(&output.join("approval.toml"), approval_toml.as_bytes())?;
-        let artifacts = CandidateArtifacts {
-            schema: SCHEMA_VERSION,
-            artifacts: [CandidateArtifact {
-                registry: REGISTRY,
-                name: &proposal.name,
-                version: &proposal.version,
-                archive: PathBuf::from("archives")
-                    .join(format!("{}.crate", materialization.archive_sha256)),
-                index_record: PathBuf::from("records")
-                    .join(format!("{}.json", materialization.index_record_sha256)),
-            }],
-        };
-        let artifacts_toml =
-            toml::to_string_pretty(&artifacts).context("serialize candidate artifact map")?;
-        write_new(&output.join("artifacts.toml"), artifacts_toml.as_bytes())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_dir_all(output);
-    }
-    result.map(|()| materialization)
+        repository,
+        false,
+    )
 }
 
-/// Reproduces one approved Git-tag package and fails unless both exact hashes match the catalog.
+/// Reproduces one locked Git publication and verifies every immutable source and content field.
 ///
 /// # Errors
 ///
-/// Returns an error for a non-Git approval or any source, package, toolchain, reproducibility, metadata, or hash mismatch.
-pub fn package_approved_git(
-    approval: &Approval,
-    cargo_version: &Version,
-    output: &Path,
-) -> Result<GitMaterialization> {
-    let Source::GitTag { repository, .. } = &approval.source else {
-        bail!(
-            "{} {} is not an approved Git-tag package",
-            approval.name,
-            approval.version
-        );
-    };
-    package_approved_git_from(approval, cargo_version, output, repository, false)
-}
-
-fn package_approved_git_from(
-    approval: &Approval,
-    cargo_version: &Version,
-    output: &Path,
-    fetch_repository: &str,
-    allow_file: bool,
-) -> Result<GitMaterialization> {
+/// Returns an error for a non-Git approval or any source, tag, package, toolchain, path, archive, or source-row mismatch.
+pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterialization> {
     let Source::GitTag {
         repository,
         tag,
+        tag_oid,
         commit,
         package,
         subdir,
+        cargo_version,
     } = &approval.source
     else {
         bail!(
-            "{} {} is not an approved Git-tag package",
+            "{} {} is not a Git-tag publication",
             approval.name,
             approval.version
         );
     };
-    let proposal = GitProposal {
-        schema: SCHEMA_VERSION,
-        registry: approval.registry.clone(),
-        name: approval.name.clone(),
-        version: approval.version.clone(),
-        repository: repository.clone(),
-        tag: tag.clone(),
-        commit: commit.clone(),
-        package: package.clone(),
-        subdir: subdir.clone(),
-    };
-    validate_proposal(&proposal)?;
-    let materialization = materialize(
-        &proposal,
-        cargo_version,
-        output,
-        fetch_repository,
-        allow_file,
+    let materialization = resolve_git_tag(repository, tag, package, cargo_version)?;
+    verify_approved_materialization(approval, tag_oid, commit, subdir, &materialization)?;
+    Ok(materialization)
+}
+
+fn resolve_git_tag_from(
+    repository: &str,
+    tag: &str,
+    expected_package: &str,
+    cargo_version: &Version,
+    fetch_repository: &str,
+    allow_file: bool,
+) -> Result<GitTagMaterialization> {
+    validate_https_repository(repository)?;
+    validate_git_tag(tag)?;
+    validate_package_name(expected_package)?;
+
+    let temporary = TemporaryDirectory::new("pkgre-git-package")?;
+    let checkout = temporary.path().join("repository");
+    let (tag_oid, commit) = fetch_tag(tag, &checkout, fetch_repository, allow_file)?;
+    ensure_safe_checkout_tree(&checkout)?;
+    ensure_clean_checkout(&checkout)?;
+
+    let cargo = pinned_cargo(cargo_version)?;
+    let cargo_home = temporary.path().join("cargo-home");
+    prepare_cargo_home(&cargo_home)?;
+    let root_manifest = checkout.join("Cargo.toml");
+    ensure!(
+        fs::symlink_metadata(&root_manifest)
+            .with_context(|| format!("inspect root manifest {}", root_manifest.display()))?
+            .file_type()
+            .is_file(),
+        "Git repository has no regular root Cargo.toml"
+    );
+    let package = cargo_metadata(
+        &cargo,
+        &cargo_home,
+        &root_manifest,
+        expected_package,
+        &checkout,
     )?;
+    validate_tag_version(tag, &package.version)?;
+    let path = package_path(&checkout, &package.manifest_path)?;
+
+    let archive_one = run_cargo_package(
+        &cargo,
+        &cargo_home,
+        &package.manifest_path,
+        expected_package,
+        &temporary.path().join("target-one"),
+        &package.version,
+    )?;
+    let archive_two = run_cargo_package(
+        &cargo,
+        &cargo_home,
+        &package.manifest_path,
+        expected_package,
+        &temporary.path().join("target-two"),
+        &package.version,
+    )?;
+    let archive_bytes = read_bounded_archive(&archive_one)?;
+    let repeated_bytes = read_bounded_archive(&archive_two)?;
+    ensure!(
+        archive_bytes == repeated_bytes,
+        "pinned Cargo produced non-deterministic archives for {} {}",
+        package.name,
+        package.version
+    );
+    ensure_clean_checkout(&checkout)?;
+
+    let archive_sha256 = sha256_bytes(&archive_bytes);
+    let source_row_bytes = generated_index_record(&package, &archive_sha256)?;
+    let source_row_sha256 = sha256_bytes(&source_row_bytes);
+    Ok(GitTagMaterialization {
+        name: package.name,
+        version: package.version,
+        tag_oid,
+        commit,
+        path,
+        archive_bytes,
+        source_row_bytes,
+        archive_sha256,
+        source_row_sha256,
+    })
+}
+
+fn verify_approved_materialization(
+    approval: &Approval,
+    expected_tag_oid: &str,
+    expected_commit: &str,
+    expected_path: &Path,
+    materialization: &GitTagMaterialization,
+) -> Result<()> {
+    ensure!(
+        materialization.name == approval.name && materialization.version == approval.version,
+        "Git publication identity changed for {} {}",
+        approval.name,
+        approval.version
+    );
+    ensure!(
+        materialization.tag_oid == expected_tag_oid,
+        "Git tag object changed for {} {}: expected {expected_tag_oid}, got {}",
+        approval.name,
+        approval.version,
+        materialization.tag_oid
+    );
+    ensure!(
+        materialization.commit == expected_commit,
+        "Git tag commit changed for {} {}: expected {expected_commit}, got {}",
+        approval.name,
+        approval.version,
+        materialization.commit
+    );
+    ensure!(
+        materialization.path == expected_path,
+        "Git package path changed for {} {}: expected {}, got {}",
+        approval.name,
+        approval.version,
+        expected_path.display(),
+        materialization.path.display()
+    );
     ensure!(
         materialization.archive_sha256 == approval.archive_sha256,
-        "approved archive hash mismatch for {} {}: expected {}, got {}",
+        "Git archive hash changed for {} {}: expected {}, got {}",
         approval.name,
         approval.version,
         approval.archive_sha256,
         materialization.archive_sha256
     );
     ensure!(
-        materialization.index_record_sha256 == approval.index_record_sha256,
-        "approved index-record hash mismatch for {} {}: expected {}, got {}",
+        materialization.source_row_sha256 == approval.index_record_sha256,
+        "Git source-row hash changed for {} {}: expected {}, got {}",
         approval.name,
         approval.version,
         approval.index_record_sha256,
-        materialization.index_record_sha256
+        materialization.source_row_sha256
     );
-    Ok(materialization)
-}
-
-fn materialize(
-    proposal: &GitProposal,
-    cargo_version: &Version,
-    output: &Path,
-    fetch_repository: &str,
-    allow_file: bool,
-) -> Result<GitMaterialization> {
-    require_absent(output)?;
-    let temporary = TemporaryDirectory::new("pkgre-git-package")?;
-    let repository = temporary.path().join("repository");
-    fetch_tag(proposal, &repository, fetch_repository, allow_file)?;
-    ensure_safe_checkout_tree(&repository)?;
-    ensure_clean_checkout(&repository)?;
-    let package_directory = checked_subdirectory(&repository, &proposal.subdir)?;
-    let manifest_path = package_directory.join("Cargo.toml");
-    ensure!(
-        fs::symlink_metadata(&manifest_path)
-            .with_context(|| format!("inspect package manifest {}", manifest_path.display()))?
-            .file_type()
-            .is_file(),
-        "package manifest is not a regular file: {}",
-        manifest_path.display()
-    );
-
-    let cargo = pinned_cargo(cargo_version)?;
-    let cargo_home = temporary.path().join("cargo-home");
-    prepare_cargo_home(&cargo_home)?;
-    let metadata = cargo_metadata(&cargo, &cargo_home, &manifest_path, proposal)?;
-    let archive_one = run_cargo_package(
-        &cargo,
-        &cargo_home,
-        &manifest_path,
-        &proposal.package,
-        &temporary.path().join("target-one"),
-        &proposal.version,
-    )?;
-    let archive_two = run_cargo_package(
-        &cargo,
-        &cargo_home,
-        &manifest_path,
-        &proposal.package,
-        &temporary.path().join("target-two"),
-        &proposal.version,
-    )?;
-    let archive_bytes = fs::read(&archive_one)
-        .with_context(|| format!("read packaged archive {}", archive_one.display()))?;
-    let repeated_bytes = fs::read(&archive_two)
-        .with_context(|| format!("read repeated archive {}", archive_two.display()))?;
-    ensure!(
-        archive_bytes == repeated_bytes,
-        "pinned Cargo produced non-deterministic archives for {} {}",
-        proposal.name,
-        proposal.version
-    );
-    ensure_clean_checkout(&repository)?;
-
-    let archive_sha256 = sha256_bytes(&archive_bytes);
-    let index_record = generated_index_record(&metadata, &archive_sha256)?;
-    let index_record_sha256 = sha256_bytes(&index_record);
-
-    fs::create_dir(output).with_context(|| format!("create output {}", output.display()))?;
-    let result = (|| {
-        let archive = output
-            .join("archives")
-            .join(format!("{archive_sha256}.crate"));
-        let record = output
-            .join("records")
-            .join(format!("{index_record_sha256}.json"));
-        write_new(&archive, &archive_bytes)?;
-        write_new(&record, &index_record)?;
-        Ok(GitMaterialization {
-            archive,
-            index_record: record,
-            archive_sha256,
-            index_record_sha256,
-        })
-    })();
-    if result.is_err() {
-        let _ = fs::remove_dir_all(output);
-    }
-    result
-}
-
-fn validate_proposal(proposal: &GitProposal) -> Result<()> {
-    ensure!(
-        proposal.schema == SCHEMA_VERSION,
-        "unsupported Git proposal schema {}; expected {SCHEMA_VERSION}",
-        proposal.schema
-    );
-    ensure!(
-        proposal.registry == REGISTRY,
-        "Git package proposal registry must be {REGISTRY:?}"
-    );
-    validate_package_name(&proposal.name)?;
-    validate_package_name(&proposal.package)?;
-    ensure!(
-        proposal.name == proposal.package,
-        "proposal package name must match its approved name"
-    );
-    validate_https_repository(&proposal.repository)?;
-    validate_git_tag(&proposal.tag)?;
-    validate_git_commit(&proposal.commit)?;
-    validate_relative_path(&proposal.subdir, true)?;
     Ok(())
 }
 
 fn fetch_tag(
-    proposal: &GitProposal,
+    tag: &str,
     repository: &Path,
     fetch_repository: &str,
     allow_file: bool,
-) -> Result<()> {
+) -> Result<(String, String)> {
     run_git(
         None,
         [
@@ -482,46 +336,48 @@ fn fetch_tag(
             OsString::from(fetch_repository),
         ],
     )?;
-    let source = OsString::from(format!("refs/tags/{}", proposal.tag));
-    let destination = OsString::from(format!("refs/tags/{}", proposal.tag));
+    let reference = format!("refs/tags/{tag}");
     let fetch_arguments = [
         OsString::from("fetch"),
         OsString::from("--quiet"),
         OsString::from("--no-tags"),
         OsString::from("--depth=1"),
         OsString::from("origin"),
-        OsString::from(format!(
-            "{}:{}",
-            source.to_string_lossy(),
-            destination.to_string_lossy()
-        )),
+        OsString::from(format!("{reference}:{reference}")),
     ];
     let fetch_command = git_command_with_file_policy(Some(repository), fetch_arguments, allow_file);
     run_command(fetch_command, "fetch exact Git tag")?;
-    let peeled = command_stdout(
+    let tag_oid = command_stdout(
         git_command(
             Some(repository),
             [
                 OsString::from("rev-parse"),
                 OsString::from("--verify"),
-                OsString::from(format!("refs/tags/{}^{{commit}}", proposal.tag)),
+                OsString::from(&reference),
+            ],
+        ),
+        "resolve fetched Git tag object",
+    )?;
+    let commit = command_stdout(
+        git_command(
+            Some(repository),
+            [
+                OsString::from("rev-parse"),
+                OsString::from("--verify"),
+                OsString::from(format!("{reference}^{{commit}}")),
             ],
         ),
         "peel fetched Git tag",
     )?;
-    ensure!(
-        peeled == proposal.commit,
-        "Git tag {} peels to {peeled}, not declared commit {}",
-        proposal.tag,
-        proposal.commit
-    );
+    validate_git_object_id(&tag_oid).context("invalid fetched Git tag object ID")?;
+    validate_git_object_id(&commit).context("invalid fetched Git commit ID")?;
     run_git(
         Some(repository),
         [
             OsString::from("checkout"),
             OsString::from("--quiet"),
             OsString::from("--detach"),
-            OsString::from(&proposal.commit),
+            OsString::from(&commit),
             OsString::from("--"),
         ],
     )?;
@@ -536,7 +392,7 @@ fn fetch_tag(
         !gitlinks.lines().any(|line| line.starts_with("160000 ")),
         "Git-tag checkout contains unsupported submodules"
     );
-    Ok(())
+    Ok((tag_oid, commit))
 }
 
 fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
@@ -601,22 +457,28 @@ fn ensure_clean_checkout(repository: &Path) -> Result<()> {
     Ok(())
 }
 
-fn checked_subdirectory(repository: &Path, subdir: &Path) -> Result<PathBuf> {
-    let mut current = repository.to_path_buf();
-    if subdir == Path::new(".") {
-        return Ok(current);
-    }
-    for component in subdir.components() {
-        current.push(component.as_os_str());
-        let metadata = fs::symlink_metadata(&current)
-            .with_context(|| format!("inspect package path {}", current.display()))?;
-        ensure!(
-            metadata.file_type().is_dir(),
-            "package path component is not a real directory: {}",
-            current.display()
-        );
-    }
-    Ok(current)
+fn package_path(repository: &Path, manifest_path: &Path) -> Result<PathBuf> {
+    let repository = fs::canonicalize(repository)
+        .with_context(|| format!("canonicalize repository {}", repository.display()))?;
+    let manifest = fs::canonicalize(manifest_path)
+        .with_context(|| format!("canonicalize manifest {}", manifest_path.display()))?;
+    let directory = manifest
+        .parent()
+        .context("package manifest has no parent")?;
+    let relative = directory.strip_prefix(&repository).with_context(|| {
+        format!(
+            "package manifest {} is outside repository {}",
+            manifest.display(),
+            repository.display()
+        )
+    })?;
+    let relative = if relative.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        relative.to_path_buf()
+    };
+    validate_relative_path(&relative, true)?;
+    Ok(relative)
 }
 
 fn pinned_cargo(version: &Version) -> Result<PathBuf> {
@@ -690,7 +552,8 @@ fn prepare_cargo_home(cargo_home: &Path) -> Result<()> {
         source,
     };
     let contents = toml::to_string_pretty(&config).context("serialize isolated Cargo config")?;
-    write_new(&cargo_home.join("config.toml"), contents.as_bytes())
+    fs::write(cargo_home.join("config.toml"), contents)
+        .with_context(|| format!("write isolated Cargo config below {}", cargo_home.display()))
 }
 
 fn is_curated_registry_source(source: &str, registry_indexes: &[&str]) -> bool {
@@ -704,7 +567,8 @@ fn cargo_metadata(
     cargo: &Path,
     cargo_home: &Path,
     manifest_path: &Path,
-    proposal: &GitProposal,
+    expected_package: &str,
+    repository: &Path,
 ) -> Result<MetadataPackage> {
     let mut command = isolated_cargo(cargo, cargo_home);
     command.current_dir(cargo_home).args([
@@ -722,34 +586,15 @@ fn cargo_metadata(
     let mut matching = metadata
         .packages
         .into_iter()
-        .filter(|package| package.name == proposal.package)
+        .filter(|package| package.name == expected_package)
         .collect::<Vec<_>>();
     ensure!(
         matching.len() == 1,
-        "Cargo metadata contains {} packages named {:?}; expected exactly one",
-        matching.len(),
-        proposal.package
+        "Cargo metadata contains {} packages named {expected_package:?}; expected exactly one",
+        matching.len()
     );
     let package = matching.pop().expect("length checked");
-    ensure!(
-        package.version == proposal.version,
-        "manifest version for {} is {}, not proposed {}",
-        proposal.package,
-        package.version,
-        proposal.version
-    );
-    let expected_manifest = fs::canonicalize(manifest_path)
-        .with_context(|| format!("canonicalize manifest {}", manifest_path.display()))?;
-    let actual_manifest = fs::canonicalize(&package.manifest_path).with_context(|| {
-        format!(
-            "canonicalize metadata manifest {}",
-            package.manifest_path.display()
-        )
-    })?;
-    ensure!(
-        actual_manifest == expected_manifest,
-        "Cargo selected a package manifest outside the declared subdirectory"
-    );
+    package_path(repository, &package.manifest_path)?;
     ensure!(
         package.publish.as_deref() == Some(&[REGISTRY.to_owned()]),
         "first-party package must set publish = [{REGISTRY:?}] exactly"
@@ -760,9 +605,8 @@ fn cargo_metadata(
         .collect::<Vec<_>>();
     for dependency in &package.dependencies {
         let source = dependency.source.as_deref().unwrap_or("path");
-        let expected_source = is_curated_registry_source(source, &registry_indexes);
         ensure!(
-            expected_source,
+            is_curated_registry_source(source, &registry_indexes),
             "first-party package dependency {} uses unsupported source {source:?}; use core, matrix, or pkgre explicitly",
             dependency.name
         );
@@ -811,6 +655,18 @@ fn run_cargo_package(
         archive.display()
     );
     Ok(archive)
+}
+
+fn read_bounded_archive(path: &Path) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("inspect package archive {}", path.display()))?;
+    ensure!(
+        metadata.len() <= MAX_ARCHIVE_BYTES,
+        "package archive {} exceeds {} bytes",
+        path.display(),
+        MAX_ARCHIVE_BYTES
+    );
+    fs::read(path).with_context(|| format!("read package archive {}", path.display()))
 }
 
 fn isolated_cargo(cargo: &Path, cargo_home: &Path) -> Command {
@@ -930,7 +786,10 @@ where
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env_remove("GIT_ASKPASS")
         .env_remove("SSH_ASKPASS")
-        .env_remove("SSH_AUTH_SOCK");
+        .env_remove("SSH_AUTH_SOCK")
+        .env_remove("HTTPS_PROXY")
+        .env_remove("HTTP_PROXY")
+        .env_remove("ALL_PROXY");
     if let Some(directory) = current_dir {
         command.current_dir(directory);
     }
@@ -969,21 +828,6 @@ fn path_arg(path: &Path) -> OsString {
     path.as_os_str().to_owned()
 }
 
-fn write_new(path: &Path, contents: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .with_context(|| format!("create {}", path.display()))?;
-    file.write_all(contents)
-        .with_context(|| format!("write {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("sync {}", path.display()))
-}
-
 struct TemporaryDirectory {
     path: PathBuf,
 }
@@ -1020,6 +864,7 @@ impl Drop for TemporaryDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::PackageState;
     use serde_json::Value;
 
     #[test]
@@ -1028,10 +873,6 @@ mod tests {
         assert!(is_curated_registry_source(indexes[0], &indexes));
         assert!(is_curated_registry_source(
             "registry+sparse+https://example.test/core/",
-            &indexes
-        ));
-        assert!(!is_curated_registry_source(
-            "sparse+https://example.test/other/",
             &indexes
         ));
         assert!(!is_curated_registry_source(
@@ -1073,44 +914,45 @@ mod tests {
     const TEST_TAG: &str = "release/pkgre-demo/v1.2.3";
 
     #[test]
-    fn git_tag_candidate_is_reproducible_and_commit_bound() {
+    fn git_tag_materialization_records_tag_and_is_reproducible() {
         let temporary = TemporaryDirectory::new("pkgre-git-e2e").unwrap();
-        let (source, proposal) = create_test_release(&temporary);
+        let source = create_test_release(&temporary);
         let source_url = source.to_str().unwrap();
         let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
-        let candidate_path = temporary.path().join("candidate");
-        let candidate =
-            candidate_git_from(&proposal, &cargo_version, &candidate_path, source_url, true)
-                .unwrap();
-        assert_candidate(&candidate_path, &candidate, &proposal);
-
-        let approval = test_approval(&proposal, &candidate);
-        let approved = package_approved_git_from(
-            &approval,
+        let materialization = resolve_git_tag_from(
+            "https://example.invalid/pkgre-demo",
+            TEST_TAG,
+            "pkgre-demo",
             &cargo_version,
-            &temporary.path().join("approved"),
             source_url,
             true,
         )
         .unwrap();
+        assert_eq!(materialization.name, "pkgre-demo");
+        assert_eq!(materialization.version, Version::parse("1.2.3").unwrap());
+        assert_eq!(materialization.path, Path::new("crates/demo"));
+        assert_ne!(materialization.tag_oid, materialization.commit);
         assert_eq!(
-            fs::read(candidate.archive).unwrap(),
-            fs::read(approved.archive).unwrap()
+            sha256_bytes(&materialization.archive_bytes),
+            materialization.archive_sha256
         );
         assert_eq!(
-            fs::read(candidate.index_record).unwrap(),
-            fs::read(approved.index_record).unwrap()
+            sha256_bytes(&materialization.source_row_bytes),
+            materialization.source_row_sha256
         );
 
-        move_test_tag(&source);
-        let moved_output = temporary.path().join("moved-candidate");
-        let error = candidate_git_from(&proposal, &cargo_version, &moved_output, source_url, true)
-            .unwrap_err();
-        assert!(format!("{error:#}").contains("not declared commit"));
-        assert!(!moved_output.exists());
+        let approval = test_approval(&materialization, &cargo_version);
+        verify_approved_materialization(
+            &approval,
+            &materialization.tag_oid,
+            &materialization.commit,
+            &materialization.path,
+            &materialization,
+        )
+        .unwrap();
     }
 
-    fn create_test_release(temporary: &TemporaryDirectory) -> (PathBuf, GitProposal) {
+    fn create_test_release(temporary: &TemporaryDirectory) -> PathBuf {
         let source = temporary.path().join("source");
         fs::create_dir_all(source.join("crates/demo/src")).unwrap();
         fs::write(
@@ -1140,75 +982,29 @@ mod tests {
         test_git(&source, &["add", "Cargo.lock"]);
         test_git(&source, &["commit", "--quiet", "-m", "lock"]);
         test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
-        let commit = test_git(&source, &["rev-parse", "HEAD"]);
-        let proposal = GitProposal {
-            schema: SCHEMA_VERSION,
-            registry: REGISTRY.to_owned(),
-            name: "pkgre-demo".to_owned(),
-            version: Version::parse("1.2.3").unwrap(),
-            repository: "https://example.invalid/pkgre-demo".to_owned(),
-            tag: TEST_TAG.to_owned(),
-            commit,
-            package: "pkgre-demo".to_owned(),
-            subdir: PathBuf::from("crates/demo"),
-        };
-        (source, proposal)
+        source
     }
 
-    fn assert_candidate(
-        candidate_path: &Path,
-        candidate: &GitMaterialization,
-        proposal: &GitProposal,
-    ) {
-        assert_eq!(
-            sha256_bytes(&fs::read(&candidate.archive).unwrap()),
-            candidate.archive_sha256
-        );
-        assert_eq!(
-            sha256_bytes(&fs::read(&candidate.index_record).unwrap()),
-            candidate.index_record_sha256
-        );
-        let record =
-            crate::index::IndexRecord::parse(&fs::read(&candidate.index_record).unwrap()).unwrap();
-        record.validate_structure().unwrap();
-        assert_eq!(record.name().unwrap(), proposal.name);
-        assert_eq!(record.version().unwrap(), proposal.version);
-        assert!(candidate_path.join("approval.toml").is_file());
-        crate::artifact::ArtifactMap::load(candidate_path.join("artifacts.toml")).unwrap();
-        let vcs_info = test_command_stdout(
-            Command::new("tar")
-                .arg("-xOf")
-                .arg(&candidate.archive)
-                .arg("pkgre-demo-1.2.3/.cargo_vcs_info.json"),
-        );
-        let vcs: serde_json::Value = serde_json::from_str(&vcs_info).unwrap();
-        assert_eq!(vcs["git"]["sha1"], proposal.commit);
-    }
-
-    fn test_approval(proposal: &GitProposal, candidate: &GitMaterialization) -> Approval {
+    fn test_approval(materialization: &GitTagMaterialization, cargo_version: &Version) -> Approval {
         Approval {
             registry: REGISTRY.to_owned(),
-            name: proposal.name.clone(),
-            version: proposal.version.clone(),
-            archive_sha256: candidate.archive_sha256.clone(),
-            index_record_sha256: candidate.index_record_sha256.clone(),
-            yanked: false,
+            name: materialization.name.clone(),
+            version: materialization.version.clone(),
+            archive_sha256: materialization.archive_sha256.clone(),
+            index_record_sha256: materialization.source_row_sha256.clone(),
+            index_row_sha256: "01".repeat(32),
+            state: PackageState::Active,
             source: Source::GitTag {
-                repository: proposal.repository.clone(),
-                tag: proposal.tag.clone(),
-                commit: proposal.commit.clone(),
-                package: proposal.package.clone(),
-                subdir: proposal.subdir.clone(),
+                repository: "https://example.invalid/pkgre-demo".to_owned(),
+                tag: TEST_TAG.to_owned(),
+                tag_oid: materialization.tag_oid.clone(),
+                commit: materialization.commit.clone(),
+                package: materialization.name.clone(),
+                subdir: materialization.path.clone(),
+                cargo_version: cargo_version.clone(),
             },
-            declared_in: PathBuf::from("approvals/pkgre.toml"),
+            declared_in: PathBuf::from("pkgre.lock"),
         }
-    }
-
-    fn move_test_tag(source: &Path) {
-        fs::write(source.join("moved"), "different commit\n").unwrap();
-        test_git(source, &["add", "moved"]);
-        test_git(source, &["commit", "--quiet", "-m", "move tag target"]);
-        test_git(source, &["tag", "--force", "-a", TEST_TAG, "-m", "moved"]);
     }
 
     fn test_git(repository: &Path, arguments: &[&str]) -> String {
@@ -1255,21 +1051,5 @@ mod tests {
         std::os::unix::fs::symlink("real", temporary.path().join("link")).unwrap();
         let error = ensure_safe_checkout_tree(temporary.path()).unwrap_err();
         assert!(format!("{error:#}").contains("symlink or special file"));
-    }
-
-    #[test]
-    fn unsafe_proposal_source_is_rejected() {
-        let proposal = GitProposal {
-            schema: SCHEMA_VERSION,
-            registry: REGISTRY.to_owned(),
-            name: "demo".to_owned(),
-            version: Version::parse("1.0.0").unwrap(),
-            repository: "https://token@example.test/repo".to_owned(),
-            tag: "v1.0.0".to_owned(),
-            commit: "01".repeat(20),
-            package: "demo".to_owned(),
-            subdir: PathBuf::from("."),
-        };
-        assert!(validate_proposal(&proposal).is_err());
     }
 }

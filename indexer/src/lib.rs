@@ -3,6 +3,7 @@
 pub mod artifact;
 pub mod import;
 pub mod index;
+pub mod lock;
 pub mod package;
 pub mod policy;
 pub mod render;

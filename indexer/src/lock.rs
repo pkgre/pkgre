@@ -1,0 +1,1529 @@
+//! Declarative generated-lock reconciliation and transactional catalog replacement.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use anyhow::{Context, Result, bail, ensure};
+use semver::Version;
+use tracing::warn;
+
+use crate::artifact::{ArtifactMap, sha256_bytes};
+use crate::import;
+use crate::index::IndexRecord;
+use crate::package;
+use crate::policy::{
+    Policy, validate_catalog, validate_git_tag, validate_https_repository, validate_tag_version,
+};
+use crate::schema::{
+    Catalog, LockedName, LockedPackage, LockedSource, NameSource, PackageState, RegistryInput,
+    RegistryLock, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
+    validate_input_for_update, version_identity,
+};
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Counts the changes made by one successful reconciliation.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ReconcileSummary {
+    /// Whether the catalog directory was replaced.
+    pub changed: bool,
+    /// Newly reserved permanent package names.
+    pub names_added: usize,
+    /// Newly materialized package identities.
+    pub packages_added: usize,
+    /// Package identities irreversibly transitioned to `removed`.
+    pub packages_removed: usize,
+}
+
+/// Reconciles generated locks and the content-addressed object store with human declarations.
+///
+/// Every local immutable-anchor, topology, existing-object, and tombstone check completes before
+/// any public artifact is fetched. A complete staged catalog is strictly reloaded and verified
+/// before the existing catalog directory is replaced.
+///
+/// # Errors
+///
+/// Returns an error for invalid or stale inputs, immutable-anchor changes, tombstone reactivation,
+/// resolution failures, non-reproducible artifacts, dependency-policy violations, or transactional
+/// filesystem failures.
+pub fn reconcile(root: &Path) -> Result<ReconcileSummary> {
+    reconcile_with(root, &LiveResolver, &FilesystemRenamer)
+}
+
+trait Resolver {
+    fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage>;
+
+    fn resolve_git_tag(
+        &self,
+        repository: &str,
+        tag: &str,
+        package_name: &str,
+        cargo_version: &Version,
+    ) -> Result<ResolvedPackage>;
+}
+
+struct LiveResolver;
+
+impl Resolver for LiveResolver {
+    fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
+        let materialization = import::resolve_crates_io(name, version)?;
+        ensure!(
+            sha256_bytes(&materialization.archive_bytes) == materialization.archive_sha256,
+            "crates.io resolver returned inconsistent archive hash for {name} {version}"
+        );
+        ensure!(
+            sha256_bytes(&materialization.source_row_bytes) == materialization.source_row_sha256,
+            "crates.io resolver returned inconsistent source-row hash for {name} {version}"
+        );
+        Ok(ResolvedPackage {
+            name: name.to_owned(),
+            version: version.clone(),
+            archive_bytes: materialization.archive_bytes,
+            source_row_bytes: materialization.source_row_bytes,
+            source: LockedSource::CratesIo {},
+        })
+    }
+
+    fn resolve_git_tag(
+        &self,
+        repository: &str,
+        tag: &str,
+        package_name: &str,
+        cargo_version: &Version,
+    ) -> Result<ResolvedPackage> {
+        let materialization =
+            package::resolve_git_tag(repository, tag, package_name, cargo_version)?;
+        ensure!(
+            sha256_bytes(&materialization.archive_bytes) == materialization.archive_sha256,
+            "Git resolver returned inconsistent archive hash for {package_name} tag {tag:?}"
+        );
+        ensure!(
+            sha256_bytes(&materialization.source_row_bytes) == materialization.source_row_sha256,
+            "Git resolver returned inconsistent source-row hash for {package_name} tag {tag:?}"
+        );
+        Ok(ResolvedPackage {
+            name: materialization.name,
+            version: materialization.version,
+            archive_bytes: materialization.archive_bytes,
+            source_row_bytes: materialization.source_row_bytes,
+            source: LockedSource::GitTag {
+                git: repository.to_owned(),
+                tag: tag.to_owned(),
+                tag_oid: materialization.tag_oid,
+                commit: materialization.commit,
+                package: package_name.to_owned(),
+                path: materialization.path,
+                cargo_version: cargo_version.clone(),
+            },
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ResolvedPackage {
+    name: String,
+    version: Version,
+    archive_bytes: Vec<u8>,
+    source_row_bytes: Vec<u8>,
+    source: LockedSource,
+}
+
+#[derive(Clone, Debug)]
+struct DesiredMirror {
+    registry: String,
+    name: String,
+    version: Version,
+}
+
+#[derive(Clone, Debug)]
+struct DesiredGitTag {
+    registry: String,
+    name: String,
+    repository: String,
+    tag: String,
+    cargo_version: Version,
+}
+
+#[derive(Default)]
+struct DesiredState {
+    mirrors: BTreeMap<Identity, DesiredMirror>,
+    git_tags: BTreeMap<GitIdentity, DesiredGitTag>,
+}
+
+type VersionIdentity = (u64, u64, u64, String);
+type Identity = (String, VersionIdentity);
+type GitIdentity = (String, String, String, String);
+
+type OldPackages = BTreeMap<Identity, (String, LockedPackage)>;
+
+#[derive(Default)]
+struct PendingObjects {
+    crates: BTreeMap<String, Vec<u8>>,
+    rows: BTreeMap<String, Vec<u8>>,
+}
+
+fn reconcile_with<R: Resolver, N: Renamer>(
+    root: &Path,
+    source_resolver: &R,
+    renamer: &N,
+) -> Result<ReconcileSummary> {
+    let root = canonical_catalog_root(root)?;
+    let _guard = CatalogGuard::acquire(&root)?;
+    let inputs = load_registry_inputs(&root)?;
+    ensure!(!inputs.is_empty(), "catalog has no registry declarations");
+
+    for input in &inputs {
+        validate_input_for_update(input)?;
+    }
+
+    let preflight_inputs = inputs_with_default_locks(&inputs);
+    let preflight_catalog = catalog_from_inputs(&root, &preflight_inputs)?;
+    let policy = validate_catalog(&preflight_catalog)?;
+    validate_existing_objects_and_rows(&preflight_catalog, &policy)?;
+
+    let desired = collect_desired_packages(&inputs)?;
+    let old = collect_old_packages(&inputs)?;
+    validate_desired_against_history(&desired, &old)?;
+
+    let (mut next_locks, mut summary) = prepare_next_locks(&inputs, &desired)?;
+    let mut pending = PendingObjects::default();
+    let mut identities = old.keys().cloned().collect::<BTreeSet<_>>();
+    for (identity, package) in &desired.mirrors {
+        if old.contains_key(identity) {
+            continue;
+        }
+        let resolved = source_resolver
+            .resolve_mirror(&package.name, &package.version)
+            .with_context(|| {
+                format!(
+                    "resolve new package {} {} for {}",
+                    package.name, package.version, package.registry
+                )
+            })?;
+        let locked = lock_resolved_package(
+            &package.registry,
+            &package.name,
+            Some(&package.version),
+            None,
+            resolved,
+            &preflight_catalog,
+            &policy,
+            &mut identities,
+            &mut pending,
+        )?;
+        next_locks
+            .get_mut(&package.registry)
+            .expect("desired registry was loaded")
+            .packages
+            .push(locked);
+        summary.packages_added += 1;
+    }
+    for (git_identity, package) in &desired.git_tags {
+        if old
+            .values()
+            .any(|(registry, locked)| git_key(registry, locked).as_ref() == Some(git_identity))
+        {
+            continue;
+        }
+        let resolved = source_resolver
+            .resolve_git_tag(
+                &package.repository,
+                &package.tag,
+                &package.name,
+                &package.cargo_version,
+            )
+            .with_context(|| {
+                format!(
+                    "resolve new Git tag {:?} for {} in {}",
+                    package.tag, package.name, package.registry
+                )
+            })?;
+        let locked = lock_resolved_package(
+            &package.registry,
+            &package.name,
+            None,
+            Some((&package.repository, &package.tag, &package.cargo_version)),
+            resolved,
+            &preflight_catalog,
+            &policy,
+            &mut identities,
+            &mut pending,
+        )?;
+        next_locks
+            .get_mut(&package.registry)
+            .expect("desired registry was loaded")
+            .packages
+            .push(locked);
+        summary.packages_added += 1;
+    }
+
+    let next_inputs = inputs_with_locks(&inputs, &next_locks);
+    let next_catalog = catalog_from_inputs(&root, &next_inputs)?;
+    validate_catalog(&next_catalog)?;
+    let lock_changed = inputs
+        .iter()
+        .any(|input| input.lock.as_ref() != next_locks.get(&input.file.registry.name));
+    if !lock_changed {
+        Catalog::load(&root).context("strictly reload unchanged catalog")?;
+        return Ok(summary);
+    }
+
+    let staging = stage_catalog(&root, &inputs, &next_inputs, &next_catalog, &pending)?;
+    validate_staged_catalog(staging.path())?;
+    install_staging(&root, staging.path(), renamer)?;
+    summary.changed = true;
+    Ok(summary)
+}
+
+fn canonical_catalog_root(root: &Path) -> Result<PathBuf> {
+    let metadata = fs::symlink_metadata(root)
+        .with_context(|| format!("inspect catalog root {}", root.display()))?;
+    ensure!(
+        metadata.file_type().is_dir(),
+        "catalog root is not a real directory: {}",
+        root.display()
+    );
+    fs::canonicalize(root).with_context(|| format!("canonicalize catalog root {}", root.display()))
+}
+
+fn inputs_with_default_locks(inputs: &[RegistryInput]) -> Vec<RegistryInput> {
+    inputs
+        .iter()
+        .cloned()
+        .map(|mut input| {
+            if input.lock.is_none() {
+                input.lock = Some(empty_lock(&input.file));
+            }
+            input
+        })
+        .collect()
+}
+
+fn inputs_with_locks(
+    inputs: &[RegistryInput],
+    locks: &BTreeMap<String, RegistryLock>,
+) -> Vec<RegistryInput> {
+    inputs
+        .iter()
+        .cloned()
+        .map(|mut input| {
+            input.lock = Some(
+                locks
+                    .get(&input.file.registry.name)
+                    .expect("every input has a next lock")
+                    .clone(),
+            );
+            input
+        })
+        .collect()
+}
+
+fn collect_desired_packages(inputs: &[RegistryInput]) -> Result<DesiredState> {
+    let mut desired = DesiredState::default();
+    for input in inputs {
+        let registry = &input.file.registry.name;
+        for (name, versions) in &input.file.mirror {
+            for version in versions {
+                let identity = package_identity(name, version);
+                ensure!(
+                    desired
+                        .mirrors
+                        .insert(
+                            identity,
+                            DesiredMirror {
+                                registry: registry.clone(),
+                                name: name.clone(),
+                                version: version.clone(),
+                            },
+                        )
+                        .is_none(),
+                    "mirrored identity {name} {version} is desired more than once"
+                );
+            }
+        }
+        for (name, declaration) in &input.file.publish {
+            validate_https_repository(&declaration.git).with_context(|| {
+                format!(
+                    "invalid Git repository for package {name:?} in {}",
+                    input.path.display()
+                )
+            })?;
+            for tag in &declaration.tags {
+                validate_git_tag(tag).with_context(|| {
+                    format!(
+                        "invalid Git tag for package {name:?} in {}",
+                        input.path.display()
+                    )
+                })?;
+                let identity = (
+                    registry.clone(),
+                    name.clone(),
+                    declaration.git.clone(),
+                    tag.clone(),
+                );
+                ensure!(
+                    desired
+                        .git_tags
+                        .insert(
+                            identity,
+                            DesiredGitTag {
+                                registry: registry.clone(),
+                                name: name.clone(),
+                                repository: declaration.git.clone(),
+                                tag: tag.clone(),
+                                cargo_version: input.file.registry.cargo_version.clone(),
+                            },
+                        )
+                        .is_none(),
+                    "Git tag {tag:?} for package {name:?} is desired more than once"
+                );
+            }
+        }
+    }
+    Ok(desired)
+}
+
+fn collect_old_packages(inputs: &[RegistryInput]) -> Result<OldPackages> {
+    let mut old = BTreeMap::new();
+    for input in inputs {
+        let Some(lock) = &input.lock else {
+            continue;
+        };
+        for package in &lock.packages {
+            let identity = package_identity(&package.name, &package.version);
+            ensure!(
+                old.insert(
+                    identity,
+                    (input.file.registry.name.clone(), package.clone()),
+                )
+                .is_none(),
+                "locked identity {} {} occurs in more than one registry",
+                package.name,
+                package.version
+            );
+        }
+    }
+    Ok(old)
+}
+
+fn validate_desired_against_history(desired: &DesiredState, old: &OldPackages) -> Result<()> {
+    let mut old_tags = BTreeMap::new();
+    for (identity, (registry, package)) in old {
+        if let Some(key) = git_key(registry, package) {
+            ensure!(
+                old_tags.insert(key, identity).is_none(),
+                "one Git package tag is locked to more than one package identity"
+            );
+        }
+    }
+    for (identity, package) in &desired.mirrors {
+        if let Some((registry, locked)) = old.get(identity) {
+            ensure!(
+                registry == &package.registry
+                    && locked.state == PackageState::Active
+                    && matches!(locked.source, LockedSource::CratesIo {}),
+                "desired mirror {} {} conflicts with immutable package history",
+                package.name,
+                package.version
+            );
+        }
+    }
+    for (key, package) in &desired.git_tags {
+        if let Some(identity) = old_tags.get(key) {
+            let (_, locked) = old
+                .get(*identity)
+                .expect("old Git tag map was derived from old packages");
+            ensure!(
+                locked.state == PackageState::Active,
+                "removed Git publication {} tag {:?} cannot be reactivated",
+                package.name,
+                package.tag
+            );
+        }
+    }
+    Ok(())
+}
+
+fn prepare_next_locks(
+    inputs: &[RegistryInput],
+    desired: &DesiredState,
+) -> Result<(BTreeMap<String, RegistryLock>, ReconcileSummary)> {
+    let mut locks = BTreeMap::new();
+    let mut summary = ReconcileSummary::default();
+    for input in inputs {
+        let registry = &input.file.registry.name;
+        let mut next = input
+            .lock
+            .clone()
+            .unwrap_or_else(|| empty_lock(&input.file));
+        let previous_names = next
+            .names
+            .iter()
+            .map(|name| name.name.clone())
+            .collect::<BTreeSet<_>>();
+        next.names = input
+            .file
+            .mirror
+            .keys()
+            .map(|name| LockedName {
+                name: name.clone(),
+                source: NameSource::Mirror,
+            })
+            .chain(input.file.publish.keys().map(|name| LockedName {
+                name: name.clone(),
+                source: NameSource::Publish,
+            }))
+            .collect();
+        summary.names_added += next
+            .names
+            .iter()
+            .filter(|name| !previous_names.contains(name.name.as_str()))
+            .count();
+
+        for package in &mut next.packages {
+            let remains_desired = match &package.source {
+                LockedSource::CratesIo {} => desired
+                    .mirrors
+                    .get(&package_identity(&package.name, &package.version))
+                    .is_some_and(|declaration| declaration.registry == *registry),
+                LockedSource::GitTag { .. } => git_key(registry, package)
+                    .is_some_and(|key| desired.git_tags.contains_key(&key)),
+            };
+            if !remains_desired && package.state == PackageState::Active {
+                package.state = PackageState::Removed;
+                summary.packages_removed += 1;
+            }
+        }
+        ensure!(
+            locks.insert(registry.clone(), next).is_none(),
+            "duplicate next lock for registry {registry:?}"
+        );
+    }
+    Ok((locks, summary))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lock_resolved_package(
+    registry: &str,
+    expected_name: &str,
+    expected_version: Option<&Version>,
+    expected_git: Option<(&str, &str, &Version)>,
+    resolved: ResolvedPackage,
+    catalog: &Catalog,
+    policy: &Policy,
+    identities: &mut BTreeSet<Identity>,
+    pending: &mut PendingObjects,
+) -> Result<LockedPackage> {
+    ensure!(
+        resolved.name == expected_name,
+        "resolved package name {:?} differs from declaration {expected_name:?}",
+        resolved.name
+    );
+    match (&resolved.source, expected_version, expected_git) {
+        (LockedSource::CratesIo {}, Some(version), None) => ensure!(
+            resolved.version == *version,
+            "resolved mirror {expected_name} has version {}; expected {version}",
+            resolved.version
+        ),
+        (
+            LockedSource::GitTag {
+                git,
+                tag,
+                package,
+                cargo_version,
+                ..
+            },
+            None,
+            Some((expected_repository, expected_tag, expected_cargo)),
+        ) => {
+            ensure!(
+                git == expected_repository
+                    && tag == expected_tag
+                    && package == expected_name
+                    && cargo_version == expected_cargo,
+                "resolved Git source evidence differs from declaration for {expected_name} tag {expected_tag:?}"
+            );
+            validate_tag_version(tag, &resolved.version)?;
+        }
+        _ => bail!("resolver returned the wrong source class for {expected_name}"),
+    }
+
+    let identity = package_identity(&resolved.name, &resolved.version);
+    ensure!(
+        identities.insert(identity),
+        "new package {} {} conflicts with an existing Cargo package identity",
+        resolved.name,
+        resolved.version
+    );
+    let archive_sha256 = sha256_bytes(&resolved.archive_bytes);
+    let source_row_sha256 = sha256_bytes(&resolved.source_row_bytes);
+    let index_row_sha256 = routed_row_hash(
+        registry,
+        &resolved.name,
+        &resolved.version,
+        &archive_sha256,
+        &resolved.source_row_bytes,
+        catalog,
+        policy,
+    )?;
+    insert_pending_object(
+        &mut pending.crates,
+        &archive_sha256,
+        resolved.archive_bytes,
+        "crate",
+    )?;
+    insert_pending_object(
+        &mut pending.rows,
+        &source_row_sha256,
+        resolved.source_row_bytes,
+        "source row",
+    )?;
+    Ok(LockedPackage {
+        name: resolved.name,
+        version: resolved.version,
+        state: PackageState::Active,
+        crate_sha256: archive_sha256,
+        source_row_sha256,
+        index_row_sha256,
+        source: resolved.source,
+    })
+}
+
+fn insert_pending_object(
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    hash: &str,
+    bytes: Vec<u8>,
+    description: &str,
+) -> Result<()> {
+    if let Some(previous) = objects.get(hash) {
+        ensure!(
+            previous == &bytes,
+            "two different {description} objects claim SHA-256 {hash}"
+        );
+    } else {
+        objects.insert(hash.to_owned(), bytes);
+    }
+    Ok(())
+}
+
+fn package_identity(name: &str, version: &Version) -> Identity {
+    (
+        name.to_ascii_lowercase().replace('-', "_"),
+        version_identity(version),
+    )
+}
+
+fn git_key(registry: &str, package: &LockedPackage) -> Option<GitIdentity> {
+    match &package.source {
+        LockedSource::GitTag { git, tag, .. } => Some((
+            registry.to_owned(),
+            package.name.clone(),
+            git.clone(),
+            tag.clone(),
+        )),
+        LockedSource::CratesIo {} => None,
+    }
+}
+
+fn validate_existing_objects_and_rows(catalog: &Catalog, policy: &Policy) -> Result<()> {
+    if catalog.approvals.is_empty() && object_store_is_absent(catalog)? {
+        return Ok(());
+    }
+    let artifacts = ArtifactMap::load(catalog)?;
+    for approval in &catalog.approvals {
+        let artifact = artifacts
+            .get(&approval.registry, &approval.name, &approval.version)
+            .expect("verified object map contains every approval");
+        let source_row = fs::read(&artifact.index_record).with_context(|| {
+            format!(
+                "read existing source row for {} {}",
+                approval.name, approval.version
+            )
+        })?;
+        let actual = routed_row_hash(
+            &approval.registry,
+            &approval.name,
+            &approval.version,
+            &approval.archive_sha256,
+            &source_row,
+            catalog,
+            policy,
+        )?;
+        ensure!(
+            actual == approval.index_row_sha256,
+            "routed index-row hash mismatch for {} {}: expected {}, got {actual}",
+            approval.name,
+            approval.version,
+            approval.index_row_sha256
+        );
+    }
+    Ok(())
+}
+
+fn object_store_is_absent(catalog: &Catalog) -> Result<bool> {
+    let objects = catalog.root.join("objects");
+    match fs::symlink_metadata(&objects) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error).with_context(|| format!("inspect {}", objects.display())),
+    }
+}
+
+fn routed_row_hash(
+    registry: &str,
+    name: &str,
+    version: &Version,
+    archive_sha256: &str,
+    source_row: &[u8],
+    catalog: &Catalog,
+    policy: &Policy,
+) -> Result<String> {
+    let mut record = IndexRecord::parse(source_row)
+        .with_context(|| format!("parse source row for {name} {version}"))?;
+    record
+        .validate_structure()
+        .with_context(|| format!("validate source row for {name} {version}"))?;
+    ensure!(
+        record.name()? == name && record.version()? == *version,
+        "source row identity differs from {name} {version}"
+    );
+    ensure!(
+        record.checksum()? == archive_sha256,
+        "source row checksum for {name} {version} differs from archive hash {archive_sha256}"
+    );
+    record.set_yanked(false);
+    let routes =
+        record.route_dependencies(registry, &catalog.homes.homes, &policy.registry_urls)?;
+    for (package, home) in routes {
+        ensure!(
+            policy.permits_dependency(registry, &home),
+            "{name} {version} in {registry} may not depend on {package} in {home}"
+        );
+    }
+    Ok(sha256_bytes(&record.to_json_line()?))
+}
+
+fn stage_catalog(
+    root: &Path,
+    inputs: &[RegistryInput],
+    next_inputs: &[RegistryInput],
+    catalog: &Catalog,
+    pending: &PendingObjects,
+) -> Result<TemporaryCatalog> {
+    let staging = TemporaryCatalog::sibling_of(root, "stage")?;
+    fs::create_dir(staging.path()).with_context(|| {
+        format!(
+            "create staged catalog directory {}",
+            staging.path().display()
+        )
+    })?;
+    for (input, next) in inputs.iter().zip(next_inputs) {
+        let filename = input
+            .path
+            .file_name()
+            .context("registry human file has no filename")?;
+        copy_new(&input.path, &staging.path().join(filename))?;
+        let lock_filename = input
+            .lock_path
+            .file_name()
+            .context("registry lock path has no filename")?;
+        let bytes = serialize_lock(
+            next.lock
+                .as_ref()
+                .expect("next registry input always has a lock"),
+        )?;
+        write_new(&staging.path().join(lock_filename), &bytes)?;
+    }
+
+    let crates = catalog
+        .approvals
+        .iter()
+        .filter(|approval| !approval.is_removed())
+        .map(|approval| approval.archive_sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    let rows = catalog
+        .approvals
+        .iter()
+        .map(|approval| approval.index_record_sha256.as_str())
+        .collect::<BTreeSet<_>>();
+    fs::create_dir_all(staging.path().join("objects/crates")).with_context(|| {
+        format!(
+            "create staged crate-object directory below {}",
+            staging.path().display()
+        )
+    })?;
+    fs::create_dir_all(staging.path().join("objects/rows")).with_context(|| {
+        format!(
+            "create staged row-object directory below {}",
+            staging.path().display()
+        )
+    })?;
+    for hash in crates {
+        materialize_object(
+            root,
+            staging.path(),
+            "crates",
+            &format!("{hash}.crate"),
+            hash,
+            &pending.crates,
+        )?;
+    }
+    for hash in rows {
+        materialize_object(
+            root,
+            staging.path(),
+            "rows",
+            &format!("{hash}.json"),
+            hash,
+            &pending.rows,
+        )?;
+    }
+    sync_directory(&staging.path().join("objects/crates"))?;
+    sync_directory(&staging.path().join("objects/rows"))?;
+    sync_directory(&staging.path().join("objects"))?;
+    sync_directory(staging.path())?;
+    Ok(staging)
+}
+
+fn materialize_object(
+    old_root: &Path,
+    staged_root: &Path,
+    kind: &str,
+    filename: &str,
+    hash: &str,
+    pending: &BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let destination = staged_root.join("objects").join(kind).join(filename);
+    if let Some(bytes) = pending.get(hash) {
+        ensure!(
+            sha256_bytes(bytes) == hash,
+            "pending object {filename} does not match its content address"
+        );
+        write_new(&destination, bytes)
+    } else {
+        let source = old_root.join("objects").join(kind).join(filename);
+        copy_new(&source, &destination)
+    }
+}
+
+fn validate_staged_catalog(root: &Path) -> Result<()> {
+    let catalog = Catalog::load(root).context("strictly load staged catalog")?;
+    let policy = validate_catalog(&catalog).context("validate staged catalog policy")?;
+    validate_existing_objects_and_rows(&catalog, &policy)
+        .context("verify staged catalog objects and routed rows")?;
+    let artifacts = ArtifactMap::load(&catalog)?;
+    let rendered = TemporaryCatalog::sibling_of(root, "render")?;
+    crate::render::render(&catalog, &artifacts, rendered.path())
+        .context("test-render staged catalog")
+}
+
+trait Renamer {
+    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
+}
+
+struct FilesystemRenamer;
+
+impl Renamer for FilesystemRenamer {
+    fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        fs::rename(source, destination)
+    }
+}
+
+fn install_staging<N: Renamer>(root: &Path, staging: &Path, renamer: &N) -> Result<()> {
+    let backup = unique_sibling(root, "backup")?;
+    renamer.rename(root, &backup).with_context(|| {
+        format!(
+            "move existing catalog {} to backup {}",
+            root.display(),
+            backup.display()
+        )
+    })?;
+    if let Err(install_error) = renamer.rename(staging, root) {
+        return match renamer.rename(&backup, root) {
+            Ok(()) => Err(install_error).with_context(|| {
+                format!(
+                    "install staged catalog {}; original catalog was restored",
+                    staging.display()
+                )
+            }),
+            Err(restore_error) => bail!(
+                "install staged catalog {} failed ({install_error}); restoring backup {} also failed ({restore_error}); recover it manually",
+                staging.display(),
+                backup.display()
+            ),
+        };
+    }
+    let parent = root.parent().unwrap_or_else(|| Path::new("."));
+    sync_directory(parent)?;
+    if let Err(error) = fs::remove_dir_all(&backup) {
+        warn!(
+            path = %backup.display(),
+            error = %error,
+            "installed catalog but could not remove backup directory"
+        );
+    }
+    Ok(())
+}
+
+fn unique_sibling(path: &Path, purpose: &str) -> Result<PathBuf> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .context("catalog directory name is not valid UTF-8")?;
+    for _ in 0..100 {
+        let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{name}.pkgre-{purpose}-{}-{sequence}",
+            std::process::id()
+        ));
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect temporary path {}", candidate.display()));
+            }
+        }
+    }
+    bail!(
+        "could not allocate a unique {purpose} path for {}",
+        path.display()
+    )
+}
+
+fn write_new(path: &Path, contents: &[u8]) -> Result<()> {
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("create {}", path.display()))?;
+    output
+        .write_all(contents)
+        .with_context(|| format!("write {}", path.display()))?;
+    output
+        .sync_all()
+        .with_context(|| format!("sync {}", path.display()))
+}
+
+fn copy_new(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(source)
+        .with_context(|| format!("inspect source file {}", source.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "source path is not a regular file: {}",
+        source.display()
+    );
+    let mut input = File::open(source).with_context(|| format!("open {}", source.display()))?;
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .with_context(|| format!("create {}", destination.display()))?;
+    std::io::copy(&mut input, &mut output)
+        .with_context(|| format!("copy {} to {}", source.display(), destination.display()))?;
+    output
+        .sync_all()
+        .with_context(|| format!("sync {}", destination.display()))
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    File::open(path)
+        .with_context(|| format!("open directory {} for sync", path.display()))?
+        .sync_all()
+        .with_context(|| format!("sync directory {}", path.display()))
+}
+
+struct CatalogGuard {
+    path: PathBuf,
+    _file: File,
+}
+
+impl CatalogGuard {
+    fn acquire(root: &Path) -> Result<Self> {
+        let parent = root.parent().unwrap_or_else(|| Path::new("."));
+        let name = root
+            .file_name()
+            .and_then(|value| value.to_str())
+            .context("catalog directory name is not valid UTF-8")?;
+        let path = parent.join(format!(".{name}.pkgre-lock"));
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| {
+                format!(
+                    "acquire reconciliation guard {}; another reconciliation may be running",
+                    path.display()
+                )
+            })?;
+        Ok(Self { path, _file: file })
+    }
+}
+
+impl Drop for CatalogGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+struct TemporaryCatalog {
+    path: PathBuf,
+}
+
+impl TemporaryCatalog {
+    fn sibling_of(path: &Path, purpose: &str) -> Result<Self> {
+        Ok(Self {
+            path: unique_sibling(path, purpose)?,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TemporaryCatalog {
+    fn drop(&mut self) {
+        match fs::symlink_metadata(&self.path) {
+            Ok(metadata) if metadata.file_type().is_dir() => {
+                let _ = fs::remove_dir_all(&self.path);
+            }
+            Ok(_) => {
+                let _ = fs::remove_file(&self.path);
+            }
+            Err(_) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+    use std::io;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::index::index_path;
+    use crate::schema::load_lock;
+
+    const CORE_URL: &str = "sparse+https://rust.pkg.re/core/";
+    const MATRIX_URL: &str = "sparse+https://rust.pkg.re/matrix/";
+    const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn bootstrap_routes_all_layers_and_second_run_is_an_exact_noop() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-bootstrap");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "[mirror]\nleaf-core = [\"1.0.0\"]\n",
+            "[mirror]\nmatrix-middle = [\"1.0.0\"]\n",
+            "[publish.pkgre-tool]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"tool/v1.0.0\"]\n",
+        );
+        let resolver = FakeResolver::default();
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert_eq!(
+            summary,
+            ReconcileSummary {
+                changed: true,
+                names_added: 3,
+                packages_added: 3,
+                packages_removed: 0,
+            }
+        );
+        assert_eq!(resolver.calls(), 3);
+        let catalog = Catalog::load(&root).unwrap();
+        ArtifactMap::load(&catalog).unwrap();
+        assert_eq!(catalog.approvals.len(), 3);
+        assert!(
+            catalog
+                .approvals
+                .iter()
+                .all(|package| package.state == PackageState::Active)
+        );
+        assert_routed_registry(&temporary, &catalog, "matrix", "matrix-middle", CORE_URL);
+        assert_routed_registry(&temporary, &catalog, "pkgre", "pkgre-tool", MATRIX_URL);
+
+        let before = snapshot(temporary.path());
+        let second = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert_eq!(second, ReconcileSummary::default());
+        assert_eq!(resolver.calls(), 3);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn unexpected_catalog_entries_fail_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-unmanaged-entry");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        fs::write(root.join("notes.md"), b"not managed by the reconciler\n").unwrap();
+        let resolver = FakeResolver::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("unexpected entry in catalog root"));
+        assert_eq!(resolver.calls(), 0);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn removal_retains_evidence_yanks_row_and_cannot_be_reversed() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-removal");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let original = locked_package(&root, "core", "alpha");
+        let archive = root
+            .join("objects/crates")
+            .join(format!("{}.crate", original.crate_sha256));
+        let row = root
+            .join("objects/rows")
+            .join(format!("{}.json", original.source_row_sha256));
+
+        write_catalog(&root, "[mirror]\nalpha = []\n", "", "");
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert_eq!(summary.packages_removed, 1);
+        assert!(summary.changed);
+        let removed = locked_package(&root, "core", "alpha");
+        assert_eq!(removed.state, PackageState::Removed);
+        let mut retained = removed.clone();
+        retained.state = PackageState::Active;
+        assert_eq!(retained, original);
+        assert!(!archive.exists());
+        assert!(row.is_file());
+        let catalog = Catalog::load(&root).unwrap();
+        ArtifactMap::load(&catalog).unwrap();
+        assert_rendered_yanked(&temporary, &catalog, "core", "alpha");
+
+        let removed_snapshot = snapshot(temporary.path());
+        assert_eq!(
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+        assert_eq!(snapshot(temporary.path()), removed_snapshot);
+
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let before_reactivation = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("cannot be reactivated"));
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before_reactivation);
+
+        write_catalog(&root, "", "", "");
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("retain the key with an empty version/tag list"));
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[test]
+    fn immutable_registry_and_routed_row_anchors_fail_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-anchors");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let core = root.join("core.toml");
+        let changed = fs::read_to_string(&core)
+            .unwrap()
+            .replace(CORE_URL, "sparse+https://example.invalid/core/");
+        fs::write(&core, changed).unwrap();
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("immutable registry identity"));
+        assert_eq!(resolver.calls(), 1);
+
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let mut lock = load_lock(&root.join("core.lock")).unwrap();
+        lock.packages[0].index_row_sha256 = "00".repeat(32);
+        fs::write(root.join("core.lock"), serialize_lock(&lock).unwrap()).unwrap();
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("routed index-row hash mismatch"));
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn changed_git_repository_fails_before_resolving_a_new_tag() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-git-anchor");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "",
+            "",
+            "[publish.pkgre-alone]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"alone/v1.0.0\"]\n",
+        );
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        write_catalog(
+            &root,
+            "",
+            "",
+            "[publish.pkgre-alone]\ngit = \"https://github.com/pkgre/other\"\ntags = [\"alone/v1.0.0\", \"alone/v1.1.0\"]\n",
+        );
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("Git repository for locked package"));
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn existing_object_corruption_and_extras_fail_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-object-preflight");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let package = locked_package(&root, "core", "alpha");
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        fs::write(
+            root.join("objects/crates")
+                .join(format!("{}.crate", package.crate_sha256)),
+            b"tampered",
+        )
+        .unwrap();
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("archive hash mismatch"));
+        assert_eq!(resolver.calls(), 1);
+
+        fs::write(
+            root.join("objects/crates")
+                .join(format!("{}.crate", package.crate_sha256)),
+            fake_archive("alpha", &Version::parse("1.0.0").unwrap()),
+        )
+        .unwrap();
+        let extra = sha256_bytes(b"extra");
+        fs::write(
+            root.join("objects/crates").join(format!("{extra}.crate")),
+            b"extra",
+        )
+        .unwrap();
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("differs from generated locks"));
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[test]
+    fn resolver_and_dependency_policy_failures_leave_the_tree_unchanged() {
+        let failing = TemporaryDirectory::new("pkgre-lock-resolver-failure");
+        let failing_root = failing.path().join("catalog");
+        write_catalog(&failing_root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::failing();
+        let before = snapshot(failing.path());
+        let error = reconcile_with(&failing_root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("synthetic resolver failure"));
+        assert_eq!(snapshot(failing.path()), before);
+
+        let invalid = TemporaryDirectory::new("pkgre-lock-policy-failure");
+        let invalid_root = invalid.path().join("catalog");
+        write_catalog(
+            &invalid_root,
+            "[mirror]\ncore-invalid = [\"1.0.0\"]\n",
+            "[mirror]\nmatrix-middle = [\"1.0.0\"]\n",
+            "",
+        );
+        let resolver = FakeResolver::default();
+        let before = snapshot(invalid.path());
+        let error = reconcile_with(&invalid_root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("may not depend"));
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(invalid.path()), before);
+    }
+
+    #[test]
+    fn failed_staging_install_restores_the_exact_original_catalog() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-install-failure");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        let renamer = FailSecondRename::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &renamer).unwrap_err();
+        assert!(format!("{error:#}").contains("original catalog was restored"));
+        assert_eq!(renamer.calls.get(), 3);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[derive(Default)]
+    struct FakeResolver {
+        calls: Cell<usize>,
+        fail: bool,
+    }
+
+    impl FakeResolver {
+        fn failing() -> Self {
+            Self {
+                calls: Cell::new(0),
+                fail: true,
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.get()
+        }
+
+        fn begin_resolution(&self) -> Result<()> {
+            self.calls.set(self.calls.get() + 1);
+            if self.fail {
+                bail!("synthetic resolver failure");
+            }
+            Ok(())
+        }
+    }
+
+    impl Resolver for FakeResolver {
+        fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
+            self.begin_resolution()?;
+            Ok(fake_resolved(
+                name,
+                version.clone(),
+                LockedSource::CratesIo {},
+            ))
+        }
+
+        fn resolve_git_tag(
+            &self,
+            repository: &str,
+            tag: &str,
+            package_name: &str,
+            cargo_version: &Version,
+        ) -> Result<ResolvedPackage> {
+            self.begin_resolution()?;
+            let component = tag
+                .rsplit('/')
+                .next()
+                .context("test tag has no component")?;
+            let version = Version::parse(component.strip_prefix('v').unwrap_or(component))?;
+            Ok(fake_resolved(
+                package_name,
+                version,
+                LockedSource::GitTag {
+                    git: repository.to_owned(),
+                    tag: tag.to_owned(),
+                    tag_oid: "11".repeat(20),
+                    commit: "22".repeat(20),
+                    package: package_name.to_owned(),
+                    path: PathBuf::from("."),
+                    cargo_version: cargo_version.clone(),
+                },
+            ))
+        }
+    }
+
+    fn fake_resolved(name: &str, version: Version, source: LockedSource) -> ResolvedPackage {
+        let archive_bytes = fake_archive(name, &version);
+        let checksum = sha256_bytes(&archive_bytes);
+        let dependencies = fake_dependencies(name)
+            .iter()
+            .map(|dependency| {
+                json!({
+                    "name": dependency,
+                    "req": "^1",
+                    "features": [],
+                    "optional": false,
+                    "default_features": true,
+                    "target": Value::Null,
+                    "kind": "normal",
+                    "registry": "sparse+https://untrusted.invalid/",
+                    "package": Value::Null,
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut source_row_bytes = serde_json::to_vec(&json!({
+            "name": name,
+            "vers": version.to_string(),
+            "deps": dependencies,
+            "cksum": checksum,
+            "features": {},
+            "yanked": true,
+        }))
+        .unwrap();
+        source_row_bytes.push(b'\n');
+        ResolvedPackage {
+            name: name.to_owned(),
+            version,
+            archive_bytes,
+            source_row_bytes,
+            source,
+        }
+    }
+
+    fn fake_archive(name: &str, version: &Version) -> Vec<u8> {
+        format!("synthetic crate archive for {name} {version}\n").into_bytes()
+    }
+
+    fn fake_dependencies(name: &str) -> &'static [&'static str] {
+        match name {
+            "matrix-middle" => &["leaf-core"],
+            "pkgre-tool" | "core-invalid" => &["matrix-middle"],
+            _ => &[],
+        }
+    }
+
+    fn write_catalog(root: &Path, core: &str, matrix: &str, pkgre: &str) {
+        fs::create_dir_all(root).unwrap();
+        write_registry(root, "core", &["core"], core);
+        write_registry(root, "matrix", &["core", "matrix"], matrix);
+        write_registry(root, "pkgre", &["core", "matrix", "pkgre"], pkgre);
+    }
+
+    fn write_registry(root: &Path, name: &str, layers: &[&str], declarations: &str) {
+        let layers = layers
+            .iter()
+            .map(|layer| format!("\"{layer}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        fs::write(
+            root.join(format!("{name}.toml")),
+            format!(
+                "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {DOWNLOAD:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{declarations}"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn locked_package(root: &Path, registry: &str, name: &str) -> LockedPackage {
+        load_lock(&root.join(format!("{registry}.lock")))
+            .unwrap()
+            .packages
+            .into_iter()
+            .find(|package| package.name == name)
+            .unwrap()
+    }
+
+    fn assert_routed_registry(
+        temporary: &TemporaryDirectory,
+        catalog: &Catalog,
+        registry: &str,
+        name: &str,
+        expected: &str,
+    ) {
+        let artifacts = ArtifactMap::load(catalog).unwrap();
+        let site = temporary.path().join(format!("site-{registry}-{name}"));
+        crate::render::render(catalog, &artifacts, &site).unwrap();
+        let row: Value =
+            serde_json::from_slice(&fs::read(site.join(registry).join(index_path(name))).unwrap())
+                .unwrap();
+        assert_eq!(row["deps"][0]["registry"], expected);
+    }
+
+    fn assert_rendered_yanked(
+        temporary: &TemporaryDirectory,
+        catalog: &Catalog,
+        registry: &str,
+        name: &str,
+    ) {
+        let artifacts = ArtifactMap::load(catalog).unwrap();
+        let site = temporary.path().join("removed-site");
+        crate::render::render(catalog, &artifacts, &site).unwrap();
+        let row: Value =
+            serde_json::from_slice(&fs::read(site.join(registry).join(index_path(name))).unwrap())
+                .unwrap();
+        assert_eq!(row["yanked"], true);
+    }
+
+    #[derive(Default)]
+    struct FailSecondRename {
+        calls: Cell<usize>,
+    }
+
+    impl Renamer for FailSecondRename {
+        fn rename(&self, source: &Path, destination: &Path) -> io::Result<()> {
+            let call = self.calls.get() + 1;
+            self.calls.set(call);
+            if call == 2 {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "synthetic install failure",
+                ))
+            } else {
+                fs::rename(source, destination)
+            }
+        }
+    }
+
+    type Snapshot = BTreeMap<PathBuf, Option<Vec<u8>>>;
+
+    fn snapshot(root: &Path) -> Snapshot {
+        let mut snapshot = BTreeMap::new();
+        snapshot_below(root, root, &mut snapshot);
+        snapshot
+    }
+
+    fn snapshot_below(base: &Path, root: &Path, snapshot: &mut Snapshot) {
+        let mut entries = fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            let relative = path.strip_prefix(base).unwrap().to_path_buf();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            if metadata.file_type().is_dir() {
+                snapshot.insert(relative, None);
+                snapshot_below(base, &path, snapshot);
+            } else {
+                assert!(metadata.file_type().is_file());
+                snapshot.insert(relative, Some(fs::read(path).unwrap()));
+            }
+        }
+    }
+
+    struct TemporaryDirectory {
+        path: PathBuf,
+    }
+
+    impl TemporaryDirectory {
+        fn new(prefix: &str) -> Self {
+            let sequence = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("{prefix}-{}-{sequence}", std::process::id()));
+            match fs::remove_dir_all(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => panic!("remove stale test directory: {error}"),
+            }
+            fs::create_dir(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.path).unwrap();
+        }
+    }
+}

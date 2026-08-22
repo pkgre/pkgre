@@ -6,7 +6,7 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 
-use crate::schema::{Approval, Catalog, Source};
+use crate::schema::{Approval, Catalog, NameSource, Source};
 
 const CNAME: &str = "rust.pkg.re";
 const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
@@ -44,11 +44,11 @@ impl Policy {
     }
 }
 
-/// Validates all catalog policy that does not require materialized package artifacts.
+/// Validates catalog topology, naming, identity, source, and routing policy.
 ///
 /// # Errors
 ///
-/// Returns an error for any topology, naming, identity, source, or routing-policy violation.
+/// Returns an error for any policy violation.
 pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     ensure!(catalog.registries.cname == CNAME, "CNAME must be {CNAME:?}");
     ensure!(
@@ -57,7 +57,7 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     );
     ensure!(
         catalog.registries.cargo_version.to_string() == CARGO_VERSION,
-        "cargo-version must be {CARGO_VERSION}"
+        "pkgre cargo-version must be {CARGO_VERSION}"
     );
     ensure!(
         catalog.registries.registries.len() == REGISTRIES.len(),
@@ -89,6 +89,16 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
         ensure!(
             &registry.index == expected_index,
             "registry {:?} index must be {expected_index:?}",
+            registry.name
+        );
+        ensure!(
+            registry.download == DOWNLOAD,
+            "registry {:?} download template must be {DOWNLOAD:?}",
+            registry.name
+        );
+        ensure!(
+            registry.cargo_version.to_string() == CARGO_VERSION,
+            "registry {:?} cargo-version must be {CARGO_VERSION}",
             registry.name
         );
         ensure!(
@@ -129,6 +139,20 @@ fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -
             registry_urls.contains_key(registry),
             "package {package:?} has unknown home {registry:?}"
         );
+        let source = catalog
+            .name_sources
+            .get(package)
+            .with_context(|| format!("package {package:?} has no permanent source class"))?;
+        match source {
+            NameSource::Mirror => ensure!(
+                registry != "pkgre",
+                "mirrored package {package:?} cannot use the pkgre registry"
+            ),
+            NameSource::Publish => ensure!(
+                registry == "pkgre",
+                "first-party package {package:?} must use the pkgre registry"
+            ),
+        }
         let key = package_collision_key(package);
         if let Some(previous) = collision_keys.insert(key, package) {
             ensure!(
@@ -137,33 +161,31 @@ fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -
             );
         }
     }
+    ensure!(
+        catalog.name_sources.len() == catalog.homes.homes.len()
+            && catalog
+                .name_sources
+                .keys()
+                .all(|name| catalog.homes.homes.contains_key(name)),
+        "permanent source classes differ from package homes"
+    );
     Ok(())
 }
 
 fn validate_approvals(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -> Result<()> {
     let mut identities = BTreeSet::new();
-    let mut index_snapshots = BTreeSet::new();
     for approval in &catalog.approvals {
         validate_approval(approval, catalog, registry_urls)?;
         let identity = (
-            approval.registry.as_str(),
             package_collision_key(&approval.name),
             version_identity(&approval.version),
         );
         ensure!(
             identities.insert(identity),
-            "duplicate approval for {} {} in {} (build metadata does not distinguish versions)",
+            "duplicate approval for {} {} (build metadata does not distinguish versions)",
             approval.name,
-            approval.version,
-            approval.registry
+            approval.version
         );
-        if let Source::CratesIo { index_record } = &approval.source {
-            ensure!(
-                index_snapshots.insert(index_record),
-                "crates.io index snapshot {} is used by more than one approval",
-                index_record.display()
-            );
-        }
     }
     Ok(())
 }
@@ -202,37 +224,30 @@ fn validate_approval(
     })?;
     validate_sha256(&approval.index_record_sha256).with_context(|| {
         format!(
-            "invalid index-record hash for {} {}",
+            "invalid source-row hash for {} {}",
+            approval.name, approval.version
+        )
+    })?;
+    validate_sha256(&approval.index_row_sha256).with_context(|| {
+        format!(
+            "invalid routed index-row hash for {} {}",
             approval.name, approval.version
         )
     })?;
 
     match &approval.source {
-        Source::CratesIo { index_record } => {
-            ensure!(
-                approval.registry != "pkgre",
-                "crates.io imports cannot be approved in the pkgre registry"
-            );
-            validate_relative_path(index_record, false).with_context(|| {
-                format!("invalid index snapshot path {}", index_record.display())
-            })?;
-            ensure!(
-                index_record.starts_with("upstream"),
-                "crates.io index snapshot must be below upstream/: {}",
-                index_record.display()
-            );
-            ensure!(
-                index_record.extension().and_then(|value| value.to_str()) == Some("json"),
-                "crates.io index snapshot must have a .json suffix: {}",
-                index_record.display()
-            );
-        }
+        Source::CratesIo => ensure!(
+            approval.registry != "pkgre",
+            "crates.io imports cannot be approved in the pkgre registry"
+        ),
         Source::GitTag {
             repository,
             tag,
+            tag_oid,
             commit,
             package,
             subdir,
+            cargo_version,
         } => {
             ensure!(
                 approval.registry == "pkgre",
@@ -245,11 +260,31 @@ fn validate_approval(
             );
             validate_https_repository(repository)?;
             validate_git_tag(tag)?;
-            validate_git_commit(commit)?;
+            validate_git_object_id(tag_oid).context("invalid Git tag object ID")?;
+            validate_git_object_id(commit).context("invalid peeled Git commit ID")?;
             validate_relative_path(subdir, true)
                 .with_context(|| format!("invalid package subdirectory {}", subdir.display()))?;
+            ensure!(
+                cargo_version.to_string() == CARGO_VERSION,
+                "Git publication {} {} used unsupported Cargo {}",
+                approval.name,
+                approval.version,
+                cargo_version
+            );
+            validate_tag_version(tag, &approval.version)?;
         }
     }
+    Ok(())
+}
+
+pub(crate) fn validate_tag_version(tag: &str, version: &Version) -> Result<()> {
+    let component = tag.rsplit('/').next().expect("validated tag is nonempty");
+    let plain = version.to_string();
+    ensure!(
+        component == plain || component == format!("v{plain}"),
+        "Git tag final component {component:?} must equal {plain:?} or {:?}",
+        format!("v{plain}")
+    );
     Ok(())
 }
 
@@ -384,16 +419,16 @@ pub(crate) fn validate_git_tag(tag: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_git_commit(commit: &str) -> Result<()> {
+pub(crate) fn validate_git_object_id(value: &str) -> Result<()> {
     ensure!(
-        commit.len() == 40 || commit.len() == 64,
-        "Git commit must be a full 40- or 64-character object ID"
+        value.len() == 40 || value.len() == 64,
+        "Git object ID must contain 40 or 64 characters"
     );
     ensure!(
-        commit
+        value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "Git commit must be lowercase hexadecimal"
+        "Git object ID must be lowercase hexadecimal"
     );
     Ok(())
 }
@@ -418,6 +453,7 @@ fn string_set<'a>(values: impl IntoIterator<Item = &'a str>) -> BTreeSet<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::{HomesFile, PackageState, RegistriesFile, Registry};
 
     #[test]
     fn package_names_are_strict_and_collision_key_matches_cargo() {
@@ -439,7 +475,7 @@ mod tests {
 
     #[test]
     fn relative_paths_reject_traversal_and_git_metadata() {
-        validate_relative_path(Path::new("upstream/se/serde.json"), false).unwrap();
+        validate_relative_path(Path::new("objects/rows/serde.json"), false).unwrap();
         validate_relative_path(Path::new("."), true).unwrap();
         assert!(validate_relative_path(Path::new("../secret"), false).is_err());
         assert!(validate_relative_path(Path::new("repo/.git/config"), false).is_err());
@@ -448,39 +484,45 @@ mod tests {
     fn valid_catalog() -> Catalog {
         Catalog {
             root: Path::new("catalog").to_path_buf(),
-            registries: crate::schema::RegistriesFile {
+            registries: RegistriesFile {
                 schema: crate::schema::SCHEMA_VERSION,
                 cname: CNAME.to_owned(),
                 download: DOWNLOAD.to_owned(),
                 cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                 registries: REGISTRIES
                     .iter()
-                    .map(|(name, index, layers)| crate::schema::Registry {
+                    .map(|(name, index, layers)| Registry {
                         name: (*name).to_owned(),
                         index: (*index).to_owned(),
+                        download: DOWNLOAD.to_owned(),
                         may_depend_on: layers.iter().map(|value| (*value).to_owned()).collect(),
+                        cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                     })
                     .collect(),
             },
-            homes: crate::schema::HomesFile {
+            homes: HomesFile {
                 schema: crate::schema::SCHEMA_VERSION,
                 homes: BTreeMap::from([("pkgre-indexer".to_owned(), "pkgre".to_owned())]),
             },
+            name_sources: BTreeMap::from([("pkgre-indexer".to_owned(), NameSource::Publish)]),
             approvals: vec![Approval {
                 registry: "pkgre".to_owned(),
                 name: "pkgre-indexer".to_owned(),
                 version: Version::parse("0.1.0").unwrap(),
                 archive_sha256: "01".repeat(32),
                 index_record_sha256: "02".repeat(32),
-                yanked: false,
+                index_row_sha256: "03".repeat(32),
+                state: PackageState::Active,
                 source: Source::GitTag {
                     repository: "https://github.com/pkgre/pkgre".to_owned(),
                     tag: "indexer/v0.1.0".to_owned(),
-                    commit: "03".repeat(20),
+                    tag_oid: "04".repeat(20),
+                    commit: "05".repeat(20),
                     package: "pkgre-indexer".to_owned(),
                     subdir: Path::new("indexer").to_path_buf(),
+                    cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                 },
-                declared_in: Path::new("approvals/pkgre.toml").to_path_buf(),
+                declared_in: Path::new("pkgre.lock").to_path_buf(),
             }],
         }
     }
@@ -502,10 +544,10 @@ mod tests {
     }
 
     #[test]
-    fn tags_and_commits_are_unambiguous() {
+    fn tags_and_object_ids_are_unambiguous() {
         validate_git_tag("indexer/v0.1.0").unwrap();
         assert!(validate_git_tag("--upload-pack=x").is_err());
-        validate_git_commit(&"01".repeat(20)).unwrap();
-        assert!(validate_git_commit(&"AB".repeat(20)).is_err());
+        validate_git_object_id(&"01".repeat(20)).unwrap();
+        assert!(validate_git_object_id(&"AB".repeat(20)).is_err());
     }
 }
