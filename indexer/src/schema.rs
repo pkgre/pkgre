@@ -78,6 +78,7 @@ struct ApprovalEntry {
     name: String,
     version: Version,
     archive_sha256: String,
+    index_record_sha256: String,
     yanked: bool,
     source: Source,
 }
@@ -93,6 +94,8 @@ pub struct Approval {
     pub version: Version,
     /// SHA-256 of the exact `.crate` archive.
     pub archive_sha256: String,
+    /// SHA-256 of the exact un-routed index record bytes.
+    pub index_record_sha256: String,
     /// Curator-owned yanked state.
     pub yanked: bool,
     /// Immutable origin evidence.
@@ -109,8 +112,6 @@ pub enum Source {
     CratesIo {
         /// Catalog-relative snapshot of the exact upstream index record.
         index_record: PathBuf,
-        /// SHA-256 of the snapshot bytes.
-        index_record_sha256: String,
     },
     /// First-party package produced from an approved immutable Git tag and commit.
     GitTag {
@@ -160,6 +161,7 @@ impl Catalog {
                 name: entry.name,
                 version: entry.version,
                 archive_sha256: entry.archive_sha256,
+                index_record_sha256: entry.index_record_sha256,
                 yanked: entry.yanked,
                 source: entry.source,
                 declared_in: path.clone(),
@@ -200,7 +202,6 @@ mod tests {
             r#"
 kind = "crates-io"
 index_record = "upstream/demo.json"
-index_record_sha256 = "00"
 surprise = true
 "#,
         );
