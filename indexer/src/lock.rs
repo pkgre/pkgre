@@ -1061,6 +1061,21 @@ mod tests {
     }
 
     #[test]
+    fn unexpected_catalog_entries_fail_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-unmanaged-entry");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        fs::write(root.join("notes.md"), b"not managed by the reconciler\n").unwrap();
+        let resolver = FakeResolver::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("unexpected entry in catalog root"));
+        assert_eq!(resolver.calls(), 0);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
     fn removal_retains_evidence_yanks_row_and_cannot_be_reversed() {
         let temporary = TemporaryDirectory::new("pkgre-lock-removal");
         let root = temporary.path().join("catalog");

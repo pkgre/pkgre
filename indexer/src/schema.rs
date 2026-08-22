@@ -1,6 +1,7 @@
 //! Declarative registry schema, generated lock schema, and catalog loading.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -305,6 +306,7 @@ pub fn load_registry_inputs(root: &Path) -> Result<Vec<RegistryInput>> {
         .collect::<std::io::Result<Vec<_>>>()
         .with_context(|| format!("read entries below {}", root.display()))?;
     paths.sort();
+    validate_catalog_root_entries(&paths, root)?;
 
     let mut inputs = Vec::new();
     let mut registries = BTreeSet::new();
@@ -346,6 +348,47 @@ pub fn load_registry_inputs(root: &Path) -> Result<Vec<RegistryInput>> {
         });
     }
     Ok(inputs)
+}
+
+fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
+    for path in paths {
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("inspect catalog entry {}", path.display()))?;
+        if path.file_name() == Some(OsStr::new("objects")) {
+            ensure!(
+                metadata.file_type().is_dir(),
+                "catalog object store is not a real directory: {}",
+                path.display()
+            );
+            continue;
+        }
+        match path.extension().and_then(|value| value.to_str()) {
+            Some("toml") => ensure!(
+                metadata.file_type().is_file(),
+                "human registry input is not a regular file: {}",
+                path.display()
+            ),
+            Some("lock") => {
+                ensure!(
+                    metadata.file_type().is_file(),
+                    "generated registry lock is not a regular file: {}",
+                    path.display()
+                );
+                let human = path.with_extension("toml");
+                ensure!(
+                    paths.binary_search(&human).is_ok(),
+                    "generated lock {} has no adjacent human registry file",
+                    path.display()
+                );
+            }
+            _ => bail!(
+                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files and objects/ are allowed",
+                root.display(),
+                path.display()
+            ),
+        }
+    }
+    Ok(())
 }
 
 /// Loads one canonical generated lock file.
