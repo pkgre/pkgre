@@ -261,7 +261,7 @@ impl StaticServer {
 
     fn stop(mut self) {
         self.stop.store(true, Ordering::Release);
-        TcpStream::connect(self.address).unwrap();
+        let _ = TcpStream::connect(self.address);
         self.thread.take().unwrap().join().unwrap().unwrap();
     }
 }
