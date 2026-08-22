@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail, ensure};
 use pkgre_indexer::artifact::ArtifactMap;
+use pkgre_indexer::import::{candidate_crates_io, load_crates_io_proposal};
 use pkgre_indexer::package::{candidate_git, load_git_proposal, package_approved_git};
 use pkgre_indexer::policy::validate_catalog;
 use pkgre_indexer::render;
@@ -12,7 +13,7 @@ use pkgre_indexer::schema::Catalog;
 use semver::Version;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer check <catalog> [artifact-map]\n  pkgre-indexer render <catalog> <artifact-map> <output>\n  pkgre-indexer verify <catalog> <artifact-map> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer candidate-git <proposal> <cargo-version> <output>\n  pkgre-indexer package-git <catalog> <package> <version> <output>";
+const USAGE: &str = "usage:\n  pkgre-indexer check <catalog> [artifact-map]\n  pkgre-indexer render <catalog> <artifact-map> <output>\n  pkgre-indexer verify <catalog> <artifact-map> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer candidate-crates-io <proposal> <output>\n  pkgre-indexer candidate-git <proposal> <cargo-version> <output>\n  pkgre-indexer package-git <catalog> <package> <version> <output>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -37,6 +38,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("render") => render_site(&values),
         Some("verify") => verify_site(&values),
         Some("verify-monotonic") => verify_monotonic(&values),
+        Some("candidate-crates-io") => candidate_crates_io_packages(&values),
         Some("candidate-git") => candidate_git_package(&values),
         Some("package-git") => package_git(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
@@ -83,6 +85,19 @@ fn verify_monotonic(arguments: &[OsString]) -> Result<()> {
     let next = Path::new(&arguments[1]);
     render::verify_monotonic(previous, next)?;
     info!("registry release is monotonic");
+    Ok(())
+}
+
+fn candidate_crates_io_packages(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2, 2)?;
+    let proposal = load_crates_io_proposal(Path::new(&arguments[0]))?;
+    let output = Path::new(&arguments[1]);
+    candidate_crates_io(&proposal, output)?;
+    info!(
+        packages = proposal.packages.len(),
+        path = %output.display(),
+        "materialized crates.io candidates"
+    );
     Ok(())
 }
 
