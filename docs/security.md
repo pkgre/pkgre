@@ -2,68 +2,94 @@
 
 ## Goal
 
-Reduce ambient Cargo supply-chain authority from “anything resolvable on crates.io/Git” to “exact artifacts + dependency routes explicitly approved in a small public catalog.” Failure mode should be missing-package/build failure rather than silent fallback to crates.io.
+Reduce ambient Cargo supply-chain authority from “anything resolvable on crates.io/Git” to “exact reviewed artifacts + explicit dependency routes committed in a small public catalog.” Unexpected package/version/source/registry edges should stop at missing desired state, reconciliation failure, or consumer resolution failure rather than silently fall back to crates.io.
 
 ## Trust anchors
 
-- Curators: decide package/version/home, inspect exact candidate bytes, approve immutable source evidence, review dependency changes.
-- Public catalog/index repository: reviewable declaration + historical release record; branch/repository administration remains privileged.
-- GitHub Pages + TLS/DNS: availability + delivery of index rows/archives; Cargo archive checksums detect modified package bytes after a trusted index row is obtained.
-- GitHub/crates.io/Git upstreams during candidacy: origins, not automatic authorities; resulting exact bytes/hashes require explicit catalog approval.
-- Nix input pins + Rust/Cargo `1.95.0`: build/toolchain trust anchor for the indexer and first-party packaging.
-- `pkgre-indexer`: enforces declared policy; bugs can invalidate guarantees.
+- Curators: decide package/version/home, inspect newly materialized exact bytes, approve permanent source evidence, review dependency/capability changes, and authorize removal.
+- Public catalog/index repository: reviewable desired state + immutable lock/object history; branch/repository administration remains privileged.
+- `pkgre-indexer`: resolves new declarations and enforces schema, lifecycle, artifact, routing, rendering, and release invariants; implementation bugs can invalidate guarantees.
+- Nix pins + Rust/Cargo `1.95.0`: tooling build inputs and first-party packaging semantics.
+- GitHub Pages + TLS/DNS: availability + delivery of rows/archives; Cargo archive checksums detect modified archives after a trusted row is obtained.
+- crates.io/Git upstreams during first materialization: origins, not continuing ambient authorities; their exact output remains uncommitted until audit + catalog review.
+
+## Authority boundaries
+
+Human `<registry>.toml` selects only:
+
+```text
+mirror: (registry, package, exact version)
+publish: (pkgre, package, credential-free HTTPS Git repository, immutable tag)
+removal: omission from retained package key's version/tag list
+```
+
+Generated locks permanently select:
+
+```text
+(registry, normalized Cargo package identity, version, source class, lifecycle state, archive hash, source-row hash, routed-active-row hash, origin provenance)
+```
+
+Network materialization is candidate generation inside an uncommitted working tree. A successful `lock` proves internal consistency, not code safety; the result gains authority only after exact object/lock review + protected-branch merge. Existing identities require no network access during reconciliation.
 
 ## Enforced invariants
 
-- Exact fixed registry topology + canonical URLs; no catalog-defined hidden registry.
-- Explicit home for every approved/referenced package name.
-- Registry-layer edge policy: `core→core`; `matrix→matrix|core`; `pkgre→pkgre|matrix|core`.
-- Dependency routing overwrites upstream registry fields, including optional/dev/build/target-specific + renamed dependencies.
-- Exact archive SHA-256 + un-routed-row SHA-256 bind every approval.
-- Imported archives byte-identical to crates.io artifacts; upstream checksum cross-checked.
-- First-party Git packages bind HTTPS repository + tag + full peeled commit + package/subdir/version + deterministic pinned-Cargo output.
-- Global package-name collision defense under Cargo ASCII case + `-`/`_` normalization.
-- Output built from scratch; render verification is byte-for-byte; published identities are monotonic except yank state.
-- Filesystem boundaries reject traversal, symlink substitution, and non-regular inputs.
+- Exactly three canonical registries/URLs/download template: `core`, `matrix`, `pkgre`.
+- Fixed edge layers: `core→core`; `matrix→core|matrix`; `pkgre→core|matrix|pkgre`.
+- One permanent registry home + `mirror|publish` source class for every reserved package name; global collision defense under Cargo ASCII case + `-`/`_` normalization.
+- Explicit home required for every dependency identity; routing overwrites all source-row registry fields, including optional/dev/build/target-specific + renamed edges.
+- Every mirrored archive is byte-identical to its crates.io artifact; exact selected upstream row retained; archive checksum cross-checked with row `cksum`; upstream-yanked versions rejected at import.
+- Every first-party package binds credential-free HTTPS repository + literal tag + tag object + peeled commit + package/version/path + pinned Cargo version + byte-identical double packaging.
+- Every first-party manifest sets exactly `publish = ["pkgre"]`; every dependency explicitly names one canonical curated registry; path/Git/crates.io/unknown dependency sources fail.
+- Exact archive/source-row/routed-active-row SHA-256 permanently binds every package identity.
+- Lifecycle is append-only: additions + `active→removed` only; removal retains source evidence + yanked row, removes unshared archive, and cannot be reversed.
+- Existing objects, locks, source rows, and routed rows pass complete local preflight before any new public artifact fetch.
+- Complete replacement catalog is staged, strictly reloaded, object-verified, and test-rendered before same-parent transactional install with rollback.
+- Catalog root and object boundaries reject unrelated entries, traversal, symlink substitution, non-regular inputs, missing/extra content-addressed objects, and non-canonical generated locks.
+- Render output is built at a new path; `verify` requires byte-for-byte tree identity; `verify-monotonic` rejects published identity disappearance, immutable mutation, topology change, and tombstone reactivation.
 
-## Candidate/approval boundary
+## Review boundary
 
-Candidate generation is deliberately non-authoritative. Network-fetched bytes, generated hashes, approval stanzas, and homes remain candidates until a curator audits + commits them. “Clicked approve” can prevent namespace surprise/new-package insertion, but does not prove source safety; review depth should track capability (build script/proc macro/native code/runtime exposure).
+Adding a version/tag is a new trust decision even when package name/home already exists. Review exact generated diff + object bytes before commit. “Package absent until explicitly listed” defeats surprise namespace insertion but does not establish source safety.
 
 Suggested review priority:
 
 ```text
-build-time executable code > native-link code > direct/runtime deps > new dependency edges > ordinary leaf updates
+build-time executable code > proc macros > native-link code > direct/runtime deps > new dependency edges/features > ordinary leaf updates
 ```
 
-Review exact `.crate` bytes: upstream Git source alone can differ from the published artifact. Inspect `Cargo.toml` + normalized `Cargo.toml`, `build.rs`, proc-macro crates, bundled binaries/generated data, unsafe/native code, tests/examples excluded from compilation assumptions, and archive path/type safety.
+For mirrors, inspect the exact `.crate`, not only an upstream Git repository: archive source can differ. Inspect `Cargo.toml`, normalized `Cargo.toml`, `build.rs`, proc-macro status, bundled executables/generated data, unsafe/native/network/process code, archive paths/types, feature/target edges, and licensing. Compare dependency rows between approved versions.
+
+For first-party tags, review the tagged commit before reconciliation and the produced archive/row afterward. Locking both tag object + peeled commit prevents ambiguity in committed provenance; exact package bytes remain usable even if upstream later disappears or mutates a tag.
 
 ## Consumer failure-closed configuration
 
 - Every direct manifest dependency uses `registry = "core"|"matrix"|"pkgre"`.
-- `.cargo/config.toml` defines all aliases, chooses a non-crates.io default, and replaces `[source.crates-io]` with a committed empty directory.
-- Lockfiles are committed; builds use `--locked`/`--frozen` in a clean Cargo home.
+- `.cargo/config.toml` defines all aliases, chooses a curated default, and replaces `[source.crates-io]` with a committed empty directory.
+- Lockfiles are committed; CI/build/install use `--locked` or `--frozen` from clean Cargo homes.
 - Nix/Crane source mappings recognize all three sparse registry URLs.
-- CI asserts no `registry+https://github.com/rust-lang/crates.io-index` or `sparse+https://index.crates.io/` source remains in lockfiles.
+- CI rejects `registry+https://github.com/rust-lang/crates.io-index`, `sparse+https://index.crates.io/`, unapproved Git sources, and unknown registry URLs in lockfiles.
 
-Cargo does not provide a universal registry allowlist: an approved custom-registry row can route a dependency to another registry URL. This design prevents that by controlling + validating every published row. Do not consume third-party custom registries as trusted layers unless they provide equivalent transparent routing guarantees.
+Cargo has no universal registry allowlist: a custom-registry row can direct transitive dependencies to arbitrary registry URLs. pkg.re closes that path only because it generates + validates every hosted row. Never treat an unrelated custom registry as a trusted layer without equivalent transparent routing controls.
 
-## Non-goals / residual risk
+## Non-goals + residual risk
 
-- No claim that approved code is benign, correct, maintained, or vulnerability-free.
-- No defense against malicious compiler/toolchain/kernel/hardware, compromised curator/admin credentials, or malicious changes approved by review.
-- No registry authentication API, private-package access control, or mutable `cargo publish` endpoint.
-- No automatic source-code provenance proof for crates.io imports beyond exact sparse-row/archive identity.
-- No prevention of arbitrary network/process behavior by package build scripts once approved and compiled; isolate builds separately.
-- SHA-256/content addressing provides integrity, not availability; Pages outage/DNS failure can stop clean builds.
-- Yank state is advisory + intentionally mutable; lockfile and Cargo behavior still apply.
-- Git dependencies bypass registry policy and are therefore outside the supported dependency model for curated projects.
+- No claim that approved code is benign, correct, maintained, vulnerability-free, or adequately reviewed.
+- No defense against malicious compiler/toolchain/kernel/hardware, compromised curator/repository/DNS/Pages credentials, or malicious changes approved through protected review.
+- No registry authentication/write API, private-package access control, or mutable `cargo publish` endpoint.
+- No cryptographic proof connecting crates.io archives to an upstream Git repository beyond the exact crates.io row/checksum/archive identity.
+- No automatic re-fetch/reproduction of an already locked Git tag during `check`; the retained content-addressed archive/row, not continuing upstream tag availability, is operational authority.
+- No prevention of arbitrary network/process behavior by approved build scripts/proc macros/native tools/runtime code; isolate builds and credentials separately.
+- SHA-256/content addressing provides integrity, not availability; Pages/DNS/repository outages can stop clean builds.
+- Removed sparse rows remain visible as yanked historical evidence; shared active content can keep an identical archive hash downloadable.
+- Git dependencies bypass registry routing and are outside the supported dependency model for curated consumers and first-party publication.
+- Generated locks cannot distinguish an authorized reviewed repository change from a privileged actor replacing lock + matching objects before history review; branch protection, review, signed human commits if desired, release monotonicity, and retained releases provide the history boundary.
 
 ## Operational controls
 
-- Protect `main`; require CI + review; minimize Actions permissions; pin actions by full commit SHA.
-- Keep deployment repository public + provenance-free: never include consuming-project names, private paths/manifests/lockfiles, or discovery reports.
-- Compare each candidate site with prior `release.json` via `verify-monotonic` before deploy.
-- Preserve prior rendered releases/backups; periodically perform clean-cache recovery builds.
-- Enable GitHub secret scanning/push protection where plan supports it; never place registry tokens in this read-only architecture.
-- Treat a new package name, new version, new build-time edge, home change, or source change as a fresh trust decision.
+- Protect `main`; require CI + review; never force-push/bypass; minimize workflow permissions; pin actions by full commit SHA.
+- Keep catalog repository public + provenance-free: no consuming-project names, private paths/manifests/lockfiles, discovery output, credentials, or tokens.
+- Treat generated lock/object changes as security-sensitive; reject hand-edited locks and unexplained object churn.
+- Compare candidate site with prior deployed `release.json` via `verify-monotonic` before deployment.
+- Preserve prior rendered releases/backups; periodically verify live hashes and perform clean-cache recovery builds across all registry layers.
+- Confirm no reconciliation is active before manually deleting a stale sibling guard.
+- Enable GitHub secret scanning/push protection where available; this read-only architecture should contain no registry publication token.
