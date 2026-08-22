@@ -13,11 +13,11 @@ include = ["/src", "/Cargo.toml", "/README.md"]
 workspace = true
 
 [dependencies]
-anyhow = "1.0"
-semver = { version = "1.0", features = ["serde"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.10"
-toml = "0.9"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+anyhow = { version = "1.0", registry = "core" }
+semver = { version = "1.0", features = ["serde"], registry = "core" }
+serde = { version = "1.0", features = ["derive"], registry = "core" }
+serde_json = { version = "1.0", registry = "core" }
+sha2 = { version = "0.10", registry = "core" }
+toml = { version = "0.9", registry = "core" }
+tracing = { version = "0.1", registry = "core" }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"], registry = "core" }
