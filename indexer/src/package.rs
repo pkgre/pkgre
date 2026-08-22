@@ -693,6 +693,13 @@ fn prepare_cargo_home(cargo_home: &Path) -> Result<()> {
     write_new(&cargo_home.join("config.toml"), contents.as_bytes())
 }
 
+fn is_curated_registry_source(source: &str, registry_indexes: &[&str]) -> bool {
+    registry_indexes.contains(&source)
+        || source
+            .strip_prefix("registry+")
+            .is_some_and(|index| registry_indexes.contains(&index))
+}
+
 fn cargo_metadata(
     cargo: &Path,
     cargo_home: &Path,
@@ -753,9 +760,7 @@ fn cargo_metadata(
         .collect::<Vec<_>>();
     for dependency in &package.dependencies {
         let source = dependency.source.as_deref().unwrap_or("path");
-        let expected_source = source
-            .strip_prefix("registry+")
-            .is_some_and(|index| registry_indexes.contains(&index));
+        let expected_source = is_curated_registry_source(source, &registry_indexes);
         ensure!(
             expected_source,
             "first-party package dependency {} uses unsupported source {source:?}; use core, matrix, or pkgre explicitly",
@@ -1016,6 +1021,24 @@ impl Drop for TemporaryDirectory {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn curated_registry_source_accepts_sparse_metadata_forms() {
+        let indexes = ["sparse+https://example.test/core/"];
+        assert!(is_curated_registry_source(indexes[0], &indexes));
+        assert!(is_curated_registry_source(
+            "registry+sparse+https://example.test/core/",
+            &indexes
+        ));
+        assert!(!is_curated_registry_source(
+            "sparse+https://example.test/other/",
+            &indexes
+        ));
+        assert!(!is_curated_registry_source(
+            "registry+https://github.com/rust-lang/crates.io-index",
+            &indexes
+        ));
+    }
 
     #[test]
     fn generated_record_routes_renamed_dependency_identity() {
