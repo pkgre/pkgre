@@ -334,7 +334,7 @@ fn validate_registry_alias(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_https_repository(repository: &str) -> Result<()> {
+pub(crate) fn validate_https_repository(repository: &str) -> Result<()> {
     ensure!(
         repository.starts_with("https://"),
         "Git repository must use HTTPS: {repository:?}"
@@ -357,7 +357,7 @@ fn validate_https_repository(repository: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_git_tag(tag: &str) -> Result<()> {
+pub(crate) fn validate_git_tag(tag: &str) -> Result<()> {
     ensure!(!tag.is_empty(), "Git tag is empty");
     ensure!(tag.len() <= 255, "Git tag exceeds 255 bytes");
     ensure!(tag.is_ascii(), "Git tag is not ASCII");
@@ -384,7 +384,7 @@ fn validate_git_tag(tag: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_git_commit(commit: &str) -> Result<()> {
+pub(crate) fn validate_git_commit(commit: &str) -> Result<()> {
     ensure!(
         commit.len() == 40 || commit.len() == 64,
         "Git commit must be a full 40- or 64-character object ID"

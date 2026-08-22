@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::artifact::{require_absent, sha256_bytes};
-use crate::policy::{REGISTRIES, validate_package_name, validate_relative_path};
+use crate::policy::{
+    REGISTRIES, validate_git_commit, validate_git_tag, validate_https_repository,
+    validate_package_name, validate_relative_path,
+};
 use crate::schema::{Approval, SCHEMA_VERSION, Source};
 
 const REGISTRY: &str = "pkgre";
@@ -449,45 +452,10 @@ fn validate_proposal(proposal: &GitProposal) -> Result<()> {
         proposal.name == proposal.package,
         "proposal package name must match its approved name"
     );
-    ensure!(
-        proposal.repository.starts_with("https://")
-            && proposal.repository.is_ascii()
-            && !proposal.repository.ends_with('/')
-            && !proposal.repository["https://".len()..].contains(['@', '?', '#'])
-            && !proposal
-                .repository
-                .bytes()
-                .any(|byte| byte.is_ascii_whitespace()),
-        "proposal repository must be a credential-free canonical HTTPS URL"
-    );
-    validate_git_ref_component(&proposal.tag)?;
-    ensure!(
-        (proposal.commit.len() == 40 || proposal.commit.len() == 64)
-            && proposal
-                .commit
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-        "proposal commit must be a full lowercase hexadecimal object ID"
-    );
+    validate_https_repository(&proposal.repository)?;
+    validate_git_tag(&proposal.tag)?;
+    validate_git_commit(&proposal.commit)?;
     validate_relative_path(&proposal.subdir, true)?;
-    Ok(())
-}
-
-fn validate_git_ref_component(tag: &str) -> Result<()> {
-    ensure!(!tag.is_empty() && tag.is_ascii(), "invalid Git tag");
-    ensure!(
-        tag.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'/' | b'-')
-        }) && tag.as_bytes()[0].is_ascii_alphanumeric()
-            && !tag.contains("..")
-            && !tag.contains("//")
-            && !tag.contains("/.")
-            && !tag.ends_with(['.', '/'])
-            && tag
-                .split('/')
-                .all(|component| !component.as_bytes().ends_with(b".lock")),
-        "Git tag is not an unambiguous safe ref name"
-    );
     Ok(())
 }
 
