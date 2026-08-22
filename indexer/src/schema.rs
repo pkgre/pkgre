@@ -180,7 +180,7 @@ pub struct LockedPackage {
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum LockedSource {
     /// Exact bytes and metadata imported from crates.io.
-    CratesIo,
+    CratesIo {},
     /// First-party package produced from an immutable Git tag.
     GitTag {
         /// Credential-free HTTPS repository URL.
@@ -468,7 +468,7 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
             )
         })?;
         match &package.source {
-            LockedSource::CratesIo => ensure!(
+            LockedSource::CratesIo {} => ensure!(
                 *source_class == NameSource::Mirror,
                 "locked crates.io package {} has non-mirror name anchor",
                 package.name
@@ -520,7 +520,7 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
                     "removed package {name} {version} cannot be reactivated"
                 );
                 ensure!(
-                    matches!(package.source, LockedSource::CratesIo),
+                    matches!(package.source, LockedSource::CratesIo {}),
                     "desired mirror {name} {version} has a different locked source"
                 );
             }
@@ -570,7 +570,7 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
         .iter()
         .filter(|package| package.state == PackageState::Active)
         .filter_map(|package| match package.source {
-            LockedSource::CratesIo => {
+            LockedSource::CratesIo {} => {
                 Some((package.name.as_str(), version_identity(&package.version)))
             }
             LockedSource::GitTag { .. } => None,
@@ -598,7 +598,7 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
         .filter(|package| package.state == PackageState::Active)
         .filter_map(|package| match &package.source {
             LockedSource::GitTag { tag, .. } => Some((package.name.as_str(), tag.as_str())),
-            LockedSource::CratesIo => None,
+            LockedSource::CratesIo {} => None,
         })
         .collect::<BTreeSet<_>>();
     let desired_tags = input
@@ -745,7 +745,7 @@ fn desired_names(file: &RegistryFile) -> Result<BTreeMap<String, NameSource>> {
 
 fn source_from_lock(source: &LockedSource) -> Source {
     match source {
-        LockedSource::CratesIo => Source::CratesIo,
+        LockedSource::CratesIo {} => Source::CratesIo,
         LockedSource::GitTag {
             git,
             tag,

@@ -271,7 +271,7 @@ fn validate_approval(
     Ok(())
 }
 
-fn validate_tag_version(tag: &str, version: &Version) -> Result<()> {
+pub(crate) fn validate_tag_version(tag: &str, version: &Version) -> Result<()> {
     let component = tag.rsplit('/').next().expect("validated tag is nonempty");
     let plain = version.to_string();
     ensure!(
@@ -425,10 +425,6 @@ pub(crate) fn validate_git_object_id(value: &str) -> Result<()> {
         "Git object ID must be lowercase hexadecimal"
     );
     Ok(())
-}
-
-pub(crate) fn validate_git_commit(commit: &str) -> Result<()> {
-    validate_git_object_id(commit)
 }
 
 fn package_collision_key(name: &str) -> String {
