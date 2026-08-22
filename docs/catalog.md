@@ -1,146 +1,174 @@
-# Catalog schema v1
+# Catalog schema v2
 
 ## Principles
 
-- Declarative convergence: committed catalog = complete desired registry state; no mutable registry API or `cargo publish` operation.
-- Exact approval identity: `(registry,name,version,archive_sha256,index_record_sha256,immutable source)`.
-- Explicit routing: every package name referenced by any approved row has exactly one home; no implicit fallback to `core` or crates.io.
-- Exact artifacts: imported crates.io `.crate` bytes + selected un-routed sparse-index row are retained unchanged; first-party artifacts are reproduced from an immutable Git tag/commit with pinned Cargo.
-- Deterministic output: one catalog + one artifact map → one byte-identical three-registry site.
+- Human authority: one committed `<registry>.toml` per registry declares exact desired mirrored versions + immutable first-party Git tags; no imperative publish API.
+- Generated evidence: adjacent canonical `<registry>.lock` permanently binds package home/source class, Cargo identity, lifecycle state, exact artifact hashes, and origin provenance.
+- Declarative convergence: `pkgre-indexer lock` resolves only new desired identities, then transactionally makes locks + objects equal the declaration/history.
+- Irreversible history: existing immutable lock fields are preserved; only additions + `active→removed` are valid; removed identities cannot reactivate.
+- Explicit routing: every reserved package name has one permanent registry home; every dependency edge is rewritten to that home + checked against the fixed layer policy.
+- Exact artifacts: mirrored `.crate` bytes + selected crates.io sparse row remain byte-identical to upstream; Git-tag packages are reproduced twice with pinned Cargo.
 
-## Layout
+## Managed layout
 
 ```text
-catalog/
-├── registries.toml
-├── homes.toml
-├── approvals/
-│   ├── core.toml
-│   ├── matrix.toml
-│   └── pkgre.toml
-└── upstream/
-    ├── core/<cargo-index-path>/<version>.json
-    └── matrix/<cargo-index-path>/<version>.json
-artifacts/
-├── artifacts.toml
-├── archives/<archive-sha256>.crate
-└── records/<index-record-sha256>.json
+registry/
+├── core.toml
+├── core.lock
+├── matrix.toml
+├── matrix.lock
+├── pkgre.toml
+├── pkgre.lock
+└── objects/
+    ├── crates/<archive-sha256>.crate
+    └── rows/<source-row-sha256>.json
 ```
 
-Approval files may be split into any number of `.toml` files; every direct child of `approvals/` must be a real regular `.toml` file. Artifact paths are relative to `artifacts.toml`; crates.io snapshot paths are relative to the catalog root. Symlinks + special files are rejected at trust boundaries.
+`registry/` is exclusive indexer-managed state: only real regular registry `.toml` files, adjacent real regular `.lock` files, and the real `objects/` directory are accepted. Orphan locks, unrelated files/directories, symlinks, and special files fail before network resolution. Keep proposals, review notes, scripts, and rendered sites outside this directory.
 
-## `registries.toml`
-
-The topology is policy-frozen in schema v1:
+## Human registry file
 
 ```toml
-schema = 1
-cname = "rust.pkg.re"
-download = "https://rust.pkg.re/crates/{sha256-checksum}.crate"
-cargo-version = "1.95.0"
+schema = 2
 
-[[registries]]
+[registry]
 name = "core"
 index = "sparse+https://rust.pkg.re/core/"
+download = "https://rust.pkg.re/crates/{sha256-checksum}.crate"
 may-depend-on = ["core"]
+cargo-version = "1.95.0"
 
-[[registries]]
-name = "matrix"
-index = "sparse+https://rust.pkg.re/matrix/"
-may-depend-on = ["core", "matrix"]
+[mirror]
+serde = ["1.0.228", "1.0.229"]
+reserved-package = []
+```
 
-[[registries]]
+First-party declaration:
+
+```toml
+schema = 2
+
+[registry]
 name = "pkgre"
 index = "sparse+https://rust.pkg.re/pkgre/"
+download = "https://rust.pkg.re/crates/{sha256-checksum}.crate"
 may-depend-on = ["core", "matrix", "pkgre"]
+cargo-version = "1.95.0"
+
+[publish.pkgre-indexer]
+git = "https://github.com/pkgre/pkgre"
+tags = ["indexer/v0.2.0"]
 ```
 
-## `homes.toml`
+Rules:
 
-One explicit registry per package name, including dependencies referenced only by optional/dev/build/target-specific edges:
+- Filename stem must equal `[registry].name`; schema, fields, aliases, URLs, download template, layer policy, and Cargo version are strict.
+- Fixed topology: `core→core`; `matrix→core|matrix`; `pkgre→core|matrix|pkgre`.
+- `[mirror]`: map package name → exact semver list; accepted only in `core`/`matrix`; bytes come from crates.io.
+- `[publish]`: map package name → credential-free HTTPS Git URL + literal tag list; accepted only in `pkgre`.
+- Package names are permanent reservations under Cargo ASCII case + `-`/`_` normalization; a name cannot move registries or switch `mirror`/`publish` source class.
+- Retain a removed mirror key with `[]`; retain a removed publisher key, unchanged `git`, with `tags = []`.
+- Build metadata does not distinguish Cargo registry version identities.
 
-```toml
-schema = 1
+## Generated lock
 
-[homes]
-anyhow = "core"
-matrix-sdk = "matrix"
-pkgre-indexer = "pkgre"
-serde = "core"
-```
-
-Rules: names are ASCII Cargo package names; comparison rejects global ASCII-case + `-`/`_` normalization collisions; every approval must match its home; every dependency identity must have a home. For renamed dependencies, routing uses Cargo's `package` identity rather than the local alias in `name`.
-
-## Approval: crates.io import
+Canonical lock shape:
 
 ```toml
-schema = 1
-registry = "core"
+schema = 2
+
+[registry]
+name = "core"
+index = "sparse+https://rust.pkg.re/core/"
+download = "https://rust.pkg.re/crates/{sha256-checksum}.crate"
+
+[[names]]
+name = "serde"
+source = "mirror"
 
 [[packages]]
 name = "serde"
 version = "1.0.229"
-archive_sha256 = "<64 lowercase hex>"
-index_record_sha256 = "<64 lowercase hex>"
-yanked = false
-source = { kind = "crates-io", index_record = "upstream/core/se/rd/serde/1.0.229.json" }
-```
-
-`archive_sha256` must equal upstream row `cksum`. `index_record_sha256` binds the exact selected un-routed crates.io row. Build metadata does not distinguish registry versions. The same snapshot path cannot back multiple approvals.
-
-## Approval: first-party Git tag
-
-```toml
-schema = 1
-registry = "pkgre"
-
-[[packages]]
-name = "pkgre-indexer"
-version = "0.1.0"
-archive_sha256 = "<64 lowercase hex>"
-index_record_sha256 = "<64 lowercase hex>"
-yanked = false
+state = "active"
+crate-sha256 = "<64 lowercase hex>"
+source-row-sha256 = "<64 lowercase hex>"
+index-row-sha256 = "<64 lowercase hex>"
 
 [packages.source]
-kind = "git-tag"
-repository = "https://github.com/pkgre/pkgre"
-tag = "indexer/v0.1.0"
-commit = "<full lowercase peeled commit object ID>"
-package = "pkgre-indexer"
-subdir = "indexer"
+kind = "crates-io"
 ```
 
-Only `pkgre` accepts Git-tag sources; only `core`/`matrix` accept crates.io imports. Repository URL must be credential-free HTTPS. Tag + full peeled commit are both bound. Workspace package must equal approved name, manifest version must equal approved version, and manifest must declare exactly `publish = ["pkgre"]`.
-
-## `artifacts.toml`
+Git-tag provenance additionally records:
 
 ```toml
-schema = 1
-
-[[artifacts]]
-registry = "core"
-name = "serde"
-version = "1.0.229"
-archive = "archives/<archive-sha256>.crate"
-index_record = "records/<index-record-sha256>.json"
+[packages.source]
+kind = "git-tag"
+git = "https://github.com/pkgre/pkgre"
+tag = "indexer/v0.2.0"
+tag-oid = "<full Git object ID>"
+commit = "<full peeled commit object ID>"
+package = "pkgre-indexer"
+path = "indexer"
+cargo-version = "1.95.0"
 ```
 
-The map is one-to-one with approvals: missing + extra entries fail. Every archive/row is rehashed; row name/version/checksum/known Cargo fields are validated. A crates.io row must also byte-match its catalog snapshot.
+Hash meanings:
 
-## Rendering
+| Field | Binds |
+|---|---|
+| `crate-sha256` | exact `.crate` archive bytes; also Cargo row `cksum` + content-addressed download identity |
+| `source-row-sha256` | exact un-routed crates.io row or deterministically generated Git-package row |
+| `index-row-sha256` | canonical routed row with `yanked = false`; removal does not alter this immutable active-row identity |
 
-For each un-routed dependency row:
+Locks are generated artifacts: never hand-edit them. Reconciliation copies every prior immutable package entry verbatim except the one-way state transition; local preflight verifies canonical form, provenance shape, object hashes, source-row identity/checksum, and routed-row hash before any fetch. Source control review + `verify-monotonic` bind updates to already deployed history.
+
+## Reconciliation
+
+`pkgre-indexer lock registry`:
+
+1. Acquire sibling guard `.registry.pkgre-lock`; concurrent or stale guard fails closed.
+2. Load human files + optional locks; validate all old anchors, tombstones, topology, root entries, retained objects, source rows, and routed rows locally.
+3. Resolve only desired identities absent from permanent history: exact crates.io version or declared Git tag.
+4. Route dependency rows against permanent package homes; reject missing homes or forbidden registry-layer edges.
+5. Generate next canonical locks; preserve old entries; mark no-longer-desired active entries `removed`.
+6. Build complete sibling staging catalog; retain every source-row object; retain archive objects used by ≥1 active identity; omit unshared removed archives.
+7. Strictly reload, object-verify, and test-render staging.
+8. Install by same-parent rename with rollback; sync files/directories; remove guard.
+
+A successful second run with unchanged declarations is an exact no-op. A process crash can leave `.registry.pkgre-lock`; after confirming no reconciliation is active, remove that guard manually before retrying. Staging/backup siblings use `.registry.pkgre-*` names and are not valid catalog entries.
+
+## Mirror materialization
+
+For each new `[mirror]` identity, the resolver fetches `https://index.crates.io/<Cargo index path>` + `https://static.crates.io/crates/<name>/<name>-<version>.crate` over HTTPS, selects exactly one matching sparse row, rejects upstream-yanked rows, validates known Cargo metadata, and requires archive SHA-256 = row `cksum`. The exact selected row including trailing newline and exact archive bytes become content-addressed objects; no archive repacking or dependency-metadata rewriting occurs in the source object.
+
+## First-party Git-tag materialization
+
+For each new `[publish]` tag, package version/path/tag object/peeled commit are discovered and locked rather than supplied by human TOML. Preconditions:
+
+- Tag final component equals package version or `v<version>`; e.g. `indexer/v0.2.0` for version `0.2.0`.
+- Tagged workspace contains exactly one selected package name; its manifest declares exactly `publish = ["pkgre"]`.
+- Every dependency, including optional/dev/build/target-specific dependencies, explicitly names canonical registry `core`, `matrix`, or `pkgre`; path/Git/crates.io/unknown sources fail.
+- Checkout has no submodules, symlinks, special files, unsafe paths, manifest mismatch, or dirty generated changes.
+- Pinned Cargo selection: absolute `PKGRE_CARGO` when present, otherwise `rustup which --toolchain <cargo-version> cargo`; exact `cargo <version> ...` prefix required.
+- `cargo metadata --no-deps --locked` runs in an isolated Cargo home with crates.io replaced by an empty directory.
+- `cargo package --no-verify --locked` runs twice with distinct targets; archives must be byte-identical.
+
+The generated source row records normalized package metadata; package identity/version/path, tag object, peeled commit, Cargo version, archive hash, source-row hash, and routed-row hash become permanent.
+
+## Routing + rendering
+
+For each dependency:
 
 ```text
 identity = dependency.package ?? dependency.name
-home = homes[identity]                        # required
-registry = null                               # same home
-registry = canonical sparse URL for home      # cross-home
+home = permanent home[identity]                 # required
+registry = null                                 # same home
+registry = canonical sparse URL for home        # cross-home
 ```
 
-Every edge must satisfy source registry `may-depend-on`. Renderer changes only dependency `registry` fields + curator-owned `yanked`, then serializes compact JSON lines sorted by semantic version. Unknown top-level row fields are retained; malformed known fields fail.
+Routing covers normal/dev/build/optional/target-specific and renamed dependencies, overwrites any source-row registry value, and rejects an edge outside the source registry's allowed layers. Unknown top-level row fields are retained; malformed known fields fail. Active routed rows are hashed permanently; a removed row reuses the same routed content with only `yanked = true`.
 
-Output:
+Rendered output:
 
 ```text
 site/
@@ -151,7 +179,17 @@ site/
 ├── matrix/config.json
 ├── pkgre/config.json
 ├── <registry>/<Cargo sparse-index package paths>
-└── crates/<archive-sha256>.crate
+└── crates/<active-archive-sha256>.crate
 ```
 
-`release.json` is the deployment/immutability manifest. Monotonic verification permits new identities + `yanked` changes; rejects removal or mutation of any prior registry/name/version/archive hash/row hash/source.
+`release.json` is the deployment-history manifest. `verify-monotonic` permits new identities + `active→removed`; requires identical topology + prior identity/archive/source-row/source provenance; forbids package disappearance, immutable mutation, and `removed→active`.
+
+## Removal
+
+Removal is not mutable curator yanking:
+
+1. Delete the version/tag from its desired list; keep the package key.
+2. Run `lock`; the permanent lock entry changes only `state = "active"` → `state = "removed"`.
+3. Source-row evidence remains in `objects/rows/`; archive disappears from `objects/crates/` unless another active identity has the same content hash.
+4. Rendered index row remains as `yanked = true`; no archive is served for that identity unless shared by active content.
+5. Re-adding the version/tag fails permanently; publish a new version/tag instead.
