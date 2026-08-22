@@ -361,6 +361,7 @@ fn materialize(
     let temporary = TemporaryDirectory::new("pkgre-git-package")?;
     let repository = temporary.path().join("repository");
     fetch_tag(proposal, &repository, fetch_repository, allow_file)?;
+    ensure_safe_checkout_tree(&repository)?;
     ensure_clean_checkout(&repository)?;
     let package_directory = checked_subdirectory(&repository, &proposal.subdir)?;
     let manifest_path = package_directory.join("Cargo.toml");
@@ -567,6 +568,52 @@ fn fetch_tag(
         !gitlinks.lines().any(|line| line.starts_with("160000 ")),
         "Git-tag checkout contains unsupported submodules"
     );
+    Ok(())
+}
+
+fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
+    inspect_checkout_directory(repository, repository)
+}
+
+fn inspect_checkout_directory(repository: &Path, directory: &Path) -> Result<()> {
+    let mut entries = fs::read_dir(directory)
+        .with_context(|| format!("read Git checkout directory {}", directory.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("read entries below {}", directory.display()))?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let name = entry.file_name();
+        let name = name.to_str().with_context(|| {
+            format!(
+                "Git checkout contains a non-UTF-8 path below {}",
+                directory.display()
+            )
+        })?;
+        if directory == repository && name == ".git" {
+            continue;
+        }
+        ensure!(
+            name.is_ascii()
+                && !name
+                    .bytes()
+                    .any(|byte| byte.is_ascii_control() || byte == b'\\')
+                && !name.eq_ignore_ascii_case(".git"),
+            "Git checkout contains an unsafe path component {name:?} below {}",
+            directory.display()
+        );
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect Git checkout path {}", path.display()))?;
+        if metadata.file_type().is_dir() {
+            inspect_checkout_directory(repository, &path)?;
+        } else {
+            ensure!(
+                metadata.file_type().is_file(),
+                "Git checkout contains a symlink or special file: {}",
+                path.display()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1207,6 +1254,16 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checkout_tree_rejects_symlinks() {
+        let temporary = TemporaryDirectory::new("pkgre-symlink-test").unwrap();
+        fs::write(temporary.path().join("real"), "contents").unwrap();
+        std::os::unix::fs::symlink("real", temporary.path().join("link")).unwrap();
+        let error = ensure_safe_checkout_tree(temporary.path()).unwrap_err();
+        assert!(format!("{error:#}").contains("symlink or special file"));
     }
 
     #[test]
