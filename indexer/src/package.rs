@@ -115,6 +115,21 @@ struct GeneratedDependency {
 }
 
 #[derive(Debug, Serialize)]
+struct CandidateArtifacts<'a> {
+    schema: u32,
+    artifacts: [CandidateArtifact<'a>; 1],
+}
+
+#[derive(Debug, Serialize)]
+struct CandidateArtifact<'a> {
+    registry: &'static str,
+    name: &'a str,
+    version: &'a Version,
+    archive: PathBuf,
+    index_record: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
 struct CandidateApproval<'a> {
     schema: u32,
     registry: &'static str,
@@ -189,10 +204,30 @@ pub fn candidate_git(
             },
         }],
     };
-    let approval_toml =
-        toml::to_string_pretty(&approval).context("serialize candidate approval")?;
-    write_new(&output.join("approval.toml"), approval_toml.as_bytes())?;
-    Ok(materialization)
+    let result = (|| {
+        let approval_toml =
+            toml::to_string_pretty(&approval).context("serialize candidate approval")?;
+        write_new(&output.join("approval.toml"), approval_toml.as_bytes())?;
+        let artifacts = CandidateArtifacts {
+            schema: SCHEMA_VERSION,
+            artifacts: [CandidateArtifact {
+                registry: REGISTRY,
+                name: &proposal.name,
+                version: &proposal.version,
+                archive: PathBuf::from("archives")
+                    .join(format!("{}.crate", materialization.archive_sha256)),
+                index_record: PathBuf::from("records")
+                    .join(format!("{}.json", materialization.index_record_sha256)),
+            }],
+        };
+        let artifacts_toml =
+            toml::to_string_pretty(&artifacts).context("serialize candidate artifact map")?;
+        write_new(&output.join("artifacts.toml"), artifacts_toml.as_bytes())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(output);
+    }
+    result.map(|()| materialization)
 }
 
 /// Reproduces one approved Git-tag package and fails unless both exact hashes match the catalog.
