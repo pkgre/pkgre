@@ -198,6 +198,12 @@ fn verify_artifact(approval: &Approval, artifact: &Artifact, catalog: &Catalog) 
     );
     let record = IndexRecord::parse(&record_bytes)
         .with_context(|| format!("parse index record {}", artifact.index_record.display()))?;
+    record.validate_structure().with_context(|| {
+        format!(
+            "validate index record structure {}",
+            artifact.index_record.display()
+        )
+    })?;
     ensure!(
         record.name()? == approval.name,
         "index record name mismatch for {} {}",

@@ -2,8 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Context, Result, bail};
-use semver::Version;
+use anyhow::{Context, Result, bail, ensure};
+use semver::{Version, VersionReq};
 use serde_json::{Map, Value};
 
 /// Parsed Cargo registry index record that retains all upstream fields.
@@ -52,6 +52,111 @@ impl IndexRecord {
     /// Returns an error when the mandatory field is absent or not a string.
     pub fn checksum(&self) -> Result<&str> {
         string_field(&self.value, "cksum")
+    }
+
+    /// Returns whether the upstream record is yanked.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the mandatory field is absent or not a Boolean.
+    pub fn yanked(&self) -> Result<bool> {
+        self.value
+            .get("yanked")
+            .context("index record missing yanked")?
+            .as_bool()
+            .context("index record yanked must be a Boolean")
+    }
+
+    /// Validates the Cargo index fields consumed or preserved by the renderer.
+    ///
+    /// Unknown top-level fields remain permitted and are retained byte-for-byte until rendering, preserving forward-compatible crates.io metadata. Known fields fail closed on malformed values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing or malformed mandatory fields, invalid dependency metadata, invalid feature maps, or unsupported index schema versions.
+    pub fn validate_structure(&self) -> Result<()> {
+        let name = self.name()?;
+        ensure_nonempty_string(name, "index record name")?;
+        self.version()?;
+        let checksum = self.checksum()?;
+        ensure!(
+            checksum.len() == 64
+                && checksum
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "index record cksum must be lowercase hexadecimal SHA-256"
+        );
+        self.yanked()?;
+        validate_feature_map(&self.value, "features")?;
+        if self.value.contains_key("features2") {
+            validate_feature_map(&self.value, "features2")?;
+        }
+        if let Some(value) = self.value.get("links") {
+            ensure!(
+                value.is_null() || value.as_str().is_some(),
+                "index record links must be null or a string"
+            );
+        }
+        if let Some(value) = self.value.get("rust_version") {
+            ensure!(
+                value.is_null() || value.as_str().is_some(),
+                "index record rust_version must be null or a string"
+            );
+        }
+        if let Some(value) = self.value.get("v") {
+            ensure!(value.as_u64() == Some(2), "unsupported index schema v");
+        }
+
+        let dependencies = self
+            .value
+            .get("deps")
+            .context("index record missing deps")?
+            .as_array()
+            .context("index record deps must be an array")?;
+        for dependency in dependencies {
+            let object = dependency
+                .as_object()
+                .context("index dependency must be an object")?;
+            ensure_nonempty_string(string_field(object, "name")?, "dependency name")?;
+            let requirement = string_field(object, "req")?;
+            VersionReq::parse(requirement)
+                .with_context(|| format!("invalid dependency requirement {requirement:?}"))?;
+            string_array_field(object, "features")?;
+            bool_field(object, "optional")?;
+            bool_field(object, "default_features")?;
+            optional_string_field(object, "target")?;
+            let kind = object
+                .get("kind")
+                .context("index dependency missing kind")?;
+            ensure!(
+                matches!(kind, Value::Null)
+                    || kind
+                        .as_str()
+                        .is_some_and(|value| matches!(value, "normal" | "dev" | "build")),
+                "index dependency kind must be null, normal, dev, or build"
+            );
+            optional_string_field(object, "registry")?;
+            optional_string_field(object, "package")?;
+            if let Some(value) = object.get("artifact") {
+                ensure!(
+                    value.is_null() || value.as_str().is_some(),
+                    "index dependency artifact must be null or a string"
+                );
+            }
+            if let Some(value) = object.get("bindep_target") {
+                ensure!(
+                    value.is_null() || value.as_str().is_some(),
+                    "index dependency bindep_target must be null or a string"
+                );
+            }
+            if let Some(value) = object.get("lib") {
+                ensure!(
+                    value.is_null() || value.as_bool().is_some(),
+                    "index dependency lib must be null or a Boolean"
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Replaces curator-owned yank state.
@@ -136,6 +241,62 @@ pub fn index_path(name: &str) -> String {
     }
 }
 
+fn bool_field(object: &Map<String, Value>, name: &str) -> Result<bool> {
+    object
+        .get(name)
+        .with_context(|| format!("index dependency missing {name}"))?
+        .as_bool()
+        .with_context(|| format!("index dependency {name} must be a Boolean"))
+}
+
+fn optional_string_field(object: &Map<String, Value>, name: &str) -> Result<()> {
+    let Some(value) = object.get(name) else {
+        return Ok(());
+    };
+    ensure!(
+        value.is_null() || value.as_str().is_some(),
+        "index dependency {name} must be null or a string"
+    );
+    Ok(())
+}
+
+fn string_array_field(object: &Map<String, Value>, name: &str) -> Result<()> {
+    let values = object
+        .get(name)
+        .with_context(|| format!("index dependency missing {name}"))?
+        .as_array()
+        .with_context(|| format!("index dependency {name} must be an array"))?;
+    ensure!(
+        values.iter().all(|value| value.as_str().is_some()),
+        "index dependency {name} must contain only strings"
+    );
+    Ok(())
+}
+
+fn validate_feature_map(object: &Map<String, Value>, name: &str) -> Result<()> {
+    let features = object
+        .get(name)
+        .with_context(|| format!("index record missing {name}"))?
+        .as_object()
+        .with_context(|| format!("index record {name} must be an object"))?;
+    for (feature, values) in features {
+        ensure_nonempty_string(feature, "feature name")?;
+        let values = values
+            .as_array()
+            .with_context(|| format!("feature {feature:?} must contain an array"))?;
+        ensure!(
+            values.iter().all(|value| value.as_str().is_some()),
+            "feature {feature:?} must contain only strings"
+        );
+    }
+    Ok(())
+}
+
+fn ensure_nonempty_string(value: &str, description: &str) -> Result<()> {
+    ensure!(!value.is_empty(), "{description} must not be empty");
+    Ok(())
+}
+
 fn string_field<'a>(object: &'a Map<String, Value>, name: &str) -> Result<&'a str> {
     object
         .get(name)
@@ -154,6 +315,21 @@ mod tests {
         assert_eq!(index_path("ab"), "2/ab");
         assert_eq!(index_path("AbC"), "3/a/abc");
         assert_eq!(index_path("Serde"), "se/rd/serde");
+    }
+
+    #[test]
+    fn known_index_fields_are_validated_strictly() {
+        let valid = IndexRecord::parse(
+            br#"{"name":"demo","vers":"1.0.0","deps":[{"name":"dep","req":"^1","features":[],"optional":false,"default_features":true,"target":null,"kind":"normal"}],"cksum":"0000000000000000000000000000000000000000000000000000000000000000","features":{},"yanked":false}"#,
+        )
+        .unwrap();
+        valid.validate_structure().unwrap();
+
+        let malformed = IndexRecord::parse(
+            br#"{"name":"demo","vers":"1.0.0","deps":[{"name":"dep","req":"^1","features":[],"optional":"no","default_features":true,"target":null,"kind":"normal"}],"cksum":"0000000000000000000000000000000000000000000000000000000000000000","features":{},"yanked":false}"#,
+        )
+        .unwrap();
+        assert!(malformed.validate_structure().is_err());
     }
 
     #[test]
