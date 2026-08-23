@@ -4,9 +4,34 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, bail, ensure};
 use semver::{Version, VersionReq};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::schema::PackageHome;
+
+/// One dependency edge from a Cargo index record, normalized for stable comparison.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct IndexDependency {
+    /// Dependency alias used by the manifest.
+    pub name: String,
+    /// Actual package identity after Cargo rename handling.
+    pub package: String,
+    /// Semantic-version requirement.
+    pub requirement: String,
+    /// Enabled dependency features in canonical order.
+    pub features: Vec<String>,
+    /// Whether the edge is optional.
+    pub optional: bool,
+    /// Whether default features are enabled.
+    pub default_features: bool,
+    /// Optional target expression.
+    pub target: Option<String>,
+    /// Cargo dependency kind (`normal`, `dev`, or `build`).
+    pub kind: String,
+    /// Upstream registry marker before pkgre routing.
+    pub registry: Option<String>,
+}
 
 /// Parsed Cargo registry index record that retains all upstream fields.
 #[derive(Clone, Debug)]
@@ -67,6 +92,102 @@ impl IndexRecord {
             .context("index record missing yanked")?
             .as_bool()
             .context("index record yanked must be a Boolean")
+    }
+
+    /// Returns the original crates.io publication timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `pubtime` is absent or not a string. Parsing and UTC canonicalization are update-policy responsibilities because first-party rows intentionally omit this field.
+    pub fn pubtime(&self) -> Result<&str> {
+        string_field(&self.value, "pubtime")
+    }
+
+    /// Returns normalized dependency metadata in stable order.
+    ///
+    /// Renamed dependencies are keyed by their actual `package` identity rather than their local alias.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed dependency metadata.
+    pub fn dependencies(&self) -> Result<Vec<IndexDependency>> {
+        let dependencies = self
+            .value
+            .get("deps")
+            .context("index record missing deps")?
+            .as_array()
+            .context("index record deps must be an array")?;
+        let mut normalized = Vec::with_capacity(dependencies.len());
+        for dependency in dependencies {
+            let object = dependency
+                .as_object()
+                .context("index dependency must be an object")?;
+            let name = string_field(object, "name")?.to_owned();
+            let package = match object.get("package") {
+                None | Some(Value::Null) => name.clone(),
+                Some(Value::String(value)) => value.clone(),
+                Some(_) => bail!("dependency package must be null or a string"),
+            };
+            let requirement = string_field(object, "req")?.to_owned();
+            VersionReq::parse(&requirement)
+                .with_context(|| format!("invalid dependency requirement {requirement:?}"))?;
+            let mut features = string_array_field(object, "features")?
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            features.sort();
+            ensure!(
+                features.windows(2).all(|window| window[0] != window[1]),
+                "index dependency repeats a feature"
+            );
+            let kind = match object.get("kind") {
+                Some(Value::Null) | None => "normal".to_owned(),
+                Some(Value::String(value))
+                    if matches!(value.as_str(), "normal" | "dev" | "build") =>
+                {
+                    value.clone()
+                }
+                Some(_) => bail!("index dependency kind must be null, normal, dev, or build"),
+            };
+            normalized.push(IndexDependency {
+                name,
+                package,
+                requirement,
+                features,
+                optional: bool_field(object, "optional")?,
+                default_features: bool_field(object, "default_features")?,
+                target: nullable_string_field(object, "target")?,
+                kind,
+                registry: nullable_string_field(object, "registry")?,
+            });
+        }
+        normalized.sort();
+        Ok(normalized)
+    }
+
+    /// Returns the package's native-link identifier when present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `links` is malformed.
+    pub fn links(&self) -> Result<Option<&str>> {
+        match self.value.get("links") {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(value)) => Ok(Some(value)),
+            Some(_) => bail!("index record links must be null or a string"),
+        }
+    }
+
+    /// Returns whether this record has at least one build dependency.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed dependency metadata.
+    pub fn has_build_dependencies(&self) -> Result<bool> {
+        Ok(self
+            .dependencies()?
+            .iter()
+            .any(|dependency| dependency.kind == "build"))
     }
 
     /// Validates the Cargo index fields consumed or preserved by the renderer.
@@ -265,17 +386,28 @@ fn optional_string_field(object: &Map<String, Value>, name: &str) -> Result<()> 
     Ok(())
 }
 
-fn string_array_field(object: &Map<String, Value>, name: &str) -> Result<()> {
+fn nullable_string_field(object: &Map<String, Value>, name: &str) -> Result<Option<String>> {
+    match object.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => bail!("index dependency {name} must be null or a string"),
+    }
+}
+
+fn string_array_field<'a>(object: &'a Map<String, Value>, name: &str) -> Result<Vec<&'a str>> {
     let values = object
         .get(name)
         .with_context(|| format!("index dependency missing {name}"))?
         .as_array()
         .with_context(|| format!("index dependency {name} must be an array"))?;
-    ensure!(
-        values.iter().all(|value| value.as_str().is_some()),
-        "index dependency {name} must contain only strings"
-    );
-    Ok(())
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .with_context(|| format!("index dependency {name} must contain only strings"))
+        })
+        .collect()
 }
 
 fn validate_feature_map(object: &Map<String, Value>, name: &str) -> Result<()> {
@@ -382,5 +514,39 @@ mod tests {
             record.value["deps"][0]["registry"],
             "sparse+https://example.test/two/"
         );
+    }
+
+    #[test]
+    fn dependency_metadata_is_normalized_by_actual_package_identity() {
+        let record = IndexRecord::parse(
+            br#"{"name":"demo","vers":"1.0.0","deps":[{"name":"z-alias","package":"real-z","req":"^1","features":["two","one"],"optional":false,"default_features":true,"target":null,"kind":"normal","registry":null},{"name":"a-build","req":"=2.0.0","features":[],"optional":true,"default_features":false,"target":"cfg(unix)","kind":"build","registry":"https://example.test/index"}],"cksum":"0000000000000000000000000000000000000000000000000000000000000000","features":{},"yanked":false,"pubtime":"2026-01-02T03:04:05Z","links":"demo"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(record.pubtime().unwrap(), "2026-01-02T03:04:05Z");
+        assert_eq!(record.links().unwrap(), Some("demo"));
+        assert!(record.has_build_dependencies().unwrap());
+        let dependencies = record.dependencies().unwrap();
+        assert_eq!(dependencies[0].name, "a-build");
+        assert_eq!(dependencies[0].package, "a-build");
+        assert_eq!(dependencies[0].kind, "build");
+        assert_eq!(dependencies[1].name, "z-alias");
+        assert_eq!(dependencies[1].package, "real-z");
+        assert_eq!(dependencies[1].features, ["one", "two"]);
+    }
+
+    #[test]
+    fn publication_and_dependency_metadata_fail_closed() {
+        let missing_pubtime = IndexRecord::parse(
+            br#"{"name":"demo","vers":"1.0.0","deps":[],"cksum":"0000000000000000000000000000000000000000000000000000000000000000","features":{},"yanked":false}"#,
+        )
+        .unwrap();
+        assert!(missing_pubtime.pubtime().is_err());
+
+        let malformed_package = IndexRecord::parse(
+            br#"{"name":"demo","vers":"1.0.0","deps":[{"name":"alias","package":false,"req":"^1","features":[],"optional":false,"default_features":true,"target":null,"kind":"normal"}],"cksum":"0000000000000000000000000000000000000000000000000000000000000000","features":{},"yanked":false}"#,
+        )
+        .unwrap();
+        assert!(malformed_package.dependencies().is_err());
     }
 }
