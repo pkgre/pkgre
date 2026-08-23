@@ -1,5 +1,6 @@
 //! Safe crates.io mirror update planning, review, and admission.
 
+mod admission;
 mod api;
 mod approval;
 mod archive;
@@ -9,6 +10,7 @@ mod source;
 mod time;
 mod workflow;
 
+pub(crate) use admission::{validate_admission_inventory, validate_admission_tree_structure};
 pub use api::parse_crates_io_api_evidence;
 pub use approval::{approve_update_plan, required_approval_kind};
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};

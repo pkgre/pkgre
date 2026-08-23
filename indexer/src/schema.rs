@@ -383,7 +383,9 @@ impl Catalog {
             validate_input_for_update(input)?;
             validate_input_strict(input)?;
         }
-        catalog_from_inputs(root, &inputs)
+        let catalog = catalog_from_inputs(root, &inputs)?;
+        crate::update::validate_admission_inventory(&catalog)?;
+        Ok(catalog)
     }
 }
 
@@ -533,7 +535,7 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
     for path in paths {
         let metadata = fs::symlink_metadata(path)
             .with_context(|| format!("inspect catalog entry {}", path.display()))?;
-        if matches!(path.file_name(), Some(name) if name == OsStr::new("objects") || name == OsStr::new("categories"))
+        if matches!(path.file_name(), Some(name) if name == OsStr::new("objects") || name == OsStr::new("categories") || name == OsStr::new("_reviews"))
         {
             ensure!(
                 metadata.file_type().is_dir(),
@@ -562,12 +564,13 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
                 );
             }
             _ => bail!(
-                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files, categories/, and objects/ are allowed",
+                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files, categories/, objects/, and _reviews/ are allowed",
                 root.display(),
                 path.display()
             ),
         }
     }
+    crate::update::validate_admission_tree_structure(root)?;
     Ok(())
 }
 

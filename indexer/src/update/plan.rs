@@ -389,18 +389,36 @@ pub fn catalog_fingerprint(root: &Path) -> Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn validate_update_plan(plan: &UpdatePlan) -> Result<()> {
+pub(crate) fn validate_update_plan(plan: &UpdatePlan) -> Result<()> {
+    validate_update_plan_with(plan, true)
+}
+
+pub(crate) fn validate_historical_update_plan(plan: &UpdatePlan) -> Result<()> {
+    validate_update_plan_with(plan, false)
+}
+
+fn validate_update_plan_with(plan: &UpdatePlan, require_current_indexer: bool) -> Result<()> {
     ensure!(
         plan.schema == UPDATE_PLAN_SCHEMA,
         "unsupported update-plan schema {}; expected {UPDATE_PLAN_SCHEMA}",
         plan.schema
     );
+    let indexer_version = plan
+        .indexer_version
+        .parse::<Version>()
+        .context("update plan indexer version is not SemVer")?;
     ensure!(
-        plan.indexer_version == env!("CARGO_PKG_VERSION"),
-        "update plan indexer version {:?} differs from running version {:?}",
-        plan.indexer_version,
-        env!("CARGO_PKG_VERSION")
+        plan.indexer_version == indexer_version.to_string(),
+        "update plan indexer version is not canonical SemVer"
     );
+    if require_current_indexer {
+        ensure!(
+            plan.indexer_version == env!("CARGO_PKG_VERSION"),
+            "update plan indexer version {:?} differs from running version {:?}",
+            plan.indexer_version,
+            env!("CARGO_PKG_VERSION")
+        );
+    }
     ensure!(
         plan.min_release_age_days == super::MIN_RELEASE_AGE_DAYS
             && plan.dormant_release_gap_days == super::DORMANT_RELEASE_GAP_DAYS,
@@ -464,7 +482,7 @@ fn validate_candidate(plan: &UpdatePlan, candidate: &UpdateCandidate) -> Result<
     );
     validate_reason_consistency(candidate)?;
     validate_decision(candidate)?;
-    validate_approvals(candidate)
+    validate_approvals(plan, candidate)
 }
 
 fn validate_candidate_route(candidate: &UpdateCandidate) -> Result<()> {
@@ -583,7 +601,7 @@ fn validate_candidate_archives(candidate: &UpdateCandidate) -> Result<()> {
     Ok(())
 }
 
-fn validate_approvals(candidate: &UpdateCandidate) -> Result<()> {
+fn validate_approvals(plan: &UpdatePlan, candidate: &UpdateCandidate) -> Result<()> {
     let binding = candidate_binding_sha256(candidate)?;
     let mut previous = None;
     for approval in &candidate.approvals {
@@ -601,6 +619,10 @@ fn validate_approvals(candidate: &UpdateCandidate) -> Result<()> {
             approval.binding_sha256 == binding,
             "candidate approval binding does not match current evidence"
         );
+        approval
+            .approved_at
+            .duration_since(&plan.evaluated_at)
+            .context("candidate approval predates plan evaluation")?;
         ensure!(!approval.note.trim().is_empty(), "approval note is empty");
         ensure!(
             approval.note == approval.note.trim(),
