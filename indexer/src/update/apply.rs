@@ -10,7 +10,7 @@ use crate::lock::{self, MirrorAdmission, ReconcileSummary};
 use super::admission::{validate_admissible_candidate, validate_plan_age, write_admission_record};
 use super::declaration::append_mirror_version;
 use super::workflow::{LivePlannerResolver, revalidate_update_plan_with};
-use super::{UpdatePlan, UtcTimestamp, load_update_plan};
+use super::{UpdatePlan, UtcTimestamp, catalog_fingerprint, load_update_plan};
 
 /// Revalidates and atomically admits every exact candidate in one canonical approved plan.
 ///
@@ -51,6 +51,10 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
     for candidate in &plan.candidates {
         validate_admissible_candidate(candidate)?;
     }
+    ensure!(
+        catalog_fingerprint(root)? == plan.catalog_sha256,
+        "catalog fingerprint differs from the approved update plan"
+    );
 
     let recomputed = revalidate_update_plan_with(root, &plan, planner_resolver)
         .context("revalidate exact update-plan evidence")?;

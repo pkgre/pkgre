@@ -17,7 +17,7 @@ use super::inspect::InspectionResolver;
 use super::workflow::PlannerResolver;
 use super::{
     ApprovalKind, SourceEvidence, UtcTimestamp, apply::apply_update_plan_with, approve_update_plan,
-    inspect::inspect_update_candidate_with, validate_admission_inventory,
+    inspect::inspect_update_candidate_with, serialize_update_plan, validate_admission_inventory,
     workflow::plan_exact_update_with,
 };
 use crate::artifact::{ArtifactMap, sha256_bytes};
@@ -70,6 +70,110 @@ fn exact_update_lifecycle_is_inert_evidence_bound_and_convergent() {
     assert_admitted_catalog(&catalog_root, &fixture, &version);
     assert_render_and_lock_convergence(&catalog_root, &temporary.path().join("site"));
     assert!(!marker.exists());
+}
+
+#[test]
+fn apply_rejects_catalog_drift_without_mutating_live_tree() {
+    let temporary = TemporaryDirectory::new("pkgre-update-e2e-drift");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = malicious_build_fixture(&temporary.path().join("inert-marker"));
+    let version = Version::parse("1.0.0").unwrap();
+    let approved_path = prepare_approved_plan(
+        temporary.path(),
+        &catalog_root,
+        &fixture,
+        &version,
+        &temporary.path().join("inert-marker"),
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(catalog_root.join("universe.toml"))
+        .unwrap()
+        .write_all(b"\n# harmless post-approval drift\n")
+        .unwrap();
+    let before = snapshot_tree(&catalog_root).unwrap();
+
+    let error = apply_update_plan_with(
+        &catalog_root,
+        &approved_path,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("catalog fingerprint differs"));
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
+}
+
+#[test]
+fn apply_rejects_changed_upstream_evidence_without_mutating_live_tree() {
+    let temporary = TemporaryDirectory::new("pkgre-update-e2e-evidence-drift");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let marker = temporary.path().join("inert-marker");
+    let planned = malicious_build_fixture(&marker);
+    let version = Version::parse("1.0.0").unwrap();
+    let approved_path =
+        prepare_approved_plan(temporary.path(), &catalog_root, &planned, &version, &marker);
+    let changed = FixtureResolver::new(vec![FixturePackage::new(
+        "demo",
+        "1.0.0",
+        "build.rs",
+        b"fn main() { println!(\"changed upstream bytes\"); }\n",
+    )]);
+    let before = snapshot_tree(&catalog_root).unwrap();
+
+    let error = apply_update_plan_with(
+        &catalog_root,
+        &approved_path,
+        &changed,
+        &planned,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("recomputed update evidence differs"));
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
+    assert_eq!(planned.lock_calls.get(), 0);
+}
+
+#[test]
+fn second_candidate_failure_rolls_back_complete_multi_candidate_apply() {
+    let temporary = TemporaryDirectory::new("pkgre-update-e2e-second-failure");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "beta"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let packages = vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n"),
+    ];
+    let planner = FixtureResolver::new(packages.clone());
+    let lock_resolver =
+        FixtureResolver::new(packages).with_lock_failure("beta", &Version::parse("1.0.0").unwrap());
+    let approved_path = prepare_multi_candidate_plan(
+        temporary.path(),
+        &catalog_root,
+        &planner,
+        &["alpha", "beta"],
+    );
+    let before = snapshot_tree(&catalog_root).unwrap();
+
+    let error = apply_update_plan_with(
+        &catalog_root,
+        &approved_path,
+        &planner,
+        &lock_resolver,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("injected lock resolution failure for beta 1.0.0"));
+    assert_eq!(lock_resolver.lock_calls.get(), 2);
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
 }
 
 fn malicious_build_fixture(marker: &Path) -> FixtureResolver {
@@ -134,6 +238,69 @@ fn prepare_approved_plan(
     .unwrap();
     assert_eq!(approved.candidates[0].approvals.len(), 1);
     approved_path
+}
+
+fn prepare_multi_candidate_plan(
+    temporary: &Path,
+    catalog_root: &Path,
+    resolver: &FixtureResolver,
+    names: &[&str],
+) -> PathBuf {
+    let evaluated_at = UtcTimestamp::now().unwrap();
+    let version = Version::parse("1.0.0").unwrap();
+    let mut plans = names.iter().map(|name| {
+        let path = temporary.join(format!("{name}-plan.toml"));
+        plan_exact_update_with(
+            catalog_root,
+            name,
+            &version,
+            &path,
+            resolver,
+            evaluated_at.clone(),
+        )
+        .unwrap()
+    });
+    let mut merged = plans.next().unwrap();
+    for plan in plans {
+        assert_eq!(plan.catalog_sha256, merged.catalog_sha256);
+        assert_eq!(plan.evaluated_at, merged.evaluated_at);
+        merged.candidates.extend(plan.candidates);
+    }
+    merged.candidates.sort_by(|left, right| {
+        (
+            left.registry.as_str(),
+            left.name.as_str(),
+            &left.candidate.version,
+        )
+            .cmp(&(
+                right.registry.as_str(),
+                right.name.as_str(),
+                &right.candidate.version,
+            ))
+    });
+    let merged_path = temporary.join("merged-plan.toml");
+    fs::write(&merged_path, serialize_update_plan(&merged).unwrap()).unwrap();
+    let note_path = temporary.join("multi-review-note.txt");
+    fs::write(
+        &note_path,
+        b"Reviewed every file in each exact candidate archive.\n",
+    )
+    .unwrap();
+    let mut input = merged_path;
+    for (index, name) in names.iter().enumerate() {
+        let output = temporary.join(format!("approved-{index}.toml"));
+        approve_update_plan(
+            &input,
+            &output,
+            name,
+            &version,
+            ApprovalKind::FullArchive,
+            &note_path,
+        )
+        .unwrap();
+        input = output;
+    }
+    input
 }
 
 fn assert_admitted_catalog(root: &Path, fixture: &FixtureResolver, version: &Version) {
@@ -238,6 +405,7 @@ struct FixtureResolver {
     packages: BTreeMap<(String, Version), FixturePackage>,
     source_calls: Cell<usize>,
     lock_calls: Cell<usize>,
+    fail_lock_for: Option<(String, Version)>,
 }
 
 impl FixtureResolver {
@@ -249,7 +417,13 @@ impl FixtureResolver {
                 .collect(),
             source_calls: Cell::new(0),
             lock_calls: Cell::new(0),
+            fail_lock_for: None,
         }
+    }
+
+    fn with_lock_failure(mut self, name: &str, version: &Version) -> Self {
+        self.fail_lock_for = Some((name.to_owned(), version.clone()));
+        self
     }
 
     fn package(&self, name: &str, version: &Version) -> Result<&FixturePackage> {
@@ -306,6 +480,13 @@ impl InspectionResolver for FixtureResolver {
 impl Resolver for FixtureResolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
         self.lock_calls.set(self.lock_calls.get() + 1);
+        if self
+            .fail_lock_for
+            .as_ref()
+            .is_some_and(|identity| identity == &(name.to_owned(), version.clone()))
+        {
+            bail!("injected lock resolution failure for {name} {version}");
+        }
         let package = self.package(name, version)?;
         Ok(ResolvedPackage {
             name: package.name.clone(),
@@ -446,6 +627,58 @@ fn set_octal(field: &mut [u8], value: u64) {
     field[..digits.len()].copy_from_slice(digits.as_bytes());
     field[field.len() - 2] = 0;
     field[field.len() - 1] = b' ';
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum SnapshotEntry {
+    Directory,
+    File(Vec<u8>),
+}
+
+fn snapshot_tree(root: &Path) -> Result<BTreeMap<PathBuf, SnapshotEntry>> {
+    let mut snapshot = BTreeMap::new();
+    snapshot_directory(root, root, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+fn snapshot_directory(
+    root: &Path,
+    directory: &Path,
+    snapshot: &mut BTreeMap<PathBuf, SnapshotEntry>,
+) -> Result<()> {
+    let mut entries = fs::read_dir(directory)
+        .with_context(|| format!("read snapshot directory {}", directory.display()))?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .context("snapshot entry escaped root")?
+            .to_path_buf();
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect snapshot entry {}", path.display()))?;
+        if metadata.file_type().is_dir() {
+            ensure!(
+                snapshot
+                    .insert(relative, SnapshotEntry::Directory)
+                    .is_none()
+            );
+            snapshot_directory(root, &path, snapshot)?;
+        } else {
+            ensure!(
+                metadata.file_type().is_file(),
+                "snapshot entry is not a regular file: {}",
+                path.display()
+            );
+            ensure!(
+                snapshot
+                    .insert(relative, SnapshotEntry::File(fs::read(&path)?))
+                    .is_none()
+            );
+        }
+    }
+    Ok(())
 }
 
 struct TemporaryDirectory {
