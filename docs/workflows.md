@@ -3,6 +3,11 @@
 ## Commands
 
 ```text
+pkgre-indexer update-plan <catalog> <new-plan>
+pkgre-indexer update-plan-exact <catalog> <package> <version> <new-plan>
+pkgre-indexer update-inspect <plan> <package> <version> <new-review-directory>
+pkgre-indexer update-approve <plan> <new-approved-plan> <package> <version> <source-delta|full-archive> <note-file>
+pkgre-indexer update-apply <catalog> <plan-or-approved-plan>
 pkgre-indexer lock <catalog>
 pkgre-indexer check <catalog>
 pkgre-indexer render <catalog> <new-output>
@@ -11,34 +16,76 @@ pkgre-indexer verify-monotonic <previous-site> <next-site>
 pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
 ```
 
-`lock` is the only command that mutates a schema-3 catalog. `migrate-v2-to-v3` reads but never modifies its source and installs only to an absent destination. `check` is local-only and never re-fetches crates.io or Git tags. Render output must be absent; no command overwrites a site tree. Use the registry directory itself as `<catalog>` (for example `registry`), never its repository parent.
+`update-plan`, `update-plan-exact`, and `update-inspect` never mutate the catalog; every output must be absent and outside the managed catalog. `update-approve` leaves its input plan/note unchanged and creates a new plan. `update-apply` is the evidence-bound mutator for new mirror identities in an established catalog. `lock` mutates only for bootstrap, empty name reservations, removals, and first-party Git tags; it rejects direct admission of a new mirror identity after any registry lock exists. `migrate-v2-to-v3` reads but never modifies its source and installs only to an absent destination. `check` is local-only and never re-fetches crates.io or Git tags. Render output must be absent; no command overwrites a site tree. Use the registry directory itself as `<catalog>` (for example `registry`), never its repository parent.
 
-## Add mirrored versions
+## Admit crates.io mirror updates
 
-1. Choose the package's permanent `universe/<category>` home from the canonical policy; inspect all direct dependency homes because an edge absent from that category's `may-depend-on` set will fail.
-2. Add exact versions under the category's `mirror` table. Inline example in `universe.toml`:
+### Selection + guardrails
 
-```toml
-[categories.acp.mirror]
-agent-client-protocol = ["2.0.0"]
-```
+- Release-age floor: every implicit/exact candidate must be non-yanked and ≥30×24 hours old at the plan's UTC evaluation time; future timestamps fail.
+- Implicit lanes: `update-plan` selects at most one latest eligible stable update for each active compatibility lane: one lane per `major` for `major≥1`, or per `minor` for stable `0.minor.patch` with `minor>0`; prereleases + `0.0.x` require `update-plan-exact`.
+- Exact selection: supports new names, inactive names, prereleases, and `0.0.x`, but cannot select a locked identity, an upstream-yanked/young identity, or an identity predating every existing review base.
+- Dormancy: a ≥365-day adjacent publication gap between the locked base and candidate requires review; all publications, including yanked/prerelease rows, count as activity. A post-gap burst stays gated until one post-gap identity is admitted.
+- Evidence: full crates.io sparse history, selected/base rows + checksum-verified archives, bounded path/type/size/mode/hash/build-surface analysis, dependency delta + category routes, version-scoped publisher/repository/API facts, and promoted source correspondence. New/inactive/dormant releases, new dependency packages, changed build surface, or publisher/repository discontinuity promote source verification.
 
-External example in `categories/universe/general.toml`:
+Decision policy:
+
+| Decision | Reasons | Admission |
+|---|---|---|
+| `automatic` | no policy reason | no human approval assertion |
+| `review-required` | new package, inactive revival, dormant wake-up, new dependency package, changed build surface, publisher/repository discontinuity, or promoted source unavailable | exactly one evidence-bound approval |
+| `blocked` | unknown dependency home, forbidden category edge, or source mismatch | impossible; fix catalog/upstream evidence + create a new plan |
+
+`explicit-candidate` records selection mode but alone does not force review. Unsafe/malformed archives, changed locked crates.io history, checksum/evidence inconsistency, duplicate identities, or catalog drift fail planning rather than yielding a candidate.
+
+### Workflow
+
+1. Choose the package's permanent `universe/<category>` home; inspect every direct dependency home + the category's exact `may-depend-on` set. For a first package identity, reserve only the name, then lock the empty anchor:
 
 ```toml
 [mirror]
-serde = ["1.0.228", "1.0.229"]
+new-package = []
 ```
-
-3. Run reconciliation from outside the managed catalog directory:
 
 ```console
 $ pkgre-indexer lock registry
 ```
 
-4. Reconciler validates all existing history locally before fetching each new exact crates.io sparse row + `.crate`; it rejects missing/duplicate/yanked/malformed rows, checksum mismatch, permanent-home changes, and forbidden category edges; it routes dependencies, generates lock entries, retains the content-addressed source row, discards verified mirror bytes, test-renders staging, then transactionally replaces `registry/`.
-5. Review the complete diff before commit: declaration/category, generated lock identity/provenance/hashes, new source-row object, dependency category routes, build-time capability, proc macros, native/unsafe code, features/targets, and licensing. Separately fetch `https://static.crates.io/crates/<name>/<name>-<version>.crate`, require SHA-256 = locked `crate-sha256`, and inspect exact archive contents. Generated success is integrity evidence, not approval.
-6. Verify locally and prove convergence:
+2. Create one canonical plan outside `registry/`. Implicit planning scans all permanently reserved mirror names with active lanes; exact planning targets one requested identity and is required for a new/inactive name, prerelease, or `0.0.x`:
+
+```console
+$ pkgre-indexer update-plan registry plan.toml
+$ pkgre-indexer update-plan-exact registry new-package 1.2.3 plan.toml
+```
+
+The plan binds the catalog fingerprint, evaluation time, exact candidate/base, decision history, archive/dependency/API/source evidence, and policy constants. It never edits declarations and refuses an existing output path.
+
+3. Review every candidate + decision. Materialize bounded inert evidence for any exact candidate into an absent directory:
+
+```console
+$ pkgre-indexer update-inspect plan.toml new-package 1.2.3 review-new-package-1.2.3
+```
+
+The review tree contains `candidate.crate`, optional `base.crate`, `inspection.toml`, and `README.txt`; hashes/analyses must equal the plan. The indexer does not extract archives to disk or invoke Cargo, compilers, build scripts, examples, binaries, repository hooks, or package code. Treat retained archives as untrusted input.
+
+4. For each `review-required` candidate, write a specific nonempty UTF-8 note (≤16 KiB) and create a new approved plan; chain outputs when a multi-candidate plan needs multiple approvals:
+
+```console
+$ pkgre-indexer update-approve plan.toml approved-1.toml new-package 1.2.3 full-archive note.txt
+$ pkgre-indexer update-approve approved-1.toml approved-2.toml existing-package 2.4.1 source-delta other-note.txt
+```
+
+`source-delta` is required only for an active package with a meaningful base/archive delta; new or inactive packages require `full-archive`. The assertion binds exact candidate evidence + review note hash/time. Automatic candidates carry no approval; blocked candidates remain inadmissible.
+
+5. Apply the plan within seven exact days of evaluation (the boundary is inclusive):
+
+```console
+$ pkgre-indexer update-apply registry approved-2.toml
+```
+
+Apply requires an unchanged catalog fingerprint; recomputes complete upstream evidence for the exact planned identities at the original evaluation time; rejects any difference except approval assertions; then uses a guarded whole-catalog transaction to edit only the target category declarations, retain rows/admission evidence, generate locks, strict-load/object-verify/test-render staging, and atomically install with rollback. It never substitutes a newer candidate.
+
+6. Review + commit each declaration/lock/row/admission change together. Every admitted updater identity has `admission-sha256` in its generated lock and exactly one canonical `_reviews/admissions/<candidate-binding-sha256>.toml`; `check` rejects missing, modified, duplicate, or unexpected records. Then prove validity + convergence:
 
 ```console
 $ pkgre-indexer check registry
@@ -47,7 +94,7 @@ $ pkgre-indexer lock registry
 $ git status --short
 ```
 
-The second `lock` must produce no diff. Any unexpected changed/deleted object or lock entry blocks approval.
+The second `lock` must report `changed=false` + produce no diff. Do not manually append a mirror version and run `lock`: once any lock exists, direct new-mirror resolution fails before network access. `lock` remains the correct path for empty name anchors, removals, first-party Git tags, and initial catalog bootstrap.
 
 ## Publish a first-party Git tag
 

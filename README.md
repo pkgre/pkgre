@@ -4,7 +4,7 @@ Declarative tooling + policy for small curated Cargo registries.
 
 ## Purpose
 
-pkg.re converts human registry/category declarations into deterministic Cargo sparse registries. Human TOML declares exact mirrored versions + immutable first-party Git tags; `pkgre-indexer lock` materializes new identities, generates immutable provenance locks, and transactionally converges retained source rows + Git-tag archives. Mirror archives are fetched + checksum-verified during locking but served later by crates.io; metadata + integrity remain controlled by the curated row. No mutable registry API or `cargo publish` operation is authoritative.
+pkg.re converts human registry/category declarations into deterministic Cargo sparse registries. Human TOML declares exact mirrored versions + immutable first-party Git tags; evidence-bound update commands admit new mirrors, while `pkgre-indexer lock` handles bootstrap/removal/Git tags and transactionally converges generated locks + retained objects. Mirror archives are fetched + checksum-verified during admission but served later by crates.io; metadata + integrity remain controlled by the curated row. No mutable registry API or `cargo publish` operation is authoritative.
 
 Removal replaces curator-controlled yanking: delete a version/tag from desired state but retain its package key; reconciliation preserves an irreversible tombstone + source evidence, removes an unshared retained Git archive, and renders the retained row as yanked.
 
@@ -50,6 +50,11 @@ Pinned build semantics: Cargo `1.95.0`; Nix flake locks Rust + build inputs; Car
 ## Catalog operation
 
 ```console
+$ pkgre-indexer update-plan registry plan.toml
+$ pkgre-indexer update-plan-exact registry <package> <version> plan.toml
+$ pkgre-indexer update-inspect plan.toml <package> <version> review
+$ pkgre-indexer update-approve plan.toml approved.toml <package> <version> <source-delta|full-archive> note.txt
+$ pkgre-indexer update-apply registry <plan-or-approved-plan.toml>
 $ pkgre-indexer lock registry
 $ pkgre-indexer check registry
 $ pkgre-indexer render registry site-next
@@ -58,7 +63,7 @@ $ pkgre-indexer verify-monotonic site-current site-next
 $ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
-`registry/` is exclusive managed state: only `<registry>.toml`, generated `<registry>.lock`, referenced `categories/<registry>/<category>.toml`, and `objects/` are permitted.
+Update planning/inspection is read-only; keep plans, notes, and inert review trees outside `registry/`. `update-apply` is the only established-catalog path for new mirror identities; it revalidates ≤7-day-old evidence and atomically adds declarations, generated locks/objects, and `_reviews/admissions/` records. `lock` remains valid for bootstrap, empty name reservations, removals, and Git tags. `registry/` is exclusive managed state: only `<registry>.toml`, generated `<registry>.lock`, referenced `categories/<registry>/<category>.toml`, `_reviews/admissions/<candidate-binding-sha256>.toml`, and `objects/` are permitted.
 
 ## Consumer configuration
 
