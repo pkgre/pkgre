@@ -9,7 +9,7 @@ use pkgre_indexer::render;
 use pkgre_indexer::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>";
+const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -32,6 +32,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
     match command.to_str() {
         Some("lock") => lock_catalog(&values),
         Some("check") => check(&values),
+        Some("migrate-v2-to-v3") => migrate_v2_to_v3(&values),
         Some("render") => render_site(&values),
         Some("verify") => verify_site(&values),
         Some("verify-monotonic") => verify_monotonic(&values),
@@ -62,6 +63,21 @@ fn check(arguments: &[OsString]) -> Result<()> {
     validate_catalog(&catalog)?;
     ArtifactMap::load(&catalog)?;
     info!(packages = catalog.approvals.len(), "catalog is valid");
+    Ok(())
+}
+
+fn migrate_v2_to_v3(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let source = Path::new(&arguments[0]);
+    let destination = Path::new(&arguments[1]);
+    let summary = pkgre_indexer::migration::migrate_v2_to_v3(source, destination)?;
+    info!(
+        names = summary.names,
+        packages = summary.packages,
+        routed_rows_changed = summary.routed_rows_changed,
+        path = %destination.display(),
+        "migrated schema-2 catalog to schema 3"
+    );
     Ok(())
 }
 
