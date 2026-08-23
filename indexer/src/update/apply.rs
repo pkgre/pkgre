@@ -24,19 +24,34 @@ use super::{UpdatePlan, UtcTimestamp, load_update_plan};
 /// plan; catalog fingerprint drift; changed upstream evidence; reconciliation failure; or an invalid
 /// staged catalog. Any failure before installation leaves the live catalog unchanged.
 pub fn apply_update_plan(root: &Path, plan_path: &Path) -> Result<ReconcileSummary> {
+    apply_update_plan_with(
+        root,
+        plan_path,
+        &LivePlannerResolver,
+        &lock::LiveResolver,
+        UtcTimestamp::now().context("read update admission time")?,
+    )
+}
+
+pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: lock::Resolver>(
+    root: &Path,
+    plan_path: &Path,
+    planner_resolver: &P,
+    lock_resolver: &L,
+    admitted_at: UtcTimestamp,
+) -> Result<ReconcileSummary> {
     let plan = load_update_plan(plan_path).context("load approved update plan")?;
     ensure!(
         !plan.candidates.is_empty(),
         "update plan contains no candidates"
     );
 
-    let admitted_at = UtcTimestamp::now().context("read update admission time")?;
     validate_plan_age(&plan, &admitted_at)?;
     for candidate in &plan.candidates {
         validate_admissible_candidate(candidate)?;
     }
 
-    let recomputed = revalidate_update_plan_with(root, &plan, &LivePlannerResolver)
+    let recomputed = revalidate_update_plan_with(root, &plan, planner_resolver)
         .context("revalidate exact update-plan evidence")?;
     ensure_revalidation_matches(&plan, &recomputed)?;
 
@@ -67,7 +82,7 @@ pub fn apply_update_plan(root: &Path, plan_path: &Path) -> Result<ReconcileSumma
                 source_row_sha256: candidate.candidate.source_row_sha256.clone(),
             });
         }
-        lock::reconcile_admitted(staged, &admissions)
+        lock::reconcile_admitted_with(staged, &admissions, lock_resolver)
             .context("reconcile exact admitted mirror identities")
     })
 }
