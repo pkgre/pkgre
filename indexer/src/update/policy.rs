@@ -15,7 +15,7 @@ pub const DORMANT_RELEASE_GAP_DAYS: u64 = 365;
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
 /// Cargo-compatible stable release lane eligible for implicit updates.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "kind")]
 pub enum CompatibilityLane {
     /// Stable `0.minor.patch`, where `minor > 0`.
@@ -65,7 +65,7 @@ pub enum PackageActivity {
 }
 
 /// Exact adjacent publication gap that triggered dormant-wake-up review.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PublicationGap {
     /// Publication immediately before the gap.
