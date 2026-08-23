@@ -72,6 +72,14 @@ pub(crate) fn reconcile_admitted(
     root: &Path,
     admissions: &[MirrorAdmission],
 ) -> Result<ReconcileSummary> {
+    reconcile_admitted_with(root, admissions, &LiveResolver)
+}
+
+pub(crate) fn reconcile_admitted_with<R: Resolver>(
+    root: &Path,
+    admissions: &[MirrorAdmission],
+    resolver: &R,
+) -> Result<ReconcileSummary> {
     let mut indexed = BTreeMap::new();
     for admission in admissions {
         let identity = package_identity(&admission.name, &admission.version);
@@ -84,7 +92,7 @@ pub(crate) fn reconcile_admitted(
     }
     reconcile_with_mode(
         root,
-        &LiveResolver,
+        resolver,
         &FilesystemRenamer,
         ReconciliationMode::Admitted(&indexed),
     )
@@ -139,7 +147,7 @@ fn transact_catalog_with<T, N: Renamer>(
     Ok(output)
 }
 
-trait Resolver {
+pub(crate) trait Resolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage>;
 
     fn resolve_git_tag(
@@ -151,7 +159,7 @@ trait Resolver {
     ) -> Result<ResolvedPackage>;
 }
 
-struct LiveResolver;
+pub(crate) struct LiveResolver;
 
 impl Resolver for LiveResolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
@@ -209,12 +217,12 @@ impl Resolver for LiveResolver {
 }
 
 #[derive(Debug)]
-struct ResolvedPackage {
-    name: String,
-    version: Version,
-    archive_bytes: Vec<u8>,
-    source_row_bytes: Vec<u8>,
-    source: LockedSource,
+pub(crate) struct ResolvedPackage {
+    pub(crate) name: String,
+    pub(crate) version: Version,
+    pub(crate) archive_bytes: Vec<u8>,
+    pub(crate) source_row_bytes: Vec<u8>,
+    pub(crate) source: LockedSource,
 }
 
 #[derive(Clone, Debug)]
