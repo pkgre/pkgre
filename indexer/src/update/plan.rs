@@ -162,7 +162,7 @@ pub enum SourceEvidence {
         /// Hash of the deterministic comparison result.
         comparison_sha256: String,
     },
-    /// Registry OIDC context and embedded VCS claim agreed and were compared.
+    /// Registry OIDC context, and any embedded VCS claim when present, were compared.
     RegistryContextAttested {
         /// Credential-free repository URL.
         repository: String,
@@ -812,19 +812,26 @@ fn validate_source_evidence(source: &SourceEvidence, candidate: &UpdateCandidate
             validate_relative_path(path, "source repository path")?;
             validate_hash(comparison_sha256, "source comparison hash")?;
             validate_hash(attestation_sha256, "source attestation hash")?;
-            ensure!(
-                candidate.candidate_archive.vcs_commit.as_ref() == Some(commit),
-                "attested source commit disagrees with the archive claim"
-            );
-            ensure!(
-                candidate
-                    .candidate_archive
-                    .vcs_path
-                    .as_deref()
-                    .unwrap_or("")
-                    == path,
-                "attested source path disagrees with the archive claim"
-            );
+            if let Some(archive_commit) = candidate.candidate_archive.vcs_commit.as_ref() {
+                ensure!(
+                    archive_commit == commit,
+                    "attested source commit disagrees with the archive claim"
+                );
+                ensure!(
+                    candidate
+                        .candidate_archive
+                        .vcs_path
+                        .as_deref()
+                        .unwrap_or("")
+                        == path,
+                    "attested source path disagrees with the archive claim"
+                );
+            } else {
+                ensure!(
+                    path.is_empty(),
+                    "attested source without an archive VCS claim has a non-root path"
+                );
+            }
             let trusted = candidate
                 .api
                 .as_ref()
@@ -1128,6 +1135,47 @@ mod tests {
         let parsed: UpdatePlan = toml::from_slice(&bytes).unwrap();
         assert_eq!(serialize_update_plan(&parsed).unwrap(), bytes);
         plan.candidates[0].candidate.crate_sha256 = "22".repeat(32);
+        assert!(serialize_update_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn attested_source_can_anchor_root_archive_without_embedded_vcs_claim() {
+        let mut plan = sample_plan();
+        let candidate = &mut plan.candidates[0];
+        let trusted = TrustedPublishingEvidence {
+            provider: "github".to_owned(),
+            repository: "https://github.com/example/demo".to_owned(),
+            commit: "11".repeat(20),
+            evidence_sha256: "12".repeat(32),
+        };
+        candidate.api = Some(ApiEvidence {
+            response_sha256: "13".repeat(32),
+            base: None,
+            candidate: ApiVersionEvidence {
+                publisher_id: Some(1),
+                publisher_login: Some("publisher".to_owned()),
+                repository: Some(trusted.repository.clone()),
+                trusted_publishing: Some(trusted.clone()),
+            },
+        });
+        candidate.source = SourceEvidence::RegistryContextAttested {
+            repository: trusted.repository,
+            commit: trusted.commit,
+            path: String::new(),
+            comparison_sha256: "14".repeat(32),
+            attestation_sha256: trusted.evidence_sha256,
+        };
+        candidate
+            .reasons
+            .retain(|reason| *reason != DecisionReason::SourceUnavailable);
+
+        serialize_update_plan(&plan).unwrap();
+
+        let SourceEvidence::RegistryContextAttested { path, .. } = &mut plan.candidates[0].source
+        else {
+            unreachable!();
+        };
+        *path = "nested".to_owned();
         assert!(serialize_update_plan(&plan).is_err());
     }
 
