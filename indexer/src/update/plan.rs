@@ -1202,3 +1202,150 @@ mod tests {
         path
     }
 }
+
+/// Calculates a complete deterministic file/build-surface delta between two inert archive analyses.
+///
+/// `delta_sha256` binds the full before/after metadata for every added, removed, or changed file, not only the public path summary.
+///
+/// # Errors
+///
+/// Returns an error if either analysis repeats a path or canonical JSON serialization fails.
+pub fn compare_archive_analyses(
+    base: &ArchiveAnalysis,
+    candidate: &ArchiveAnalysis,
+) -> Result<ArchiveDelta> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "kebab-case")]
+    struct ChangedFile<'a> {
+        before: &'a super::ArchiveFile,
+        after: &'a super::ArchiveFile,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "kebab-case")]
+    struct CompleteDelta<'a> {
+        added: Vec<&'a super::ArchiveFile>,
+        removed: Vec<&'a super::ArchiveFile>,
+        changed: Vec<ChangedFile<'a>>,
+        build_surface_before: &'a BTreeMap<String, String>,
+        build_surface_after: &'a BTreeMap<String, String>,
+    }
+
+    let base_files = archive_files_by_path(base, "base")?;
+    let candidate_files = archive_files_by_path(candidate, "candidate")?;
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut changed = Vec::new();
+    for (path, file) in &candidate_files {
+        match base_files.get(path) {
+            None => added.push(*file),
+            Some(previous) if *previous != *file => changed.push(ChangedFile {
+                before: previous,
+                after: file,
+            }),
+            Some(_) => {}
+        }
+    }
+    for (path, file) in &base_files {
+        if !candidate_files.contains_key(path) {
+            removed.push(*file);
+        }
+    }
+    let added_paths = added.iter().map(|file| file.path.clone()).collect();
+    let removed_paths = removed.iter().map(|file| file.path.clone()).collect();
+    let changed_paths = changed.iter().map(|file| file.after.path.clone()).collect();
+    let complete = CompleteDelta {
+        added,
+        removed,
+        changed,
+        build_surface_before: &base.build_surface,
+        build_surface_after: &candidate.build_surface,
+    };
+    let canonical = serde_json::to_vec(&complete).context("serialize complete archive delta")?;
+    Ok(ArchiveDelta {
+        delta_sha256: sha256_bytes(&canonical),
+        added: added_paths,
+        removed: removed_paths,
+        changed: changed_paths,
+        build_surface_changed: base.build_surface != candidate.build_surface,
+    })
+}
+
+fn archive_files_by_path<'a>(
+    analysis: &'a ArchiveAnalysis,
+    description: &str,
+) -> Result<BTreeMap<&'a str, &'a super::ArchiveFile>> {
+    let mut files = BTreeMap::new();
+    for file in &analysis.files {
+        ensure!(
+            files.insert(file.path.as_str(), file).is_none(),
+            "{description} archive analysis repeats path {:?}",
+            file.path
+        );
+    }
+    Ok(files)
+}
+
+#[cfg(test)]
+mod archive_delta_tests {
+    use super::*;
+    use crate::update::ArchiveFile;
+
+    fn file(path: &str, mode: u32, hash_byte: &str) -> ArchiveFile {
+        ArchiveFile {
+            path: path.to_owned(),
+            size: 1,
+            mode,
+            sha256: hash_byte.repeat(32),
+            binary: false,
+        }
+    }
+
+    fn analysis(
+        files: Vec<ArchiveFile>,
+        build_surface: BTreeMap<String, String>,
+    ) -> ArchiveAnalysis {
+        ArchiveAnalysis {
+            compressed_bytes: 1,
+            unpacked_bytes: 1,
+            files,
+            build_surface,
+            vcs: None,
+        }
+    }
+
+    #[test]
+    fn complete_archive_delta_is_canonical_and_binds_modes_and_surface() {
+        let base = analysis(
+            vec![file("changed", 0o644, "01"), file("removed", 0o644, "02")],
+            BTreeMap::new(),
+        );
+        let candidate = analysis(
+            vec![file("added", 0o644, "03"), file("changed", 0o755, "01")],
+            BTreeMap::from([("manifest:Cargo.toml:build".to_owned(), "04".repeat(32))]),
+        );
+        let delta = compare_archive_analyses(&base, &candidate).unwrap();
+        assert_eq!(delta.added, ["added"]);
+        assert_eq!(delta.removed, ["removed"]);
+        assert_eq!(delta.changed, ["changed"]);
+        assert!(delta.build_surface_changed);
+
+        let mut byte_changed = candidate.clone();
+        byte_changed.files[1].sha256 = "05".repeat(32);
+        assert_ne!(
+            delta.delta_sha256,
+            compare_archive_analyses(&base, &byte_changed)
+                .unwrap()
+                .delta_sha256
+        );
+    }
+
+    #[test]
+    fn duplicate_analysis_paths_fail_closed() {
+        let repeated = analysis(
+            vec![file("same", 0o644, "01"), file("same", 0o644, "01")],
+            BTreeMap::new(),
+        );
+        assert!(compare_archive_analyses(&repeated, &repeated).is_err());
+    }
+}
