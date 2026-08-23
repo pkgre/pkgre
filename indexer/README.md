@@ -22,4 +22,4 @@ pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
 
 `<catalog>` is exclusive managed state containing one `<registry>.toml` human declaration + adjacent generated `<registry>.lock` per registry, optional referenced `categories/<registry>/<category>.toml`, and `objects/{crates,rows}/`. Rows cover all locked identities; crates contain active Git-tag archives only. Retain every approved package key even when its desired version/tag list becomes empty; deletion, category/source-class change, or mirror/Git mix within one registry fails closed.
 
-Documentation: [`catalog schema`](../docs/catalog.md) | [`curator workflows`](../docs/workflows.md) | [`security model`](../docs/security.md).
+Documentation: [`catalog schema`](../docs/catalog.md) | [`production mirror-update runbook`](../docs/production-update-runbook.md) | [`curator workflows`](../docs/workflows.md) | [`security model`](../docs/security.md).
