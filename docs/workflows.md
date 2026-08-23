@@ -29,8 +29,8 @@ matrix-sdk = ["0.16.0"]
 $ pkgre-indexer lock registry
 ```
 
-4. Reconciler validates all existing history locally before fetching each new exact crates.io sparse row + `.crate`; it rejects missing/duplicate/yanked/malformed rows and checksum mismatch, routes dependencies, generates lock entries, stores content-addressed objects, test-renders staging, then transactionally replaces `registry/`.
-5. Review the complete diff before commit: declaration, generated lock identity/provenance/hashes, new source-row object, exact archive contents, dependency routes/layers, build-time capability, proc macros, native/unsafe code, features/targets, and licensing. Generated success is integrity evidence, not approval.
+4. Reconciler validates all existing history locally before fetching each new exact crates.io sparse row + `.crate`; it rejects missing/duplicate/yanked/malformed rows and checksum mismatch, routes dependencies, generates lock entries, retains the content-addressed source row but discards verified mirror bytes, test-renders staging, then transactionally replaces `registry/`.
+5. Review the complete diff before commit: declaration, generated lock identity/provenance/hashes, new source-row object, dependency routes/layers, build-time capability, proc macros, native/unsafe code, features/targets, and licensing. Separately fetch `https://static.crates.io/crates/<name>/<name>-<version>.crate`, require SHA-256 = locked `crate-sha256`, and inspect exact archive contents. Generated success is integrity evidence, not approval.
 6. Verify locally and prove convergence:
 
 ```console
@@ -93,8 +93,8 @@ tags = []
 ```
 
 2. Run `pkgre-indexer lock registry`.
-3. Review that only the intended lock entries transitioned `state = "active"` → `state = "removed"`; source-row evidence remains; an archive object disappears only if no active identity shares its hash.
-4. Rendered history retains the row with `yanked = true` and omits an unshared archive. Reactivation is permanently rejected; restoring functionality requires a new version/tag.
+3. Review that only the intended lock entries transitioned `state = "active"` → `state = "removed"`; source-row evidence remains; a retained Git archive object disappears only if no active Git identity shares its hash; mirror archives are never retained.
+4. Rendered history retains the row with `yanked = true` and omits an unshared Git archive. Reactivation is permanently rejected; restoring functionality requires a new version/tag.
 5. Run `check`, a second no-op `lock`, render, and `verify-monotonic` before commit/deploy.
 
 Removing a package key, changing its home/source class, changing a locked publisher Git URL, or re-adding a removed identity fails before network access.
@@ -115,19 +115,19 @@ Required review:
 - `git diff --check`; generated lock/object diff fully explained; second `lock` exact no-op;
 - tooling format/build/test/lint/Nix checks pass with locked inputs;
 - prior `release.json` package identities all retained; additions/removals intentional; immutable fields unchanged;
-- rendered site contains only `.nojekyll`, `CNAME`, `release.json`, canonical registry configs/rows, and active content-addressed archives;
+- rendered site contains only `.nojekyll`, `CNAME`, `release.json`, canonical registry configs/rows, and active content-addressed Git-tag archives;
 - branch protection/required CI passes; merge normally with no force/bypass.
 
 Deploy only the rendered site, never `registry/`. A release workflow should independently run `check`, `render`, `verify`, fetch/build the prior released site, run `verify-monotonic`, and publish with read-only source permissions plus only the minimum Pages permissions.
 
 ## Post-deployment verification
 
-- Fetch `https://rust.pkg.re/{core,matrix,pkgre}/config.json`; require the canonical content-addressed `dl` template.
+- Fetch `https://rust.pkg.re/{core,matrix,pkgre}/config.json`; require crates.io `dl` for `core`/`matrix` + the pkg.re content-addressed template for `pkgre`.
 - Fetch representative package rows in every registry; validate expected checksum/routes/yank state.
-- Fetch representative content-addressed archives; recompute SHA-256; confirm removed unshared archives return not found.
+- Fetch representative mirror archives through `static.crates.io` + Git-tag archives through pkg.re; recompute SHA-256 against curated rows; confirm removed unshared Git archives return not found.
 - Compare live `release.json` with the committed candidate.
 - Use a fresh Cargo home/cache and committed failure-closed `.cargo/config.toml`; run metadata/build/install with `--locked`/`--frozen` across every layer.
-- Capture network/source evidence that no crates.io index/archive, Git dependency, or unknown registry was contacted.
+- Capture network/source evidence that no crates.io index, Git dependency, or unknown registry was contacted; mirror archive traffic may target only `static.crates.io`.
 
 Keep consumer validation results private: public commits/logs/issues must not include consumer repository names, filesystem paths, manifests, lockfiles, dependency-discovery output, tokens, or credentials.
 

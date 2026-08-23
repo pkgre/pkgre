@@ -9,13 +9,12 @@ use pkgre_indexer::artifact::{ArtifactMap, sha256_bytes};
 use pkgre_indexer::index::{IndexRecord, index_path};
 use pkgre_indexer::render;
 use pkgre_indexer::schema::{
-    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, NameSource, PackageState,
-    RegistryLock, SCHEMA_VERSION, serialize_lock,
+    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, MIRROR_DOWNLOAD, NameSource,
+    PUBLISH_DOWNLOAD, PackageState, RegistryLock, SCHEMA_VERSION, serialize_lock,
 };
 use semver::Version;
 use serde_json::{Value, json};
 
-const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -55,16 +54,32 @@ fn renderer_routes_dependencies_and_reproduces_exact_site() {
         "rust.pkg.re\n"
     );
     assert!(site.join(".nojekyll").is_file());
-    for artifact in [&core, &matrix, &pkgre] {
-        assert_eq!(
-            fs::read(
-                site.join("crates")
-                    .join(format!("{}.crate", artifact.archive_hash))
-            )
-            .unwrap(),
-            artifact.archive_bytes
+    for (registry, expected) in [
+        ("core", MIRROR_DOWNLOAD),
+        ("matrix", MIRROR_DOWNLOAD),
+        ("pkgre", PUBLISH_DOWNLOAD),
+    ] {
+        let config: Value =
+            serde_json::from_slice(&fs::read(site.join(registry).join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(config["dl"], expected);
+    }
+    for artifact in [&core, &matrix] {
+        assert!(
+            !site
+                .join("crates")
+                .join(format!("{}.crate", artifact.archive_hash))
+                .exists()
         );
     }
+    assert_eq!(
+        fs::read(
+            site.join("crates")
+                .join(format!("{}.crate", pkgre.archive_hash))
+        )
+        .unwrap(),
+        pkgre.archive_bytes
+    );
 
     fs::write(site.join("CNAME"), "tampered.example\n").unwrap();
     assert!(render::verify(&catalog, &artifacts, &site).is_err());
@@ -87,12 +102,16 @@ fn add_artifact(
 ) -> TestArtifact {
     let archive_bytes = format!("synthetic archive for {name} 1.0.0\n").into_bytes();
     let archive_hash = sha256_bytes(&archive_bytes);
-    write_file(
-        &root
-            .join("objects/crates")
-            .join(format!("{archive_hash}.crate")),
-        &archive_bytes,
-    );
+    if registry == "pkgre" {
+        write_file(
+            &root
+                .join("objects/crates")
+                .join(format!("{archive_hash}.crate")),
+            &archive_bytes,
+        );
+    } else {
+        fs::create_dir_all(root.join("objects/crates")).unwrap();
+    }
     let dependencies = dependency.map_or_else(Vec::new, |dependency| {
         vec![json!({
             "name": dependency,
@@ -160,10 +179,15 @@ fn write_registry(root: &Path, name: &str, layers: &[&str], packages: &str) {
         .map(|layer| format!("\"{layer}\""))
         .collect::<Vec<_>>()
         .join(", ");
+    let download = if name == "pkgre" {
+        PUBLISH_DOWNLOAD
+    } else {
+        MIRROR_DOWNLOAD
+    };
     fs::write(
         root.join(format!("{name}.toml")),
         format!(
-            "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {DOWNLOAD:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{packages}"
+            "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {download:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{packages}"
         ),
     )
     .unwrap();
@@ -213,7 +237,11 @@ fn write_locks<'a>(root: &Path, artifacts: impl IntoIterator<Item = &'a TestArti
             registry: LockedRegistry {
                 name: registry.to_owned(),
                 index: registry_urls[registry].clone(),
-                download: DOWNLOAD.to_owned(),
+                download: if registry == "pkgre" {
+                    PUBLISH_DOWNLOAD.to_owned()
+                } else {
+                    MIRROR_DOWNLOAD.to_owned()
+                },
             },
             names: vec![LockedName {
                 name: artifact.name.to_owned(),

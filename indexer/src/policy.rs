@@ -6,10 +6,11 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 
-use crate::schema::{Approval, Catalog, NameSource, Source};
+use crate::schema::{
+    Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, Registry, Source,
+};
 
 const CNAME: &str = "rust.pkg.re";
-const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
 pub(crate) const CARGO_VERSION: &str = "1.95.0";
 pub(crate) const REGISTRIES: [(&str, &str, &[&str]); 3] = [
     ("core", "sparse+https://rust.pkg.re/core/", &["core"]),
@@ -52,10 +53,6 @@ impl Policy {
 pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     ensure!(catalog.registries.cname == CNAME, "CNAME must be {CNAME:?}");
     ensure!(
-        catalog.registries.download == DOWNLOAD,
-        "download template must be {DOWNLOAD:?}"
-    );
-    ensure!(
         catalog.registries.cargo_version.to_string() == CARGO_VERSION,
         "pkgre cargo-version must be {CARGO_VERSION}"
     );
@@ -91,11 +88,7 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
             "registry {:?} index must be {expected_index:?}",
             registry.name
         );
-        ensure!(
-            registry.download == DOWNLOAD,
-            "registry {:?} download template must be {DOWNLOAD:?}",
-            registry.name
-        );
+        validate_registry_download(catalog, registry)?;
         ensure!(
             registry.cargo_version.to_string() == CARGO_VERSION,
             "registry {:?} cargo-version must be {CARGO_VERSION}",
@@ -128,6 +121,42 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
         registry_urls,
         dependency_layers,
     })
+}
+
+fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<()> {
+    let mut has_mirror = false;
+    let mut has_publish = false;
+    for (name, home) in &catalog.homes.homes {
+        if home != &registry.name {
+            continue;
+        }
+        match catalog
+            .name_sources
+            .get(name)
+            .with_context(|| format!("package {name:?} has no permanent source class"))?
+        {
+            NameSource::Mirror => has_mirror = true,
+            NameSource::Publish => has_publish = true,
+        }
+    }
+    ensure!(
+        !(has_mirror && has_publish),
+        "registry {:?} cannot mix mirror and publish sources because Cargo provides one dl URL per registry",
+        registry.name
+    );
+    let expected = if has_mirror {
+        MIRROR_DOWNLOAD
+    } else if has_publish || registry.name == "pkgre" {
+        PUBLISH_DOWNLOAD
+    } else {
+        MIRROR_DOWNLOAD
+    };
+    ensure!(
+        registry.download == expected,
+        "registry {:?} download must be {expected:?} for its source class",
+        registry.name
+    );
+    Ok(())
 }
 
 fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -> Result<()> {
@@ -487,14 +516,17 @@ mod tests {
             registries: RegistriesFile {
                 schema: crate::schema::SCHEMA_VERSION,
                 cname: CNAME.to_owned(),
-                download: DOWNLOAD.to_owned(),
                 cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                 registries: REGISTRIES
                     .iter()
                     .map(|(name, index, layers)| Registry {
                         name: (*name).to_owned(),
                         index: (*index).to_owned(),
-                        download: DOWNLOAD.to_owned(),
+                        download: if *name == "pkgre" {
+                            PUBLISH_DOWNLOAD.to_owned()
+                        } else {
+                            MIRROR_DOWNLOAD.to_owned()
+                        },
                         may_depend_on: layers.iter().map(|value| (*value).to_owned()).collect(),
                         cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                     })
@@ -532,6 +564,35 @@ mod tests {
         let policy = validate_catalog(&valid_catalog()).unwrap();
         assert!(policy.permits_dependency("pkgre", "core"));
         assert!(!policy.permits_dependency("core", "matrix"));
+    }
+
+    #[test]
+    fn registry_source_classes_require_matching_downloads() {
+        let mut mirror_download = valid_catalog();
+        mirror_download.registries.registries[0].download = PUBLISH_DOWNLOAD.to_owned();
+        let error = validate_catalog(&mirror_download).unwrap_err();
+        assert!(format!("{error:#}").contains("for its source class"));
+
+        let mut publish_download = valid_catalog();
+        publish_download.registries.registries[2].download = MIRROR_DOWNLOAD.to_owned();
+        let error = validate_catalog(&publish_download).unwrap_err();
+        assert!(format!("{error:#}").contains("for its source class"));
+    }
+
+    #[test]
+    fn one_registry_cannot_mix_mirror_and_publish_name_anchors() {
+        let mut catalog = valid_catalog();
+        catalog
+            .homes
+            .homes
+            .insert("reserved-mirror".to_owned(), "pkgre".to_owned());
+        catalog
+            .name_sources
+            .insert("reserved-mirror".to_owned(), NameSource::Mirror);
+        let error = validate_catalog(&catalog).unwrap_err();
+        assert!(format!("{error:#}").contains(
+            "cannot mix mirror and publish sources because Cargo provides one dl URL per registry"
+        ));
     }
 
     #[test]

@@ -53,7 +53,7 @@
             {
               inherit package;
               archive = pkgs.fetchurl {
-                url = "https://rust.pkg.re/crates/${package.checksum}.crate";
+                url = "https://static.crates.io/crates/${package.name}/${package.name}-${package.version}.crate";
                 sha256 = package.checksum;
               };
             }

@@ -7,7 +7,7 @@
 - Declarative convergence: `pkgre-indexer lock` resolves only new desired identities, then transactionally makes locks + objects equal the declaration/history.
 - Irreversible history: existing immutable lock fields are preserved; only additions + `active→removed` are valid; removed identities cannot reactivate.
 - Explicit routing: every reserved package name has one permanent registry home; every dependency edge is rewritten to that home + checked against the fixed layer policy.
-- Exact artifacts: mirrored `.crate` bytes + selected crates.io sparse row remain byte-identical to upstream; Git-tag packages are reproduced twice with pinned Cargo.
+- Exact artifacts: mirrored `.crate` bytes are fetched + checksum-verified against the retained exact crates.io row but not stored; Git-tag packages are reproduced twice with pinned Cargo + retained by content hash.
 
 ## Managed layout
 
@@ -20,7 +20,7 @@ registry/
 ├── pkgre.toml
 ├── pkgre.lock
 └── objects/
-    ├── crates/<archive-sha256>.crate
+    ├── crates/<active-git-archive-sha256>.crate
     └── rows/<source-row-sha256>.json
 ```
 
@@ -34,7 +34,7 @@ schema = 2
 [registry]
 name = "core"
 index = "sparse+https://rust.pkg.re/core/"
-download = "https://rust.pkg.re/crates/{sha256-checksum}.crate"
+download = "https://static.crates.io/crates"
 may-depend-on = ["core"]
 cargo-version = "1.95.0"
 
@@ -62,10 +62,11 @@ tags = ["indexer/v0.2.0"]
 
 Rules:
 
-- Filename stem must equal `[registry].name`; schema, fields, aliases, URLs, download template, layer policy, and Cargo version are strict.
+- Filename stem must equal `[registry].name`; schema, fields, aliases, URLs, source-class download, layer policy, and Cargo version are strict.
 - Fixed topology: `core→core`; `matrix→core|matrix`; `pkgre→core|matrix|pkgre`.
 - `[mirror]`: map package name → exact semver list; accepted only in `core`/`matrix`; bytes come from crates.io.
 - `[publish]`: map package name → credential-free HTTPS Git URL + literal tag list; accepted only in `pkgre`.
+- One registry is mirror-only or publish-only, including empty permanent name anchors; mixing classes fails because Cargo provides one index-wide `dl` URL.
 - Package names are permanent reservations under Cargo ASCII case + `-`/`_` normalization; a name cannot move registries or switch `mirror`/`publish` source class.
 - Retain a removed mirror key with `[]`; retain a removed publisher key, unchanged `git`, with `tags = []`.
 - Build metadata does not distinguish Cargo registry version identities.
@@ -80,7 +81,7 @@ schema = 2
 [registry]
 name = "core"
 index = "sparse+https://rust.pkg.re/core/"
-download = "https://rust.pkg.re/crates/{sha256-checksum}.crate"
+download = "https://static.crates.io/crates"
 
 [[names]]
 name = "serde"
@@ -116,7 +117,7 @@ Hash meanings:
 
 | Field | Binds |
 |---|---|
-| `crate-sha256` | exact `.crate` archive bytes; also Cargo row `cksum` + content-addressed download identity |
+| `crate-sha256` | exact `.crate` archive bytes + Cargo row `cksum`; mirror bytes are re-fetched from crates.io, Git bytes use the retained content-addressed object |
 | `source-row-sha256` | exact un-routed crates.io row or deterministically generated Git-package row |
 | `index-row-sha256` | canonical routed row with `yanked = false`; removal does not alter this immutable active-row identity |
 
@@ -131,7 +132,7 @@ Locks are generated artifacts: never hand-edit them. Reconciliation copies every
 3. Resolve only desired identities absent from permanent history: exact crates.io version or declared Git tag.
 4. Route dependency rows against permanent package homes; reject missing homes or forbidden registry-layer edges.
 5. Generate next canonical locks; preserve old entries; mark no-longer-desired active entries `removed`.
-6. Build complete sibling staging catalog; retain every source-row object; retain archive objects used by ≥1 active identity; omit unshared removed archives.
+6. Build complete sibling staging catalog; retain every source-row object; retain archive objects used by ≥1 active Git-tag identity; omit all mirror archives + unshared removed Git archives.
 7. Strictly reload, object-verify, and test-render staging.
 8. Install by same-parent rename with rollback; sync files/directories; remove guard.
 
@@ -139,7 +140,7 @@ A successful second run with unchanged declarations is an exact no-op. A process
 
 ## Mirror materialization
 
-For each new `[mirror]` identity, the resolver fetches `https://index.crates.io/<Cargo index path>` + `https://static.crates.io/crates/<name>/<name>-<version>.crate` over HTTPS, selects exactly one matching sparse row, rejects upstream-yanked rows, validates known Cargo metadata, and requires archive SHA-256 = row `cksum`. The exact selected row including trailing newline and exact archive bytes become content-addressed objects; no archive repacking or dependency-metadata rewriting occurs in the source object.
+For each new `[mirror]` identity, the resolver fetches `https://index.crates.io/<Cargo index path>` + `https://static.crates.io/crates/<name>/<name>-<version>.crate` over HTTPS, selects exactly one matching sparse row, rejects upstream-yanked rows, validates known Cargo metadata, and requires archive SHA-256 = row `cksum`. The exact selected row including trailing newline becomes a retained content-addressed object; archive bytes are verified then discarded. Cargo later downloads through `https://static.crates.io/crates/<name>/<version>/download` + validates those bytes against the curated row `cksum`; crates.io controls availability, not accepted metadata or integrity.
 
 ## First-party Git-tag materialization
 
@@ -179,10 +180,10 @@ site/
 ├── matrix/config.json
 ├── pkgre/config.json
 ├── <registry>/<Cargo sparse-index package paths>
-└── crates/<active-archive-sha256>.crate
+└── crates/<active-git-archive-sha256>.crate
 ```
 
-`release.json` is the deployment-history manifest. `verify-monotonic` permits new identities + `active→removed`; requires identical topology + prior identity/archive/source-row/source provenance; forbids package disappearance, immutable mutation, and `removed→active`.
+`core/config.json` + `matrix/config.json` use `https://static.crates.io/crates`; `pkgre/config.json` uses the content-addressed pkg.re template. `release.json` schema 2 records download per registry. `verify-monotonic` permits the one-time schema-1 global-template migration, then requires downloads + topology immutable; it permits new identities + `active→removed` while forbidding package disappearance, immutable mutation, and `removed→active`.
 
 ## Removal
 
@@ -190,6 +191,6 @@ Removal is not mutable curator yanking:
 
 1. Delete the version/tag from its desired list; keep the package key.
 2. Run `lock`; the permanent lock entry changes only `state = "active"` → `state = "removed"`.
-3. Source-row evidence remains in `objects/rows/`; archive disappears from `objects/crates/` unless another active identity has the same content hash.
-4. Rendered index row remains as `yanked = true`; no archive is served for that identity unless shared by active content.
+3. Source-row evidence remains in `objects/rows/`; mirror archives were never retained; a Git archive disappears from `objects/crates/` unless another active Git identity has the same content hash.
+4. Rendered index row remains as `yanked = true`; no Git archive is served for that identity unless shared by active Git content; crates.io may still retain mirror bytes independently.
 5. Re-adding the version/tag fails permanently; publish a new version/tag instead.
