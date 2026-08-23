@@ -13,6 +13,9 @@ mod source;
 mod time;
 mod workflow;
 
+#[cfg(test)]
+mod e2e_tests;
+
 pub(crate) use admission::{validate_admission_inventory, validate_admission_tree_structure};
 pub use api::parse_crates_io_api_evidence;
 pub use apply::apply_update_plan;
