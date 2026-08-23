@@ -206,6 +206,7 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use flate2::{Compression, write::GzEncoder};
@@ -410,7 +411,6 @@ mod tests {
         tar.resize(tar.len() + (BLOCK - contents.len() % BLOCK) % BLOCK, 0);
         tar.resize(tar.len() + BLOCK * 2, 0);
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        use std::io::Write as _;
         encoder.write_all(&tar).unwrap();
         encoder.finish().unwrap()
     }

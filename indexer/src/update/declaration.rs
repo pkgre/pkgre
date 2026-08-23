@@ -10,7 +10,7 @@ use semver::Version;
 use toml_edit::{DocumentMut, Item};
 
 use crate::category::CategoryId;
-use crate::schema::{load_registry_inputs, version_identity};
+use crate::schema::{CategoryDeclaration, RegistryInput, load_registry_inputs, version_identity};
 
 use super::UpdateCandidate;
 
@@ -53,7 +53,24 @@ pub(crate) fn append_mirror_version(root: &Path, candidate: &UpdateCandidate) ->
         candidate.candidate.version
     );
 
-    let path = &category.declared_in;
+    edit_mirror_declaration(
+        &category.declared_in,
+        path_is_registry_input(input, category),
+        &category_id,
+        candidate,
+    )
+}
+
+fn path_is_registry_input(input: &RegistryInput, category: &CategoryDeclaration) -> bool {
+    category.declared_in == input.path
+}
+
+fn edit_mirror_declaration(
+    path: &Path,
+    inline: bool,
+    category_id: &CategoryId,
+    candidate: &UpdateCandidate,
+) -> Result<()> {
     let bytes =
         fs::read(path).with_context(|| format!("read candidate declaration {}", path.display()))?;
     let text = String::from_utf8(bytes)
@@ -61,7 +78,7 @@ pub(crate) fn append_mirror_version(root: &Path, candidate: &UpdateCandidate) ->
     let mut document = text
         .parse::<DocumentMut>()
         .with_context(|| format!("parse editable TOML {}", path.display()))?;
-    let item = if path == &input.path {
+    let item = if inline {
         nested_item_mut(
             &mut document,
             &["categories", category_id.local(), "mirror", &candidate.name],
@@ -70,10 +87,19 @@ pub(crate) fn append_mirror_version(root: &Path, candidate: &UpdateCandidate) ->
     } else {
         nested_item_mut(&mut document, &["mirror", &candidate.name], path)?
     };
+    insert_canonical_version(item, path, &candidate.name, &candidate.candidate.version)?;
+    replace_regular_file(path, document.to_string().as_bytes())
+}
+
+fn insert_canonical_version(
+    item: &mut Item,
+    path: &Path,
+    name: &str,
+    candidate: &Version,
+) -> Result<()> {
     let versions = item.as_array_mut().with_context(|| {
         format!(
-            "mirror declaration for {:?} is not an array in {}",
-            candidate.name,
+            "mirror declaration for {name:?} is not an array in {}",
             path.display()
         )
     })?;
@@ -84,16 +110,14 @@ pub(crate) fn append_mirror_version(root: &Path, candidate: &UpdateCandidate) ->
                 .as_str()
                 .with_context(|| {
                     format!(
-                        "mirror version for {:?} is not a string in {}",
-                        candidate.name,
+                        "mirror version for {name:?} is not a string in {}",
                         path.display()
                     )
                 })?
                 .parse::<Version>()
                 .with_context(|| {
                     format!(
-                        "mirror version for {:?} is not SemVer in {}",
-                        candidate.name,
+                        "mirror version for {name:?} is not SemVer in {}",
                         path.display()
                     )
                 })
@@ -101,30 +125,25 @@ pub(crate) fn append_mirror_version(root: &Path, candidate: &UpdateCandidate) ->
         .collect::<Result<Vec<_>>>()?;
     ensure!(
         parsed.windows(2).all(|window| window[0] < window[1]),
-        "mirror versions for {:?} are not in canonical SemVer order in {}",
-        candidate.name,
+        "mirror versions for {name:?} are not in canonical SemVer order in {}",
         path.display()
     );
     ensure!(
-        !parsed.iter().any(|version| {
-            version_identity(version) == version_identity(&candidate.candidate.version)
-        }),
-        "candidate identity {} {} is already present in editable TOML",
-        candidate.name,
-        candidate.candidate.version
+        !parsed
+            .iter()
+            .any(|version| version_identity(version) == version_identity(candidate)),
+        "candidate identity {name} {candidate} is already present in editable TOML"
     );
     let insertion = parsed
-        .binary_search(&candidate.candidate.version)
+        .binary_search(candidate)
         .unwrap_or_else(std::convert::identity);
-    versions.insert(insertion, candidate.candidate.version.to_string());
-    parsed.insert(insertion, candidate.candidate.version.clone());
+    versions.insert(insertion, candidate.to_string());
+    parsed.insert(insertion, candidate.clone());
     ensure!(
         parsed.windows(2).all(|window| window[0] < window[1]),
-        "candidate {} {} cannot be inserted in strict SemVer order",
-        candidate.name,
-        candidate.candidate.version
+        "candidate {name} {candidate} cannot be inserted in strict SemVer order"
     );
-    replace_regular_file(path, document.to_string().as_bytes())
+    Ok(())
 }
 
 fn nested_item_mut<'a>(

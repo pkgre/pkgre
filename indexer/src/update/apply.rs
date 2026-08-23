@@ -24,12 +24,13 @@ use super::{UpdatePlan, UtcTimestamp, load_update_plan};
 /// plan; catalog fingerprint drift; changed upstream evidence; reconciliation failure; or an invalid
 /// staged catalog. Any failure before installation leaves the live catalog unchanged.
 pub fn apply_update_plan(root: &Path, plan_path: &Path) -> Result<ReconcileSummary> {
+    let admitted_at = UtcTimestamp::now().context("read update admission time")?;
     apply_update_plan_with(
         root,
         plan_path,
         &LivePlannerResolver,
         &lock::LiveResolver,
-        UtcTimestamp::now().context("read update admission time")?,
+        &admitted_at,
     )
 }
 
@@ -38,7 +39,7 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
     plan_path: &Path,
     planner_resolver: &P,
     lock_resolver: &L,
-    admitted_at: UtcTimestamp,
+    admitted_at: &UtcTimestamp,
 ) -> Result<ReconcileSummary> {
     let plan = load_update_plan(plan_path).context("load approved update plan")?;
     ensure!(
@@ -46,7 +47,7 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
         "update plan contains no candidates"
     );
 
-    validate_plan_age(&plan, &admitted_at)?;
+    validate_plan_age(&plan, admitted_at)?;
     for candidate in &plan.candidates {
         validate_admissible_candidate(candidate)?;
     }
@@ -64,7 +65,7 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
                     candidate.name, candidate.candidate.version
                 )
             })?;
-            write_admission_record(staged, &plan, candidate, &admitted_at).with_context(|| {
+            write_admission_record(staged, &plan, candidate, admitted_at).with_context(|| {
                 format!(
                     "retain admission evidence for {} {}",
                     candidate.name, candidate.candidate.version
@@ -101,6 +102,8 @@ fn ensure_revalidation_matches(planned: &UpdatePlan, recomputed: &UpdatePlan) ->
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::update::{
         ArchiveSummary, DependencyDelta, PackageActivity, PlannedIdentity, SourceEvidence,
@@ -158,7 +161,7 @@ mod tests {
                     compressed_bytes: 1,
                     unpacked_bytes: 1,
                     files: 1,
-                    build_surface: Default::default(),
+                    build_surface: BTreeMap::default(),
                     vcs_commit: None,
                     vcs_path: None,
                 },

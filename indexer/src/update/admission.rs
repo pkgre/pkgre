@@ -39,7 +39,7 @@ pub(crate) struct AdmissionRecord {
 /// Validates that the optional admission-evidence tree contains only expected real directories and regular files.
 pub(crate) fn validate_admission_tree_structure(root: &Path) -> Result<()> {
     let review_root = root.join(REVIEWS_DIRECTORY);
-    let Some(_) = optional_real_directory(&review_root, "admission review root")? else {
+    let Some(()) = optional_real_directory(&review_root, "admission review root")? else {
         return Ok(());
     };
     let entries = sorted_entries(&review_root)?;
@@ -76,7 +76,7 @@ pub(crate) fn validate_admission_inventory(catalog: &Catalog) -> Result<()> {
         .root
         .join(REVIEWS_DIRECTORY)
         .join(ADMISSIONS_DIRECTORY);
-    let Some(_) = optional_real_directory(&approvals, "admission directory")? else {
+    let Some(()) = optional_real_directory(&approvals, "admission directory")? else {
         return Ok(());
     };
     let mut bindings = BTreeSet::new();
