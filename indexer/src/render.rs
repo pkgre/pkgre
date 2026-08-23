@@ -27,7 +27,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Name of the deterministic release manifest within a rendered site.
 pub const RELEASE_MANIFEST: &str = "release.json";
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Release {
     schema: u32,
@@ -37,7 +37,7 @@ struct Release {
     packages: Vec<ReleasePackage>,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseRegistry {
     name: String,
@@ -46,7 +46,7 @@ struct ReleaseRegistry {
     categories: Vec<ReleaseCategory>,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseCategory {
     id: CategoryId,
@@ -54,7 +54,7 @@ struct ReleaseCategory {
     may_depend_on: Vec<CategoryId>,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseName {
     name: String,
@@ -63,7 +63,7 @@ struct ReleaseName {
     source: NameSource,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReleasePackage {
     registry: String,
@@ -77,7 +77,7 @@ struct ReleasePackage {
     source: ReleaseSource,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum ReleaseSource {
     CratesIo,
@@ -139,7 +139,7 @@ struct LegacyReleaseRegistry {
     may_depend_on: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReleasePackageV2 {
     registry: String,
@@ -151,7 +151,7 @@ struct ReleasePackageV2 {
     source: ReleaseSourceV2,
 }
 
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum ReleaseSourceV2 {
     CratesIo,
@@ -713,6 +713,26 @@ fn validate_v3_release(release: &Release) -> Result<()> {
         "schema-3 release does not have the exact canonical registry/category topology"
     );
     let names = name_map(&release.names)?;
+    for anchor in names.values() {
+        ensure!(
+            expected_categories.contains_key(&anchor.category),
+            "release name {:?} has noncanonical category {}",
+            anchor.name,
+            anchor.category
+        );
+        match anchor.source {
+            NameSource::Mirror => ensure!(
+                anchor.registry == "universe",
+                "mirrored release name {:?} must use the universe registry",
+                anchor.name
+            ),
+            NameSource::Publish => ensure!(
+                anchor.registry == "pkgre",
+                "first-party release name {:?} must use the pkgre registry",
+                anchor.name
+            ),
+        }
+    }
     let packages = package_map(&release.packages)?;
     for package in packages.values() {
         validate_sha256(&package.archive_sha256)?;
@@ -1181,6 +1201,204 @@ mod tests {
         write_manifest(&next, &release);
         let error = verify_monotonic(&previous, &next).unwrap_err();
         assert!(format!("{error:#}").contains("unsupported release manifest schema transition"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn schema_three_registries() -> Vec<ReleaseRegistry> {
+        let dependencies = canonical_category_dependencies();
+        REGISTRIES
+            .iter()
+            .map(|(name, index)| ReleaseRegistry {
+                name: (*name).to_owned(),
+                index: (*index).to_owned(),
+                download: if *name == "pkgre" {
+                    PUBLISH_DOWNLOAD.to_owned()
+                } else {
+                    MIRROR_DOWNLOAD.to_owned()
+                },
+                categories: dependencies
+                    .iter()
+                    .filter(|(category, _)| category.registry() == *name)
+                    .map(|(category, allowed)| ReleaseCategory {
+                        id: category.clone(),
+                        may_depend_on: allowed.iter().cloned().collect(),
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn schema_two_crate(name: &str, yanked: bool) -> ReleasePackageV2 {
+        ReleasePackageV2 {
+            registry: "core".to_owned(),
+            name: name.to_owned(),
+            version: Version::new(1, 0, 0),
+            archive_sha256: "a".repeat(64),
+            index_record_sha256: "b".repeat(64),
+            yanked,
+            source: ReleaseSourceV2::CratesIo,
+        }
+    }
+
+    fn schema_two_release(package: ReleasePackageV2) -> ReleaseV2 {
+        ReleaseV2 {
+            schema: 2,
+            cname: "rust.pkg.re".to_owned(),
+            registries: old_registries([MIRROR_DOWNLOAD, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD]),
+            packages: vec![package],
+        }
+    }
+
+    fn migrate_test_release(package: &ReleasePackageV2) -> Release {
+        let category = category_for_v2_home(&package.registry, &package.name).unwrap();
+        let registry = category.registry().to_owned();
+        let mut release = Release {
+            schema: 3,
+            cname: "rust.pkg.re".to_owned(),
+            registries: schema_three_registries(),
+            names: vec![ReleaseName {
+                name: package.name.clone(),
+                registry: registry.clone(),
+                category: category.clone(),
+                source: package.source.name_source(),
+            }],
+            packages: vec![ReleasePackage {
+                registry,
+                category,
+                name: package.name.clone(),
+                version: package.version.clone(),
+                archive_sha256: package.archive_sha256.clone(),
+                index_record_sha256: package.index_record_sha256.clone(),
+                index_row_sha256: String::new(),
+                yanked: package.yanked,
+                source: ReleaseSource::CratesIo,
+            }],
+        };
+        let row = test_release_row(&release.packages[0]);
+        release.packages[0].index_row_sha256 = active_row_hash(&row);
+        release
+    }
+
+    fn test_release_row(package: &ReleasePackage) -> Vec<u8> {
+        let mut row = serde_json::to_vec(&serde_json::json!({
+            "name": package.name,
+            "vers": package.version.to_string(),
+            "deps": [],
+            "cksum": package.archive_sha256,
+            "features": {},
+            "yanked": package.yanked,
+        }))
+        .unwrap();
+        row.push(b'\n');
+        row
+    }
+
+    fn active_row_hash(row: &[u8]) -> String {
+        let mut record = IndexRecord::parse(row).unwrap();
+        record.set_yanked(false);
+        sha256_bytes(&record.to_json_line().unwrap())
+    }
+
+    fn write_schema_three_site(path: &Path, release: &Release) {
+        write_manifest(path, release);
+        let mut rows = BTreeMap::<PathBuf, Vec<Vec<u8>>>::new();
+        for package in &release.packages {
+            rows.entry(path.join(&package.registry).join(index_path(&package.name)))
+                .or_default()
+                .push(test_release_row(package));
+        }
+        for (path, versions) in rows {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, versions.concat()).unwrap();
+        }
+    }
+
+    #[test]
+    fn canonical_schema_two_release_migrates_to_schema_three() {
+        let root = temporary_test_root("v2-v3");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", false);
+        write_manifest(&previous, &schema_two_release(package.clone()));
+        write_schema_three_site(&next, &migrate_test_release(&package));
+
+        verify_monotonic(&previous, &next).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_two_release_cannot_remap_a_package_to_an_arbitrary_category() {
+        let root = temporary_test_root("v2-v3-remap");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", false);
+        write_manifest(&previous, &schema_two_release(package.clone()));
+        let mut migrated = migrate_test_release(&package);
+        let category = CategoryId::new("universe", "yaml").unwrap();
+        migrated.names[0].category.clone_from(&category);
+        migrated.packages[0].category = category;
+        write_schema_three_site(&next, &migrated);
+
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("mapped to the wrong schema-3 home"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_three_preserves_name_category_and_package_anchors() {
+        let root = temporary_test_root("v3-anchors");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", false);
+        let release = migrate_test_release(&package);
+        write_schema_three_site(&previous, &release);
+
+        let mut recategorized = release.clone();
+        let category = CategoryId::new("universe", "yaml").unwrap();
+        recategorized.names[0].category.clone_from(&category);
+        recategorized.packages[0].category = category;
+        write_schema_three_site(&next, &recategorized);
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("permanent package name"));
+
+        let mut changed_package = release.clone();
+        changed_package.packages[0].index_record_sha256 = "c".repeat(64);
+        write_schema_three_site(&next, &changed_package);
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("immutable release identity changed"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_three_removed_package_cannot_be_reactivated() {
+        let root = temporary_test_root("v3-reactivate");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", true);
+        let removed = migrate_test_release(&package);
+        write_schema_three_site(&previous, &removed);
+        let mut reactivated = removed.clone();
+        reactivated.packages[0].yanked = false;
+        write_schema_three_site(&next, &reactivated);
+
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("was reactivated"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_three_routed_row_hash_must_match_the_site() {
+        let root = temporary_test_root("v3-row-hash");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", false);
+        let mut release = migrate_test_release(&package);
+        release.packages[0].index_row_sha256 = "d".repeat(64);
+        write_schema_three_site(&previous, &release);
+        write_schema_three_site(&next, &release);
+
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("rendered index-row hash differs"));
         fs::remove_dir_all(root).unwrap();
     }
 
