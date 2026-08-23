@@ -19,7 +19,7 @@ use crate::policy::{
 };
 use crate::schema::{
     Catalog, LockedName, LockedPackage, LockedSource, NameSource, PackageState, RegistryInput,
-    RegistryLock, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
+    RegistryLock, Source, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
     validate_input_for_update, version_identity,
 };
 
@@ -182,7 +182,7 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     let preflight_inputs = inputs_with_default_locks(&inputs);
     let preflight_catalog = catalog_from_inputs(&root, &preflight_inputs)?;
     let policy = validate_catalog(&preflight_catalog)?;
-    validate_existing_objects_and_rows(&preflight_catalog, &policy)?;
+    let uses_legacy_archives = validate_existing_objects_and_rows(&preflight_catalog, &policy)?;
 
     let desired = collect_desired_packages(&inputs)?;
     let old = collect_old_packages(&inputs)?;
@@ -266,7 +266,7 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     let lock_changed = inputs
         .iter()
         .any(|input| input.lock.as_ref() != next_locks.get(&input.file.registry.name));
-    if !lock_changed {
+    if !lock_changed && !uses_legacy_archives {
         Catalog::load(&root).context("strictly reload unchanged catalog")?;
         return Ok(summary);
     }
@@ -459,6 +459,9 @@ fn prepare_next_locks(
             .lock
             .clone()
             .unwrap_or_else(|| empty_lock(&input.file));
+        next.registry
+            .download
+            .clone_from(&input.file.registry.download);
         let previous_names = next
             .names
             .iter()
@@ -569,12 +572,14 @@ fn lock_resolved_package(
         catalog,
         policy,
     )?;
-    insert_pending_object(
-        &mut pending.crates,
-        &archive_sha256,
-        resolved.archive_bytes,
-        "crate",
-    )?;
+    if matches!(&resolved.source, LockedSource::GitTag { .. }) {
+        insert_pending_object(
+            &mut pending.crates,
+            &archive_sha256,
+            resolved.archive_bytes,
+            "crate",
+        )?;
+    }
     insert_pending_object(
         &mut pending.rows,
         &source_row_sha256,
@@ -628,11 +633,21 @@ fn git_key(registry: &str, package: &LockedPackage) -> Option<GitIdentity> {
     }
 }
 
-fn validate_existing_objects_and_rows(catalog: &Catalog, policy: &Policy) -> Result<()> {
+fn validate_existing_objects_and_rows(catalog: &Catalog, policy: &Policy) -> Result<bool> {
     if catalog.approvals.is_empty() && object_store_is_absent(catalog)? {
-        return Ok(());
+        return Ok(false);
     }
+    let (artifacts, uses_legacy_archives) = ArtifactMap::load_for_update(catalog)?;
+    validate_routed_rows(catalog, policy, &artifacts)?;
+    Ok(uses_legacy_archives)
+}
+
+fn validate_strict_objects_and_rows(catalog: &Catalog, policy: &Policy) -> Result<()> {
     let artifacts = ArtifactMap::load(catalog)?;
+    validate_routed_rows(catalog, policy, &artifacts)
+}
+
+fn validate_routed_rows(catalog: &Catalog, policy: &Policy, artifacts: &ArtifactMap) -> Result<()> {
     for approval in &catalog.approvals {
         let artifact = artifacts
             .get(&approval.registry, &approval.name, &approval.version)
@@ -741,7 +756,9 @@ fn stage_catalog(
     let crates = catalog
         .approvals
         .iter()
-        .filter(|approval| !approval.is_removed())
+        .filter(|approval| {
+            !approval.is_removed() && matches!(&approval.source, Source::GitTag { .. })
+        })
         .map(|approval| approval.archive_sha256.as_str())
         .collect::<BTreeSet<_>>();
     let rows = catalog
@@ -812,7 +829,7 @@ fn materialize_object(
 fn validate_staged_catalog(root: &Path) -> Result<()> {
     let catalog = Catalog::load(root).context("strictly load staged catalog")?;
     let policy = validate_catalog(&catalog).context("validate staged catalog policy")?;
-    validate_existing_objects_and_rows(&catalog, &policy)
+    validate_strict_objects_and_rows(&catalog, &policy)
         .context("verify staged catalog objects and routed rows")?;
     let artifacts = ArtifactMap::load(&catalog)?;
     let rendered = TemporaryCatalog::sibling_of(root, "render")?;
@@ -1011,11 +1028,10 @@ mod tests {
 
     use super::*;
     use crate::index::index_path;
-    use crate::schema::load_lock;
+    use crate::schema::{MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, load_lock};
 
     const CORE_URL: &str = "sparse+https://rust.pkg.re/core/";
     const MATRIX_URL: &str = "sparse+https://rust.pkg.re/matrix/";
-    const DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
@@ -1073,6 +1089,108 @@ mod tests {
         assert!(format!("{error:#}").contains("unexpected entry in catalog root"));
         assert_eq!(resolver.calls(), 0);
         assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn mixed_mirror_and_publish_registry_fails_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-mixed-source");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\n\n[publish.beta]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"beta/v1.0.0\"]\n",
+            "",
+            "",
+        );
+        let resolver = FakeResolver::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains(
+            "cannot mix mirror and publish sources because Cargo provides one dl URL per registry"
+        ));
+        assert_eq!(resolver.calls(), 0);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn exact_legacy_archive_set_migrates_once_without_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-legacy-archives");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\n",
+            "",
+            "[publish.beta]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"beta/v1.0.0\"]\n",
+        );
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let mirror = locked_package(&root, "core", "alpha");
+        let mirror_archive = root
+            .join("objects/crates")
+            .join(format!("{}.crate", mirror.crate_sha256));
+        fs::write(
+            &mirror_archive,
+            fake_archive("alpha", &Version::parse("1.0.0").unwrap()),
+        )
+        .unwrap();
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert_eq!(
+            summary,
+            ReconcileSummary {
+                changed: true,
+                ..ReconcileSummary::default()
+            }
+        );
+        assert_eq!(resolver.calls(), 2);
+        assert!(!mirror_archive.exists());
+        let git = locked_package(&root, "pkgre", "beta");
+        assert!(
+            root.join("objects/crates")
+                .join(format!("{}.crate", git.crate_sha256))
+                .is_file()
+        );
+
+        let before = snapshot(temporary.path());
+        assert_eq!(
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+        assert_eq!(resolver.calls(), 2);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn legacy_download_lock_migrates_with_archive_cleanup() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-download-migration");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let mut core_lock = load_lock(&root.join("core.lock")).unwrap();
+        core_lock.registry.download = PUBLISH_DOWNLOAD.to_owned();
+        fs::write(root.join("core.lock"), serialize_lock(&core_lock).unwrap()).unwrap();
+        let mirror = locked_package(&root, "core", "alpha");
+        let mirror_archive = root
+            .join("objects/crates")
+            .join(format!("{}.crate", mirror.crate_sha256));
+        fs::write(
+            &mirror_archive,
+            fake_archive("alpha", &Version::parse("1.0.0").unwrap()),
+        )
+        .unwrap();
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert!(summary.changed);
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(
+            load_lock(&root.join("core.lock"))
+                .unwrap()
+                .registry
+                .download,
+            MIRROR_DOWNLOAD
+        );
+        assert!(!mirror_archive.exists());
     }
 
     #[test]
@@ -1402,10 +1520,15 @@ mod tests {
             .map(|layer| format!("\"{layer}\""))
             .collect::<Vec<_>>()
             .join(", ");
+        let download = if name == "pkgre" {
+            PUBLISH_DOWNLOAD
+        } else {
+            MIRROR_DOWNLOAD
+        };
         fs::write(
             root.join(format!("{name}.toml")),
             format!(
-                "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {DOWNLOAD:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{declarations}"
+                "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {download:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{declarations}"
             ),
         )
         .unwrap();

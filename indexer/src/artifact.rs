@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::index::IndexRecord;
 use crate::policy::validate_sha256;
-use crate::schema::{Approval, Catalog};
+use crate::schema::{Approval, Catalog, Source};
 
 /// One materialized archive and un-routed source index row.
 #[derive(Debug)]
@@ -35,12 +35,43 @@ pub struct ArtifactMap {
 }
 
 impl ArtifactMap {
-    /// Derives all object paths from a loaded catalog and verifies the object store.
+    /// Derives all object paths from a loaded catalog and strictly verifies the object store.
     ///
     /// # Errors
     ///
     /// Returns an error for missing, extra, non-regular, or hash-mismatched objects.
     pub fn load(catalog: &Catalog) -> Result<Self> {
+        let result = Self::from_catalog(catalog)?;
+        result.verify(catalog)?;
+        Ok(result)
+    }
+
+    /// Loads an existing catalog while accepting the exact pre-migration all-active archive set.
+    ///
+    /// This update-only compatibility path still verifies every retained archive and rejects any
+    /// set other than strict active Git-tag archives or the exact legacy all-active set.
+    pub(crate) fn load_for_update(catalog: &Catalog) -> Result<(Self, bool)> {
+        let result = Self::from_catalog(catalog)?;
+        let strict_archives = retained_archive_hashes(catalog);
+        let legacy_archives = legacy_archive_hashes(catalog);
+        let archive_root = catalog.root.join("objects/crates");
+        let actual_archives = read_object_names(&archive_root, "crate")?;
+        ensure!(
+            actual_archives == strict_archives || actual_archives == legacy_archives,
+            "object set below {} differs from generated locks; expected the strict Git-only set or exact legacy all-active set",
+            archive_root.display()
+        );
+        let uses_legacy_archives = actual_archives != strict_archives;
+        let accepted_archives = if uses_legacy_archives {
+            legacy_archives
+        } else {
+            strict_archives
+        };
+        result.verify_with_archives(catalog, &accepted_archives)?;
+        Ok((result, uses_legacy_archives))
+    }
+
+    fn from_catalog(catalog: &Catalog) -> Result<Self> {
         let mut entries = BTreeMap::new();
         for approval in &catalog.approvals {
             let key = (
@@ -70,9 +101,7 @@ impl ArtifactMap {
                 "duplicate artifact identity"
             );
         }
-        let result = Self { entries };
-        result.verify(catalog)?;
-        Ok(result)
+        Ok(Self { entries })
     }
 
     /// Finds one exact materialized object pair.
@@ -82,35 +111,38 @@ impl ArtifactMap {
             .get(&(registry.to_owned(), name.to_owned(), version.clone()))
     }
 
-    /// Verifies object hashes, row identities, and the exact active archive/retained-row sets.
+    /// Verifies object hashes, row identities, and the exact active Git archive/retained-row sets.
     ///
-    /// Removed archives must be absent unless the same content hash is still used by another active package. Source rows are retained for every locked identity.
+    /// Mirror archives are not retained. Removed Git archives must be absent unless the same content
+    /// hash is still used by another active Git package. Source rows are retained for every locked identity.
     ///
     /// # Errors
     ///
     /// Returns an error for missing, extra, non-regular, or hash-mismatched objects.
     pub fn verify(&self, catalog: &Catalog) -> Result<()> {
+        self.verify_with_archives(catalog, &retained_archive_hashes(catalog))
+    }
+
+    fn verify_with_archives(
+        &self,
+        catalog: &Catalog,
+        retained_archives: &BTreeSet<String>,
+    ) -> Result<()> {
         ensure!(
             self.entries.len() == catalog.approvals.len(),
             "object map has {} entries but catalog has {} locked packages",
             self.entries.len(),
             catalog.approvals.len()
         );
-        let active_archives = catalog
-            .approvals
-            .iter()
-            .filter(|approval| !approval.is_removed())
-            .map(|approval| approval.archive_sha256.as_str())
-            .collect::<BTreeSet<_>>();
         let retained_rows = catalog
             .approvals
             .iter()
-            .map(|approval| approval.index_record_sha256.as_str())
+            .map(|approval| approval.index_record_sha256.clone())
             .collect::<BTreeSet<_>>();
         verify_object_names(
             &catalog.root.join("objects/crates"),
             "crate",
-            &active_archives,
+            retained_archives,
         )?;
         verify_object_names(&catalog.root.join("objects/rows"), "json", &retained_rows)?;
 
@@ -129,11 +161,31 @@ impl ArtifactMap {
             verify_artifact(
                 approval,
                 artifact,
-                active_archives.contains(approval.archive_sha256.as_str()),
+                retained_archives.contains(&approval.archive_sha256),
             )?;
         }
         Ok(())
     }
+}
+
+fn retained_archive_hashes(catalog: &Catalog) -> BTreeSet<String> {
+    catalog
+        .approvals
+        .iter()
+        .filter(|approval| {
+            !approval.is_removed() && matches!(&approval.source, Source::GitTag { .. })
+        })
+        .map(|approval| approval.archive_sha256.clone())
+        .collect()
+}
+
+fn legacy_archive_hashes(catalog: &Catalog) -> BTreeSet<String> {
+    catalog
+        .approvals
+        .iter()
+        .filter(|approval| !approval.is_removed())
+        .map(|approval| approval.archive_sha256.clone())
+        .collect()
 }
 
 fn verify_artifact(approval: &Approval, artifact: &Artifact, archive_retained: bool) -> Result<()> {
@@ -186,7 +238,19 @@ fn verify_artifact(approval: &Approval, artifact: &Artifact, archive_retained: b
     Ok(())
 }
 
-fn verify_object_names(root: &Path, suffix: &str, expected: &BTreeSet<&str>) -> Result<()> {
+fn verify_object_names(root: &Path, suffix: &str, expected: &BTreeSet<String>) -> Result<()> {
+    let actual = read_object_names(root, suffix)?;
+    ensure!(
+        actual == *expected,
+        "object set below {} differs from generated locks; missing={:?}, extra={:?}",
+        root.display(),
+        expected.difference(&actual).collect::<Vec<_>>(),
+        actual.difference(expected).collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+fn read_object_names(root: &Path, suffix: &str) -> Result<BTreeSet<String>> {
     let metadata = fs::symlink_metadata(root)
         .with_context(|| format!("inspect object directory {}", root.display()))?;
     ensure!(
@@ -218,18 +282,7 @@ fn verify_object_names(root: &Path, suffix: &str, expected: &BTreeSet<&str>) -> 
             .with_context(|| format!("invalid object filename {}", path.display()))?;
         actual.insert(hash.to_owned());
     }
-    let expected = expected
-        .iter()
-        .map(|value| (*value).to_owned())
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        actual == expected,
-        "object set below {} differs from generated locks; missing={:?}, extra={:?}",
-        root.display(),
-        expected.difference(&actual).collect::<Vec<_>>(),
-        actual.difference(&expected).collect::<Vec<_>>()
-    );
-    Ok(())
+    Ok(actual)
 }
 
 /// Computes the lowercase hexadecimal SHA-256 of bytes.

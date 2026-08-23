@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::artifact::{ArtifactMap, require_absent, sha256_bytes};
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{Policy, validate_catalog};
-use crate::schema::{Approval, Catalog, RELEASE_SCHEMA_VERSION, Source};
+use crate::schema::{
+    Approval, Catalog, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, RELEASE_SCHEMA_VERSION, Source,
+};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -25,7 +27,6 @@ pub const RELEASE_MANIFEST: &str = "release.json";
 struct Release {
     schema: u32,
     cname: String,
-    download: String,
     registries: Vec<ReleaseRegistry>,
     packages: Vec<ReleasePackage>,
 }
@@ -33,6 +34,26 @@ struct Release {
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseRegistry {
+    name: String,
+    index: String,
+    download: String,
+    #[serde(rename = "may-depend-on")]
+    may_depend_on: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyRelease {
+    schema: u32,
+    cname: String,
+    download: String,
+    registries: Vec<LegacyReleaseRegistry>,
+    packages: Vec<ReleasePackage>,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyReleaseRegistry {
     name: String,
     index: String,
     #[serde(rename = "may-depend-on")]
@@ -92,17 +113,13 @@ fn render_into(
         &output.join("CNAME"),
         format!("{}\n", catalog.registries.cname).as_bytes(),
     )?;
-    let config = serde_json::to_vec(&serde_json::json!({
-        "dl": catalog.registries.download,
-    }))
-    .context("serialize registry config")?;
-    let mut config_line = config;
-    config_line.push(b'\n');
     for registry in &catalog.registries.registries {
-        write_new(
-            &output.join(&registry.name).join("config.json"),
-            &config_line,
-        )?;
+        let mut config = serde_json::to_vec(&serde_json::json!({
+            "dl": registry.download,
+        }))
+        .context("serialize registry config")?;
+        config.push(b'\n');
+        write_new(&output.join(&registry.name).join("config.json"), &config)?;
     }
 
     let mut rows = BTreeMap::<(String, String), Vec<(Version, Vec<u8>)>>::new();
@@ -147,7 +164,10 @@ fn render_into(
             .or_default()
             .push((approval.version.clone(), record.to_json_line()?));
 
-        if !approval.is_removed() && copied_archives.insert(approval.archive_sha256.clone()) {
+        if !approval.is_removed()
+            && matches!(&approval.source, Source::GitTag { .. })
+            && copied_archives.insert(approval.archive_sha256.clone())
+        {
             copy_new(
                 &artifact.archive,
                 &output
@@ -196,15 +216,17 @@ pub fn verify_monotonic(previous_site: &Path, next_site: &Path) -> Result<()> {
     let previous = load_release(&previous_site.join(RELEASE_MANIFEST))?;
     let next = load_release(&next_site.join(RELEASE_MANIFEST))?;
     ensure!(
-        previous.schema == RELEASE_SCHEMA_VERSION && next.schema == RELEASE_SCHEMA_VERSION,
-        "unsupported release manifest schema"
+        next.schema == RELEASE_SCHEMA_VERSION
+            && matches!(previous.schema, 1 | RELEASE_SCHEMA_VERSION),
+        "unsupported release manifest schema transition {} -> {}",
+        previous.schema,
+        next.schema
     );
     ensure!(
-        previous.cname == next.cname
-            && previous.download == next.download
-            && previous.registries == next.registries,
-        "registry topology changed across releases"
+        previous.cname == next.cname,
+        "CNAME changed across releases"
     );
+    validate_registry_transition(&previous, &next)?;
     let next_packages = package_map(&next.packages)?;
     for prior in &previous.packages {
         let key = release_key(prior);
@@ -241,6 +263,7 @@ fn release_from_catalog(catalog: &Catalog) -> Release {
         .map(|registry| ReleaseRegistry {
             name: registry.name.clone(),
             index: registry.index.clone(),
+            download: registry.download.clone(),
             may_depend_on: registry.may_depend_on.clone(),
         })
         .collect();
@@ -275,7 +298,6 @@ fn release_from_catalog(catalog: &Catalog) -> Release {
     Release {
         schema: RELEASE_SCHEMA_VERSION,
         cname: catalog.registries.cname.clone(),
-        download: catalog.registries.download.clone(),
         registries,
         packages,
     }
@@ -301,8 +323,72 @@ fn sorted_approvals(catalog: &Catalog) -> Vec<&Approval> {
 fn load_release(path: &Path) -> Result<Release> {
     let bytes =
         fs::read(path).with_context(|| format!("read release manifest {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse release manifest {}", path.display()))
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse release manifest {}", path.display()))?;
+    match value.get("schema").and_then(serde_json::Value::as_u64) {
+        Some(1) => {
+            let legacy: LegacyRelease = serde_json::from_value(value)
+                .with_context(|| format!("parse schema-1 release manifest {}", path.display()))?;
+            Ok(Release {
+                schema: legacy.schema,
+                cname: legacy.cname,
+                registries: legacy
+                    .registries
+                    .into_iter()
+                    .map(|registry| ReleaseRegistry {
+                        name: registry.name,
+                        index: registry.index,
+                        download: legacy.download.clone(),
+                        may_depend_on: registry.may_depend_on,
+                    })
+                    .collect(),
+                packages: legacy.packages,
+            })
+        }
+        Some(schema) if schema == u64::from(RELEASE_SCHEMA_VERSION) => {
+            serde_json::from_value(value)
+                .with_context(|| format!("parse release manifest {}", path.display()))
+        }
+        Some(schema) => bail!(
+            "unsupported release manifest schema {schema} in {}",
+            path.display()
+        ),
+        None => bail!("release manifest has no integer schema: {}", path.display()),
+    }
+}
+
+fn validate_registry_transition(previous: &Release, next: &Release) -> Result<()> {
+    ensure!(
+        previous.registries.len() == next.registries.len(),
+        "registry topology changed across releases"
+    );
+    for (previous_registry, next_registry) in previous.registries.iter().zip(&next.registries) {
+        ensure!(
+            previous_registry.name == next_registry.name
+                && previous_registry.index == next_registry.index
+                && previous_registry.may_depend_on == next_registry.may_depend_on,
+            "registry topology changed across releases"
+        );
+        if previous.schema == RELEASE_SCHEMA_VERSION {
+            ensure!(
+                previous_registry.download == next_registry.download,
+                "registry {:?} download changed across releases",
+                previous_registry.name
+            );
+            continue;
+        }
+        let expected = match previous_registry.name.as_str() {
+            "core" | "matrix" => MIRROR_DOWNLOAD,
+            "pkgre" => PUBLISH_DOWNLOAD,
+            name => bail!("unexpected registry {name:?} in schema-1 release migration"),
+        };
+        ensure!(
+            previous_registry.download == PUBLISH_DOWNLOAD && next_registry.download == expected,
+            "registry {:?} has an unsupported schema-1 download migration",
+            previous_registry.name
+        );
+    }
+    Ok(())
 }
 
 fn package_map(
@@ -519,6 +605,122 @@ impl Drop for TemporaryDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release_registries(downloads: [&str; 3]) -> Vec<ReleaseRegistry> {
+        ["core", "matrix", "pkgre"]
+            .into_iter()
+            .zip(downloads)
+            .map(|(name, download)| ReleaseRegistry {
+                name: name.to_owned(),
+                index: format!("sparse+https://rust.pkg.re/{name}/"),
+                download: download.to_owned(),
+                may_depend_on: match name {
+                    "core" => vec!["core".to_owned()],
+                    "matrix" => vec!["core".to_owned(), "matrix".to_owned()],
+                    "pkgre" => vec!["core".to_owned(), "matrix".to_owned(), "pkgre".to_owned()],
+                    _ => unreachable!(),
+                },
+            })
+            .collect()
+    }
+
+    fn legacy_registries() -> Vec<LegacyReleaseRegistry> {
+        release_registries([PUBLISH_DOWNLOAD; 3])
+            .into_iter()
+            .map(|registry| LegacyReleaseRegistry {
+                name: registry.name,
+                index: registry.index,
+                may_depend_on: registry.may_depend_on,
+            })
+            .collect()
+    }
+
+    fn write_manifest(path: &Path, value: &impl Serialize) {
+        fs::create_dir_all(path).unwrap();
+        fs::write(
+            path.join(RELEASE_MANIFEST),
+            serde_json::to_vec_pretty(value).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn schema_one_release_migrates_only_to_source_specific_downloads() {
+        let root = std::env::temp_dir().join(format!(
+            "pkgre-release-migration-test-{}-{}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let previous = root.join("previous");
+        let next = root.join("next");
+        write_manifest(
+            &previous,
+            &LegacyRelease {
+                schema: 1,
+                cname: "rust.pkg.re".to_owned(),
+                download: PUBLISH_DOWNLOAD.to_owned(),
+                registries: legacy_registries(),
+                packages: Vec::new(),
+            },
+        );
+        let mut next_release = Release {
+            schema: RELEASE_SCHEMA_VERSION,
+            cname: "rust.pkg.re".to_owned(),
+            registries: release_registries([MIRROR_DOWNLOAD, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD]),
+            packages: Vec::new(),
+        };
+        write_manifest(&next, &next_release);
+        verify_monotonic(&previous, &next).unwrap();
+
+        next_release.registries[0].download = PUBLISH_DOWNLOAD.to_owned();
+        fs::write(
+            next.join(RELEASE_MANIFEST),
+            serde_json::to_vec_pretty(&next_release).unwrap(),
+        )
+        .unwrap();
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("unsupported schema-1 download migration"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_two_downloads_are_immutable_and_cannot_reverse_to_schema_one() {
+        let root = std::env::temp_dir().join(format!(
+            "pkgre-release-schema-two-test-{}-{}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let release = Release {
+            schema: RELEASE_SCHEMA_VERSION,
+            cname: "rust.pkg.re".to_owned(),
+            registries: release_registries([MIRROR_DOWNLOAD, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD]),
+            packages: Vec::new(),
+        };
+        write_manifest(&previous, &release);
+        let mut changed = release;
+        changed.registries[0].download = PUBLISH_DOWNLOAD.to_owned();
+        write_manifest(&next, &changed);
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("download changed"));
+
+        let legacy = LegacyRelease {
+            schema: 1,
+            cname: "rust.pkg.re".to_owned(),
+            download: PUBLISH_DOWNLOAD.to_owned(),
+            registries: legacy_registries(),
+            packages: Vec::new(),
+        };
+        fs::write(
+            next.join(RELEASE_MANIFEST),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("unsupported release manifest schema transition"));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn content_comparison_detects_equal_and_different_files() {

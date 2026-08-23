@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 /// Supported human registry and generated lock schema version.
 pub const SCHEMA_VERSION: u32 = 2;
 /// Stable deployed release-manifest wire schema.
-pub const RELEASE_SCHEMA_VERSION: u32 = 1;
+pub const RELEASE_SCHEMA_VERSION: u32 = 2;
+/// Cargo download base for registries backed by crates.io archives.
+pub const MIRROR_DOWNLOAD: &str = "https://static.crates.io/crates";
+/// Cargo download template for registries backed by retained Git-tag archives.
+pub const PUBLISH_DOWNLOAD: &str = "https://rust.pkg.re/crates/{sha256-checksum}.crate";
 const CNAME: &str = "rust.pkg.re";
 
 /// Fully loaded strict catalog.
@@ -37,8 +41,6 @@ pub struct RegistriesFile {
     pub schema: u32,
     /// GitHub Pages custom domain.
     pub cname: String,
-    /// Download URL template shared by all registries.
-    pub download: String,
     /// Pinned Cargo version for the `pkgre` registry.
     pub cargo_version: Version,
     /// Registry declarations.
@@ -53,7 +55,7 @@ pub struct Registry {
     pub name: String,
     /// Canonical sparse index URL, including `sparse+` and a trailing slash.
     pub index: String,
-    /// Content-addressed archive download template.
+    /// Cargo archive download base or template for this registry.
     pub download: String,
     /// Registry homes on which packages in this registry may depend.
     pub may_depend_on: Vec<String>,
@@ -124,7 +126,7 @@ pub struct LockedRegistry {
     pub name: String,
     /// Canonical sparse index URL.
     pub index: String,
-    /// Canonical archive download template.
+    /// Cargo archive download base or template.
     pub download: String,
 }
 
@@ -473,9 +475,16 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
 fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
     ensure!(
         lock.registry.name == input.file.registry.name
-            && lock.registry.index == input.file.registry.index
-            && lock.registry.download == input.file.registry.download,
+            && lock.registry.index == input.file.registry.index,
         "immutable registry identity in {} differs from {}",
+        input.lock_path.display(),
+        input.path.display()
+    );
+    ensure!(
+        lock.registry.download == input.file.registry.download
+            || (lock.registry.download == PUBLISH_DOWNLOAD
+                && input.file.registry.download == MIRROR_DOWNLOAD),
+        "registry download in {} differs from {}; only the one-way mirror migration from {PUBLISH_DOWNLOAD:?} to {MIRROR_DOWNLOAD:?} is allowed",
         input.lock_path.display(),
         input.path.display()
     );
@@ -635,6 +644,11 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
             input.path.display()
         )
     })?;
+    ensure!(
+        lock.registry.download == input.file.registry.download,
+        "registry download in {} is stale; run `pkgre-indexer lock`",
+        input.lock_path.display()
+    );
     let desired_names = desired_names(&input.file)?;
     let locked_names = lock
         .names
@@ -712,14 +726,12 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
     let mut name_sources = BTreeMap::new();
     let mut approvals = Vec::new();
     let mut registries = Vec::new();
-    let mut downloads = BTreeSet::new();
     for input in inputs {
         let lock = input
             .lock
             .as_ref()
             .with_context(|| format!("generated lock is missing: {}", input.lock_path.display()))?;
         registries.push(input.file.registry.clone());
-        downloads.insert(input.file.registry.download.clone());
         for (name, source) in desired_names(&input.file)? {
             ensure!(
                 homes
@@ -744,10 +756,6 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
             declared_in: input.lock_path.clone(),
         }));
     }
-    ensure!(
-        downloads.len() == 1,
-        "all registries must use one identical download template"
-    );
     registries.sort_by(|left, right| left.name.cmp(&right.name));
     approvals.sort_by(|left, right| {
         (
@@ -774,7 +782,6 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
         registries: RegistriesFile {
             schema: SCHEMA_VERSION,
             cname: CNAME.to_owned(),
-            download: downloads.into_iter().next().expect("one download template"),
             cargo_version,
             registries,
         },
