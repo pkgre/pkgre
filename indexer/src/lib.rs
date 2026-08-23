@@ -10,3 +10,4 @@ pub mod package;
 pub mod policy;
 pub mod render;
 pub mod schema;
+pub mod update;
