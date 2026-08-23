@@ -34,7 +34,7 @@ struct InspectionReport<'a> {
     source_evidence: &'a SourceEvidence,
 }
 
-trait InspectionResolver {
+pub(crate) trait InspectionResolver {
     fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>>;
 }
 
@@ -65,7 +65,7 @@ pub fn inspect_update_candidate(
     inspect_update_candidate_with(plan_path, name, version, output, &LiveInspectionResolver)
 }
 
-fn inspect_update_candidate_with<R: InspectionResolver>(
+pub(crate) fn inspect_update_candidate_with<R: InspectionResolver>(
     plan_path: &Path,
     name: &str,
     version: &Version,

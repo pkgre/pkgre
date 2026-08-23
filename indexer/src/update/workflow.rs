@@ -61,12 +61,30 @@ pub fn plan_exact_update(
     version: &Version,
     output: &Path,
 ) -> Result<UpdatePlan> {
+    plan_exact_update_with(
+        root,
+        name,
+        version,
+        output,
+        &LivePlannerResolver,
+        UtcTimestamp::now()?,
+    )
+}
+
+pub(crate) fn plan_exact_update_with<R: PlannerResolver>(
+    root: &Path,
+    name: &str,
+    version: &Version,
+    output: &Path,
+    resolver: &R,
+    evaluated_at: UtcTimestamp,
+) -> Result<UpdatePlan> {
     crate::policy::validate_package_name(name).context("invalid exact update package name")?;
     plan_with(
         root,
         output,
-        &LivePlannerResolver,
-        UtcTimestamp::now()?,
+        resolver,
+        evaluated_at,
         &PlanRequest::Exact {
             name: name.to_owned(),
             version: version.clone(),
