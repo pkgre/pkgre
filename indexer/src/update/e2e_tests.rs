@@ -69,6 +69,7 @@ fn exact_update_lifecycle_is_inert_evidence_bound_and_convergent() {
 
     assert_admitted_catalog(&catalog_root, &fixture, &version);
     assert_render_and_lock_convergence(&catalog_root, &temporary.path().join("site"));
+    assert_admission_failures_reach_ordinary_catalog_verification(&catalog_root);
     assert!(!marker.exists());
 }
 
@@ -210,7 +211,13 @@ fn prepare_approved_plan(
     assert_eq!(fixture.source_calls.get(), 1);
 
     let review = temporary.join("review");
+    let catalog_before_inspection = super::catalog_fingerprint(catalog_root).unwrap();
     inspect_update_candidate_with(&plan_path, "demo", version, &review, fixture).unwrap();
+    assert_eq!(
+        super::catalog_fingerprint(catalog_root).unwrap(),
+        catalog_before_inspection,
+        "review inspection must remain outside catalog state"
+    );
     assert!(!marker.exists());
     assert!(review.join("README.txt").is_file());
     assert!(review.join("inspection.toml").is_file());
@@ -314,6 +321,7 @@ fn assert_admitted_catalog(root: &Path, fixture: &FixtureResolver, version: &Ver
     assert_eq!(locked.registry, "universe");
     assert_eq!(locked.category.to_string(), "universe/general");
     assert_eq!(locked.archive_sha256, sha256_bytes(&package.archive));
+    assert!(locked.admission_sha256.is_some());
     assert_eq!(
         locked.index_record_sha256,
         sha256_bytes(&package.source_row)
@@ -343,6 +351,37 @@ fn assert_admitted_catalog(root: &Path, fixture: &FixtureResolver, version: &Ver
             .unwrap()
             .contains("demo = [\"1.0.0\"]")
     );
+}
+
+fn assert_admission_failures_reach_ordinary_catalog_verification(root: &Path) {
+    let admissions = root.join("_reviews/admissions");
+    let mut records = fs::read_dir(&admissions)
+        .unwrap()
+        .collect::<std::io::Result<Vec<_>>>()
+        .unwrap();
+    records.sort_by_key(fs::DirEntry::file_name);
+    assert_eq!(records.len(), 1);
+    let path = records[0].path();
+    let bytes = fs::read(&path).unwrap();
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(b"\n")
+        .unwrap();
+    assert!(Catalog::load(root).is_err());
+    fs::write(&path, &bytes).unwrap();
+
+    fs::remove_file(&path).unwrap();
+    assert!(Catalog::load(root).is_err());
+    fs::write(&path, &bytes).unwrap();
+
+    let unexpected = admissions.join(format!("{}.toml", "00".repeat(32)));
+    fs::write(&unexpected, &bytes).unwrap();
+    assert!(Catalog::load(root).is_err());
+    fs::remove_file(unexpected).unwrap();
+    Catalog::load(root).unwrap();
 }
 
 fn assert_render_and_lock_convergence(root: &Path, site: &Path) {

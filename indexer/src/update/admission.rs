@@ -72,11 +72,16 @@ pub(crate) fn validate_admission_tree_structure(root: &Path) -> Result<()> {
 /// Loads and validates all optional admission records against immutable locked identities.
 pub(crate) fn validate_admission_inventory(catalog: &Catalog) -> Result<()> {
     validate_admission_tree_structure(&catalog.root)?;
+    let expected_bindings = expected_admission_bindings(catalog)?;
     let approvals = catalog
         .root
         .join(REVIEWS_DIRECTORY)
         .join(ADMISSIONS_DIRECTORY);
     let Some(()) = optional_real_directory(&approvals, "admission directory")? else {
+        ensure!(
+            expected_bindings.is_empty(),
+            "generated locks reference missing update-admission records"
+        );
         return Ok(());
     };
     let mut bindings = BTreeSet::new();
@@ -91,7 +96,7 @@ pub(crate) fn validate_admission_inventory(catalog: &Catalog) -> Result<()> {
             path.display()
         );
         ensure!(
-            bindings.insert(binding),
+            bindings.insert(binding.clone()),
             "duplicate admission candidate binding in {}",
             path.display()
         );
@@ -126,12 +131,45 @@ pub(crate) fn validate_admission_inventory(catalog: &Catalog) -> Result<()> {
                 && locked.category.to_string() == record.candidate.category
                 && locked.archive_sha256 == record.candidate.candidate.crate_sha256
                 && locked.index_record_sha256 == record.candidate.candidate.source_row_sha256
+                && locked.admission_sha256.as_deref() == Some(binding.as_str())
                 && matches!(locked.source, Source::CratesIo),
-            "admission record {} differs from immutable locked route or hashes",
+            "admission record {} differs from immutable locked route, hashes, or binding",
             path.display()
         );
     }
+    ensure!(
+        bindings == expected_bindings,
+        "update-admission inventory differs from generated-lock bindings; missing={:?}, unexpected={:?}",
+        expected_bindings.difference(&bindings).collect::<Vec<_>>(),
+        bindings.difference(&expected_bindings).collect::<Vec<_>>()
+    );
     Ok(())
+}
+
+fn expected_admission_bindings(catalog: &Catalog) -> Result<BTreeSet<String>> {
+    let mut bindings = BTreeSet::new();
+    for approval in &catalog.approvals {
+        let Some(binding) = &approval.admission_sha256 else {
+            continue;
+        };
+        crate::policy::validate_sha256(binding).with_context(|| {
+            format!(
+                "invalid update-admission binding for {} {}",
+                approval.name, approval.version
+            )
+        })?;
+        ensure!(
+            matches!(approval.source, Source::CratesIo),
+            "non-crates.io identity {} {} references update-admission evidence",
+            approval.name,
+            approval.version
+        );
+        ensure!(
+            bindings.insert(binding.clone()),
+            "generated locks repeat update-admission binding {binding}"
+        );
+    }
+    Ok(bindings)
 }
 
 /// Writes one canonical immutable admission record and returns its catalog-relative path.
@@ -506,6 +544,27 @@ mod tests {
     }
 
     #[test]
+    fn inventory_requires_exact_reverse_lock_binding() {
+        let root = temporary_directory("reverse-binding");
+        let candidate = approved_review_candidate();
+        let mut catalog = catalog_for(&root, &candidate);
+        let error = validate_admission_inventory(&catalog).unwrap_err();
+        assert!(format!("{error:#}").contains("missing update-admission records"));
+
+        write_admission_record(
+            &root,
+            &update_plan(candidate.clone()),
+            &candidate,
+            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
+        )
+        .unwrap();
+        catalog.approvals[0].admission_sha256 = None;
+        let error = validate_admission_inventory(&catalog).unwrap_err();
+        assert!(format!("{error:#}").contains("binding"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn review_tree_rejects_unexpected_nested_and_non_regular_entries() {
         let root = temporary_directory("tree");
         fs::create_dir_all(root.join("_reviews/admissions/nested")).unwrap();
@@ -651,6 +710,7 @@ mod tests {
                 archive_sha256: candidate.candidate.crate_sha256.clone(),
                 index_record_sha256: candidate.candidate.source_row_sha256.clone(),
                 index_row_sha256: "08".repeat(32),
+                admission_sha256: Some(candidate_binding_sha256(candidate).unwrap()),
                 state: PackageState::Active,
                 source: Source::CratesIo,
                 declared_in: root.join("universe.lock"),

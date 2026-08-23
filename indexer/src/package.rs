@@ -994,6 +994,7 @@ mod tests {
             archive_sha256: materialization.archive_sha256.clone(),
             index_record_sha256: materialization.source_row_sha256.clone(),
             index_row_sha256: "01".repeat(32),
+            admission_sha256: None,
             state: PackageState::Active,
             source: Source::GitTag {
                 repository: "https://example.invalid/pkgre-demo".to_owned(),

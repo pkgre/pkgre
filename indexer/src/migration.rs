@@ -540,6 +540,7 @@ fn migrate_lock_packages(
             crate_sha256: package.crate_sha256.clone(),
             source_row_sha256: package.source_row_sha256.clone(),
             index_row_sha256,
+            admission_sha256: None,
             source: migrate_locked_source(&package.source),
         });
     }

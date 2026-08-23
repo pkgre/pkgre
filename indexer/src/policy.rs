@@ -657,6 +657,7 @@ mod tests {
                 archive_sha256: "01".repeat(32),
                 index_record_sha256: "02".repeat(32),
                 index_row_sha256: "03".repeat(32),
+                admission_sha256: None,
                 state: PackageState::Active,
                 source: Source::GitTag {
                     repository: "https://github.com/pkgre/pkgre".to_owned(),

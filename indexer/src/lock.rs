@@ -63,6 +63,7 @@ pub(crate) struct MirrorAdmission {
     pub(crate) version: Version,
     pub(crate) crate_sha256: String,
     pub(crate) source_row_sha256: String,
+    pub(crate) binding_sha256: String,
 }
 
 /// Reconciles a catalog whose only new crates.io identities have exact update admission evidence.
@@ -332,6 +333,20 @@ fn reconcile_with_mode<R: Resolver, N: Renamer>(
     Ok(summary)
 }
 
+fn mirror_admission<'a>(
+    mode: ReconciliationMode<'a>,
+    identity: &Identity,
+) -> Option<&'a MirrorAdmission> {
+    match mode {
+        ReconciliationMode::Direct => None,
+        ReconciliationMode::Admitted(admissions) => Some(
+            admissions
+                .get(identity)
+                .expect("new mirror admissions were validated before resolution"),
+        ),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolve_new_packages<R: Resolver>(
     source_resolver: &R,
@@ -357,10 +372,8 @@ fn resolve_new_packages<R: Resolver>(
                     package.name, package.version, package.registry
                 )
             })?;
-        if let ReconciliationMode::Admitted(admissions) = mode {
-            let admission = admissions
-                .get(identity)
-                .expect("new mirror admissions were validated before resolution");
+        let admission = mirror_admission(mode, identity);
+        if let Some(admission) = admission {
             ensure!(
                 sha256_bytes(&resolved.archive_bytes) == admission.crate_sha256,
                 "resolved archive hash differs from update admission for {} {}",
@@ -380,6 +393,7 @@ fn resolve_new_packages<R: Resolver>(
             &package.name,
             Some(&package.version),
             None,
+            admission.map(|value| value.binding_sha256.as_str()),
             resolved,
             catalog,
             policy,
@@ -419,6 +433,7 @@ fn resolve_new_packages<R: Resolver>(
             &package.name,
             None,
             Some((&package.repository, &package.tag, &package.cargo_version)),
+            None,
             resolved,
             catalog,
             policy,
@@ -764,6 +779,7 @@ fn lock_resolved_package(
     expected_name: &str,
     expected_version: Option<&Version>,
     expected_git: Option<(&str, &str, &Version)>,
+    admission_sha256: Option<&str>,
     resolved: ResolvedPackage,
     catalog: &Catalog,
     policy: &Policy,
@@ -802,6 +818,13 @@ fn lock_resolved_package(
             validate_tag_version(tag, &resolved.version)?;
         }
         _ => bail!("resolver returned the wrong source class for {expected_name}"),
+    }
+    ensure!(
+        admission_sha256.is_none() || matches!(resolved.source, LockedSource::CratesIo {}),
+        "only crates.io identities may carry update-admission evidence"
+    );
+    if let Some(binding) = admission_sha256 {
+        crate::policy::validate_sha256(binding).context("validate update-admission binding")?;
     }
 
     let identity = package_identity(&resolved.name, &resolved.version);
@@ -847,6 +870,7 @@ fn lock_resolved_package(
         crate_sha256: archive_sha256,
         source_row_sha256,
         index_row_sha256,
+        admission_sha256: admission_sha256.map(str::to_owned),
         source: resolved.source,
     })
 }
@@ -1443,7 +1467,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_mirror_admission_succeeds() {
+    fn admitted_reconciliation_requires_catalog_owned_record() {
         let temporary = TemporaryDirectory::new("pkgre-lock-exact-admission");
         let root = temporary.path().join("catalog");
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
@@ -1456,23 +1480,19 @@ mod tests {
             "",
         );
         let admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+        let before = snapshot(temporary.path());
 
-        let summary = reconcile_with_mode(
+        let error = reconcile_with_mode(
             &root,
             &resolver,
             &FilesystemRenamer,
             ReconciliationMode::Admitted(&admissions),
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(summary.packages_added, 1);
+        assert!(format!("{error:#}").contains("missing update-admission records"));
         assert_eq!(resolver.calls(), 2);
-        let beta = locked_package(&root, "universe", "beta");
-        let admission = admissions
-            .get(&package_identity("beta", &Version::parse("1.0.0").unwrap()))
-            .unwrap();
-        assert_eq!(beta.crate_sha256, admission.crate_sha256);
-        assert_eq!(beta.source_row_sha256, admission.source_row_sha256);
+        assert_eq!(snapshot(temporary.path()), before);
     }
 
     #[test]
@@ -2173,6 +2193,7 @@ mod tests {
                     version: version.clone(),
                     crate_sha256: sha256_bytes(&resolved.archive_bytes),
                     source_row_sha256: sha256_bytes(&resolved.source_row_bytes),
+                    binding_sha256: "ab".repeat(32),
                 };
                 (package_identity(name, &version), admission)
             })

@@ -10,7 +10,9 @@ use crate::lock::{self, MirrorAdmission, ReconcileSummary};
 use super::admission::{validate_admissible_candidate, validate_plan_age, write_admission_record};
 use super::declaration::append_mirror_version;
 use super::workflow::{LivePlannerResolver, revalidate_update_plan_with};
-use super::{UpdatePlan, UtcTimestamp, catalog_fingerprint, load_update_plan};
+use super::{
+    UpdatePlan, UtcTimestamp, candidate_binding_sha256, catalog_fingerprint, load_update_plan,
+};
 
 /// Revalidates and atomically admits every exact candidate in one canonical approved plan.
 ///
@@ -85,6 +87,7 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
                 version: candidate.candidate.version.clone(),
                 crate_sha256: candidate.candidate.crate_sha256.clone(),
                 source_row_sha256: candidate.candidate.source_row_sha256.clone(),
+                binding_sha256: candidate_binding_sha256(candidate)?,
             });
         }
         lock::reconcile_admitted_with(staged, &admissions, lock_resolver)

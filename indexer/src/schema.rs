@@ -234,6 +234,9 @@ pub struct LockedPackage {
     pub source_row_sha256: String,
     /// SHA-256 of the canonical routed row with `yanked = false`.
     pub index_row_sha256: String,
+    /// Candidate-binding SHA-256 for an identity admitted by the update workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_sha256: Option<String>,
     /// Immutable origin evidence.
     pub source: LockedSource,
 }
@@ -300,6 +303,8 @@ pub struct Approval {
     pub index_record_sha256: String,
     /// SHA-256 of the canonical routed row with `yanked = false`.
     pub index_row_sha256: String,
+    /// Candidate-binding SHA-256 for an identity admitted by the update workflow.
+    pub admission_sha256: Option<String>,
     /// Active or irreversibly removed state.
     pub state: PackageState,
     /// Immutable origin evidence.
@@ -835,17 +840,32 @@ fn validate_locked_source<'a>(
     tags: &mut BTreeSet<(&'a str, &'a str)>,
 ) -> Result<()> {
     match &package.source {
-        LockedSource::CratesIo {} => ensure!(
-            anchor.source == NameSource::Mirror,
-            "locked crates.io package {} has non-mirror name anchor",
-            package.name
-        ),
+        LockedSource::CratesIo {} => {
+            ensure!(
+                anchor.source == NameSource::Mirror,
+                "locked crates.io package {} has non-mirror name anchor",
+                package.name
+            );
+            if let Some(binding) = &package.admission_sha256 {
+                crate::policy::validate_sha256(binding).with_context(|| {
+                    format!(
+                        "invalid update-admission binding for {} {}",
+                        package.name, package.version
+                    )
+                })?;
+            }
+        }
         LockedSource::GitTag {
             git,
             tag,
             package: source_package,
             ..
         } => {
+            ensure!(
+                package.admission_sha256.is_none(),
+                "locked Git package {} unexpectedly has update-admission evidence",
+                package.name
+            );
             ensure!(
                 anchor.source == NameSource::Publish,
                 "locked Git package {} has non-publish name anchor",
@@ -1072,6 +1092,7 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
                 archive_sha256: package.crate_sha256.clone(),
                 index_record_sha256: package.source_row_sha256.clone(),
                 index_row_sha256: package.index_row_sha256.clone(),
+                admission_sha256: package.admission_sha256.clone(),
                 state: package.state,
                 source: source_from_lock(&package.source),
                 declared_in: input.lock_path.clone(),
