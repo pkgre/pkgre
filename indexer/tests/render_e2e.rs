@@ -321,6 +321,7 @@ fn write_locks(root: &Path, artifacts: &[TestArtifact]) {
                 crate_sha256: artifact.archive_hash.clone(),
                 source_row_sha256: artifact.record_hash.clone(),
                 index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
+                admission_sha256: None,
                 source: if registry == "pkgre" {
                     LockedSource::GitTag {
                         git: "https://github.com/pkgre/pkgre".to_owned(),

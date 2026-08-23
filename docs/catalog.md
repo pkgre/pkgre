@@ -4,8 +4,8 @@
 
 - Human authority: one committed `<registry>.toml` per registry declares fixed registry settings + categories; each category declares exact dependency policy + desired mirrored versions or immutable first-party Git tags; no imperative publish API.
 - Small/large category ergonomics: a category body may be inline in its registry file or stored at the exact referenced `categories/<registry>/<category>.toml` path.
-- Generated evidence: adjacent canonical `<registry>.lock` permanently binds package category/source class, Cargo identity, lifecycle state, exact artifact hashes, and origin provenance.
-- Declarative convergence: `pkgre-indexer lock` resolves only new desired identities, then transactionally makes locks + objects equal the declaration/history.
+- Generated evidence: adjacent canonical `<registry>.lock` permanently binds package category/source class, Cargo identity, lifecycle state, exact artifact hashes, origin provenance, and optional updater-admission binding; `_reviews/admissions/` retains canonical policy/review evidence for updater-admitted mirrors.
+- Declarative convergence: `pkgre-indexer update-apply` admits new mirrors from fresh evidence-bound plans; `pkgre-indexer lock` handles bootstrap/removal/Git tags; both transactionally converge locks + objects to declaration/history.
 - Irreversible history: existing immutable lock fields are preserved; only additions + `active→removed` are valid; removed identities cannot reactivate.
 - Explicit routing: every reserved package name has one permanent registry/category home; every dependency edge is rewritten to that registry home + checked against the source category's exact `may-depend-on` rule.
 - Exact artifacts: mirrored `.crate` bytes are fetched + checksum-verified against the retained exact crates.io row but not stored; Git-tag packages are reproduced twice with pinned Cargo + retained by content hash.
@@ -23,12 +23,14 @@ registry/
 │   └── universe/
 │       ├── general.toml
 │       └── matrix.toml
+├── _reviews/
+│   └── admissions/<candidate-binding-sha256>.toml
 └── objects/
     ├── crates/<active-git-archive-sha256>.crate
     └── rows/<source-row-sha256>.json
 ```
 
-`registry/` is exclusive indexer-managed state: only real regular registry `.toml` files, adjacent real regular `.lock` files, the canonical `categories/` inventory, and the real `objects/` directory are accepted. Every external category file must be referenced exactly once at `categories/<registry>/<local-category>.toml`; orphan files/directories, noncanonical paths, symlinks, special files, locks without declarations, and unrelated entries fail before network resolution. Keep proposals, review notes, scripts, and rendered sites outside this directory.
+`registry/` is exclusive indexer-managed state: only real regular registry `.toml` files, adjacent real regular `.lock` files, the canonical `categories/` inventory, canonical `_reviews/admissions/` updater evidence, and the real `objects/` directory are accepted. Every external category file must be referenced exactly once at `categories/<registry>/<local-category>.toml`; every admission filename must equal its lowercase SHA-256 candidate binding + have an exact reverse lock reference. Orphan files/directories, noncanonical paths/content, symlinks, special files, locks without declarations, unrelated entries, missing admission records, and unexpected admission records fail before network resolution. Keep proposals, transient plans, review notes, scripts, inert inspection trees, and rendered sites outside this directory.
 
 ## Human registry/category files
 
@@ -138,6 +140,7 @@ state = "active"
 crate-sha256 = "<64 lowercase hex>"
 source-row-sha256 = "<64 lowercase hex>"
 index-row-sha256 = "<64 lowercase hex>"
+admission-sha256 = "<candidate-binding-sha256>"
 
 [packages.source]
 kind = "crates-io"
@@ -164,16 +167,25 @@ Hash meanings:
 | `crate-sha256` | Exact `.crate` archive bytes + Cargo row `cksum`; mirror bytes are re-fetched from crates.io, Git bytes use the retained content-addressed object |
 | `source-row-sha256` | Exact unrouted crates.io row or deterministically generated Git-package row |
 | `index-row-sha256` | Canonical routed row with `yanked = false`; removal does not alter this immutable active-row identity |
+| `admission-sha256` | Optional candidate-binding hash for a mirror identity admitted by `update-apply`; requires exactly one matching canonical `_reviews/admissions/<hash>.toml` and is forbidden on Git identities |
 
-Locks are generated artifacts: never hand-edit them. Reconciliation copies every prior immutable package entry verbatim except the one-way state transition; local preflight verifies canonical form, category/source anchors, provenance shape, object hashes, source-row identity/checksum, and routed-row hash before any fetch. Source control review + `verify-monotonic` bind updates to already deployed history.
+Locks are generated artifacts: never hand-edit them. Reconciliation copies every prior immutable package entry verbatim except the one-way state transition; local preflight verifies canonical form, category/source anchors, provenance shape, object hashes, source-row identity/checksum, routed-row hash, and exact bidirectional lock↔admission inventory before any fetch. Legacy/bootstrap mirror identities may omit `admission-sha256`; an established catalog cannot create another such identity through ordinary `lock`. Source control review + `verify-monotonic` bind updates to already deployed history.
+
+## Update admission evidence
+
+`update-plan`/`update-plan-exact` create canonical read-only plans outside the catalog. Each candidate binds permanent route, exact version/pubtime/row/archive hashes, complete observed sparse-history hash, decision-relevant history hash, age/lane/dormancy, bounded base/candidate archive analyses + delta, dependencies, crates.io API facts, promoted source correspondence, decision, and reasons. Candidate-binding SHA-256 covers all of that while excluding later approval assertions.
+
+`update-inspect` re-fetches checksum-bound candidate/base archives + verifies planned analyses/delta before creating an inert review tree. `update-approve` can append exactly one required review assertion to a new plan: `source-delta` for an active name with a base, otherwise `full-archive`; the assertion binds candidate hash, canonical note + note hash, and timestamp. `automatic` candidates require no assertion; `blocked` candidates cannot be admitted.
+
+`update-apply` accepts plans evaluated no more than seven exact days earlier, requires the catalog fingerprint to remain exact, re-plans the same identities at the original evaluation time, and requires equality of all evidence other than approvals. Its guarded transaction appends declarations, materializes the already-hashed source rows, writes canonical admission records, and generates locks together. Each resulting mirror lock's `admission-sha256` must equal the record filename/candidate binding; each record must point back to exactly one matching immutable lock identity/route/archive/row. Ordinary load/`check` authenticates record form, review chronology/note hash, policy constants/outcome, and exact two-way inventory without network access.
 
 ## Reconciliation
 
-`pkgre-indexer lock registry`:
+`pkgre-indexer lock registry` is the direct declarative reconciler. In an established catalog it may reserve empty names, materialize new Git tags, and remove active identities, but cannot admit a new mirror identity; mirror admission must enter through `update-apply`.
 
 1. Acquire sibling guard `.registry.pkgre-lock`; concurrent or stale guard fails closed.
-2. Load human registry/category files + optional locks; validate all old anchors, tombstones, canonical topology, root/category inventory, retained objects, source rows, and routed rows locally.
-3. Resolve only desired identities absent from permanent history: exact crates.io version or declared Git tag.
+2. Load human registry/category files + optional locks/admissions; validate all old anchors, tombstones, canonical topology, root/category/review inventory, retained objects, source rows, routed rows, and lock↔admission bindings locally.
+3. Resolve only permitted desired identities absent from permanent history: all source classes during initial no-lock bootstrap, or declared Git tags in an established catalog. A direct new mirror fails before resolution; updater reconciliation additionally requires an exact catalog-owned admission descriptor/record.
 4. Route dependency rows against permanent package homes; reject missing homes or an edge absent from the source category's `may-depend-on` set.
 5. Generate next canonical locks; preserve old entries; mark no-longer-desired active entries `removed`.
 6. Build complete sibling staging catalog; retain every source-row object; retain archive objects used by ≥1 active Git-tag identity; omit all mirror archives + unshared removed Git archives.
@@ -184,7 +196,7 @@ A successful second run with unchanged declarations is an exact no-op. A process
 
 ## Mirror materialization
 
-For each new mirror identity, the resolver fetches `https://index.crates.io/<Cargo index path>` + `https://static.crates.io/crates/<name>/<name>-<version>.crate` over HTTPS, selects exactly one matching sparse row, rejects upstream-yanked rows, validates known Cargo metadata, and requires archive SHA-256 = row `cksum`. The exact selected row including trailing newline becomes a retained content-addressed object; archive bytes are verified then discarded. Cargo later downloads through `https://static.crates.io/crates/<name>/<version>/download` + validates those bytes against the curated row `cksum`; crates.io controls availability, not accepted metadata or integrity.
+For each planned/admitted mirror identity, the updater fetches `https://index.crates.io/<Cargo index path>` + `https://static.crates.io/crates/<name>/<name>-<version>.crate` over HTTPS, selects exactly one matching sparse row, rejects upstream-yanked/young/malformed rows, validates known Cargo metadata, and requires archive SHA-256 = row `cksum`. Planning additionally analyzes archive/dependency/API/source evidence; apply revalidates it before admitted reconciliation. The exact selected row including trailing newline becomes a retained content-addressed object; archive bytes are verified then discarded. Cargo later downloads through `https://static.crates.io/crates/<name>/<version>/download` + validates those bytes against the curated row `cksum`; crates.io controls availability, not accepted metadata or integrity. Initial no-lock bootstrap may materialize mirror declarations directly, but every later new mirror identity requires updater admission evidence.
 
 ## First-party Git-tag materialization
 

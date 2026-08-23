@@ -1,10 +1,9 @@
 [registries]
-core = { index = "sparse+https://rust.pkg.re/core/" }
-matrix = { index = "sparse+https://rust.pkg.re/matrix/" }
+universe = { index = "sparse+https://rust.pkg.re/universe/" }
 pkgre = { index = "sparse+https://rust.pkg.re/pkgre/" }
 
 [registry]
-default = "core"
+default = "universe"
 
 [source.crates-io]
 replace-with = "disabled-crates-io"

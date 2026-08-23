@@ -6,12 +6,13 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 
 ## Trust anchors
 
-- Curators: decide package/version/category home, inspect newly materialized exact bytes, approve permanent source evidence, review dependency/capability changes, and authorize removal.
-- Public catalog/index repository: reviewable desired state + immutable lock/object history; branch/repository administration remains privileged.
-- `pkgre-indexer`: resolves new declarations and enforces schema, lifecycle, artifact, category routing, rendering, migration, and release invariants; implementation bugs can invalidate guarantees.
+- Curators: decide package/version/category home, inspect exact planned bytes/evidence, add evidence-bound approvals when policy requires one, review generated catalog changes, and authorize removal.
+- Public catalog/index repository: reviewable desired state + immutable lock/object/admission history; branch/repository administration remains privileged.
+- Canonical update plan: binds catalog fingerprint, original evaluation time, exact sparse history/candidate/base, API/archive/dependency/source evidence, policy result, and later human approval assertions; plans/notes remain outside the trusted catalog until successful admission.
+- `pkgre-indexer`: resolves candidates, recomputes evidence, and enforces schema, update policy, approval/admission binding, lifecycle, artifact, category routing, rendering, migration, and release invariants; implementation bugs can invalidate guarantees.
 - Nix pins + Rust/Cargo `1.95.0`: tooling build inputs and first-party packaging semantics.
 - GitHub Pages + TLS/DNS: availability + delivery of rows/Git-tag archives; crates.io CDN: availability + delivery of mirror archives; Cargo checksums reject bytes that differ from a trusted curated row.
-- crates.io/Git upstreams during first materialization: metadata/source origins whose output remains uncommitted until audit + catalog review; crates.io remains the mirror-byte availability provider, constrained by the permanently locked checksum.
+- crates.io sparse/API/archive + public Git upstreams during planning/apply: metadata/source origins whose exact observations are bound into the plan, revalidated before admission, and remain uncommitted until policy/review passes; crates.io remains the mirror-byte availability provider, constrained by the permanently locked checksum.
 
 ## Authority boundaries
 
@@ -30,11 +31,17 @@ Generated locks permanently select:
 (registry, category, normalized Cargo package identity, version, source class, lifecycle state, archive hash, source-row hash, routed-active-row hash, origin provenance)
 ```
 
-Network materialization is candidate generation inside an uncommitted working tree. A successful `lock` proves internal consistency, not code safety; the result gains authority only after exact object/lock review + protected-branch merge. Existing identities require no network access during reconciliation.
+Network planning/materialization is candidate generation outside authoritative catalog state. `automatic` means no separate approval assertion is required, not that the change bypasses source-control review: a result gains authority only after exact generated diff + evidence review and protected-branch merge. Existing identities require no network access during local `check`/reconciliation.
 
 ## Enforced invariants
 
 - Exactly two canonical registries/URLs/source-class downloads: mirror-only `universe` uses `https://static.crates.io/crates`; publish-only `pkgre` uses the pkg.re content-addressed template; mixed classes fail because Cargo provides one `dl` URL per registry.
+- New mirror candidates must be non-yanked + at least 30 exact days old. Implicit planning selects only the latest eligible stable release in each active compatibility lane (`major≥1` by major; stable `0.minor`, `minor>0`, by minor); prereleases, `0.0.x`, new names, and inactive names require exact selection.
+- A candidate after a ≥365-day adjacent publication gap from its locked base requires review; yanked/prerelease publications count as activity, and the gate persists through a post-gap burst until one post-gap identity is locked.
+- New/inactive names, dormant wake-ups, new dependency identities, build-surface changes, and publisher/repository discontinuities promote best-effort Git source correspondence. Unavailable promoted source requires review; archive/source mismatch blocks admission.
+- Update outcomes are exact: `automatic` carries no approval assertion, `review-required` carries exactly one candidate/note/time-bound assertion of the required scope, and `blocked` cannot be admitted. All outcomes still require ordinary catalog diff review + protected merge.
+- Plans bind canonical policy/evidence + an exact catalog fingerprint. Apply accepts only nonfuture plans no more than seven exact days old, re-plans the same identities at the original evaluation time, rejects upstream/catalog drift, and installs declarations/rows/locks/admissions through the same guarded whole-catalog transaction + rollback boundary.
+- Every updater-admitted mirror lock reverse-binds exactly one immutable canonical `_reviews/admissions/<candidate-binding-sha256>.toml` record, and every record maps back to exactly one matching lock identity/route/archive/row. Established catalogs reject direct-lock admission of new mirror identities; bootstrap, empty name anchors, removals, and Git tags remain permitted.
 - Exact canonical category topology: `universe/{general,acp,filesystem,matrix,mcp,sse,terminal,yaml}` + `pkgre/tooling`; every category is inhabited and declares its complete fixed direct-dependency allowlist.
 - Category edges: `general→general`; each universe feature category → itself + `general`; `mcp` additionally → `sse`; `tooling→tooling|general`; no implicit permission arises merely because two packages share `universe`.
 - One permanent registry/category home + `mirror|publish` source class for every reserved package name; global collision defense under Cargo ASCII case + `-`/`_` normalization.
@@ -52,7 +59,7 @@ Network materialization is candidate generation inside an uncommitted working tr
 
 ## Review boundary
 
-Adding a version/tag is a new trust decision even when package name/home already exists. Review exact generated diff + object bytes before commit. “Package absent until explicitly listed” defeats surprise namespace insertion but does not establish source safety.
+Adding a version/tag is a new trust decision even when package name/home already exists. `automatic` means policy found no configured escalation reason and therefore requires no explicit approval assertion; it still requires review of the exact generated catalog diff under protected-branch policy. `review-required` requires one evidence-bound `source-delta` approval for an active package with a meaningful base, or `full-archive` approval for a new/inactive package; `blocked` is inadmissible. “Package absent until explicitly listed” defeats surprise namespace insertion but does not establish source safety.
 
 Suggested review priority:
 
@@ -80,7 +87,8 @@ Cargo has no universal registry allowlist, and Cargo cannot enforce pkg.re categ
 - No defense against malicious compiler/toolchain/kernel/hardware, compromised curator/repository/DNS/Pages credentials, or malicious changes approved through protected review.
 - No registry authentication/write API, private-package access control, or mutable `cargo publish` endpoint.
 - No support yet for mirror + Git publications in one registry; doing so safely requires a pkg.re dispatch/redirect download endpoint while retaining permanent source-class/checksum semantics.
-- No cryptographic proof connecting crates.io archives to an upstream Git repository beyond the exact crates.io row/checksum/archive identity.
+- Source correspondence is mechanical + best-effort, not a semantic audit or cryptographic provenance proof. A successful comparison cannot prove benign/complete source, and unavailable/unsupported public Git trees degrade to review-required evidence rather than silently passing; a byte mismatch blocks.
+- Planning/apply depends on current crates.io sparse/API/archive and promoted public-Git availability. An outage, deletion, rate limit, or unsupported Git tree can prevent exact evidence creation/revalidation even when previously observed bytes were sound.
 - No automatic re-fetch/reproduction of an already locked Git tag during `check`; the retained content-addressed archive/row, not continuing upstream tag availability, is operational authority.
 - No prevention of arbitrary network/process behavior by approved build scripts/proc macros/native tools/runtime code; isolate builds and credentials separately.
 - SHA-256/content addressing provides integrity, not availability; Pages/DNS/repository outages stop index/Git-tag access, while crates.io CDN outages or archive removal stop mirror downloads.
@@ -92,7 +100,8 @@ Cargo has no universal registry allowlist, and Cargo cannot enforce pkg.re categ
 
 - Protect `main`; require CI + review; never force-push/bypass; minimize workflow permissions; pin actions by full commit SHA.
 - Keep catalog repository public + provenance-free: no consuming-project names, private paths/manifests/lockfiles, discovery output, credentials, or tokens.
-- Treat category declaration/generated lock/object changes as security-sensitive; reject hand-edited locks, unexplained source-row churn, or unexplained retained Git-archive churn.
+- Keep plans, approval notes, and inert inspection trees outside managed `registry/`; they are review inputs, not catalog files. Admit declaration/row/lock plus canonical `_reviews/admissions/` evidence in one indexer transaction and commit/review that complete diff atomically.
+- Treat category declaration/generated lock/object/admission changes as security-sensitive; reject hand-edited locks/admissions, unexplained source-row churn, or unexplained retained Git-archive churn.
 - Compare candidate site with prior deployed `release.json` via `verify-monotonic` before deployment.
 - Preserve prior rendered releases/backups; periodically verify live hashes and perform clean-cache recovery builds across both registries + representative categories.
 - Confirm no reconciliation is active before manually deleting a stale sibling guard.

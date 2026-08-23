@@ -54,7 +54,101 @@ pub fn reconcile(root: &Path) -> Result<ReconcileSummary> {
     reconcile_with(root, &LiveResolver, &FilesystemRenamer)
 }
 
-trait Resolver {
+/// Exact crates.io identity and upstream hashes admitted by the update workflow.
+#[derive(Clone, Debug)]
+pub(crate) struct MirrorAdmission {
+    pub(crate) registry: String,
+    pub(crate) category: CategoryId,
+    pub(crate) name: String,
+    pub(crate) version: Version,
+    pub(crate) crate_sha256: String,
+    pub(crate) source_row_sha256: String,
+    pub(crate) binding_sha256: String,
+}
+
+/// Reconciles a catalog whose only new crates.io identities have exact update admission evidence.
+// Kept crate-private until the update-apply entry point calls it.
+#[allow(dead_code)]
+pub(crate) fn reconcile_admitted(
+    root: &Path,
+    admissions: &[MirrorAdmission],
+) -> Result<ReconcileSummary> {
+    reconcile_admitted_with(root, admissions, &LiveResolver)
+}
+
+pub(crate) fn reconcile_admitted_with<R: Resolver>(
+    root: &Path,
+    admissions: &[MirrorAdmission],
+    resolver: &R,
+) -> Result<ReconcileSummary> {
+    let mut indexed = BTreeMap::new();
+    for admission in admissions {
+        let identity = package_identity(&admission.name, &admission.version);
+        ensure!(
+            indexed.insert(identity, admission.clone()).is_none(),
+            "update admission repeats Cargo identity {} {}",
+            admission.name,
+            admission.version
+        );
+    }
+    reconcile_with_mode(
+        root,
+        resolver,
+        &FilesystemRenamer,
+        ReconciliationMode::Admitted(&indexed),
+    )
+}
+
+/// Applies a complete catalog mutation to a private copy and atomically installs it.
+///
+/// The live catalog is guarded and must match `expected_sha256` both before copying and immediately
+/// before installation. The callback may perform nested reconciliation against the private copy.
+/// A strictly loaded, policy-checked, object-verified, test-rendered copy is the only tree installed.
+///
+/// # Errors
+///
+/// Returns an error for catalog drift, unsafe tree entries, callback failure, invalid staged output,
+/// concurrent reconciliation, or transactional filesystem failure.
+#[allow(dead_code)]
+pub(crate) fn transact_catalog<T>(
+    root: &Path,
+    expected_sha256: &str,
+    mutate: impl FnOnce(&Path) -> Result<T>,
+) -> Result<T> {
+    transact_catalog_with(root, expected_sha256, mutate, &FilesystemRenamer)
+}
+
+fn transact_catalog_with<T, N: Renamer>(
+    root: &Path,
+    expected_sha256: &str,
+    mutate: impl FnOnce(&Path) -> Result<T>,
+    renamer: &N,
+) -> Result<T> {
+    let root = canonical_catalog_root(root)?;
+    let _guard = CatalogGuard::acquire(&root)?;
+    ensure!(
+        crate::update::catalog_fingerprint(&root)? == expected_sha256,
+        "catalog fingerprint differs from the update plan before transaction"
+    );
+
+    let staging = TemporaryCatalog::sibling_of(&root, "transaction")?;
+    copy_optional_tree(&root, staging.path(), "catalog transaction tree")?;
+    ensure!(
+        crate::update::catalog_fingerprint(staging.path())? == expected_sha256,
+        "private catalog copy differs from the update plan"
+    );
+
+    let output = mutate(staging.path()).context("mutate private catalog transaction")?;
+    validate_staged_catalog(staging.path()).context("validate private catalog transaction")?;
+    ensure!(
+        crate::update::catalog_fingerprint(&root)? == expected_sha256,
+        "live catalog changed during update transaction"
+    );
+    install_staging(&root, staging.path(), renamer)?;
+    Ok(output)
+}
+
+pub(crate) trait Resolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage>;
 
     fn resolve_git_tag(
@@ -66,7 +160,7 @@ trait Resolver {
     ) -> Result<ResolvedPackage>;
 }
 
-struct LiveResolver;
+pub(crate) struct LiveResolver;
 
 impl Resolver for LiveResolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
@@ -124,12 +218,12 @@ impl Resolver for LiveResolver {
 }
 
 #[derive(Debug)]
-struct ResolvedPackage {
-    name: String,
-    version: Version,
-    archive_bytes: Vec<u8>,
-    source_row_bytes: Vec<u8>,
-    source: LockedSource,
+pub(crate) struct ResolvedPackage {
+    pub(crate) name: String,
+    pub(crate) version: Version,
+    pub(crate) archive_bytes: Vec<u8>,
+    pub(crate) source_row_bytes: Vec<u8>,
+    pub(crate) source: LockedSource,
 }
 
 #[derive(Clone, Debug)]
@@ -168,10 +262,26 @@ struct PendingObjects {
     rows: BTreeMap<String, Vec<u8>>,
 }
 
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum ReconciliationMode<'a> {
+    Direct,
+    Admitted(&'a BTreeMap<Identity, MirrorAdmission>),
+}
+
 fn reconcile_with<R: Resolver, N: Renamer>(
     root: &Path,
     source_resolver: &R,
     renamer: &N,
+) -> Result<ReconcileSummary> {
+    reconcile_with_mode(root, source_resolver, renamer, ReconciliationMode::Direct)
+}
+
+fn reconcile_with_mode<R: Resolver, N: Renamer>(
+    root: &Path,
+    source_resolver: &R,
+    renamer: &N,
+    mode: ReconciliationMode<'_>,
 ) -> Result<ReconcileSummary> {
     let root = canonical_catalog_root(root)?;
     let _guard = CatalogGuard::acquire(&root)?;
@@ -190,6 +300,8 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     let desired = collect_desired_packages(&inputs)?;
     let old = collect_old_packages(&inputs)?;
     validate_desired_against_history(&desired, &old)?;
+    let bootstrap = inputs.iter().all(|input| input.lock.is_none());
+    validate_mirror_admissions(&desired, &old, bootstrap, mode)?;
 
     let (mut next_locks, mut summary) = prepare_next_locks(&inputs, &desired)?;
     let pending = resolve_new_packages(
@@ -198,6 +310,7 @@ fn reconcile_with<R: Resolver, N: Renamer>(
         &old,
         &preflight_catalog,
         &policy,
+        mode,
         &mut next_locks,
         &mut summary,
     )?;
@@ -220,12 +333,28 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     Ok(summary)
 }
 
+fn mirror_admission<'a>(
+    mode: ReconciliationMode<'a>,
+    identity: &Identity,
+) -> Option<&'a MirrorAdmission> {
+    match mode {
+        ReconciliationMode::Direct => None,
+        ReconciliationMode::Admitted(admissions) => Some(
+            admissions
+                .get(identity)
+                .expect("new mirror admissions were validated before resolution"),
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn resolve_new_packages<R: Resolver>(
     source_resolver: &R,
     desired: &DesiredState,
     old: &OldPackages,
     catalog: &Catalog,
     policy: &Policy,
+    mode: ReconciliationMode<'_>,
     next_locks: &mut BTreeMap<String, RegistryLock>,
     summary: &mut ReconcileSummary,
 ) -> Result<PendingObjects> {
@@ -243,12 +372,28 @@ fn resolve_new_packages<R: Resolver>(
                     package.name, package.version, package.registry
                 )
             })?;
+        let admission = mirror_admission(mode, identity);
+        if let Some(admission) = admission {
+            ensure!(
+                sha256_bytes(&resolved.archive_bytes) == admission.crate_sha256,
+                "resolved archive hash differs from update admission for {} {}",
+                package.name,
+                package.version
+            );
+            ensure!(
+                sha256_bytes(&resolved.source_row_bytes) == admission.source_row_sha256,
+                "resolved source-row hash differs from update admission for {} {}",
+                package.name,
+                package.version
+            );
+        }
         let locked = lock_resolved_package(
             &package.registry,
             &package.category,
             &package.name,
             Some(&package.version),
             None,
+            admission.map(|value| value.binding_sha256.as_str()),
             resolved,
             catalog,
             policy,
@@ -288,6 +433,7 @@ fn resolve_new_packages<R: Resolver>(
             &package.name,
             None,
             Some((&package.repository, &package.tag, &package.cargo_version)),
+            None,
             resolved,
             catalog,
             policy,
@@ -491,6 +637,62 @@ fn validate_desired_against_history(desired: &DesiredState, old: &OldPackages) -
     Ok(())
 }
 
+fn validate_mirror_admissions(
+    desired: &DesiredState,
+    old: &OldPackages,
+    bootstrap: bool,
+    mode: ReconciliationMode<'_>,
+) -> Result<()> {
+    let new_identities = desired
+        .mirrors
+        .keys()
+        .filter(|identity| !old.contains_key(*identity))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    match mode {
+        ReconciliationMode::Direct => {
+            if let Some(identity) = new_identities.first() {
+                let package = desired
+                    .mirrors
+                    .get(identity)
+                    .expect("new identity came from desired mirrors");
+                ensure!(
+                    bootstrap,
+                    "direct lock reconciliation cannot admit new crates.io identity {} {}; use update-plan and update-apply",
+                    package.name,
+                    package.version
+                );
+            }
+        }
+        ReconciliationMode::Admitted(admissions) => {
+            let admitted_identities = admissions.keys().cloned().collect::<BTreeSet<_>>();
+            ensure!(
+                admitted_identities == new_identities,
+                "update admissions must exactly match the new crates.io identities in the declarations"
+            );
+            for identity in new_identities {
+                let package = desired
+                    .mirrors
+                    .get(&identity)
+                    .expect("new identity came from desired mirrors");
+                let admission = admissions
+                    .get(&identity)
+                    .expect("admitted identity set was checked above");
+                ensure!(
+                    admission.registry == package.registry
+                        && admission.category == package.category
+                        && admission.name == package.name
+                        && admission.version == package.version,
+                    "update admission route differs from declaration for {} {}",
+                    package.name,
+                    package.version
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn prepare_next_locks(
     inputs: &[RegistryInput],
     desired: &DesiredState,
@@ -577,6 +779,7 @@ fn lock_resolved_package(
     expected_name: &str,
     expected_version: Option<&Version>,
     expected_git: Option<(&str, &str, &Version)>,
+    admission_sha256: Option<&str>,
     resolved: ResolvedPackage,
     catalog: &Catalog,
     policy: &Policy,
@@ -615,6 +818,13 @@ fn lock_resolved_package(
             validate_tag_version(tag, &resolved.version)?;
         }
         _ => bail!("resolver returned the wrong source class for {expected_name}"),
+    }
+    ensure!(
+        admission_sha256.is_none() || matches!(resolved.source, LockedSource::CratesIo {}),
+        "only crates.io identities may carry update-admission evidence"
+    );
+    if let Some(binding) = admission_sha256 {
+        crate::policy::validate_sha256(binding).context("validate update-admission binding")?;
     }
 
     let identity = package_identity(&resolved.name, &resolved.version);
@@ -660,6 +870,7 @@ fn lock_resolved_package(
         crate_sha256: archive_sha256,
         source_row_sha256,
         index_row_sha256,
+        admission_sha256: admission_sha256.map(str::to_owned),
         source: resolved.source,
     })
 }
@@ -812,9 +1023,6 @@ fn stage_catalog(
             .file_name()
             .context("registry human file has no filename")?;
         copy_new(&input.path, &staging.path().join(filename))?;
-        for relative in &input.category_paths {
-            copy_new(&root.join(relative), &staging.path().join(relative))?;
-        }
         let lock_filename = input
             .lock_path
             .file_name()
@@ -826,6 +1034,16 @@ fn stage_catalog(
         )?;
         write_new(&staging.path().join(lock_filename), &bytes)?;
     }
+    copy_optional_tree(
+        &root.join("categories"),
+        &staging.path().join("categories"),
+        "external category tree",
+    )?;
+    copy_optional_tree(
+        &root.join("_reviews"),
+        &staging.path().join("_reviews"),
+        "admission review tree",
+    )?;
 
     let crates = catalog
         .approvals
@@ -1021,6 +1239,46 @@ fn copy_new(source: &Path, destination: &Path) -> Result<()> {
         .with_context(|| format!("sync {}", destination.display()))
 }
 
+fn copy_optional_tree(source: &Path, destination: &Path, description: &str) -> Result<()> {
+    let metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", source.display())),
+    };
+    ensure!(
+        metadata.file_type().is_dir(),
+        "{description} is not a real directory: {}",
+        source.display()
+    );
+    fs::create_dir(destination)
+        .with_context(|| format!("create copied directory {}", destination.display()))?;
+    let mut entries = fs::read_dir(source)
+        .with_context(|| format!("read {description} {}", source.display()))?
+        .map(|entry| entry.map(|value| value.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort();
+    for entry in entries {
+        let entry_metadata = fs::symlink_metadata(&entry)
+            .with_context(|| format!("inspect {description} entry {}", entry.display()))?;
+        let target = destination.join(
+            entry
+                .file_name()
+                .context("copied catalog entry has no filename")?,
+        );
+        if entry_metadata.file_type().is_dir() {
+            copy_optional_tree(&entry, &target, description)?;
+        } else if entry_metadata.file_type().is_file() {
+            copy_new(&entry, &target)?;
+        } else {
+            bail!(
+                "{description} entry is not a real directory or regular file: {}",
+                entry.display()
+            );
+        }
+    }
+    sync_directory(destination)
+}
+
 fn sync_directory(path: &Path) -> Result<()> {
     File::open(path)
         .with_context(|| format!("open directory {} for sync", path.display()))?
@@ -1153,6 +1411,299 @@ mod tests {
         assert_eq!(second, ReconcileSummary::default());
         assert_eq!(resolver.calls(), 3);
         assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn established_catalog_rejects_direct_new_mirror_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-direct-admission");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains(
+                "direct lock reconciliation cannot admit new crates.io identity beta 1.0.0"
+            )
+        );
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn one_existing_lock_disables_direct_bootstrap() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-partial-bootstrap");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let inputs = load_registry_inputs(&root).unwrap();
+        let pkgre = inputs
+            .iter()
+            .find(|input| input.file.registry.name == "pkgre")
+            .unwrap();
+        fs::write(
+            root.join("pkgre.lock"),
+            serialize_lock(&empty_lock(&pkgre.file)).unwrap(),
+        )
+        .unwrap();
+        let resolver = FakeResolver::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+
+        assert!(format!("{error:#}").contains(
+            "direct lock reconciliation cannot admit new crates.io identity alpha 1.0.0"
+        ));
+        assert_eq!(resolver.calls(), 0);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn admitted_reconciliation_requires_catalog_owned_record() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-exact-admission");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with_mode(
+            &root,
+            &resolver,
+            &FilesystemRenamer,
+            ReconciliationMode::Admitted(&admissions),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("missing update-admission records"));
+        assert_eq!(resolver.calls(), 2);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn reconciliation_retains_external_categories_and_admission_directories() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-auxiliary-trees");
+        let root = temporary.path().join("catalog");
+        let declarations = "[mirror]\nalpha = [\"1.0.0\"]\n";
+        write_catalog(&root, declarations, "", "");
+        let inline = mirror_category(
+            "general",
+            &["universe/general"],
+            declarations,
+            "reserved-general",
+        );
+        let external_reference = concat!(
+            "[categories.general]\n",
+            "file = \"categories/universe/general.toml\"\n\n",
+        );
+        let universe_path = root.join("universe.toml");
+        let universe = fs::read_to_string(&universe_path).unwrap();
+        assert!(universe.contains(&inline));
+        fs::write(
+            &universe_path,
+            universe.replacen(&inline, external_reference, 1),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("categories/universe")).unwrap();
+        let category = concat!(
+            "schema = 3\n",
+            "may-depend-on = [\"universe/general\"]\n\n",
+            "[mirror]\n",
+            "alpha = [\"1.0.0\"]\n",
+        );
+        let category_path = root.join("categories/universe/general.toml");
+        fs::write(&category_path, category).unwrap();
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        fs::create_dir_all(root.join("_reviews/admissions")).unwrap();
+
+        let removed_category = category.replace("alpha = [\"1.0.0\"]", "alpha = []");
+        fs::write(&category_path, &removed_category).unwrap();
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_removed, 1);
+        assert_eq!(
+            fs::read_to_string(&category_path).unwrap(),
+            removed_category
+        );
+        assert!(root.join("_reviews/admissions").is_dir());
+        let before = snapshot(temporary.path());
+        assert_eq!(
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn missing_or_extra_mirror_admissions_fail_before_resolution() {
+        for (prefix, entries) in [
+            ("pkgre-lock-missing-admission", Vec::new()),
+            (
+                "pkgre-lock-extra-admission",
+                vec![
+                    ("universe", "general", "beta", "1.0.0"),
+                    ("universe", "general", "gamma", "1.0.0"),
+                ],
+            ),
+        ] {
+            let temporary = TemporaryDirectory::new(prefix);
+            let root = temporary.path().join("catalog");
+            write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+            let resolver = FakeResolver::default();
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+            write_catalog(
+                &root,
+                "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+                "",
+                "",
+            );
+            let admissions = fake_admission_map(&entries);
+            let before = snapshot(temporary.path());
+
+            let error = reconcile_with_mode(
+                &root,
+                &resolver,
+                &FilesystemRenamer,
+                ReconciliationMode::Admitted(&admissions),
+            )
+            .unwrap_err();
+
+            assert!(format!("{error:#}").contains(
+                "update admissions must exactly match the new crates.io identities in the declarations"
+            ));
+            assert_eq!(resolver.calls(), 1);
+            assert_eq!(snapshot(temporary.path()), before);
+        }
+    }
+
+    #[test]
+    fn wrong_mirror_admission_route_fails_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-wrong-admission-route");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let admissions = fake_admission_map(&[("universe", "matrix", "beta", "1.0.0")]);
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with_mode(
+            &root,
+            &resolver,
+            &FilesystemRenamer,
+            ReconciliationMode::Admitted(&admissions),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{error:#}")
+                .contains("update admission route differs from declaration for beta 1.0.0")
+        );
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn wrong_mirror_admission_hashes_leave_tree_unchanged() {
+        for (prefix, wrong_archive) in [
+            ("pkgre-lock-wrong-archive-admission", true),
+            ("pkgre-lock-wrong-row-admission", false),
+        ] {
+            let temporary = TemporaryDirectory::new(prefix);
+            let root = temporary.path().join("catalog");
+            write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+            let resolver = FakeResolver::default();
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+            write_catalog(
+                &root,
+                "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+                "",
+                "",
+            );
+            let mut admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+            let admission = admissions.values_mut().next().unwrap();
+            if wrong_archive {
+                admission.crate_sha256 = "00".repeat(32);
+            } else {
+                admission.source_row_sha256 = "00".repeat(32);
+            }
+            let before = snapshot(temporary.path());
+
+            let error = reconcile_with_mode(
+                &root,
+                &resolver,
+                &FilesystemRenamer,
+                ReconciliationMode::Admitted(&admissions),
+            )
+            .unwrap_err();
+
+            let expected = if wrong_archive {
+                "resolved archive hash differs from update admission for beta 1.0.0"
+            } else {
+                "resolved source-row hash differs from update admission for beta 1.0.0"
+            };
+            assert!(format!("{error:#}").contains(expected));
+            assert_eq!(resolver.calls(), 2);
+            assert_eq!(snapshot(temporary.path()), before);
+        }
+    }
+
+    #[test]
+    fn established_catalog_allows_direct_new_git_tag() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-direct-git-tag");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "",
+            "",
+            "[publish.beta]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"beta/v1.0.0\"]\n",
+        );
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        write_catalog(
+            &root,
+            "",
+            "",
+            "[publish.beta]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"beta/v1.0.0\", \"beta/v1.1.0\"]\n",
+        );
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_added, 1);
+        assert_eq!(resolver.calls(), 2);
+        assert_eq!(
+            locked_package(&root, "pkgre", "beta").version.to_string(),
+            "1.0.0"
+        );
+        assert!(
+            load_lock(&root.join("pkgre.lock"))
+                .unwrap()
+                .packages
+                .iter()
+                .any(|package| package.name == "beta"
+                    && package.version == Version::parse("1.1.0").unwrap())
+        );
     }
 
     #[test]
@@ -1463,6 +2014,90 @@ mod tests {
     }
 
     #[test]
+    fn catalog_transaction_installs_only_a_valid_complete_private_copy() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-success");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+
+        let returned = transact_catalog(&root, &expected, |staged| {
+            fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+            Ok(42)
+        })
+        .unwrap();
+
+        assert_eq!(returned, 42);
+        assert!(root.join("_reviews/admissions").is_dir());
+        Catalog::load(&root).unwrap();
+    }
+
+    #[test]
+    fn catalog_transaction_failure_and_fingerprint_drift_leave_live_tree_unchanged() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-failure");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+        let before = snapshot(temporary.path());
+
+        let error = transact_catalog(&root, &expected, |staged| -> Result<()> {
+            fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+            bail!("synthetic private mutation failure")
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("synthetic private mutation failure"));
+        assert_eq!(snapshot(temporary.path()), before);
+
+        let error = transact_catalog(&root, &"00".repeat(32), |_| Ok(())).unwrap_err();
+        assert!(format!("{error:#}").contains("catalog fingerprint differs"));
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn catalog_transaction_rejects_a_concurrent_guard() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-guard");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+        let canonical = canonical_catalog_root(&root).unwrap();
+        let _guard = CatalogGuard::acquire(&canonical).unwrap();
+        let before = snapshot(temporary.path());
+
+        let error = transact_catalog(&root, &expected, |_| Ok(())).unwrap_err();
+
+        assert!(format!("{error:#}").contains("another reconciliation may be running"));
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn failed_catalog_transaction_install_restores_the_exact_original() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-install-failure");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+        let before = snapshot(temporary.path());
+        let renamer = FailSecondRename::default();
+
+        let error = transact_catalog_with(
+            &root,
+            &expected,
+            |staged| {
+                fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+                Ok(())
+            },
+            &renamer,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("original catalog was restored"));
+        assert_eq!(renamer.calls.get(), 3);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
     fn failed_staging_install_restores_the_exact_original_catalog() {
         let temporary = TemporaryDirectory::new("pkgre-lock-install-failure");
         let root = temporary.path().join("catalog");
@@ -1541,6 +2176,28 @@ mod tests {
                 },
             ))
         }
+    }
+
+    fn fake_admission_map(
+        entries: &[(&str, &str, &str, &str)],
+    ) -> BTreeMap<Identity, MirrorAdmission> {
+        entries
+            .iter()
+            .map(|(registry, category, name, version)| {
+                let version = Version::parse(version).unwrap();
+                let resolved = fake_resolved(name, version.clone(), LockedSource::CratesIo {});
+                let admission = MirrorAdmission {
+                    registry: (*registry).to_owned(),
+                    category: CategoryId::new(*registry, *category).unwrap(),
+                    name: (*name).to_owned(),
+                    version: version.clone(),
+                    crate_sha256: sha256_bytes(&resolved.archive_bytes),
+                    source_row_sha256: sha256_bytes(&resolved.source_row_bytes),
+                    binding_sha256: "ab".repeat(32),
+                };
+                (package_identity(name, &version), admission)
+            })
+            .collect()
     }
 
     fn fake_resolved(name: &str, version: Version, source: LockedSource) -> ResolvedPackage {
