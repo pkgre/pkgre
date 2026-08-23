@@ -1,6 +1,7 @@
 //! Safe crates.io mirror update planning, review, and admission.
 
 mod api;
+mod approval;
 mod archive;
 mod plan;
 mod policy;
@@ -9,6 +10,7 @@ mod time;
 mod workflow;
 
 pub use api::parse_crates_io_api_evidence;
+pub use approval::{approve_update_plan, required_approval_kind};
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};
 pub use plan::{
     ApiEvidence, ApiVersionEvidence, ApprovalKind, ArchiveDelta, ArchiveSummary, DecisionReason,
