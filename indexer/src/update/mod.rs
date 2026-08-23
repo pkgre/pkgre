@@ -4,6 +4,7 @@ mod api;
 mod archive;
 mod plan;
 mod policy;
+mod source;
 mod time;
 
 pub use api::parse_crates_io_api_evidence;
@@ -20,4 +21,5 @@ pub use policy::{
     PackageActivity, PolicyRelease, PublicationGap, SelectedCandidate, classify_package,
     implicit_lane, select_implicit_candidates,
 };
+pub use source::verify_source_correspondence;
 pub use time::UtcTimestamp;
