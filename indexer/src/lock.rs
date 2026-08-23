@@ -942,9 +942,6 @@ fn stage_catalog(
             .file_name()
             .context("registry human file has no filename")?;
         copy_new(&input.path, &staging.path().join(filename))?;
-        for relative in &input.category_paths {
-            copy_new(&root.join(relative), &staging.path().join(relative))?;
-        }
         let lock_filename = input
             .lock_path
             .file_name()
@@ -956,6 +953,16 @@ fn stage_catalog(
         )?;
         write_new(&staging.path().join(lock_filename), &bytes)?;
     }
+    copy_optional_tree(
+        &root.join("categories"),
+        &staging.path().join("categories"),
+        "external category tree",
+    )?;
+    copy_optional_tree(
+        &root.join("_reviews"),
+        &staging.path().join("_reviews"),
+        "admission review tree",
+    )?;
 
     let crates = catalog
         .approvals
@@ -1149,6 +1156,46 @@ fn copy_new(source: &Path, destination: &Path) -> Result<()> {
     output
         .sync_all()
         .with_context(|| format!("sync {}", destination.display()))
+}
+
+fn copy_optional_tree(source: &Path, destination: &Path, description: &str) -> Result<()> {
+    let metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", source.display())),
+    };
+    ensure!(
+        metadata.file_type().is_dir(),
+        "{description} is not a real directory: {}",
+        source.display()
+    );
+    fs::create_dir(destination)
+        .with_context(|| format!("create copied directory {}", destination.display()))?;
+    let mut entries = fs::read_dir(source)
+        .with_context(|| format!("read {description} {}", source.display()))?
+        .map(|entry| entry.map(|value| value.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort();
+    for entry in entries {
+        let entry_metadata = fs::symlink_metadata(&entry)
+            .with_context(|| format!("inspect {description} entry {}", entry.display()))?;
+        let target = destination.join(
+            entry
+                .file_name()
+                .context("copied catalog entry has no filename")?,
+        );
+        if entry_metadata.file_type().is_dir() {
+            copy_optional_tree(&entry, &target, description)?;
+        } else if entry_metadata.file_type().is_file() {
+            copy_new(&entry, &target)?;
+        } else {
+            bail!(
+                "{description} entry is not a real directory or regular file: {}",
+                entry.display()
+            );
+        }
+    }
+    sync_directory(destination)
 }
 
 fn sync_directory(path: &Path) -> Result<()> {
@@ -1369,6 +1416,61 @@ mod tests {
             .unwrap();
         assert_eq!(beta.crate_sha256, admission.crate_sha256);
         assert_eq!(beta.source_row_sha256, admission.source_row_sha256);
+    }
+
+    #[test]
+    fn reconciliation_retains_external_categories_and_admission_directories() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-auxiliary-trees");
+        let root = temporary.path().join("catalog");
+        let declarations = "[mirror]\nalpha = [\"1.0.0\"]\n";
+        write_catalog(&root, declarations, "", "");
+        let inline = mirror_category(
+            "general",
+            &["universe/general"],
+            declarations,
+            "reserved-general",
+        );
+        let external_reference = concat!(
+            "[categories.general]\n",
+            "file = \"categories/universe/general.toml\"\n\n",
+        );
+        let universe_path = root.join("universe.toml");
+        let universe = fs::read_to_string(&universe_path).unwrap();
+        assert!(universe.contains(&inline));
+        fs::write(
+            &universe_path,
+            universe.replacen(&inline, external_reference, 1),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("categories/universe")).unwrap();
+        let category = concat!(
+            "schema = 3\n",
+            "may-depend-on = [\"universe/general\"]\n\n",
+            "[mirror]\n",
+            "alpha = [\"1.0.0\"]\n",
+        );
+        let category_path = root.join("categories/universe/general.toml");
+        fs::write(&category_path, category).unwrap();
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        fs::create_dir_all(root.join("_reviews/admissions")).unwrap();
+
+        let removed_category = category.replace("alpha = [\"1.0.0\"]", "alpha = []");
+        fs::write(&category_path, &removed_category).unwrap();
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_removed, 1);
+        assert_eq!(
+            fs::read_to_string(&category_path).unwrap(),
+            removed_category
+        );
+        assert!(root.join("_reviews/admissions").is_dir());
+        let before = snapshot(temporary.path());
+        assert_eq!(
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+        assert_eq!(snapshot(temporary.path()), before);
     }
 
     #[test]
