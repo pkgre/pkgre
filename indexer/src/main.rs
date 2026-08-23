@@ -9,7 +9,7 @@ use pkgre_indexer::render;
 use pkgre_indexer::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>";
+const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer update-plan <catalog> <plan>\n  pkgre-indexer update-plan-exact <catalog> <package> <version> <plan>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -36,6 +36,8 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("render") => render_site(&values),
         Some("verify") => verify_site(&values),
         Some("verify-monotonic") => verify_monotonic(&values),
+        Some("update-plan") => update_plan(&values),
+        Some("update-plan-exact") => update_plan_exact(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -108,6 +110,60 @@ fn verify_monotonic(arguments: &[OsString]) -> Result<()> {
     render::verify_monotonic(previous, next)?;
     info!("registry release is monotonic");
     Ok(())
+}
+
+fn update_plan(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let catalog = Path::new(&arguments[0]);
+    let output = Path::new(&arguments[1]);
+    let plan = pkgre_indexer::update::plan_updates(catalog, output)?;
+    log_update_plan(&plan, output);
+    Ok(())
+}
+
+fn update_plan_exact(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 4)?;
+    let catalog = Path::new(&arguments[0]);
+    let name = arguments[1]
+        .to_str()
+        .context("package name is not valid UTF-8")?;
+    let version = arguments[2]
+        .to_str()
+        .context("package version is not valid UTF-8")?
+        .parse()
+        .context("package version is not valid SemVer")?;
+    let output = Path::new(&arguments[3]);
+    let plan = pkgre_indexer::update::plan_exact_update(catalog, name, &version, output)?;
+    log_update_plan(&plan, output);
+    Ok(())
+}
+
+fn log_update_plan(plan: &pkgre_indexer::update::UpdatePlan, output: &Path) {
+    use pkgre_indexer::update::UpdateDecision;
+
+    let automatic = plan
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.decision == UpdateDecision::Automatic)
+        .count();
+    let review_required = plan
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.decision == UpdateDecision::ReviewRequired)
+        .count();
+    let blocked = plan
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.decision == UpdateDecision::Blocked)
+        .count();
+    info!(
+        candidates = plan.candidates.len(),
+        automatic,
+        review_required,
+        blocked,
+        path = %output.display(),
+        "created canonical read-only update plan"
+    );
 }
 
 fn load_catalog(path: &OsStr) -> Result<Catalog> {
