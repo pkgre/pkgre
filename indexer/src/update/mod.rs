@@ -6,6 +6,7 @@ mod plan;
 mod policy;
 mod source;
 mod time;
+mod workflow;
 
 pub use api::parse_crates_io_api_evidence;
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};
@@ -23,3 +24,4 @@ pub use policy::{
 };
 pub use source::verify_source_correspondence;
 pub use time::UtcTimestamp;
+pub use workflow::{plan_exact_update, plan_updates};
