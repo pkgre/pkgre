@@ -40,6 +40,42 @@ impl CategoryId {
     }
 }
 
+/// Maps one canonical schema-2 package home to its schema-3 category.
+///
+/// # Errors
+///
+/// Returns an error for an unexpected schema-2 registry or first-party package name.
+pub(crate) fn category_for_v2_home(registry: &str, package: &str) -> Result<CategoryId> {
+    let local = match registry {
+        "matrix" => "matrix",
+        "pkgre" => {
+            ensure!(
+                package == "pkgre-indexer",
+                "unexpected schema-2 pkgre package {package:?}"
+            );
+            "tooling"
+        }
+        "core" => match package {
+            "agent-client-protocol"
+            | "agent-client-protocol-derive"
+            | "agent-client-protocol-schema" => "acp",
+            "notify" | "notify-types" => "filesystem",
+            "rmcp" | "rmcp-macros" => "mcp",
+            "eventsource-stream" | "sse-stream" => "sse",
+            "atty" | "portable-pty" => "terminal",
+            "serde_yaml" | "serde_yaml_ng" => "yaml",
+            _ => "general",
+        },
+        _ => anyhow::bail!("unexpected schema-2 registry {registry:?}"),
+    };
+    let target_registry = if registry == "pkgre" {
+        "pkgre"
+    } else {
+        "universe"
+    };
+    CategoryId::new(target_registry, local)
+}
+
 impl fmt::Display for CategoryId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}/{}", self.registry, self.local)
@@ -140,6 +176,31 @@ mod tests {
             serde_json::from_str::<CategoryId>(&encoded).unwrap(),
             category
         );
+    }
+
+    #[test]
+    fn schema_two_homes_have_exact_schema_three_categories() {
+        assert_eq!(
+            category_for_v2_home("core", "serde").unwrap().to_string(),
+            "universe/general"
+        );
+        assert_eq!(
+            category_for_v2_home("core", "rmcp").unwrap().to_string(),
+            "universe/mcp"
+        );
+        assert_eq!(
+            category_for_v2_home("matrix", "matrix-sdk")
+                .unwrap()
+                .to_string(),
+            "universe/matrix"
+        );
+        assert_eq!(
+            category_for_v2_home("pkgre", "pkgre-indexer")
+                .unwrap()
+                .to_string(),
+            "pkgre/tooling"
+        );
+        assert!(category_for_v2_home("pkgre", "other").is_err());
     }
 
     #[test]

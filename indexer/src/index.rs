@@ -6,6 +6,8 @@ use anyhow::{Context, Result, bail, ensure};
 use semver::{Version, VersionReq};
 use serde_json::{Map, Value};
 
+use crate::schema::PackageHome;
+
 /// Parsed Cargo registry index record that retains all upstream fields.
 #[derive(Clone, Debug)]
 pub struct IndexRecord {
@@ -174,9 +176,9 @@ impl IndexRecord {
     pub fn route_dependencies(
         &mut self,
         current_home: &str,
-        homes: &BTreeMap<String, String>,
+        homes: &BTreeMap<String, PackageHome>,
         registry_urls: &BTreeMap<String, String>,
-    ) -> Result<BTreeSet<(String, String)>> {
+    ) -> Result<BTreeSet<(String, PackageHome)>> {
         let dependencies = self
             .value
             .get_mut("deps")
@@ -198,14 +200,17 @@ impl IndexRecord {
             let home = homes
                 .get(&package)
                 .with_context(|| format!("dependency {package:?} has no declared home"))?;
-            let registry = if home == current_home {
+            let registry = if home.registry == current_home {
                 Value::Null
             } else {
                 Value::String(
                     registry_urls
-                        .get(home)
+                        .get(&home.registry)
                         .with_context(|| {
-                            format!("dependency {package:?} has unknown home {home:?}")
+                            format!(
+                                "dependency {package:?} has unknown registry home {:?}",
+                                home.registry
+                            )
                         })?
                         .clone(),
                 )
@@ -339,8 +344,20 @@ mod tests {
         )
         .unwrap();
         let homes = BTreeMap::from([
-            ("demo".to_owned(), "one".to_owned()),
-            ("real".to_owned(), "two".to_owned()),
+            (
+                "demo".to_owned(),
+                PackageHome {
+                    registry: "one".to_owned(),
+                    category: "one/general".parse().unwrap(),
+                },
+            ),
+            (
+                "real".to_owned(),
+                PackageHome {
+                    registry: "two".to_owned(),
+                    category: "two/general".parse().unwrap(),
+                },
+            ),
         ]);
         let urls = BTreeMap::from([
             (
@@ -354,7 +371,13 @@ mod tests {
         ]);
 
         let routed = record.route_dependencies("one", &homes, &urls).unwrap();
-        assert!(routed.contains(&("real".to_owned(), "two".to_owned())));
+        assert!(routed.contains(&(
+            "real".to_owned(),
+            PackageHome {
+                registry: "two".to_owned(),
+                category: "two/general".parse().unwrap(),
+            }
+        )));
         assert_eq!(
             record.value["deps"][0]["registry"],
             "sparse+https://example.test/two/"

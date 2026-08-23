@@ -528,7 +528,7 @@ fn prepare_cargo_home(cargo_home: &Path) -> Result<()> {
         .with_context(|| format!("create disabled Cargo source {}", disabled.display()))?;
     let registries = REGISTRIES
         .iter()
-        .map(|(name, index, _)| (*name, CargoRegistry { index }))
+        .map(|(name, index)| (*name, CargoRegistry { index }))
         .collect();
     let source = BTreeMap::from([
         (
@@ -601,13 +601,13 @@ fn cargo_metadata(
     );
     let registry_indexes = REGISTRIES
         .iter()
-        .map(|(_, index, _)| *index)
+        .map(|(_, index)| *index)
         .collect::<Vec<_>>();
     for dependency in &package.dependencies {
         let source = dependency.source.as_deref().unwrap_or("path");
         ensure!(
             is_curated_registry_source(source, &registry_indexes),
-            "first-party package dependency {} uses unsupported source {source:?}; use core, matrix, or pkgre explicitly",
+            "first-party package dependency {} uses unsupported source {source:?}; use universe or pkgre explicitly",
             dependency.name
         );
         ensure!(
@@ -988,6 +988,7 @@ mod tests {
     fn test_approval(materialization: &GitTagMaterialization, cargo_version: &Version) -> Approval {
         Approval {
             registry: REGISTRY.to_owned(),
+            category: "pkgre/tooling".parse().unwrap(),
             name: materialization.name.clone(),
             version: materialization.version.clone(),
             archive_sha256: materialization.archive_sha256.clone(),
