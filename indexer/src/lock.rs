@@ -90,6 +90,55 @@ pub(crate) fn reconcile_admitted(
     )
 }
 
+/// Applies a complete catalog mutation to a private copy and atomically installs it.
+///
+/// The live catalog is guarded and must match `expected_sha256` both before copying and immediately
+/// before installation. The callback may perform nested reconciliation against the private copy.
+/// A strictly loaded, policy-checked, object-verified, test-rendered copy is the only tree installed.
+///
+/// # Errors
+///
+/// Returns an error for catalog drift, unsafe tree entries, callback failure, invalid staged output,
+/// concurrent reconciliation, or transactional filesystem failure.
+#[allow(dead_code)]
+pub(crate) fn transact_catalog<T>(
+    root: &Path,
+    expected_sha256: &str,
+    mutate: impl FnOnce(&Path) -> Result<T>,
+) -> Result<T> {
+    transact_catalog_with(root, expected_sha256, mutate, &FilesystemRenamer)
+}
+
+fn transact_catalog_with<T, N: Renamer>(
+    root: &Path,
+    expected_sha256: &str,
+    mutate: impl FnOnce(&Path) -> Result<T>,
+    renamer: &N,
+) -> Result<T> {
+    let root = canonical_catalog_root(root)?;
+    let _guard = CatalogGuard::acquire(&root)?;
+    ensure!(
+        crate::update::catalog_fingerprint(&root)? == expected_sha256,
+        "catalog fingerprint differs from the update plan before transaction"
+    );
+
+    let staging = TemporaryCatalog::sibling_of(&root, "transaction")?;
+    copy_optional_tree(&root, staging.path(), "catalog transaction tree")?;
+    ensure!(
+        crate::update::catalog_fingerprint(staging.path())? == expected_sha256,
+        "private catalog copy differs from the update plan"
+    );
+
+    let output = mutate(staging.path()).context("mutate private catalog transaction")?;
+    validate_staged_catalog(staging.path()).context("validate private catalog transaction")?;
+    ensure!(
+        crate::update::catalog_fingerprint(&root)? == expected_sha256,
+        "live catalog changed during update transaction"
+    );
+    install_staging(&root, staging.path(), renamer)?;
+    Ok(output)
+}
+
 trait Resolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage>;
 
@@ -1934,6 +1983,90 @@ mod tests {
         assert!(format!("{error:#}").contains("may not depend"));
         assert_eq!(resolver.calls(), 1);
         assert_eq!(snapshot(invalid.path()), before);
+    }
+
+    #[test]
+    fn catalog_transaction_installs_only_a_valid_complete_private_copy() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-success");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+
+        let returned = transact_catalog(&root, &expected, |staged| {
+            fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+            Ok(42)
+        })
+        .unwrap();
+
+        assert_eq!(returned, 42);
+        assert!(root.join("_reviews/admissions").is_dir());
+        Catalog::load(&root).unwrap();
+    }
+
+    #[test]
+    fn catalog_transaction_failure_and_fingerprint_drift_leave_live_tree_unchanged() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-failure");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+        let before = snapshot(temporary.path());
+
+        let error = transact_catalog(&root, &expected, |staged| -> Result<()> {
+            fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+            bail!("synthetic private mutation failure")
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("synthetic private mutation failure"));
+        assert_eq!(snapshot(temporary.path()), before);
+
+        let error = transact_catalog(&root, &"00".repeat(32), |_| Ok(())).unwrap_err();
+        assert!(format!("{error:#}").contains("catalog fingerprint differs"));
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn catalog_transaction_rejects_a_concurrent_guard() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-guard");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+        let canonical = canonical_catalog_root(&root).unwrap();
+        let _guard = CatalogGuard::acquire(&canonical).unwrap();
+        let before = snapshot(temporary.path());
+
+        let error = transact_catalog(&root, &expected, |_| Ok(())).unwrap_err();
+
+        assert!(format!("{error:#}").contains("another reconciliation may be running"));
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn failed_catalog_transaction_install_restores_the_exact_original() {
+        let temporary = TemporaryDirectory::new("pkgre-catalog-transaction-install-failure");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+        let expected = crate::update::catalog_fingerprint(&root).unwrap();
+        let before = snapshot(temporary.path());
+        let renamer = FailSecondRename::default();
+
+        let error = transact_catalog_with(
+            &root,
+            &expected,
+            |staged| {
+                fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+                Ok(())
+            },
+            &renamer,
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("original catalog was restored"));
+        assert_eq!(renamer.calls.get(), 3);
+        assert_eq!(snapshot(temporary.path()), before);
     }
 
     #[test]
