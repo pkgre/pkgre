@@ -18,8 +18,8 @@ pub use plan::{
 };
 pub use policy::{
     CompatibilityLane, DORMANT_RELEASE_GAP_DAYS, LockedRelease, MIN_RELEASE_AGE_DAYS,
-    PackageActivity, PolicyRelease, PublicationGap, SelectedCandidate, classify_package,
-    implicit_lane, select_implicit_candidates,
+    PackageActivity, PolicyRelease, PublicationGap, SelectedCandidate, SelectedExactCandidate,
+    classify_package, implicit_lane, select_exact_candidate, select_implicit_candidates,
 };
 pub use source::verify_source_correspondence;
 pub use time::UtcTimestamp;

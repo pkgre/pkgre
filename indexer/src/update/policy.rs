@@ -229,6 +229,109 @@ pub fn select_implicit_candidates(
     Ok(selected)
 }
 
+/// One exact age-eligible candidate selected by an explicit request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedExactCandidate {
+    /// Most recently published prior locked identity, absent for a first-ever identity.
+    pub base: Option<LockedRelease>,
+    /// Exact requested non-yanked publication.
+    pub candidate: PolicyRelease,
+    /// Exact candidate age at evaluation time.
+    pub age_seconds: u64,
+    /// First dormant gap since the locked base, if any.
+    pub dormant_gap: Option<PublicationGap>,
+}
+
+/// Selects one exact update candidate, including prereleases and stable `0.0.x` identities.
+///
+/// Explicit selection still enforces the 30-day minimum age and rejects yanked or previously locked identities. Existing names use the most recently published locked identity at or before the candidate as their review base.
+///
+/// # Errors
+///
+/// Returns an error for a future publication, duplicate history, a missing/yanked/young/already-locked candidate, a locked identity missing from upstream history, or an existing name without a prior review base.
+pub fn select_exact_candidate(
+    evaluation_time: &UtcTimestamp,
+    history: &[PolicyRelease],
+    locked: &[LockedRelease],
+    requested: &Version,
+) -> Result<SelectedExactCandidate> {
+    validate_unique_versions(history, "upstream publication")?;
+    validate_unique_locked_versions(locked)?;
+    for release in history {
+        evaluation_time
+            .duration_since(&release.published_at)
+            .with_context(|| {
+                format!(
+                    "upstream publication {} has future pubtime {} relative to evaluation time {}",
+                    release.version, release.published_at, evaluation_time
+                )
+            })?;
+    }
+
+    let upstream = history
+        .iter()
+        .map(|release| (version_key(&release.version), release))
+        .collect::<BTreeMap<_, _>>();
+    for release in locked {
+        let observed = upstream
+            .get(&version_key(&release.version))
+            .with_context(|| {
+                format!(
+                    "locked identity {} is absent from current upstream history",
+                    release.version
+                )
+            })?;
+        ensure!(
+            observed.published_at == release.published_at,
+            "locked identity {} publication time changed from {} to {}",
+            release.version,
+            release.published_at,
+            observed.published_at
+        );
+    }
+    ensure!(
+        !locked
+            .iter()
+            .any(|release| version_key(&release.version) == version_key(requested)),
+        "requested identity {requested} is already locked"
+    );
+    let candidate = upstream.get(&version_key(requested)).with_context(|| {
+        format!("requested identity {requested} is absent from upstream history")
+    })?;
+    ensure!(
+        !candidate.yanked,
+        "requested identity {requested} is yanked upstream"
+    );
+    let age_seconds = evaluation_time.duration_since(&candidate.published_at)?;
+    ensure!(
+        age_seconds >= MIN_RELEASE_AGE_DAYS * SECONDS_PER_DAY,
+        "requested identity {requested} is younger than the {MIN_RELEASE_AGE_DAYS}-day release-age floor"
+    );
+
+    let base = locked
+        .iter()
+        .filter(|release| release.published_at <= candidate.published_at)
+        .max_by(|left, right| {
+            (&left.published_at, &left.version).cmp(&(&right.published_at, &right.version))
+        })
+        .cloned();
+    ensure!(
+        locked.is_empty() || base.is_some(),
+        "requested identity {requested} predates every locked review base"
+    );
+    let dormant_gap = base
+        .as_ref()
+        .map(|base| first_dormant_gap(history, base, candidate))
+        .transpose()?
+        .flatten();
+    Ok(SelectedExactCandidate {
+        base,
+        candidate: (*candidate).clone(),
+        age_seconds,
+        dormant_gap,
+    })
+}
+
 fn first_dormant_gap(
     history: &[PolicyRelease],
     base: &LockedRelease,
@@ -467,6 +570,91 @@ mod tests {
         .unwrap();
         assert!(admitted[0].dormant_gap.is_none());
         assert_eq!(admitted[0].base.version, Version::parse("1.0.1").unwrap());
+    }
+
+    #[test]
+    fn exact_selection_supports_new_zero_zero_and_prerelease_identities() {
+        let history = vec![
+            release("0.0.3", "2024-01-01T00:00:00Z", false),
+            release("1.0.0-rc.1", "2024-01-02T00:00:00Z", false),
+        ];
+        let evaluation = timestamp("2024-03-01T00:00:00Z");
+        for requested in ["0.0.3", "1.0.0-rc.1"] {
+            let selected = select_exact_candidate(
+                &evaluation,
+                &history,
+                &[],
+                &Version::parse(requested).unwrap(),
+            )
+            .unwrap();
+            assert!(selected.base.is_none());
+            assert_eq!(
+                selected.candidate.version,
+                Version::parse(requested).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn exact_selection_requires_age_and_uses_inactive_history_as_base() {
+        let history = vec![
+            release("1.0.0", "2020-01-01T00:00:00Z", false),
+            release("1.1.0", "2021-01-01T00:00:00Z", false),
+            release("1.2.0", "2024-02-01T00:00:00Z", false),
+        ];
+        let locked = vec![
+            locked("1.0.0", "2020-01-01T00:00:00Z", false),
+            locked("1.1.0", "2021-01-01T00:00:00Z", false),
+        ];
+        let requested = Version::parse("1.2.0").unwrap();
+        assert!(
+            select_exact_candidate(
+                &timestamp("2024-03-01T23:59:59Z"),
+                &history,
+                &locked,
+                &requested,
+            )
+            .is_err()
+        );
+        let selected = select_exact_candidate(
+            &timestamp("2024-03-02T00:00:00Z"),
+            &history,
+            &locked,
+            &requested,
+        )
+        .unwrap();
+        assert_eq!(
+            selected.base.unwrap().version,
+            Version::parse("1.1.0").unwrap()
+        );
+        assert!(selected.dormant_gap.is_some());
+    }
+
+    #[test]
+    fn exact_selection_rejects_yanked_and_previously_locked_identities() {
+        let history = vec![
+            release("1.0.0", "2020-01-01T00:00:00Z", false),
+            release("1.1.0", "2020-02-01T00:00:00Z", true),
+        ];
+        let evaluation = timestamp("2021-01-01T00:00:00Z");
+        assert!(
+            select_exact_candidate(
+                &evaluation,
+                &history,
+                &[locked("1.0.0", "2020-01-01T00:00:00Z", true)],
+                &Version::parse("1.0.0").unwrap(),
+            )
+            .is_err()
+        );
+        assert!(
+            select_exact_candidate(
+                &evaluation,
+                &history,
+                &[],
+                &Version::parse("1.1.0").unwrap(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
