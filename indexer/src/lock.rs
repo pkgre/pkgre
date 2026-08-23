@@ -11,6 +11,7 @@ use semver::Version;
 use tracing::warn;
 
 use crate::artifact::{ArtifactMap, sha256_bytes};
+use crate::category::CategoryId;
 use crate::import;
 use crate::index::IndexRecord;
 use crate::package;
@@ -134,6 +135,7 @@ struct ResolvedPackage {
 #[derive(Clone, Debug)]
 struct DesiredMirror {
     registry: String,
+    category: CategoryId,
     name: String,
     version: Version,
 }
@@ -141,6 +143,7 @@ struct DesiredMirror {
 #[derive(Clone, Debug)]
 struct DesiredGitTag {
     registry: String,
+    category: CategoryId,
     name: String,
     repository: String,
     tag: String,
@@ -157,7 +160,7 @@ type VersionIdentity = (u64, u64, u64, String);
 type Identity = (String, VersionIdentity);
 type GitIdentity = (String, String, String, String);
 
-type OldPackages = BTreeMap<Identity, (String, LockedPackage)>;
+type OldPackages = BTreeMap<Identity, (String, CategoryId, LockedPackage)>;
 
 #[derive(Default)]
 struct PendingObjects {
@@ -189,6 +192,43 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     validate_desired_against_history(&desired, &old)?;
 
     let (mut next_locks, mut summary) = prepare_next_locks(&inputs, &desired)?;
+    let pending = resolve_new_packages(
+        source_resolver,
+        &desired,
+        &old,
+        &preflight_catalog,
+        &policy,
+        &mut next_locks,
+        &mut summary,
+    )?;
+
+    let next_inputs = inputs_with_locks(&inputs, &next_locks);
+    let next_catalog = catalog_from_inputs(&root, &next_inputs)?;
+    validate_catalog(&next_catalog)?;
+    let lock_changed = inputs
+        .iter()
+        .any(|input| input.lock.as_ref() != next_locks.get(&input.file.registry.name));
+    if !lock_changed && !uses_legacy_archives {
+        Catalog::load(&root).context("strictly reload unchanged catalog")?;
+        return Ok(summary);
+    }
+
+    let staging = stage_catalog(&root, &inputs, &next_inputs, &next_catalog, &pending)?;
+    validate_staged_catalog(staging.path())?;
+    install_staging(&root, staging.path(), renamer)?;
+    summary.changed = true;
+    Ok(summary)
+}
+
+fn resolve_new_packages<R: Resolver>(
+    source_resolver: &R,
+    desired: &DesiredState,
+    old: &OldPackages,
+    catalog: &Catalog,
+    policy: &Policy,
+    next_locks: &mut BTreeMap<String, RegistryLock>,
+    summary: &mut ReconcileSummary,
+) -> Result<PendingObjects> {
     let mut pending = PendingObjects::default();
     let mut identities = old.keys().cloned().collect::<BTreeSet<_>>();
     for (identity, package) in &desired.mirrors {
@@ -205,12 +245,13 @@ fn reconcile_with<R: Resolver, N: Renamer>(
             })?;
         let locked = lock_resolved_package(
             &package.registry,
+            &package.category,
             &package.name,
             Some(&package.version),
             None,
             resolved,
-            &preflight_catalog,
-            &policy,
+            catalog,
+            policy,
             &mut identities,
             &mut pending,
         )?;
@@ -224,7 +265,7 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     for (git_identity, package) in &desired.git_tags {
         if old
             .values()
-            .any(|(registry, locked)| git_key(registry, locked).as_ref() == Some(git_identity))
+            .any(|(registry, _, locked)| git_key(registry, locked).as_ref() == Some(git_identity))
         {
             continue;
         }
@@ -243,12 +284,13 @@ fn reconcile_with<R: Resolver, N: Renamer>(
             })?;
         let locked = lock_resolved_package(
             &package.registry,
+            &package.category,
             &package.name,
             None,
             Some((&package.repository, &package.tag, &package.cargo_version)),
             resolved,
-            &preflight_catalog,
-            &policy,
+            catalog,
+            policy,
             &mut identities,
             &mut pending,
         )?;
@@ -259,23 +301,7 @@ fn reconcile_with<R: Resolver, N: Renamer>(
             .push(locked);
         summary.packages_added += 1;
     }
-
-    let next_inputs = inputs_with_locks(&inputs, &next_locks);
-    let next_catalog = catalog_from_inputs(&root, &next_inputs)?;
-    validate_catalog(&next_catalog)?;
-    let lock_changed = inputs
-        .iter()
-        .any(|input| input.lock.as_ref() != next_locks.get(&input.file.registry.name));
-    if !lock_changed && !uses_legacy_archives {
-        Catalog::load(&root).context("strictly reload unchanged catalog")?;
-        return Ok(summary);
-    }
-
-    let staging = stage_catalog(&root, &inputs, &next_inputs, &next_catalog, &pending)?;
-    validate_staged_catalog(staging.path())?;
-    install_staging(&root, staging.path(), renamer)?;
-    summary.changed = true;
-    Ok(summary)
+    Ok(pending)
 }
 
 fn canonical_catalog_root(root: &Path) -> Result<PathBuf> {
@@ -325,61 +351,65 @@ fn collect_desired_packages(inputs: &[RegistryInput]) -> Result<DesiredState> {
     let mut desired = DesiredState::default();
     for input in inputs {
         let registry = &input.file.registry.name;
-        for (name, versions) in &input.file.mirror {
-            for version in versions {
-                let identity = package_identity(name, version);
-                ensure!(
-                    desired
-                        .mirrors
-                        .insert(
-                            identity,
-                            DesiredMirror {
-                                registry: registry.clone(),
-                                name: name.clone(),
-                                version: version.clone(),
-                            },
-                        )
-                        .is_none(),
-                    "mirrored identity {name} {version} is desired more than once"
-                );
+        for category in input.file.category_values() {
+            for (name, versions) in &category.mirror {
+                for version in versions {
+                    let identity = package_identity(name, version);
+                    ensure!(
+                        desired
+                            .mirrors
+                            .insert(
+                                identity,
+                                DesiredMirror {
+                                    registry: registry.clone(),
+                                    category: category.id.clone(),
+                                    name: name.clone(),
+                                    version: version.clone(),
+                                },
+                            )
+                            .is_none(),
+                        "mirrored identity {name} {version} is desired more than once"
+                    );
+                }
             }
-        }
-        for (name, declaration) in &input.file.publish {
-            validate_https_repository(&declaration.git).with_context(|| {
-                format!(
-                    "invalid Git repository for package {name:?} in {}",
-                    input.path.display()
-                )
-            })?;
-            for tag in &declaration.tags {
-                validate_git_tag(tag).with_context(|| {
+            for (name, declaration) in &category.publish {
+                validate_https_repository(&declaration.git).with_context(|| {
                     format!(
-                        "invalid Git tag for package {name:?} in {}",
-                        input.path.display()
+                        "invalid Git repository for package {name:?} in {}",
+                        category.declared_in.display()
                     )
                 })?;
-                let identity = (
-                    registry.clone(),
-                    name.clone(),
-                    declaration.git.clone(),
-                    tag.clone(),
-                );
-                ensure!(
-                    desired
-                        .git_tags
-                        .insert(
-                            identity,
-                            DesiredGitTag {
-                                registry: registry.clone(),
-                                name: name.clone(),
-                                repository: declaration.git.clone(),
-                                tag: tag.clone(),
-                                cargo_version: input.file.registry.cargo_version.clone(),
-                            },
+                for tag in &declaration.tags {
+                    validate_git_tag(tag).with_context(|| {
+                        format!(
+                            "invalid Git tag for package {name:?} in {}",
+                            category.declared_in.display()
                         )
-                        .is_none(),
-                    "Git tag {tag:?} for package {name:?} is desired more than once"
-                );
+                    })?;
+                    let identity = (
+                        registry.clone(),
+                        name.clone(),
+                        declaration.git.clone(),
+                        tag.clone(),
+                    );
+                    ensure!(
+                        desired
+                            .git_tags
+                            .insert(
+                                identity,
+                                DesiredGitTag {
+                                    registry: registry.clone(),
+                                    category: category.id.clone(),
+                                    name: name.clone(),
+                                    repository: declaration.git.clone(),
+                                    tag: tag.clone(),
+                                    cargo_version: input.file.registry.cargo_version.clone(),
+                                },
+                            )
+                            .is_none(),
+                        "Git tag {tag:?} for package {name:?} is desired more than once"
+                    );
+                }
             }
         }
     }
@@ -392,12 +422,25 @@ fn collect_old_packages(inputs: &[RegistryInput]) -> Result<OldPackages> {
         let Some(lock) = &input.lock else {
             continue;
         };
+        let categories = lock
+            .names
+            .iter()
+            .map(|name| (name.name.as_str(), name.category.as_str()))
+            .collect::<BTreeMap<_, _>>();
         for package in &lock.packages {
+            let local = categories.get(package.name.as_str()).with_context(|| {
+                format!(
+                    "locked package {} {} has no permanent name anchor",
+                    package.name, package.version
+                )
+            })?;
+            let category = CategoryId::new(&input.file.registry.name, *local)
+                .context("locked package has invalid category anchor")?;
             let identity = package_identity(&package.name, &package.version);
             ensure!(
                 old.insert(
                     identity,
-                    (input.file.registry.name.clone(), package.clone()),
+                    (input.file.registry.name.clone(), category, package.clone(),),
                 )
                 .is_none(),
                 "locked identity {} {} occurs in more than one registry",
@@ -411,7 +454,7 @@ fn collect_old_packages(inputs: &[RegistryInput]) -> Result<OldPackages> {
 
 fn validate_desired_against_history(desired: &DesiredState, old: &OldPackages) -> Result<()> {
     let mut old_tags = BTreeMap::new();
-    for (identity, (registry, package)) in old {
+    for (identity, (registry, _, package)) in old {
         if let Some(key) = git_key(registry, package) {
             ensure!(
                 old_tags.insert(key, identity).is_none(),
@@ -420,9 +463,10 @@ fn validate_desired_against_history(desired: &DesiredState, old: &OldPackages) -
         }
     }
     for (identity, package) in &desired.mirrors {
-        if let Some((registry, locked)) = old.get(identity) {
+        if let Some((registry, category, locked)) = old.get(identity) {
             ensure!(
                 registry == &package.registry
+                    && category == &package.category
                     && locked.state == PackageState::Active
                     && matches!(locked.source, LockedSource::CratesIo {}),
                 "desired mirror {} {} conflicts with immutable package history",
@@ -433,12 +477,12 @@ fn validate_desired_against_history(desired: &DesiredState, old: &OldPackages) -
     }
     for (key, package) in &desired.git_tags {
         if let Some(identity) = old_tags.get(key) {
-            let (_, locked) = old
+            let (_, category, locked) = old
                 .get(*identity)
                 .expect("old Git tag map was derived from old packages");
             ensure!(
-                locked.state == PackageState::Active,
-                "removed Git publication {} tag {:?} cannot be reactivated",
+                category == &package.category && locked.state == PackageState::Active,
+                "removed or recategorized Git publication {} tag {:?} cannot be reactivated",
                 package.name,
                 package.tag
             );
@@ -469,17 +513,28 @@ fn prepare_next_locks(
             .collect::<BTreeSet<_>>();
         next.names = input
             .file
-            .mirror
-            .keys()
-            .map(|name| LockedName {
-                name: name.clone(),
-                source: NameSource::Mirror,
+            .categories
+            .iter()
+            .flat_map(|(local, category)| {
+                category
+                    .mirror
+                    .keys()
+                    .map(|name| LockedName {
+                        name: name.clone(),
+                        category: local.clone(),
+                        source: NameSource::Mirror,
+                    })
+                    .chain(category.publish.keys().map(|name| LockedName {
+                        name: name.clone(),
+                        category: local.clone(),
+                        source: NameSource::Publish,
+                    }))
             })
-            .chain(input.file.publish.keys().map(|name| LockedName {
-                name: name.clone(),
-                source: NameSource::Publish,
-            }))
             .collect();
+        next.names.sort_by(|left, right| {
+            (left.name.to_ascii_lowercase(), left.name.as_str())
+                .cmp(&(right.name.to_ascii_lowercase(), right.name.as_str()))
+        });
         summary.names_added += next
             .names
             .iter()
@@ -491,9 +546,16 @@ fn prepare_next_locks(
                 LockedSource::CratesIo {} => desired
                     .mirrors
                     .get(&package_identity(&package.name, &package.version))
-                    .is_some_and(|declaration| declaration.registry == *registry),
-                LockedSource::GitTag { .. } => git_key(registry, package)
-                    .is_some_and(|key| desired.git_tags.contains_key(&key)),
+                    .is_some_and(|declaration| {
+                        declaration.registry == *registry
+                            && declaration.category.registry() == registry
+                    }),
+                LockedSource::GitTag { .. } => git_key(registry, package).is_some_and(|key| {
+                    desired.git_tags.get(&key).is_some_and(|declaration| {
+                        declaration.registry == *registry
+                            && declaration.category.registry() == registry
+                    })
+                }),
             };
             if !remains_desired && package.state == PackageState::Active {
                 package.state = PackageState::Removed;
@@ -511,6 +573,7 @@ fn prepare_next_locks(
 #[allow(clippy::too_many_arguments)]
 fn lock_resolved_package(
     registry: &str,
+    category: &CategoryId,
     expected_name: &str,
     expected_version: Option<&Version>,
     expected_git: Option<(&str, &str, &Version)>,
@@ -563,8 +626,12 @@ fn lock_resolved_package(
     );
     let archive_sha256 = sha256_bytes(&resolved.archive_bytes);
     let source_row_sha256 = sha256_bytes(&resolved.source_row_bytes);
+    ensure!(
+        category.registry() == registry,
+        "category {category} does not belong to registry {registry:?}"
+    );
     let index_row_sha256 = routed_row_hash(
-        registry,
+        category,
         &resolved.name,
         &resolved.version,
         &archive_sha256,
@@ -659,7 +726,7 @@ fn validate_routed_rows(catalog: &Catalog, policy: &Policy, artifacts: &Artifact
             )
         })?;
         let actual = routed_row_hash(
-            &approval.registry,
+            &approval.category,
             &approval.name,
             &approval.version,
             &approval.archive_sha256,
@@ -688,7 +755,7 @@ fn object_store_is_absent(catalog: &Catalog) -> Result<bool> {
 }
 
 fn routed_row_hash(
-    registry: &str,
+    source_category: &CategoryId,
     name: &str,
     version: &Version,
     archive_sha256: &str,
@@ -710,12 +777,16 @@ fn routed_row_hash(
         "source row checksum for {name} {version} differs from archive hash {archive_sha256}"
     );
     record.set_yanked(false);
-    let routes =
-        record.route_dependencies(registry, &catalog.homes.homes, &policy.registry_urls)?;
+    let routes = record.route_dependencies(
+        source_category.registry(),
+        &catalog.homes.homes,
+        &policy.registry_urls,
+    )?;
     for (package, home) in routes {
         ensure!(
-            policy.permits_dependency(registry, &home),
-            "{name} {version} in {registry} may not depend on {package} in {home}"
+            policy.permits_dependency(source_category, &home.category),
+            "{name} {version} in {source_category} may not depend on {package} in {}",
+            home.category
         );
     }
     Ok(sha256_bytes(&record.to_json_line()?))
@@ -741,6 +812,9 @@ fn stage_catalog(
             .file_name()
             .context("registry human file has no filename")?;
         copy_new(&input.path, &staging.path().join(filename))?;
+        for relative in &input.category_paths {
+            copy_new(&root.join(relative), &staging.path().join(relative))?;
+        }
         let lock_filename = input
             .lock_path
             .file_name()
@@ -1030,8 +1104,7 @@ mod tests {
     use crate::index::index_path;
     use crate::schema::{MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, load_lock};
 
-    const CORE_URL: &str = "sparse+https://rust.pkg.re/core/";
-    const MATRIX_URL: &str = "sparse+https://rust.pkg.re/matrix/";
+    const UNIVERSE_URL: &str = "sparse+https://rust.pkg.re/universe/";
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
@@ -1051,7 +1124,7 @@ mod tests {
             summary,
             ReconcileSummary {
                 changed: true,
-                names_added: 3,
+                names_added: 9,
                 packages_added: 3,
                 packages_removed: 0,
             }
@@ -1066,8 +1139,14 @@ mod tests {
                 .iter()
                 .all(|package| package.state == PackageState::Active)
         );
-        assert_routed_registry(&temporary, &catalog, "matrix", "matrix-middle", CORE_URL);
-        assert_routed_registry(&temporary, &catalog, "pkgre", "pkgre-tool", MATRIX_URL);
+        assert_routed_registry(&temporary, &catalog, "universe", "matrix-middle", None);
+        assert_routed_registry(
+            &temporary,
+            &catalog,
+            "pkgre",
+            "pkgre-tool",
+            Some(UNIVERSE_URL),
+        );
 
         let before = snapshot(temporary.path());
         let second = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
@@ -1124,7 +1203,7 @@ mod tests {
         );
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let mirror = locked_package(&root, "core", "alpha");
+        let mirror = locked_package(&root, "universe", "alpha");
         let mirror_archive = root
             .join("objects/crates")
             .join(format!("{}.crate", mirror.crate_sha256));
@@ -1167,10 +1246,14 @@ mod tests {
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let mut core_lock = load_lock(&root.join("core.lock")).unwrap();
+        let mut core_lock = load_lock(&root.join("universe.lock")).unwrap();
         core_lock.registry.download = PUBLISH_DOWNLOAD.to_owned();
-        fs::write(root.join("core.lock"), serialize_lock(&core_lock).unwrap()).unwrap();
-        let mirror = locked_package(&root, "core", "alpha");
+        fs::write(
+            root.join("universe.lock"),
+            serialize_lock(&core_lock).unwrap(),
+        )
+        .unwrap();
+        let mirror = locked_package(&root, "universe", "alpha");
         let mirror_archive = root
             .join("objects/crates")
             .join(format!("{}.crate", mirror.crate_sha256));
@@ -1184,7 +1267,7 @@ mod tests {
         assert!(summary.changed);
         assert_eq!(resolver.calls(), 1);
         assert_eq!(
-            load_lock(&root.join("core.lock"))
+            load_lock(&root.join("universe.lock"))
                 .unwrap()
                 .registry
                 .download,
@@ -1200,7 +1283,7 @@ mod tests {
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let original = locked_package(&root, "core", "alpha");
+        let original = locked_package(&root, "universe", "alpha");
         let archive = root
             .join("objects/crates")
             .join(format!("{}.crate", original.crate_sha256));
@@ -1212,7 +1295,7 @@ mod tests {
         let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
         assert_eq!(summary.packages_removed, 1);
         assert!(summary.changed);
-        let removed = locked_package(&root, "core", "alpha");
+        let removed = locked_package(&root, "universe", "alpha");
         assert_eq!(removed.state, PackageState::Removed);
         let mut retained = removed.clone();
         retained.state = PackageState::Active;
@@ -1221,7 +1304,7 @@ mod tests {
         assert!(row.is_file());
         let catalog = Catalog::load(&root).unwrap();
         ArtifactMap::load(&catalog).unwrap();
-        assert_rendered_yanked(&temporary, &catalog, "core", "alpha");
+        assert_rendered_yanked(&temporary, &catalog, "universe", "alpha");
 
         let removed_snapshot = snapshot(temporary.path());
         assert_eq!(
@@ -1239,7 +1322,10 @@ mod tests {
 
         write_catalog(&root, "", "", "");
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
-        assert!(format!("{error:#}").contains("retain the key with an empty version/tag list"));
+        assert!(
+            format!("{error:#}")
+                .contains("retain the key in its original category with an empty version/tag list")
+        );
         assert_eq!(resolver.calls(), 1);
     }
 
@@ -1257,10 +1343,10 @@ mod tests {
             "",
             "",
         );
-        let core = root.join("core.toml");
+        let core = root.join("universe.toml");
         let changed = fs::read_to_string(&core)
             .unwrap()
-            .replace(CORE_URL, "sparse+https://example.invalid/core/");
+            .replace(UNIVERSE_URL, "sparse+https://example.invalid/universe/");
         fs::write(&core, changed).unwrap();
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
         assert!(format!("{error:#}").contains("immutable registry identity"));
@@ -1272,9 +1358,9 @@ mod tests {
             "",
             "",
         );
-        let mut lock = load_lock(&root.join("core.lock")).unwrap();
+        let mut lock = load_lock(&root.join("universe.lock")).unwrap();
         lock.packages[0].index_row_sha256 = "00".repeat(32);
-        fs::write(root.join("core.lock"), serialize_lock(&lock).unwrap()).unwrap();
+        fs::write(root.join("universe.lock"), serialize_lock(&lock).unwrap()).unwrap();
         let before = snapshot(temporary.path());
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
         assert!(format!("{error:#}").contains("routed index-row hash mismatch"));
@@ -1315,7 +1401,7 @@ mod tests {
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let package = locked_package(&root, "core", "alpha");
+        let package = locked_package(&root, "universe", "alpha");
         write_catalog(
             &root,
             "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
@@ -1501,34 +1587,95 @@ mod tests {
 
     fn fake_dependencies(name: &str) -> &'static [&'static str] {
         match name {
-            "matrix-middle" => &["leaf-core"],
-            "pkgre-tool" | "core-invalid" => &["matrix-middle"],
+            "matrix-middle" | "pkgre-tool" => &["leaf-core"],
+            "core-invalid" => &["matrix-middle"],
             _ => &[],
         }
     }
 
-    fn write_catalog(root: &Path, core: &str, matrix: &str, pkgre: &str) {
+    fn write_catalog(root: &Path, general: &str, matrix: &str, pkgre: &str) {
         fs::create_dir_all(root).unwrap();
-        write_registry(root, "core", &["core"], core);
-        write_registry(root, "matrix", &["core", "matrix"], matrix);
-        write_registry(root, "pkgre", &["core", "matrix", "pkgre"], pkgre);
+        let mut universe_categories = String::new();
+        universe_categories.push_str(&mirror_category(
+            "general",
+            &["universe/general"],
+            general,
+            "reserved-general",
+        ));
+        universe_categories.push_str(&mirror_category(
+            "matrix",
+            &["universe/matrix", "universe/general"],
+            matrix,
+            "reserved-matrix",
+        ));
+        for (local, dependencies) in [
+            ("acp", &["universe/acp", "universe/general"] as &[_]),
+            (
+                "filesystem",
+                &["universe/filesystem", "universe/general"] as &[_],
+            ),
+            (
+                "mcp",
+                &["universe/mcp", "universe/sse", "universe/general"] as &[_],
+            ),
+            ("sse", &["universe/sse", "universe/general"] as &[_]),
+            (
+                "terminal",
+                &["universe/terminal", "universe/general"] as &[_],
+            ),
+            ("yaml", &["universe/yaml", "universe/general"] as &[_]),
+        ] {
+            universe_categories.push_str(&mirror_category(
+                local,
+                dependencies,
+                "",
+                &format!("reserved-{local}"),
+            ));
+        }
+        write_registry(root, "universe", MIRROR_DOWNLOAD, &universe_categories);
+
+        let tooling = if pkgre.trim().is_empty() {
+            "[categories.tooling.publish.pkgre-category-anchor]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = []\n"
+                .to_owned()
+        } else {
+            scope_declarations("tooling", pkgre)
+        };
+        let pkgre_categories = format!(
+            "[categories.tooling]\nmay-depend-on = [\"pkgre/tooling\", \"universe/general\"]\n\n{tooling}"
+        );
+        write_registry(root, "pkgre", PUBLISH_DOWNLOAD, &pkgre_categories);
     }
 
-    fn write_registry(root: &Path, name: &str, layers: &[&str], declarations: &str) {
-        let layers = layers
+    fn mirror_category(
+        local: &str,
+        dependencies: &[&str],
+        declarations: &str,
+        fallback_name: &str,
+    ) -> String {
+        let dependencies = dependencies
             .iter()
-            .map(|layer| format!("\"{layer}\""))
+            .map(|category| format!("\"{category}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        let download = if name == "pkgre" {
-            PUBLISH_DOWNLOAD
+        let declarations = if declarations.trim().is_empty() {
+            format!("[categories.{local}.mirror]\n{fallback_name} = []\n")
         } else {
-            MIRROR_DOWNLOAD
+            scope_declarations(local, declarations)
         };
+        format!("[categories.{local}]\nmay-depend-on = [{dependencies}]\n\n{declarations}\n")
+    }
+
+    fn scope_declarations(local: &str, declarations: &str) -> String {
+        declarations
+            .replace("[mirror]", &format!("[categories.{local}.mirror]"))
+            .replace("[publish.", &format!("[categories.{local}.publish."))
+    }
+
+    fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
         fs::write(
             root.join(format!("{name}.toml")),
             format!(
-                "schema = 2\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {download:?}\nmay-depend-on = [{layers}]\ncargo-version = \"1.95.0\"\n\n{declarations}"
+                "schema = 3\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
             ),
         )
         .unwrap();
@@ -1548,7 +1695,7 @@ mod tests {
         catalog: &Catalog,
         registry: &str,
         name: &str,
-        expected: &str,
+        expected: Option<&str>,
     ) {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join(format!("site-{registry}-{name}"));
@@ -1556,7 +1703,7 @@ mod tests {
         let row: Value =
             serde_json::from_slice(&fs::read(site.join(registry).join(index_path(name))).unwrap())
                 .unwrap();
-        assert_eq!(row["deps"][0]["registry"], expected);
+        assert_eq!(row["deps"][0]["registry"].as_str(), expected);
     }
 
     fn assert_rendered_yanked(

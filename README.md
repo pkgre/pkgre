@@ -1,26 +1,39 @@
 # pkg.re
 
-Declarative tooling + policy for small, curated Cargo registries.
+Declarative tooling + policy for small curated Cargo registries.
 
 ## Purpose
 
-pkg.re converts three human-edited registry files into deterministic Cargo sparse registries. Human TOML declares exact mirrored versions + immutable first-party Git tags; `pkgre-indexer lock` materializes new identities, generates immutable provenance locks, and transactionally converges retained source rows + Git-tag archives. Mirror archives are fetched + checksum-verified during locking but served later by crates.io; metadata + integrity remain controlled by the curated row. No mutable registry API or `cargo publish` operation is authoritative.
+pkg.re converts human registry/category declarations into deterministic Cargo sparse registries. Human TOML declares exact mirrored versions + immutable first-party Git tags; `pkgre-indexer lock` materializes new identities, generates immutable provenance locks, and transactionally converges retained source rows + Git-tag archives. Mirror archives are fetched + checksum-verified during locking but served later by crates.io; metadata + integrity remain controlled by the curated row. No mutable registry API or `cargo publish` operation is authoritative.
 
 Removal replaces curator-controlled yanking: delete a version/tag from desired state but retain its package key; reconciliation preserves an irreversible tombstone + source evidence, removes an unshared retained Git archive, and renders the retained row as yanked.
 
 Registries:
 
-| Alias | URL | Contents | Archive download | May depend on |
-|---|---|---|---|---|
-| `core` | `sparse+https://rust.pkg.re/core/` | General-purpose mirrored crates | `https://static.crates.io/crates` | `core` |
-| `matrix` | `sparse+https://rust.pkg.re/matrix/` | Matrix ecosystem mirrors | `https://static.crates.io/crates` | `matrix`, `core` |
-| `pkgre` | `sparse+https://rust.pkg.re/pkgre/` | First-party pkg.re Git-tag packages | `https://rust.pkg.re/crates/{sha256-checksum}.crate` | `pkgre`, `matrix`, `core` |
+| Alias | URL | Source class | Archive download |
+|---|---|---|---|
+| `universe` | `sparse+https://rust.pkg.re/universe/` | crates.io mirrors | `https://static.crates.io/crates` |
+| `pkgre` | `sparse+https://rust.pkg.re/pkgre/` | First-party pkg.re Git-tag packages | `https://rust.pkg.re/crates/{sha256-checksum}.crate` |
+
+A registry is mirror-only or Git-only because Cargo exposes one index-wide `dl` URL; mixed source classes fail closed. Category policy is finer-grained than Cargo registries:
+
+| Category | May depend on |
+|---|---|
+| `universe/general` | `universe/general` |
+| `universe/acp` | `universe/acp`, `universe/general` |
+| `universe/filesystem` | `universe/filesystem`, `universe/general` |
+| `universe/matrix` | `universe/matrix`, `universe/general` |
+| `universe/mcp` | `universe/mcp`, `universe/sse`, `universe/general` |
+| `universe/sse` | `universe/sse`, `universe/general` |
+| `universe/terminal` | `universe/terminal`, `universe/general` |
+| `universe/yaml` | `universe/yaml`, `universe/general` |
+| `pkgre/tooling` | `pkgre/tooling`, `universe/general` |
 
 ## Components
 
-- `indexer/`: Rust reconciler, validator, deterministic renderer, release verifier.
-- [`docs/catalog.md`](docs/catalog.md): schema-v2 human files, generated locks, objects, routing, removal.
-- [`docs/workflows.md`](docs/workflows.md): mirror review, Git-tag publication, removal, release procedures.
+- `indexer/`: Rust reconciler, validator, schema-2→3 migrator, deterministic renderer, release verifier.
+- [`docs/catalog.md`](docs/catalog.md): schema-3 human files, inline/external categories, generated locks, objects, routing, removal.
+- [`docs/workflows.md`](docs/workflows.md): mirror review, Git-tag publication, removal, migration, release procedures.
 - [`docs/security.md`](docs/security.md): trust model, enforced invariants, exclusions.
 - Registry catalog/site: [`pkgre/rust`](https://github.com/pkgre/rust).
 
@@ -42,34 +55,33 @@ $ pkgre-indexer check registry
 $ pkgre-indexer render registry site-next
 $ pkgre-indexer verify registry site-next
 $ pkgre-indexer verify-monotonic site-current site-next
+$ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
-`registry/` is an exclusive managed-state directory: only `<registry>.toml`, generated `<registry>.lock`, and `objects/` are permitted.
+`registry/` is exclusive managed state: only `<registry>.toml`, generated `<registry>.lock`, referenced `categories/<registry>/<category>.toml`, and `objects/` are permitted.
 
 ## Consumer configuration
 
-Project manifests name every alternate registry explicitly:
+Project manifests name every alternate registry explicitly; categories do not change Cargo's registry alias:
 
 ```toml
 [dependencies]
-serde = { version = "=1.0.229", registry = "core" }
-matrix-sdk = { version = "=0.16.0", registry = "matrix" }
+serde = { version = "=1.0.229", registry = "universe" }
+matrix-sdk = { version = "=0.18.0", registry = "universe" }
+pkgre-indexer = { version = "=0.2.0", registry = "pkgre" }
 ```
 
 Project `.cargo/config.toml` defines aliases and fails closed on implicit crates.io access:
 
 ```toml
-[registries.core]
-index = "sparse+https://rust.pkg.re/core/"
-
-[registries.matrix]
-index = "sparse+https://rust.pkg.re/matrix/"
+[registries.universe]
+index = "sparse+https://rust.pkg.re/universe/"
 
 [registries.pkgre]
 index = "sparse+https://rust.pkg.re/pkgre/"
 
 [registry]
-default = "pkgre"
+default = "universe"
 
 [source.crates-io]
 replace-with = "disabled-crates-io"

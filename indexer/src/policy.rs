@@ -6,43 +6,77 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 
+use crate::category::CategoryId;
 use crate::schema::{
-    Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, Registry, Source,
+    Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, PackageHome, Registry, Source,
 };
 
 const CNAME: &str = "rust.pkg.re";
 pub(crate) const CARGO_VERSION: &str = "1.95.0";
-pub(crate) const REGISTRIES: [(&str, &str, &[&str]); 3] = [
-    ("core", "sparse+https://rust.pkg.re/core/", &["core"]),
+pub(crate) const REGISTRIES: [(&str, &str); 2] = [
+    ("pkgre", "sparse+https://rust.pkg.re/pkgre/"),
+    ("universe", "sparse+https://rust.pkg.re/universe/"),
+];
+pub(crate) const CATEGORY_DEPENDENCIES: [(&str, &[&str]); 9] = [
+    ("pkgre/tooling", &["pkgre/tooling", "universe/general"]),
+    ("universe/acp", &["universe/acp", "universe/general"]),
     (
-        "matrix",
-        "sparse+https://rust.pkg.re/matrix/",
-        &["core", "matrix"],
+        "universe/filesystem",
+        &["universe/filesystem", "universe/general"],
     ),
+    ("universe/general", &["universe/general"]),
+    ("universe/matrix", &["universe/matrix", "universe/general"]),
     (
-        "pkgre",
-        "sparse+https://rust.pkg.re/pkgre/",
-        &["core", "matrix", "pkgre"],
+        "universe/mcp",
+        &["universe/mcp", "universe/sse", "universe/general"],
     ),
+    ("universe/sse", &["universe/sse", "universe/general"]),
+    (
+        "universe/terminal",
+        &["universe/terminal", "universe/general"],
+    ),
+    ("universe/yaml", &["universe/yaml", "universe/general"]),
 ];
 
-/// Validated registry topology used to route dependency records.
+/// Validated registry and category topology used to route and authorize dependencies.
 #[derive(Debug)]
 pub struct Policy {
     /// Canonical sparse URL keyed by registry alias.
     pub registry_urls: BTreeMap<String, String>,
-    /// Permitted dependency homes keyed by registry alias.
-    pub dependency_layers: BTreeMap<String, BTreeSet<String>>,
+    /// Permitted direct dependency categories keyed by source category.
+    pub category_dependencies: BTreeMap<CategoryId, BTreeSet<CategoryId>>,
 }
 
 impl Policy {
-    /// Returns whether a package in `from` may depend on a package in `to`.
+    /// Returns whether a package in `from` may directly depend on a package in `to`.
     #[must_use]
-    pub fn permits_dependency(&self, from: &str, to: &str) -> bool {
-        self.dependency_layers
+    pub fn permits_dependency(&self, from: &CategoryId, to: &CategoryId) -> bool {
+        self.category_dependencies
             .get(from)
-            .is_some_and(|layers| layers.contains(to))
+            .is_some_and(|categories| categories.contains(to))
     }
+}
+
+/// Returns the compiled canonical category dependency topology.
+pub(crate) fn canonical_category_dependencies() -> BTreeMap<CategoryId, BTreeSet<CategoryId>> {
+    CATEGORY_DEPENDENCIES
+        .iter()
+        .map(|(category, dependencies)| {
+            (
+                category
+                    .parse()
+                    .expect("compiled category identity is canonical"),
+                dependencies
+                    .iter()
+                    .map(|dependency| {
+                        dependency
+                            .parse()
+                            .expect("compiled dependency category identity is canonical")
+                    })
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// Validates catalog topology, naming, identity, source, and routing policy.
@@ -53,34 +87,32 @@ impl Policy {
 pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     ensure!(catalog.registries.cname == CNAME, "CNAME must be {CNAME:?}");
     ensure!(
+        catalog.registries.schema == crate::schema::SCHEMA_VERSION,
+        "registry topology schema must be {}",
+        crate::schema::SCHEMA_VERSION
+    );
+    ensure!(
+        catalog.homes.schema == crate::schema::SCHEMA_VERSION,
+        "package-home schema must be {}",
+        crate::schema::SCHEMA_VERSION
+    );
+    ensure!(
         catalog.registries.cargo_version.to_string() == CARGO_VERSION,
         "pkgre cargo-version must be {CARGO_VERSION}"
     );
     ensure!(
         catalog.registries.registries.len() == REGISTRIES.len(),
-        "catalog must declare exactly core, matrix, and pkgre registries"
+        "catalog must declare exactly universe and pkgre registries"
     );
 
-    let expected = REGISTRIES
+    let expected_registries = REGISTRIES
         .iter()
-        .map(|(name, index, layers)| {
-            (
-                (*name).to_owned(),
-                ((*index).to_owned(), string_set(layers.iter().copied())),
-            )
-        })
+        .map(|(name, index)| ((*name).to_owned(), (*index).to_owned()))
         .collect::<BTreeMap<_, _>>();
     let mut registry_urls = BTreeMap::new();
-    let mut dependency_layers = BTreeMap::new();
     for registry in &catalog.registries.registries {
         validate_registry_alias(&registry.name)?;
-        let actual_layers = string_set(registry.may_depend_on.iter().map(String::as_str));
-        ensure!(
-            actual_layers.len() == registry.may_depend_on.len(),
-            "registry {:?} repeats a dependency layer",
-            registry.name
-        );
-        let (expected_index, expected_layers) = expected
+        let expected_index = expected_registries
             .get(&registry.name)
             .with_context(|| format!("unexpected registry {:?}", registry.name))?;
         ensure!(
@@ -95,31 +127,56 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
             registry.name
         );
         ensure!(
-            &actual_layers == expected_layers,
-            "registry {:?} dependency layers must be {:?}",
-            registry.name,
-            expected_layers
-        );
-        ensure!(
             registry_urls
                 .insert(registry.name.clone(), registry.index.clone())
                 .is_none(),
             "duplicate registry {:?}",
             registry.name
         );
-        dependency_layers.insert(registry.name.clone(), actual_layers);
     }
     ensure!(
-        registry_urls.len() == expected.len(),
-        "catalog must declare core, matrix, and pkgre exactly once"
+        registry_urls == expected_registries,
+        "catalog must declare universe and pkgre exactly once"
     );
 
-    validate_homes(catalog, &registry_urls)?;
+    let expected_categories = canonical_category_dependencies();
+    let mut category_dependencies = BTreeMap::new();
+    for (category, dependencies) in &catalog.categories {
+        ensure!(
+            registry_urls.contains_key(category.registry()),
+            "category {category} names an unknown registry"
+        );
+        let actual = dependencies.iter().cloned().collect::<BTreeSet<_>>();
+        ensure!(
+            actual.len() == dependencies.len(),
+            "category {category} repeats a may-depend-on target"
+        );
+        for dependency in &actual {
+            ensure!(
+                catalog.categories.contains_key(dependency),
+                "category {category} may depend on unknown category {dependency}"
+            );
+        }
+        let expected = expected_categories
+            .get(category)
+            .with_context(|| format!("unexpected category {category}"))?;
+        ensure!(
+            &actual == expected,
+            "category {category} may-depend-on must be {expected:?}"
+        );
+        category_dependencies.insert(category.clone(), actual);
+    }
+    ensure!(
+        category_dependencies == expected_categories,
+        "catalog must declare the exact canonical category topology"
+    );
+
+    validate_homes(catalog, &registry_urls, &category_dependencies)?;
     validate_approvals(catalog, &registry_urls)?;
 
     Ok(Policy {
         registry_urls,
-        dependency_layers,
+        category_dependencies,
     })
 }
 
@@ -127,7 +184,7 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
     let mut has_mirror = false;
     let mut has_publish = false;
     for (name, home) in &catalog.homes.homes {
-        if home != &registry.name {
+        if home.registry != registry.name {
             continue;
         }
         match catalog
@@ -159,26 +216,29 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
     Ok(())
 }
 
-fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -> Result<()> {
+fn validate_homes(
+    catalog: &Catalog,
+    registry_urls: &BTreeMap<String, String>,
+    categories: &BTreeMap<CategoryId, BTreeSet<CategoryId>>,
+) -> Result<()> {
     let mut collision_keys = BTreeMap::<String, &str>::new();
-    for (package, registry) in &catalog.homes.homes {
+    let mut inhabited_categories = BTreeSet::new();
+    for (package, home) in &catalog.homes.homes {
         validate_package_name(package)
             .with_context(|| format!("invalid package home name {package:?}"))?;
-        ensure!(
-            registry_urls.contains_key(registry),
-            "package {package:?} has unknown home {registry:?}"
-        );
+        validate_package_home(package, home, registry_urls, categories)?;
+        inhabited_categories.insert(home.category.clone());
         let source = catalog
             .name_sources
             .get(package)
             .with_context(|| format!("package {package:?} has no permanent source class"))?;
         match source {
             NameSource::Mirror => ensure!(
-                registry != "pkgre",
-                "mirrored package {package:?} cannot use the pkgre registry"
+                home.registry == "universe",
+                "mirrored package {package:?} must use the universe registry"
             ),
             NameSource::Publish => ensure!(
-                registry == "pkgre",
+                home.registry == "pkgre",
                 "first-party package {package:?} must use the pkgre registry"
             ),
         }
@@ -191,12 +251,44 @@ fn validate_homes(catalog: &Catalog, registry_urls: &BTreeMap<String, String>) -
         }
     }
     ensure!(
+        inhabited_categories.len() == categories.len()
+            && categories
+                .keys()
+                .all(|category| inhabited_categories.contains(category)),
+        "every category must reserve at least one package name"
+    );
+    ensure!(
         catalog.name_sources.len() == catalog.homes.homes.len()
             && catalog
                 .name_sources
                 .keys()
                 .all(|name| catalog.homes.homes.contains_key(name)),
         "permanent source classes differ from package homes"
+    );
+    Ok(())
+}
+
+fn validate_package_home(
+    package: &str,
+    home: &PackageHome,
+    registry_urls: &BTreeMap<String, String>,
+    categories: &BTreeMap<CategoryId, BTreeSet<CategoryId>>,
+) -> Result<()> {
+    ensure!(
+        registry_urls.contains_key(&home.registry),
+        "package {package:?} has unknown registry home {:?}",
+        home.registry
+    );
+    ensure!(
+        home.category.registry() == home.registry,
+        "package {package:?} category {} does not belong to registry {:?}",
+        home.category,
+        home.registry
+    );
+    ensure!(
+        categories.contains_key(&home.category),
+        "package {package:?} has unknown category home {}",
+        home.category
     );
     Ok(())
 }
@@ -239,11 +331,14 @@ fn validate_approval(
             format!("approved package {:?} has no declared home", approval.name)
         })?;
     ensure!(
-        home == &approval.registry,
-        "approval for {} {} is in {:?}, but its declared home is {home:?}",
+        home.registry == approval.registry && home.category == approval.category,
+        "approval for {} {} is in {}/{}, but its declared home is {}/{}",
         approval.name,
         approval.version,
-        approval.registry
+        approval.registry,
+        approval.category,
+        home.registry,
+        home.category
     );
     validate_sha256(&approval.archive_sha256).with_context(|| {
         format!(
@@ -266,8 +361,8 @@ fn validate_approval(
 
     match &approval.source {
         Source::CratesIo => ensure!(
-            approval.registry != "pkgre",
-            "crates.io imports cannot be approved in the pkgre registry"
+            approval.registry == "universe",
+            "crates.io imports must be approved in the universe registry"
         ),
         Source::GitTag {
             repository,
@@ -475,14 +570,10 @@ fn version_identity(version: &Version) -> (u64, u64, u64, String) {
     )
 }
 
-fn string_set<'a>(values: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
-    values.into_iter().map(str::to_owned).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{HomesFile, PackageState, RegistriesFile, Registry};
+    use crate::schema::{HomesFile, PackageState, RegistriesFile};
 
     #[test]
     fn package_names_are_strict_and_collision_key_matches_cargo() {
@@ -511,6 +602,27 @@ mod tests {
     }
 
     fn valid_catalog() -> Catalog {
+        let categories = canonical_category_dependencies()
+            .into_iter()
+            .map(|(category, dependencies)| (category, dependencies.into_iter().collect()))
+            .collect::<BTreeMap<_, Vec<_>>>();
+        let mut homes = BTreeMap::new();
+        let mut name_sources = BTreeMap::new();
+        for category in categories.keys() {
+            let (name, source) = if category.registry() == "pkgre" {
+                ("pkgre-indexer".to_owned(), NameSource::Publish)
+            } else {
+                (format!("reserved-{}", category.local()), NameSource::Mirror)
+            };
+            homes.insert(
+                name.clone(),
+                PackageHome {
+                    registry: category.registry().to_owned(),
+                    category: category.clone(),
+                },
+            );
+            name_sources.insert(name, source);
+        }
         Catalog {
             root: Path::new("catalog").to_path_buf(),
             registries: RegistriesFile {
@@ -519,7 +631,7 @@ mod tests {
                 cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                 registries: REGISTRIES
                     .iter()
-                    .map(|(name, index, layers)| Registry {
+                    .map(|(name, index)| Registry {
                         name: (*name).to_owned(),
                         index: (*index).to_owned(),
                         download: if *name == "pkgre" {
@@ -527,18 +639,19 @@ mod tests {
                         } else {
                             MIRROR_DOWNLOAD.to_owned()
                         },
-                        may_depend_on: layers.iter().map(|value| (*value).to_owned()).collect(),
                         cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                     })
                     .collect(),
             },
+            categories,
             homes: HomesFile {
                 schema: crate::schema::SCHEMA_VERSION,
-                homes: BTreeMap::from([("pkgre-indexer".to_owned(), "pkgre".to_owned())]),
+                homes,
             },
-            name_sources: BTreeMap::from([("pkgre-indexer".to_owned(), NameSource::Publish)]),
+            name_sources,
             approvals: vec![Approval {
                 registry: "pkgre".to_owned(),
+                category: "pkgre/tooling".parse().unwrap(),
                 name: "pkgre-indexer".to_owned(),
                 version: Version::parse("0.1.0").unwrap(),
                 archive_sha256: "01".repeat(32),
@@ -560,21 +673,43 @@ mod tests {
     }
 
     #[test]
-    fn exact_topology_and_first_party_source_are_accepted() {
+    fn exact_topology_and_category_policy_are_accepted() {
         let policy = validate_catalog(&valid_catalog()).unwrap();
-        assert!(policy.permits_dependency("pkgre", "core"));
-        assert!(!policy.permits_dependency("core", "matrix"));
+        assert!(policy.permits_dependency(
+            &"pkgre/tooling".parse().unwrap(),
+            &"universe/general".parse().unwrap()
+        ));
+        assert!(policy.permits_dependency(
+            &"universe/mcp".parse().unwrap(),
+            &"universe/sse".parse().unwrap()
+        ));
+        assert!(!policy.permits_dependency(
+            &"universe/general".parse().unwrap(),
+            &"universe/matrix".parse().unwrap()
+        ));
     }
 
     #[test]
     fn registry_source_classes_require_matching_downloads() {
         let mut mirror_download = valid_catalog();
-        mirror_download.registries.registries[0].download = PUBLISH_DOWNLOAD.to_owned();
+        let universe = mirror_download
+            .registries
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "universe")
+            .unwrap();
+        universe.download = PUBLISH_DOWNLOAD.to_owned();
         let error = validate_catalog(&mirror_download).unwrap_err();
         assert!(format!("{error:#}").contains("for its source class"));
 
         let mut publish_download = valid_catalog();
-        publish_download.registries.registries[2].download = MIRROR_DOWNLOAD.to_owned();
+        let pkgre = publish_download
+            .registries
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "pkgre")
+            .unwrap();
+        pkgre.download = MIRROR_DOWNLOAD.to_owned();
         let error = validate_catalog(&publish_download).unwrap_err();
         assert!(format!("{error:#}").contains("for its source class"));
     }
@@ -582,10 +717,13 @@ mod tests {
     #[test]
     fn one_registry_cannot_mix_mirror_and_publish_name_anchors() {
         let mut catalog = valid_catalog();
-        catalog
-            .homes
-            .homes
-            .insert("reserved-mirror".to_owned(), "pkgre".to_owned());
+        catalog.homes.homes.insert(
+            "reserved-mirror".to_owned(),
+            PackageHome {
+                registry: "pkgre".to_owned(),
+                category: "pkgre/tooling".parse().unwrap(),
+            },
+        );
         catalog
             .name_sources
             .insert("reserved-mirror".to_owned(), NameSource::Mirror);
@@ -596,11 +734,13 @@ mod tests {
     }
 
     #[test]
-    fn topology_cannot_add_a_hidden_dependency_layer() {
+    fn topology_cannot_add_a_hidden_category_edge() {
         let mut catalog = valid_catalog();
-        catalog.registries.registries[0]
-            .may_depend_on
-            .push("matrix".to_owned());
+        catalog
+            .categories
+            .get_mut(&"universe/general".parse().unwrap())
+            .unwrap()
+            .push("universe/matrix".parse().unwrap());
         assert!(validate_catalog(&catalog).is_err());
     }
 

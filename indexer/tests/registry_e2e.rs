@@ -1,4 +1,4 @@
-//! Cargo end-to-end test for transparent dependencies across three sparse registries.
+//! Cargo end-to-end test for transparent same-registry categories and cross-registry dependencies.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -18,23 +18,21 @@ use serde_json::{Value, json};
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn cargo_builds_locked_with_clean_cache_across_three_registries() {
+fn cargo_builds_locked_with_clean_cache_across_two_registries() {
     let temporary = TemporaryDirectory::new("pkgre-cargo-e2e");
     let site = temporary.path().join("site");
     fs::create_dir_all(&site).unwrap();
     let server = StaticServer::start(site.clone());
     let base = server.base_url();
-    let core = format!("sparse+{base}/core/");
-    let matrix = format!("sparse+{base}/matrix/");
+    let universe = format!("sparse+{base}/universe/");
     let pkgre = format!("sparse+{base}/pkgre/");
 
-    write_registry_config(&site, "core", &base);
-    write_registry_config(&site, "matrix", &base);
+    write_registry_config(&site, "universe", &base);
     write_registry_config(&site, "pkgre", &base);
     add_package(
         &temporary,
         &site,
-        "core",
+        "universe",
         "leaf-core",
         "pub fn value() -> u32 { 40 }\n",
         &[],
@@ -42,10 +40,10 @@ fn cargo_builds_locked_with_clean_cache_across_three_registries() {
     add_package(
         &temporary,
         &site,
-        "matrix",
+        "universe",
         "matrix-middle",
         "pub fn value() -> u32 { leaf_core::value() + 1 }\n",
-        &[("leaf-core", &core)],
+        &[("leaf-core", None)],
     );
     add_package(
         &temporary,
@@ -53,7 +51,7 @@ fn cargo_builds_locked_with_clean_cache_across_three_registries() {
         "pkgre",
         "pkgre-top",
         "pub fn value() -> u32 { matrix_middle::value() + 1 }\n",
-        &[("matrix-middle", &matrix)],
+        &[("matrix-middle", Some(&universe))],
     );
 
     let project = temporary.path().join("consumer");
@@ -74,7 +72,7 @@ fn cargo_builds_locked_with_clean_cache_across_three_registries() {
     fs::write(
         project.join(".cargo/config.toml"),
         format!(
-            "[registries.core]\nindex = {core:?}\n\n[registries.matrix]\nindex = {matrix:?}\n\n[registries.pkgre]\nindex = {pkgre:?}\n\n[registry]\ndefault = \"pkgre\"\n\n[source.crates-io]\nreplace-with = \"disabled\"\n\n[source.disabled]\ndirectory = {:?}\n",
+            "[registries.universe]\nindex = {universe:?}\n\n[registries.pkgre]\nindex = {pkgre:?}\n\n[registry]\ndefault = \"pkgre\"\n\n[source.crates-io]\nreplace-with = \"disabled\"\n\n[source.disabled]\ndirectory = {:?}\n",
             disabled.display().to_string()
         ),
     )
@@ -86,8 +84,7 @@ fn cargo_builds_locked_with_clean_cache_across_three_registries() {
         &["generate-lockfile"],
     );
     let lock = fs::read_to_string(project.join("Cargo.lock")).unwrap();
-    assert!(lock.contains(&core));
-    assert!(lock.contains(&matrix));
+    assert!(lock.contains(&universe));
     assert!(lock.contains(&pkgre));
     assert!(!lock.contains("crates.io"));
 
@@ -104,8 +101,7 @@ fn cargo_builds_locked_with_clean_cache_across_three_registries() {
     assert!(status.success());
 
     let requests = server.requests();
-    assert!(requests.iter().any(|path| path.starts_with("/core/")));
-    assert!(requests.iter().any(|path| path.starts_with("/matrix/")));
+    assert!(requests.iter().any(|path| path.starts_with("/universe/")));
     assert!(requests.iter().any(|path| path.starts_with("/pkgre/")));
     assert!(requests.iter().any(|path| path.starts_with("/crates/")));
     assert!(requests.iter().all(|path| !path.contains("crates.io")));
@@ -118,7 +114,7 @@ fn add_package(
     registry: &str,
     name: &str,
     source: &str,
-    dependencies: &[(&str, &str)],
+    dependencies: &[(&str, Option<&str>)],
 ) {
     let version = "1.0.0";
     let stage = temporary.path().join(format!("stage-{name}"));
