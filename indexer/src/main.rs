@@ -9,7 +9,7 @@ use pkgre_indexer::render;
 use pkgre_indexer::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer update-plan <catalog> <plan>\n  pkgre-indexer update-plan-exact <catalog> <package> <version> <plan>\n  pkgre-indexer update-approve <plan> <approved-plan> <package> <version> <source-delta|full-archive> <note-file>";
+const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer update-plan <catalog> <plan>\n  pkgre-indexer update-plan-exact <catalog> <package> <version> <plan>\n  pkgre-indexer update-approve <plan> <approved-plan> <package> <version> <source-delta|full-archive> <note-file>\n  pkgre-indexer update-apply <catalog> <approved-plan>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -39,6 +39,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("update-plan") => update_plan(&values),
         Some("update-plan-exact") => update_plan_exact(&values),
         Some("update-approve") => update_approve(&values),
+        Some("update-apply") => update_apply(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -167,6 +168,22 @@ fn update_approve(arguments: &[OsString]) -> Result<()> {
         review_kind = ?kind,
         path = %output.display(),
         "created evidence-bound approved update plan"
+    );
+    Ok(())
+}
+
+fn update_apply(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let catalog = Path::new(&arguments[0]);
+    let plan = Path::new(&arguments[1]);
+    let summary = pkgre_indexer::update::apply_update_plan(catalog, plan)?;
+    info!(
+        changed = summary.changed,
+        names_added = summary.names_added,
+        packages_added = summary.packages_added,
+        packages_removed = summary.packages_removed,
+        path = %catalog.display(),
+        "atomically applied evidence-bound update plan"
     );
     Ok(())
 }
