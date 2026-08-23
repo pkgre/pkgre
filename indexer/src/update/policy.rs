@@ -332,6 +332,49 @@ pub fn select_exact_candidate(
     })
 }
 
+pub(crate) fn select_exact_implicit_candidate(
+    evaluation_time: &UtcTimestamp,
+    history: &[PolicyRelease],
+    locked: &[LockedRelease],
+    lane: &CompatibilityLane,
+    requested: &Version,
+) -> Result<SelectedCandidate> {
+    let exact = select_exact_candidate(evaluation_time, history, locked, requested)?;
+    ensure!(
+        implicit_lane(&exact.candidate.version).as_ref() == Some(lane),
+        "requested identity {requested} does not belong to compatibility lane {lane:?}"
+    );
+    let active_maximum = locked
+        .iter()
+        .filter(|release| release.active)
+        .filter(|release| implicit_lane(&release.version).as_ref() == Some(lane))
+        .max_by(|left, right| left.version.cmp(&right.version))
+        .context("requested compatibility lane has no active locked identity")?;
+    ensure!(
+        exact.candidate.version > active_maximum.version,
+        "requested identity {requested} is not newer than active lane maximum {}",
+        active_maximum.version
+    );
+    let base = locked
+        .iter()
+        .filter(|release| implicit_lane(&release.version).as_ref() == Some(lane))
+        .filter(|release| release.published_at <= exact.candidate.published_at)
+        .max_by(|left, right| {
+            (&left.published_at, &left.version).cmp(&(&right.published_at, &right.version))
+        })
+        .context("requested compatibility lane has no prior locked base")?
+        .clone();
+    let dormant_gap = first_dormant_gap(history, &base, &exact.candidate)?;
+    Ok(SelectedCandidate {
+        lane: lane.clone(),
+        active_lane_maximum: active_maximum.version.clone(),
+        base,
+        candidate: exact.candidate,
+        age_seconds: exact.age_seconds,
+        dormant_gap,
+    })
+}
+
 fn first_dormant_gap(
     history: &[PolicyRelease],
     base: &LockedRelease,
@@ -520,6 +563,34 @@ mod tests {
         assert_eq!(
             selected[1].candidate.version,
             Version::parse("1.5.0").unwrap()
+        );
+    }
+
+    #[test]
+    fn exact_implicit_revalidation_does_not_switch_to_a_newer_release() {
+        let history = vec![
+            release("1.0.0", "2024-01-01T00:00:00Z", false),
+            release("1.0.1", "2024-02-01T00:00:00Z", false),
+            release("1.0.2", "2024-02-02T00:00:00Z", false),
+        ];
+        let locked = vec![locked("1.0.0", "2024-01-01T00:00:00Z", true)];
+        let selected = select_exact_implicit_candidate(
+            &timestamp("2024-04-01T00:00:00Z"),
+            &history,
+            &locked,
+            &CompatibilityLane::Major { major: 1 },
+            &Version::parse("1.0.1").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(selected.candidate.version, Version::parse("1.0.1").unwrap());
+        assert_eq!(selected.base.version, Version::parse("1.0.0").unwrap());
+        assert_eq!(
+            select_implicit_candidates(&timestamp("2024-04-01T00:00:00Z"), &history, &locked,)
+                .unwrap()[0]
+                .candidate
+                .version,
+            Version::parse("1.0.2").unwrap()
         );
     }
 

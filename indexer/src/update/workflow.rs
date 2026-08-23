@@ -74,7 +74,7 @@ pub fn plan_exact_update(
     )
 }
 
-trait PlannerResolver {
+pub(crate) trait PlannerResolver {
     fn history(&self, name: &str) -> Result<CratesIoHistory>;
 
     fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>>;
@@ -88,7 +88,7 @@ trait PlannerResolver {
     ) -> Result<SourceEvidence>;
 }
 
-struct LivePlannerResolver;
+pub(crate) struct LivePlannerResolver;
 
 impl PlannerResolver for LivePlannerResolver {
     fn history(&self, name: &str) -> Result<CratesIoHistory> {
@@ -121,6 +121,14 @@ impl PlannerResolver for LivePlannerResolver {
 enum PlanRequest {
     Implicit,
     Exact { name: String, version: Version },
+    Revalidate(Vec<RevalidationTarget>),
+}
+
+#[derive(Clone, Debug)]
+struct RevalidationTarget {
+    name: String,
+    version: Version,
+    lane: Option<CompatibilityLane>,
 }
 
 #[derive(Clone, Debug)]
@@ -137,6 +145,45 @@ struct CandidateSelection {
 fn plan_with<R: PlannerResolver>(
     root: &Path,
     output: &Path,
+    resolver: &R,
+    evaluated_at: UtcTimestamp,
+    request: &PlanRequest,
+) -> Result<UpdatePlan> {
+    let plan = build_plan_with(root, resolver, evaluated_at, request)?;
+    let bytes = serialize_update_plan(&plan)?;
+    ensure!(
+        catalog_fingerprint(root)? == plan.catalog_sha256,
+        "catalog changed before the update plan could be emitted"
+    );
+    write_new(output, &bytes)?;
+    Ok(plan)
+}
+
+pub(crate) fn revalidate_update_plan_with<R: PlannerResolver>(
+    root: &Path,
+    plan: &UpdatePlan,
+    resolver: &R,
+) -> Result<UpdatePlan> {
+    super::plan::validate_update_plan(plan)?;
+    let targets = plan
+        .candidates
+        .iter()
+        .map(|candidate| RevalidationTarget {
+            name: candidate.name.clone(),
+            version: candidate.candidate.version.clone(),
+            lane: candidate.lane.clone(),
+        })
+        .collect();
+    build_plan_with(
+        root,
+        resolver,
+        plan.evaluated_at.clone(),
+        &PlanRequest::Revalidate(targets),
+    )
+}
+
+fn build_plan_with<R: PlannerResolver>(
+    root: &Path,
     resolver: &R,
     evaluated_at: UtcTimestamp,
     request: &PlanRequest,
@@ -191,12 +238,10 @@ fn plan_with<R: PlannerResolver>(
         dormant_release_gap_days: super::DORMANT_RELEASE_GAP_DAYS,
         candidates,
     };
-    let bytes = serialize_update_plan(&plan)?;
     ensure!(
         catalog_fingerprint(root)? == initial_fingerprint,
-        "catalog changed during update planning; refusing to emit a stale plan"
+        "catalog changed during update planning; refusing to retain stale evidence"
     );
-    write_new(output, &bytes)?;
     Ok(plan)
 }
 
@@ -204,22 +249,33 @@ fn planning_targets(
     catalog: &Catalog,
     request: &PlanRequest,
 ) -> Result<Vec<(String, crate::schema::PackageHome)>> {
-    let exact_name = match request {
+    let requested = match request {
         PlanRequest::Implicit => None,
-        PlanRequest::Exact { name, .. } => Some(name.as_str()),
+        PlanRequest::Exact { name, .. } => Some(BTreeSet::from([name.as_str()])),
+        PlanRequest::Revalidate(targets) => {
+            Some(targets.iter().map(|target| target.name.as_str()).collect())
+        }
     };
     let targets = catalog
         .homes
         .homes
         .iter()
-        .filter(|(name, _)| exact_name.is_none_or(|exact| exact == name.as_str()))
+        .filter(|(name, _)| {
+            requested
+                .as_ref()
+                .is_none_or(|names| names.contains(name.as_str()))
+        })
         .filter(|(name, _)| catalog.name_sources.get(*name) == Some(&NameSource::Mirror))
         .map(|(name, home)| (name.clone(), home.clone()))
         .collect::<Vec<_>>();
-    if let Some(name) = exact_name {
+    if let Some(requested) = requested {
+        let observed = targets
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<BTreeSet<_>>();
         ensure!(
-            targets.len() == 1,
-            "package {name:?} is not a permanently reserved crates.io mirror name"
+            observed == requested,
+            "requested update packages are not all permanently reserved crates.io mirror names"
         );
     }
     Ok(targets)
@@ -342,6 +398,42 @@ fn select_candidates(
             }])
         }
         PlanRequest::Exact { .. } => Ok(Vec::new()),
+        PlanRequest::Revalidate(targets) => targets
+            .iter()
+            .filter(|target| target.name == name)
+            .map(|target| {
+                if let Some(lane) = &target.lane {
+                    let selected = super::policy::select_exact_implicit_candidate(
+                        evaluated_at,
+                        history,
+                        locked,
+                        lane,
+                        &target.version,
+                    )?;
+                    Ok(CandidateSelection {
+                        activity,
+                        lane: Some(selected.lane),
+                        base: Some(selected.base),
+                        candidate: selected.candidate,
+                        age_seconds: selected.age_seconds,
+                        dormant_gap: selected.dormant_gap,
+                        explicit: false,
+                    })
+                } else {
+                    let selected =
+                        select_exact_candidate(evaluated_at, history, locked, &target.version)?;
+                    Ok(CandidateSelection {
+                        activity,
+                        lane: None,
+                        base: selected.base,
+                        candidate: selected.candidate,
+                        age_seconds: selected.age_seconds,
+                        dormant_gap: selected.dormant_gap,
+                        explicit: true,
+                    })
+                }
+            })
+            .collect(),
     }
 }
 
