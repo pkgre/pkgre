@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1.0", registry = "universe" }
+flate2 = { version = "=1.1.9", registry = "universe" }
 semver = { version = "1.0", features = ["serde"], registry = "universe" }
 serde = { version = "1.0", features = ["derive"], registry = "universe" }
 serde_json = { version = "1.0", registry = "universe" }
