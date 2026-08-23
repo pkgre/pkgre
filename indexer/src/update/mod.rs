@@ -4,6 +4,7 @@ mod admission;
 mod api;
 mod approval;
 mod archive;
+mod declaration;
 mod plan;
 mod policy;
 mod source;
