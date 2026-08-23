@@ -54,6 +54,42 @@ pub fn reconcile(root: &Path) -> Result<ReconcileSummary> {
     reconcile_with(root, &LiveResolver, &FilesystemRenamer)
 }
 
+/// Exact crates.io identity and upstream hashes admitted by the update workflow.
+#[derive(Clone, Debug)]
+pub(crate) struct MirrorAdmission {
+    pub(crate) registry: String,
+    pub(crate) category: CategoryId,
+    pub(crate) name: String,
+    pub(crate) version: Version,
+    pub(crate) crate_sha256: String,
+    pub(crate) source_row_sha256: String,
+}
+
+/// Reconciles a catalog whose only new crates.io identities have exact update admission evidence.
+// Kept crate-private until the update-apply entry point calls it.
+#[allow(dead_code)]
+pub(crate) fn reconcile_admitted(
+    root: &Path,
+    admissions: &[MirrorAdmission],
+) -> Result<ReconcileSummary> {
+    let mut indexed = BTreeMap::new();
+    for admission in admissions {
+        let identity = package_identity(&admission.name, &admission.version);
+        ensure!(
+            indexed.insert(identity, admission.clone()).is_none(),
+            "update admission repeats Cargo identity {} {}",
+            admission.name,
+            admission.version
+        );
+    }
+    reconcile_with_mode(
+        root,
+        &LiveResolver,
+        &FilesystemRenamer,
+        ReconciliationMode::Admitted(&indexed),
+    )
+}
+
 trait Resolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage>;
 
@@ -168,10 +204,26 @@ struct PendingObjects {
     rows: BTreeMap<String, Vec<u8>>,
 }
 
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum ReconciliationMode<'a> {
+    Direct,
+    Admitted(&'a BTreeMap<Identity, MirrorAdmission>),
+}
+
 fn reconcile_with<R: Resolver, N: Renamer>(
     root: &Path,
     source_resolver: &R,
     renamer: &N,
+) -> Result<ReconcileSummary> {
+    reconcile_with_mode(root, source_resolver, renamer, ReconciliationMode::Direct)
+}
+
+fn reconcile_with_mode<R: Resolver, N: Renamer>(
+    root: &Path,
+    source_resolver: &R,
+    renamer: &N,
+    mode: ReconciliationMode<'_>,
 ) -> Result<ReconcileSummary> {
     let root = canonical_catalog_root(root)?;
     let _guard = CatalogGuard::acquire(&root)?;
@@ -190,6 +242,8 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     let desired = collect_desired_packages(&inputs)?;
     let old = collect_old_packages(&inputs)?;
     validate_desired_against_history(&desired, &old)?;
+    let bootstrap = inputs.iter().all(|input| input.lock.is_none());
+    validate_mirror_admissions(&desired, &old, bootstrap, mode)?;
 
     let (mut next_locks, mut summary) = prepare_next_locks(&inputs, &desired)?;
     let pending = resolve_new_packages(
@@ -198,6 +252,7 @@ fn reconcile_with<R: Resolver, N: Renamer>(
         &old,
         &preflight_catalog,
         &policy,
+        mode,
         &mut next_locks,
         &mut summary,
     )?;
@@ -220,12 +275,14 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     Ok(summary)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_new_packages<R: Resolver>(
     source_resolver: &R,
     desired: &DesiredState,
     old: &OldPackages,
     catalog: &Catalog,
     policy: &Policy,
+    mode: ReconciliationMode<'_>,
     next_locks: &mut BTreeMap<String, RegistryLock>,
     summary: &mut ReconcileSummary,
 ) -> Result<PendingObjects> {
@@ -243,6 +300,23 @@ fn resolve_new_packages<R: Resolver>(
                     package.name, package.version, package.registry
                 )
             })?;
+        if let ReconciliationMode::Admitted(admissions) = mode {
+            let admission = admissions
+                .get(identity)
+                .expect("new mirror admissions were validated before resolution");
+            ensure!(
+                sha256_bytes(&resolved.archive_bytes) == admission.crate_sha256,
+                "resolved archive hash differs from update admission for {} {}",
+                package.name,
+                package.version
+            );
+            ensure!(
+                sha256_bytes(&resolved.source_row_bytes) == admission.source_row_sha256,
+                "resolved source-row hash differs from update admission for {} {}",
+                package.name,
+                package.version
+            );
+        }
         let locked = lock_resolved_package(
             &package.registry,
             &package.category,
@@ -486,6 +560,62 @@ fn validate_desired_against_history(desired: &DesiredState, old: &OldPackages) -
                 package.name,
                 package.tag
             );
+        }
+    }
+    Ok(())
+}
+
+fn validate_mirror_admissions(
+    desired: &DesiredState,
+    old: &OldPackages,
+    bootstrap: bool,
+    mode: ReconciliationMode<'_>,
+) -> Result<()> {
+    let new_identities = desired
+        .mirrors
+        .keys()
+        .filter(|identity| !old.contains_key(*identity))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    match mode {
+        ReconciliationMode::Direct => {
+            if let Some(identity) = new_identities.first() {
+                let package = desired
+                    .mirrors
+                    .get(identity)
+                    .expect("new identity came from desired mirrors");
+                ensure!(
+                    bootstrap,
+                    "direct lock reconciliation cannot admit new crates.io identity {} {}; use update-plan and update-apply",
+                    package.name,
+                    package.version
+                );
+            }
+        }
+        ReconciliationMode::Admitted(admissions) => {
+            let admitted_identities = admissions.keys().cloned().collect::<BTreeSet<_>>();
+            ensure!(
+                admitted_identities == new_identities,
+                "update admissions must exactly match the new crates.io identities in the declarations"
+            );
+            for identity in new_identities {
+                let package = desired
+                    .mirrors
+                    .get(&identity)
+                    .expect("new identity came from desired mirrors");
+                let admission = admissions
+                    .get(&identity)
+                    .expect("admitted identity set was checked above");
+                ensure!(
+                    admission.registry == package.registry
+                        && admission.category == package.category
+                        && admission.name == package.name
+                        && admission.version == package.version,
+                    "update admission route differs from declaration for {} {}",
+                    package.name,
+                    package.version
+                );
+            }
         }
     }
     Ok(())
@@ -1156,6 +1286,248 @@ mod tests {
     }
 
     #[test]
+    fn established_catalog_rejects_direct_new_mirror_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-direct-admission");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains(
+                "direct lock reconciliation cannot admit new crates.io identity beta 1.0.0"
+            )
+        );
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn one_existing_lock_disables_direct_bootstrap() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-partial-bootstrap");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let inputs = load_registry_inputs(&root).unwrap();
+        let pkgre = inputs
+            .iter()
+            .find(|input| input.file.registry.name == "pkgre")
+            .unwrap();
+        fs::write(
+            root.join("pkgre.lock"),
+            serialize_lock(&empty_lock(&pkgre.file)).unwrap(),
+        )
+        .unwrap();
+        let resolver = FakeResolver::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+
+        assert!(format!("{error:#}").contains(
+            "direct lock reconciliation cannot admit new crates.io identity alpha 1.0.0"
+        ));
+        assert_eq!(resolver.calls(), 0);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn exact_mirror_admission_succeeds() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-exact-admission");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+
+        let summary = reconcile_with_mode(
+            &root,
+            &resolver,
+            &FilesystemRenamer,
+            ReconciliationMode::Admitted(&admissions),
+        )
+        .unwrap();
+
+        assert_eq!(summary.packages_added, 1);
+        assert_eq!(resolver.calls(), 2);
+        let beta = locked_package(&root, "universe", "beta");
+        let admission = admissions
+            .get(&package_identity("beta", &Version::parse("1.0.0").unwrap()))
+            .unwrap();
+        assert_eq!(beta.crate_sha256, admission.crate_sha256);
+        assert_eq!(beta.source_row_sha256, admission.source_row_sha256);
+    }
+
+    #[test]
+    fn missing_or_extra_mirror_admissions_fail_before_resolution() {
+        for (prefix, entries) in [
+            ("pkgre-lock-missing-admission", Vec::new()),
+            (
+                "pkgre-lock-extra-admission",
+                vec![
+                    ("universe", "general", "beta", "1.0.0"),
+                    ("universe", "general", "gamma", "1.0.0"),
+                ],
+            ),
+        ] {
+            let temporary = TemporaryDirectory::new(prefix);
+            let root = temporary.path().join("catalog");
+            write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+            let resolver = FakeResolver::default();
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+            write_catalog(
+                &root,
+                "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+                "",
+                "",
+            );
+            let admissions = fake_admission_map(&entries);
+            let before = snapshot(temporary.path());
+
+            let error = reconcile_with_mode(
+                &root,
+                &resolver,
+                &FilesystemRenamer,
+                ReconciliationMode::Admitted(&admissions),
+            )
+            .unwrap_err();
+
+            assert!(format!("{error:#}").contains(
+                "update admissions must exactly match the new crates.io identities in the declarations"
+            ));
+            assert_eq!(resolver.calls(), 1);
+            assert_eq!(snapshot(temporary.path()), before);
+        }
+    }
+
+    #[test]
+    fn wrong_mirror_admission_route_fails_before_resolution() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-wrong-admission-route");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        write_catalog(
+            &root,
+            "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+            "",
+            "",
+        );
+        let admissions = fake_admission_map(&[("universe", "matrix", "beta", "1.0.0")]);
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with_mode(
+            &root,
+            &resolver,
+            &FilesystemRenamer,
+            ReconciliationMode::Admitted(&admissions),
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{error:#}")
+                .contains("update admission route differs from declaration for beta 1.0.0")
+        );
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn wrong_mirror_admission_hashes_leave_tree_unchanged() {
+        for (prefix, wrong_archive) in [
+            ("pkgre-lock-wrong-archive-admission", true),
+            ("pkgre-lock-wrong-row-admission", false),
+        ] {
+            let temporary = TemporaryDirectory::new(prefix);
+            let root = temporary.path().join("catalog");
+            write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+            let resolver = FakeResolver::default();
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+            write_catalog(
+                &root,
+                "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
+                "",
+                "",
+            );
+            let mut admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+            let admission = admissions.values_mut().next().unwrap();
+            if wrong_archive {
+                admission.crate_sha256 = "00".repeat(32);
+            } else {
+                admission.source_row_sha256 = "00".repeat(32);
+            }
+            let before = snapshot(temporary.path());
+
+            let error = reconcile_with_mode(
+                &root,
+                &resolver,
+                &FilesystemRenamer,
+                ReconciliationMode::Admitted(&admissions),
+            )
+            .unwrap_err();
+
+            let expected = if wrong_archive {
+                "resolved archive hash differs from update admission for beta 1.0.0"
+            } else {
+                "resolved source-row hash differs from update admission for beta 1.0.0"
+            };
+            assert!(format!("{error:#}").contains(expected));
+            assert_eq!(resolver.calls(), 2);
+            assert_eq!(snapshot(temporary.path()), before);
+        }
+    }
+
+    #[test]
+    fn established_catalog_allows_direct_new_git_tag() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-direct-git-tag");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "",
+            "",
+            "[publish.beta]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"beta/v1.0.0\"]\n",
+        );
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        write_catalog(
+            &root,
+            "",
+            "",
+            "[publish.beta]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"beta/v1.0.0\", \"beta/v1.1.0\"]\n",
+        );
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_added, 1);
+        assert_eq!(resolver.calls(), 2);
+        assert_eq!(
+            locked_package(&root, "pkgre", "beta").version.to_string(),
+            "1.0.0"
+        );
+        assert!(
+            load_lock(&root.join("pkgre.lock"))
+                .unwrap()
+                .packages
+                .iter()
+                .any(|package| package.name == "beta"
+                    && package.version == Version::parse("1.1.0").unwrap())
+        );
+    }
+
+    #[test]
     fn unexpected_catalog_entries_fail_before_resolution() {
         let temporary = TemporaryDirectory::new("pkgre-lock-unmanaged-entry");
         let root = temporary.path().join("catalog");
@@ -1541,6 +1913,27 @@ mod tests {
                 },
             ))
         }
+    }
+
+    fn fake_admission_map(
+        entries: &[(&str, &str, &str, &str)],
+    ) -> BTreeMap<Identity, MirrorAdmission> {
+        entries
+            .iter()
+            .map(|(registry, category, name, version)| {
+                let version = Version::parse(version).unwrap();
+                let resolved = fake_resolved(name, version.clone(), LockedSource::CratesIo {});
+                let admission = MirrorAdmission {
+                    registry: (*registry).to_owned(),
+                    category: CategoryId::new(*registry, *category).unwrap(),
+                    name: (*name).to_owned(),
+                    version: version.clone(),
+                    crate_sha256: sha256_bytes(&resolved.archive_bytes),
+                    source_row_sha256: sha256_bytes(&resolved.source_row_bytes),
+                };
+                (package_identity(name, &version), admission)
+            })
+            .collect()
     }
 
     fn fake_resolved(name: &str, version: Version, source: LockedSource) -> ResolvedPackage {
