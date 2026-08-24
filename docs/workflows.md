@@ -15,7 +15,7 @@ pkgre-indexer verify-monotonic <previous-site> <next-site>
 pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
 ```
 
-`update-plan`, `update-plan-exact`, and `update-inspect` never mutate the catalog; every output must be absent and outside managed `registry/`. `update-apply` is the only established-catalog path for new mirror identities: it re-fetches/recomputes exact facts + mutates transactionally. `lock` mutates only for initial bootstrap, empty name reservations, removals, and first-party Git tags; it rejects direct new-mirror admission after any registry lock exists. `check` is local-only. `migrate-v2-to-v3` never modifies source. Render output must be absent. Use the registry directory itself as `<catalog>`, not its repository parent.
+`update-plan`, `update-plan-exact`, and `update-inspect` never mutate the catalog; every output must be absent and outside managed `registry/`. `update-apply` is the only established-catalog path for new mirror identities: it re-fetches/recomputes exact facts + mutates transactionally. `lock` mutates only for initial bootstrap, empty name reservations, removals, first-party Git tags, and canonical download-catalog convergence; it rejects direct new-mirror admission after any registry lock exists. `check` is local-only. `migrate-v2-to-v3` never modifies source. Render output must be absent. Use the registry directory itself as `<catalog>`, not its repository parent.
 
 ## Admit crates.io mirror updates
 
@@ -106,9 +106,9 @@ note = "Reviewed the complete archive delta from 1.2.2."
 $ pkgre-indexer update-apply registry 2026-08-24-routine.toml
 ```
 
-Apply loads only canonical human requests, re-fetches/recomputes all current facts, rejects any young/yanked/blocked/route-invalid/evidence-invalid request, then executes one catalog transaction. It appends versions, generates one complete admission lock, hashes that complete lock, assigns the shared hash to every admitted package, writes `admissions/2026-08-24-routine.{toml,lock}`, reconciles rows/registry locks, strict-loads + test-renders staging, and atomically installs it. Failure before installation leaves live catalog unchanged. Apply never substitutes a newer version.
+Apply loads only canonical human requests, re-fetches/recomputes all current facts, rejects any young/yanked/blocked/route-invalid/evidence-invalid request, then executes one catalog transaction. It appends versions, generates one complete admission lock, hashes that complete lock, assigns the shared hash to every admitted package, writes `admissions/2026-08-24-routine.{toml,lock}`, reconciles rows/registry locks + canonical `downloads.json`, strict-loads + test-renders staging, and atomically installs it. Failure before installation leaves live catalog unchanged. Apply never substitutes a newer version.
 
-6. Review + commit declarations, registry locks, row objects, and exactly one admission pair together. Verify no `.crate` mirror objects exist. Every new package's `admission-sha256` must equal `sha256sum admissions/<batch>.lock`. Then prove validity + convergence:
+6. Review + commit declarations, registry locks, canonical `downloads.json`, row objects, and exactly one admission pair together. Verify every added active identity has one exact route and no `.crate` mirror objects exist. Every new package's `admission-sha256` must equal `sha256sum admissions/<batch>.lock`. Then prove validity + convergence:
 
 ```console
 $ pkgre-indexer check registry
@@ -156,7 +156,7 @@ tags = ["indexer/v0.3.0"]
 3. Set `PKGRE_CARGO=/absolute/path/to/cargo` or provide rustup toolchain `1.95.0`; executable must report `cargo 1.95.0 ...`.
 4. Run `pkgre-indexer lock registry`. It fetches exact tag, locks tag object + peeled commit, discovers package/path/version, runs isolated locked metadata, packages twice into distinct targets, requires byte-identical archives, generates source row, routes dependencies, and locks all hashes.
 5. Verify URL/tag/object/commit/package/path/Cargo version + exact archive/row; compare with reviewed tag.
-6. Run `check`, second no-op `lock`, render/release validation, then commit declaration/lock/objects together.
+6. Run `check`, second no-op `lock`, verify the added exact Git route in `downloads.json`, render/release validation, then commit declaration/lock/catalog/objects together.
 
 Pinned Cargo selection: absolute canonical regular-file `PKGRE_CARGO` first; otherwise absolute result of `rustup which --toolchain <cargo-version> cargo`. Nix builds set `PKGRE_CARGO` to the pinned toolchain. Existing Git identities validate retained bytes/provenance locally without recontacting upstream.
 
@@ -182,6 +182,18 @@ Changing package home/source class, changing locked publisher URL, deleting key,
 6. Run `check`, `render`, `verify`, and `verify-monotonic` against old rendered site.
 7. Replace source only after review + rerun validation at final path; commit. Source is never modified by migration.
 
+## Migrate registry downloads to the immutable router
+
+A download-configuration migration is staged separately from service deployment; full contract + rollback: [`download-routing.md`](download-routing.md).
+
+1. Generate + merge `registry/downloads.json` while current direct `dl` endpoints remain live; render/verify/monotonicity must prove no package/topology mutation.
+2. Deploy `pkgre-download-serve` behind fixed nginx without changing registry declarations. Require readiness + expected catalog commit/hash + exact redirect/malformed-path probes.
+3. Replace each `[registry].download` with its own exact router template. Never reuse another registry alias or use an arbitrary hostname/path.
+4. Run `lock`; only declaration/registry-lock download fields + regenerated release/config bytes may change; exact routes/checksums/sources must not. Run `check`, exact second-lock no-op, render, verify, and `verify-monotonic`.
+5. Merge/publish, validate live config/router, then run clean-cache Cargo E2E across representative crates.io + Git-tag packages.
+
+Rollback:revert/publish `dl` values first; current direct endpoints are safe only for single-source registries. After no live config references the router, service rollback is independent. Never mutate checksum/source routes as a routing workaround.
+
 ## Release gate
 
 ```console
@@ -191,16 +203,17 @@ $ pkgre-indexer verify registry site-next
 $ pkgre-indexer verify-monotonic site-current site-next
 ```
 
-Required: `git diff --check`; exact second-lock no-op; tooling format/test/lint/Nix checks; prior release name/package identities retained; additions/removals intentional; topology/anchors/immutable fields unchanged; exact source-class downloads; rendered inventory limited to expected files; protected CI passes; normal merge without force/bypass.
+Required: `git diff --check`; exact second-lock no-op; tooling format/test/lint/Nix checks; prior release name/package identities retained; additions/removals intentional; topology/anchors/immutable fields unchanged; every active package has one exact canonical generated route; each registry uses its canonical source-specific or exact router `dl`; rendered inventory limited to expected files; protected CI passes; normal merge without force/bypass.
 
 Deploy only rendered `site/`, never `registry/`. Workflow should independently run check/render/verify, fetch prior live `release.json`, run `verify-monotonic`, then publish with read-only source + minimum Pages permissions.
 
 ## Post-deployment verification
 
-- Fetch `https://rust.pkg.re/{universe,pkgre}/config.json`; require crates.io `dl` for universe + pkg.re content-addressed template for pkgre.
+- Fetch `https://rust.pkg.re/{universe,pkgre}/config.json`; after router migration require exact registry-bound `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}` values.
 - Fetch representative rows across categories; compare checksum/routes/yank state with `release.json`.
-- Fetch representative mirror archive from static.crates.io + Git archive from pkg.re; verify SHA-256.
-- Compare live `release.json` with committed candidate; require schema 3 + exact topology/anchors.
+- Fetch `https://dl.rust.pkg.re/healthz` + `/status`; require ready, expected source commit/manifest hash/route counts, and no refresh error.
+- Request representative exact mirror + Git-tag router URLs; require `307` to static.crates.io + content-addressed pkg.re respectively; independently download + verify SHA-256. Alter case/checksum and add query/encoding; require `404`; unsupported method → `405`.
+- Compare live `release.json` + `downloads.json` with committed candidate; require schema/topology/anchors + exact active route projection.
 - Use fresh Cargo home/cache + failure-closed config; build `--locked`/`--frozen` across both registries.
 
 Keep consumer validation private: public commits/logs/issues must not expose consumer repositories, paths, manifests, lockfiles, dependency-discovery output, credentials, or tokens.

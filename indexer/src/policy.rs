@@ -7,6 +7,7 @@ use anyhow::{Context, Result, ensure};
 use semver::Version;
 
 use crate::category::CategoryId;
+use crate::download::router_download_template;
 use crate::schema::{
     Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, PackageHome, Registry, Source,
 };
@@ -196,9 +197,13 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
             NameSource::Publish => has_publish = true,
         }
     }
+    let router = router_download_template(&registry.name);
+    if registry.download == router {
+        return Ok(());
+    }
     ensure!(
         !(has_mirror && has_publish),
-        "registry {:?} cannot mix mirror and publish sources because Cargo provides one dl URL per registry",
+        "registry {:?} mixes mirror and publish sources and therefore requires download {router:?}",
         registry.name
     );
     let expected = if has_mirror {
@@ -210,7 +215,7 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
     };
     ensure!(
         registry.download == expected,
-        "registry {:?} download must be {expected:?} for its source class",
+        "registry {:?} download must be {expected:?} for its source class, or {router:?} for the immutable router",
         registry.name
     );
     Ok(())
@@ -228,20 +233,10 @@ fn validate_homes(
             .with_context(|| format!("invalid package home name {package:?}"))?;
         validate_package_home(package, home, registry_urls, categories)?;
         inhabited_categories.insert(home.category.clone());
-        let source = catalog
+        catalog
             .name_sources
             .get(package)
             .with_context(|| format!("package {package:?} has no permanent source class"))?;
-        match source {
-            NameSource::Mirror => ensure!(
-                home.registry == "universe",
-                "mirrored package {package:?} must use the universe registry"
-            ),
-            NameSource::Publish => ensure!(
-                home.registry == "pkgre",
-                "first-party package {package:?} must use the pkgre registry"
-            ),
-        }
         let key = package_collision_key(package);
         if let Some(previous) = collision_keys.insert(key, package) {
             ensure!(
@@ -359,11 +354,18 @@ fn validate_approval(
         )
     })?;
 
+    let expected_name_source = match &approval.source {
+        Source::CratesIo => NameSource::Mirror,
+        Source::GitTag { .. } => NameSource::Publish,
+    };
+    ensure!(
+        catalog.name_sources.get(&approval.name) == Some(&expected_name_source),
+        "approval source for {} {} differs from its permanent name source class",
+        approval.name,
+        approval.version
+    );
     match &approval.source {
-        Source::CratesIo => ensure!(
-            approval.registry == "universe",
-            "crates.io imports must be approved in the universe registry"
-        ),
+        Source::CratesIo => {}
         Source::GitTag {
             repository,
             tag,
@@ -373,10 +375,6 @@ fn validate_approval(
             subdir,
             cargo_version,
         } => {
-            ensure!(
-                approval.registry == "pkgre",
-                "Git-tag packages must be approved in the pkgre registry"
-            );
             ensure!(
                 package == &approval.name,
                 "Git-tag source package {package:?} does not match approval name {:?}",
@@ -482,7 +480,12 @@ pub fn validate_relative_path(path: &Path, allow_dot: bool) -> Result<()> {
     Ok(())
 }
 
-fn validate_registry_alias(name: &str) -> Result<()> {
+/// Validates a lowercase Cargo registry alias.
+///
+/// # Errors
+///
+/// Returns an error unless the alias is nonempty and contains only lowercase ASCII alphanumeric, `-`, or `_` characters.
+pub fn validate_registry_alias(name: &str) -> Result<()> {
     ensure!(
         !name.is_empty()
             && name.bytes().all(|byte| {
@@ -716,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn one_registry_cannot_mix_mirror_and_publish_name_anchors() {
+    fn mixed_source_registry_requires_its_exact_router_template() {
         let mut catalog = valid_catalog();
         catalog.homes.homes.insert(
             "reserved-mirror".to_owned(),
@@ -729,9 +732,26 @@ mod tests {
             .name_sources
             .insert("reserved-mirror".to_owned(), NameSource::Mirror);
         let error = validate_catalog(&catalog).unwrap_err();
-        assert!(format!("{error:#}").contains(
-            "cannot mix mirror and publish sources because Cargo provides one dl URL per registry"
-        ));
+        assert!(format!("{error:#}").contains("requires download"));
+
+        catalog
+            .registries
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "pkgre")
+            .unwrap()
+            .download = router_download_template("universe");
+        let error = validate_catalog(&catalog).unwrap_err();
+        assert!(format!("{error:#}").contains("requires download"));
+
+        catalog
+            .registries
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "pkgre")
+            .unwrap()
+            .download = router_download_template("pkgre");
+        validate_catalog(&catalog).unwrap();
     }
 
     #[test]

@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact::{ArtifactMap, require_absent, sha256_bytes};
 use crate::category::{CategoryId, category_for_v2_home};
+use crate::download::{
+    DOWNLOAD_CATALOG_FILE, DownloadCatalog, DownloadRoute, DownloadSource, router_download_template,
+};
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{
     CARGO_VERSION, REGISTRIES, canonical_category_dependencies, validate_catalog,
@@ -225,6 +228,8 @@ fn render_into(
         config.push(b'\n');
         write_new(&output.join(&registry.name).join("config.json"), &config)?;
     }
+    let downloads = DownloadCatalog::from_catalog(catalog).canonical_bytes()?;
+    write_new(&output.join(DOWNLOAD_CATALOG_FILE), &downloads)?;
 
     let mut rows = BTreeMap::<(String, String), Vec<(Version, Vec<u8>)>>::new();
     let mut copied_archives = BTreeSet::new();
@@ -609,9 +614,27 @@ fn verify_v3_to_v3(previous: &Release, next: &Release, next_site: &Path) -> Resu
     validate_v3_release(previous)?;
     validate_v3_release(next)?;
     ensure!(
-        previous.registries == next.registries,
+        previous.registries.len() == next.registries.len(),
         "registry/category topology changed across releases"
     );
+    for (before, after) in previous.registries.iter().zip(&next.registries) {
+        ensure!(
+            before.name == after.name
+                && before.index == after.index
+                && before.categories == after.categories,
+            "registry/category topology changed across releases"
+        );
+        let router = router_download_template(&before.name);
+        ensure!(
+            before.download == after.download
+                || ((before.download == MIRROR_DOWNLOAD || before.download == PUBLISH_DOWNLOAD)
+                    && after.download == router),
+            "registry {:?} has an unsupported download transition from {:?} to {:?}; only a one-way migration to {router:?} is allowed",
+            before.name,
+            before.download,
+            after.download
+        );
+    }
     let previous_names = name_map(&previous.names)?;
     let next_names = name_map(&next.names)?;
     for (name, prior) in previous_names {
@@ -688,30 +711,26 @@ fn validate_v3_release(release: &Release) -> Result<()> {
         "release CNAME is noncanonical"
     );
     let expected_categories = canonical_category_dependencies();
-    let expected_registries = REGISTRIES
-        .iter()
-        .map(|(name, index)| ReleaseRegistry {
-            name: (*name).to_owned(),
-            index: (*index).to_owned(),
-            download: if *name == "pkgre" {
-                PUBLISH_DOWNLOAD.to_owned()
-            } else {
-                MIRROR_DOWNLOAD.to_owned()
-            },
-            categories: expected_categories
-                .iter()
-                .filter(|(category, _)| category.registry() == *name)
-                .map(|(category, dependencies)| ReleaseCategory {
-                    id: category.clone(),
-                    may_depend_on: dependencies.iter().cloned().collect(),
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
     ensure!(
-        release.registries == expected_registries,
+        release.registries.len() == REGISTRIES.len(),
         "schema-3 release does not have the exact canonical registry/category topology"
     );
+    for (registry, (expected_name, expected_index)) in release.registries.iter().zip(REGISTRIES) {
+        let expected_registry_categories = expected_categories
+            .iter()
+            .filter(|(category, _)| category.registry() == expected_name)
+            .map(|(category, dependencies)| ReleaseCategory {
+                id: category.clone(),
+                may_depend_on: dependencies.iter().cloned().collect(),
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            registry.name == expected_name
+                && registry.index == expected_index
+                && registry.categories == expected_registry_categories,
+            "schema-3 release does not have the exact canonical registry/category topology"
+        );
+    }
     let names = name_map(&release.names)?;
     for anchor in names.values() {
         ensure!(
@@ -720,18 +739,9 @@ fn validate_v3_release(release: &Release) -> Result<()> {
             anchor.name,
             anchor.category
         );
-        match anchor.source {
-            NameSource::Mirror => ensure!(
-                anchor.registry == "universe",
-                "mirrored release name {:?} must use the universe registry",
-                anchor.name
-            ),
-            NameSource::Publish => ensure!(
-                anchor.registry == "pkgre",
-                "first-party release name {:?} must use the pkgre registry",
-                anchor.name
-            ),
-        }
+    }
+    for registry in &release.registries {
+        validate_release_registry_download(registry, names.values().copied())?;
     }
     let packages = package_map(&release.packages)?;
     for package in packages.values() {
@@ -753,6 +763,42 @@ fn validate_v3_release(release: &Release) -> Result<()> {
             package.version
         );
     }
+    Ok(())
+}
+
+fn validate_release_registry_download<'a>(
+    registry: &ReleaseRegistry,
+    names: impl Iterator<Item = &'a ReleaseName>,
+) -> Result<()> {
+    let mut has_mirror = false;
+    let mut has_publish = false;
+    for name in names.filter(|name| name.registry == registry.name) {
+        match name.source {
+            NameSource::Mirror => has_mirror = true,
+            NameSource::Publish => has_publish = true,
+        }
+    }
+    let router = router_download_template(&registry.name);
+    if registry.download == router {
+        return Ok(());
+    }
+    ensure!(
+        !(has_mirror && has_publish),
+        "release registry {:?} mixes mirror and publish sources and therefore requires download {router:?}",
+        registry.name
+    );
+    let expected = if has_mirror {
+        MIRROR_DOWNLOAD
+    } else if has_publish || registry.name == "pkgre" {
+        PUBLISH_DOWNLOAD
+    } else {
+        MIRROR_DOWNLOAD
+    };
+    ensure!(
+        registry.download == expected,
+        "release registry {:?} download must be {expected:?} for its source class, or {router:?} for the immutable router",
+        registry.name
+    );
     Ok(())
 }
 
@@ -882,6 +928,28 @@ fn same_v2_v3_source(previous: &ReleaseSourceV2, next: &ReleaseSource) -> bool {
 }
 
 fn verify_v3_rows(release: &Release, site: &Path) -> Result<()> {
+    let routes = release
+        .packages
+        .iter()
+        .filter(|package| !package.yanked)
+        .map(|package| DownloadRoute {
+            registry: package.registry.clone(),
+            name: package.name.clone(),
+            version: package.version.clone(),
+            sha256: package.archive_sha256.clone(),
+            source: match package.source {
+                ReleaseSource::CratesIo => DownloadSource::CratesIo,
+                ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+            },
+        })
+        .collect::<Vec<_>>();
+    let expected_downloads = DownloadCatalog::from_routes(routes);
+    let actual_downloads = DownloadCatalog::load_from_root(site)?;
+    ensure!(
+        actual_downloads == expected_downloads,
+        "rendered download catalog differs from active release packages"
+    );
+
     for package in &release.packages {
         let path = site.join(&package.registry).join(index_path(&package.name));
         let bytes = fs::read(&path).with_context(|| {
@@ -1301,6 +1369,27 @@ mod tests {
 
     fn write_schema_three_site(path: &Path, release: &Release) {
         write_manifest(path, release);
+        let routes = release
+            .packages
+            .iter()
+            .filter(|package| !package.yanked)
+            .map(|package| DownloadRoute {
+                registry: package.registry.clone(),
+                name: package.name.clone(),
+                version: package.version.clone(),
+                sha256: package.archive_sha256.clone(),
+                source: match package.source {
+                    ReleaseSource::CratesIo => DownloadSource::CratesIo,
+                    ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+                },
+            })
+            .collect::<Vec<_>>();
+        let downloads = DownloadCatalog::from_routes(routes);
+        fs::write(
+            path.join(DOWNLOAD_CATALOG_FILE),
+            downloads.canonical_bytes().unwrap(),
+        )
+        .unwrap();
         let mut rows = BTreeMap::<PathBuf, Vec<Vec<u8>>>::new();
         for package in &release.packages {
             rows.entry(path.join(&package.registry).join(index_path(&package.name)))
@@ -1370,6 +1459,63 @@ mod tests {
     }
 
     #[test]
+    fn schema_three_download_migration_is_registry_bound_and_one_way() {
+        let root = temporary_test_root("v3-download-migration");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", false);
+        let legacy = migrate_test_release(&package);
+        let mut routed = legacy.clone();
+        routed
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "universe")
+            .unwrap()
+            .download = router_download_template("universe");
+        write_schema_three_site(&previous, &legacy);
+        write_schema_three_site(&next, &routed);
+        verify_monotonic(&previous, &next).unwrap();
+
+        write_schema_three_site(&previous, &routed);
+        write_schema_three_site(&next, &legacy);
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("only a one-way migration"));
+
+        let mut wrong_registry = legacy;
+        wrong_registry
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "universe")
+            .unwrap()
+            .download = router_download_template("pkgre");
+        let error = validate_v3_release(&wrong_registry).unwrap_err();
+        assert!(format!("{error:#}").contains("download must be"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mixed_source_release_requires_the_registry_router() {
+        let package = schema_two_crate("serde", false);
+        let mut release = migrate_test_release(&package);
+        release.names.push(ReleaseName {
+            name: "first-party".to_owned(),
+            registry: "universe".to_owned(),
+            category: "universe/general".parse().unwrap(),
+            source: NameSource::Publish,
+        });
+        let error = validate_v3_release(&release).unwrap_err();
+        assert!(format!("{error:#}").contains("requires download"));
+
+        release
+            .registries
+            .iter_mut()
+            .find(|registry| registry.name == "universe")
+            .unwrap()
+            .download = router_download_template("universe");
+        validate_v3_release(&release).unwrap();
+    }
+
+    #[test]
     fn schema_three_removed_package_cannot_be_reactivated() {
         let root = temporary_test_root("v3-reactivate");
         let previous = root.join("previous");
@@ -1399,6 +1545,35 @@ mod tests {
 
         let error = verify_monotonic(&previous, &next).unwrap_err();
         assert!(format!("{error:#}").contains("rendered index-row hash differs"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_three_download_catalog_must_match_active_release_packages() {
+        let root = temporary_test_root("v3-download-catalog");
+        let previous = root.join("previous");
+        let next = root.join("next");
+        let package = schema_two_crate("serde", false);
+        let release = migrate_test_release(&package);
+        write_schema_three_site(&previous, &release);
+        write_schema_three_site(&next, &release);
+        verify_monotonic(&previous, &next).unwrap();
+
+        fs::write(
+            next.join(DOWNLOAD_CATALOG_FILE),
+            b"{
+  \"schema\": 1,
+  \"routes\": []
+}
+",
+        )
+        .unwrap();
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("differs from active release packages"));
+
+        fs::remove_file(next.join(DOWNLOAD_CATALOG_FILE)).unwrap();
+        let error = verify_monotonic(&previous, &next).unwrap_err();
+        assert!(format!("{error:#}").contains("inspect generated download catalog"));
         fs::remove_dir_all(root).unwrap();
     }
 

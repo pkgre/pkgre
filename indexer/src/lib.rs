@@ -2,6 +2,7 @@
 
 pub mod artifact;
 pub mod category;
+pub mod download;
 pub mod import;
 pub mod index;
 pub mod lock;

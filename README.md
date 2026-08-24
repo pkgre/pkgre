@@ -8,14 +8,14 @@ pkg.re converts human registry/category declarations into deterministic Cargo sp
 
 Removal replaces curator-controlled yanking: delete a version/tag from desired state but retain its package key; reconciliation preserves an irreversible tombstone + source evidence and renders the retained row as yanked.
 
-Registries:
+Current registry topology:
 
-| Alias | URL | Source class | Archive download |
+| Alias | URL | Current package sources | Immutable router template |
 |---|---|---|---|
-| `universe` | `sparse+https://rust.pkg.re/universe/` | crates.io mirrors | `https://static.crates.io/crates` |
-| `pkgre` | `sparse+https://rust.pkg.re/pkgre/` | first-party pkg.re Git-tag packages | `https://rust.pkg.re/crates/{sha256-checksum}.crate` |
+| `universe` | `sparse+https://rust.pkg.re/universe/` | crates.io mirrors | `https://dl.rust.pkg.re/v1/universe/{crate}/{version}/{sha256-checksum}` |
+| `pkgre` | `sparse+https://rust.pkg.re/pkgre/` | first-party pkg.re Git-tag packages | `https://dl.rust.pkg.re/v1/pkgre/{crate}/{version}/{sha256-checksum}` |
 
-Cargo provides one index-wide `dl` URL, so one registry is mirror-only or Git-only; mixed source classes fail closed. Category policy is finer-grained than Cargo registries:
+Cargo provides one index-wide `dl` URL. A single-source registry may use its source-specific endpoint (`https://static.crates.io/crates` or `https://rust.pkg.re/crates/{sha256-checksum}.crate`); a mixed mirror/Git registry must use its exact registry-bound immutable router. The generated checksum-bearing route catalog makes mixed operation safe without storing crates.io archives. Category policy remains finer-grained than Cargo registries:
 
 | Category | May depend on |
 |---|---|
@@ -31,8 +31,10 @@ Cargo provides one index-wide `dl` URL, so one registry is mirror-only or Git-on
 
 ## Components
 
-- `indexer/`: Rust reconciler, validator, mirror admission planner/applicator, schema-2→3 migrator, deterministic renderer, release verifier.
-- [`docs/catalog.md`](docs/catalog.md): schema-3 declarations, inline/external categories, generated locks, admission batches, objects, routing, removal.
+- `indexer/`: Rust reconciler, validator, mirror admission planner/applicator, schema-2→3 migrator, deterministic renderer, download-catalog generator, release verifier.
+- `download-serve/`: stateless exact-route service; fetches a commit-pinned generated catalog and returns only hardcoded crates.io/content-addressed redirects.
+- [`docs/catalog.md`](docs/catalog.md): schema-3 declarations, inline/external categories, generated locks/catalogs, admission batches, objects, routing, removal.
+- [`docs/download-routing.md`](docs/download-routing.md): router wire contract, fetch/refresh/LKG semantics, reverse-proxy boundary, deployment + rollback.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md): standalone production mirror-update procedure from deployed-pin selection through an unmerged curator-review PR.
 - [`docs/workflows.md`](docs/workflows.md): mirror, Git-tag, removal, migration, release workflows.
 - [`docs/security.md`](docs/security.md): trust model, enforced invariants, exclusions.
@@ -43,7 +45,9 @@ Cargo provides one index-wide `dl` URL, so one registry is mirror-only or Git-on
 ```console
 $ nix flake check --print-build-logs
 $ nix build .#indexer
+$ nix build .#download-serve
 $ nix run .#indexer -- --help
+$ nix run .#download-serve -- --help
 ```
 
 Pinned build semantics: Cargo `1.95.0`; Nix locks Rust + build inputs; Cargo inputs become fixed-output Nix fetches; checks build/test/lint offline after fetching.
@@ -63,9 +67,9 @@ $ pkgre-indexer verify-monotonic site-current site-next
 $ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
-`update-plan` performs current network-backed evaluation but emits only a compact, hash-free human manifest containing category/name/exact version. Every nonblocked generated manifest is directly applyable; optional typed review evidence may be added. `update-apply` re-fetches + recomputes all machine facts, then atomically adds declarations, source rows, registry locks, and an immutable `admissions/<batch>.toml` + generated `admissions/<batch>.lock` pair. Package `admission-sha256` fields bind the complete generated batch lock. `lock` handles bootstrap, empty name reservations, removals, and Git tags; it cannot directly add mirror identities to an established catalog.
+`update-plan` performs current network-backed evaluation but emits only a compact, hash-free human manifest containing category/name/exact version. Every nonblocked generated manifest is directly applyable; optional typed review evidence may be added. `update-apply` re-fetches + recomputes all machine facts, then atomically adds declarations, source rows, registry locks, canonical `downloads.json`, and an immutable `admissions/<batch>.toml` + generated `admissions/<batch>.lock` pair. Package `admission-sha256` fields bind the complete generated batch lock. `lock` handles bootstrap, empty name reservations, removals, Git tags, and download-catalog convergence; it cannot directly add mirror identities to an established catalog.
 
-`registry/` is exclusive managed state: only `<registry>.toml`, generated `<registry>.lock`, referenced `categories/<registry>/<category>.toml`, paired `admissions/<batch>.{toml,lock}`, and `objects/` are permitted. Keep transient manifests, inspection trees, logs, and rendered sites outside it until `update-apply` installs the immutable admission pair transactionally.
+`registry/` is exclusive managed state: only `<registry>.toml`, generated `<registry>.lock`, canonical generated `downloads.json`, referenced `categories/<registry>/<category>.toml`, paired `admissions/<batch>.{toml,lock}`, and `objects/` are permitted. Keep transient manifests, inspection trees, logs, and rendered sites outside it until `update-apply` installs the immutable admission pair transactionally.
 
 ## Consumer configuration
 
@@ -75,7 +79,7 @@ Project manifests name alternate registries explicitly; categories do not create
 [dependencies]
 serde = { version = "=1.0.229", registry = "universe" }
 matrix-sdk = { version = "=0.18.0", registry = "universe" }
-pkgre-indexer = { version = "=0.3.0", registry = "pkgre" }
+pkgre-indexer = { version = "=0.4.0", registry = "pkgre" }
 ```
 
 Project `.cargo/config.toml` defines aliases and disables implicit crates.io index access:

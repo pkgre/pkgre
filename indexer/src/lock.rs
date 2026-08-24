@@ -12,6 +12,7 @@ use tracing::warn;
 
 use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::category::CategoryId;
+use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, MAX_DOWNLOAD_CATALOG_BYTES};
 use crate::import;
 use crate::index::IndexRecord;
 use crate::package;
@@ -321,7 +322,9 @@ fn reconcile_with_mode<R: Resolver, N: Renamer>(
     let lock_changed = inputs
         .iter()
         .any(|input| input.lock.as_ref() != next_locks.get(&input.file.registry.name));
-    if !lock_changed && !uses_legacy_archives {
+    let downloads = DownloadCatalog::from_catalog(&next_catalog).canonical_bytes()?;
+    let downloads_changed = generated_download_catalog_differs(&root, &downloads)?;
+    if !lock_changed && !uses_legacy_archives && !downloads_changed {
         Catalog::load(&root).context("strictly reload unchanged catalog")?;
         return Ok(summary);
     }
@@ -956,6 +959,26 @@ fn validate_routed_rows(catalog: &Catalog, policy: &Policy, artifacts: &Artifact
     Ok(())
 }
 
+fn generated_download_catalog_differs(root: &Path, expected: &[u8]) -> Result<bool> {
+    let path = root.join(DOWNLOAD_CATALOG_FILE);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
+    };
+    ensure!(
+        metadata.file_type().is_file(),
+        "generated download catalog is not a regular file: {}",
+        path.display()
+    );
+    if metadata.len() > MAX_DOWNLOAD_CATALOG_BYTES as u64 {
+        return Ok(true);
+    }
+    let actual = fs::read(&path)
+        .with_context(|| format!("read generated download catalog {}", path.display()))?;
+    Ok(actual != expected)
+}
+
 fn object_store_is_absent(catalog: &Catalog) -> Result<bool> {
     let objects = catalog.root.join("objects");
     match fs::symlink_metadata(&objects) {
@@ -1034,6 +1057,8 @@ fn stage_catalog(
         )?;
         write_new(&staging.path().join(lock_filename), &bytes)?;
     }
+    let downloads = DownloadCatalog::from_catalog(catalog).canonical_bytes()?;
+    write_new(&staging.path().join(DOWNLOAD_CATALOG_FILE), &downloads)?;
     copy_optional_tree(
         &root.join("categories"),
         &staging.path().join("categories"),
@@ -1359,6 +1384,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::download::{DownloadSource, router_download_template};
     use crate::index::index_path;
     use crate::schema::{MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, load_lock};
 
@@ -1436,6 +1462,103 @@ mod tests {
             )
         );
         assert_eq!(resolver.calls(), 1);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn generated_download_catalog_is_required_exact_regenerated_and_rendered() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-download-catalog");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert_eq!(resolver.calls(), 1);
+
+        let expected = fs::read(root.join(DOWNLOAD_CATALOG_FILE)).unwrap();
+        let parsed = DownloadCatalog::parse_canonical(&expected).unwrap();
+        assert_eq!(parsed.routes.len(), 1);
+        assert_eq!(parsed.routes[0].name, "alpha");
+        assert_eq!(parsed.routes[0].source, DownloadSource::CratesIo);
+
+        let catalog = Catalog::load(&root).unwrap();
+        let artifacts = ArtifactMap::load(&catalog).unwrap();
+        let site = temporary.path().join("download-site");
+        crate::render::render(&catalog, &artifacts, &site).unwrap();
+        assert_eq!(
+            fs::read(site.join(DOWNLOAD_CATALOG_FILE)).unwrap(),
+            expected
+        );
+
+        fs::remove_file(root.join(DOWNLOAD_CATALOG_FILE)).unwrap();
+        assert_download_catalog_regenerated(&root, &resolver, None, &expected);
+        assert_download_catalog_regenerated(
+            &root,
+            &resolver,
+            Some(serde_json::to_vec(&parsed).unwrap()),
+            &expected,
+        );
+
+        let mut changed = parsed.clone();
+        changed.routes[0].sha256 = "03".repeat(32);
+        assert_download_catalog_regenerated(
+            &root,
+            &resolver,
+            Some(changed.canonical_bytes().unwrap()),
+            &expected,
+        );
+        let mut changed = parsed.clone();
+        changed.routes[0].source = DownloadSource::GitTag;
+        assert_download_catalog_regenerated(
+            &root,
+            &resolver,
+            Some(changed.canonical_bytes().unwrap()),
+            &expected,
+        );
+
+        let mut extra = parsed;
+        extra.routes.push(crate::download::DownloadRoute {
+            registry: "universe".to_owned(),
+            name: "zeta".to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+            sha256: "04".repeat(32),
+            source: DownloadSource::CratesIo,
+        });
+        assert_download_catalog_regenerated(
+            &root,
+            &resolver,
+            Some(extra.canonical_bytes().unwrap()),
+            &expected,
+        );
+        assert_download_catalog_regenerated(
+            &root,
+            &resolver,
+            Some(vec![b' '; MAX_DOWNLOAD_CATALOG_BYTES + 1]),
+            &expected,
+        );
+
+        assert_eq!(
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[test]
+    fn nonregular_download_catalog_is_rejected_without_mutation() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-download-nonregular");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let path = root.join(DOWNLOAD_CATALOG_FILE);
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        let before = snapshot(temporary.path());
+
+        let error = Catalog::load(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("not a regular file"));
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("not a regular file"));
         assert_eq!(snapshot(temporary.path()), before);
     }
 
@@ -1721,7 +1844,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_mirror_and_publish_registry_fails_before_resolution() {
+    fn mixed_mirror_and_publish_registry_requires_router_before_resolution() {
         let temporary = TemporaryDirectory::new("pkgre-lock-mixed-source");
         let root = temporary.path().join("catalog");
         write_catalog(
@@ -1734,11 +1857,25 @@ mod tests {
         let before = snapshot(temporary.path());
 
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
-        assert!(format!("{error:#}").contains(
-            "cannot mix mirror and publish sources because Cargo provides one dl URL per registry"
-        ));
+        assert!(format!("{error:#}").contains("requires download"));
         assert_eq!(resolver.calls(), 0);
         assert_eq!(snapshot(temporary.path()), before);
+
+        let declaration = fs::read_to_string(root.join("universe.toml")).unwrap();
+        fs::write(
+            root.join("universe.toml"),
+            declaration.replace(MIRROR_DOWNLOAD, &router_download_template("universe")),
+        )
+        .unwrap();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert_eq!(resolver.calls(), 2);
+
+        let downloads = DownloadCatalog::load_from_root(&root).unwrap();
+        assert_eq!(downloads.routes.len(), 2);
+        assert_eq!(downloads.routes[0].name, "alpha");
+        assert_eq!(downloads.routes[0].source, DownloadSource::CratesIo);
+        assert_eq!(downloads.routes[1].name, "beta");
+        assert_eq!(downloads.routes[1].source, DownloadSource::GitTag);
     }
 
     #[test]
@@ -1827,6 +1964,44 @@ mod tests {
     }
 
     #[test]
+    fn source_specific_download_migrates_once_to_registry_router() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-router-migration");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        let declaration = fs::read_to_string(root.join("universe.toml")).unwrap();
+        fs::write(
+            root.join("universe.toml"),
+            declaration.replace(MIRROR_DOWNLOAD, &router_download_template("universe")),
+        )
+        .unwrap();
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        assert!(summary.changed);
+        assert_eq!(resolver.calls(), 1);
+        assert_eq!(
+            load_lock(&root.join("universe.lock"))
+                .unwrap()
+                .registry
+                .download,
+            router_download_template("universe")
+        );
+
+        let routed = fs::read_to_string(root.join("universe.toml")).unwrap();
+        fs::write(
+            root.join("universe.toml"),
+            routed.replace(&router_download_template("universe"), MIRROR_DOWNLOAD),
+        )
+        .unwrap();
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("one-way source-specific"));
+        assert_eq!(snapshot(temporary.path()), before);
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[test]
     fn removal_retains_evidence_yanks_row_and_cannot_be_reversed() {
         let temporary = TemporaryDirectory::new("pkgre-lock-removal");
         let root = temporary.path().join("catalog");
@@ -1854,6 +2029,12 @@ mod tests {
         assert!(row.is_file());
         let catalog = Catalog::load(&root).unwrap();
         ArtifactMap::load(&catalog).unwrap();
+        assert!(
+            DownloadCatalog::load_from_root(&root)
+                .unwrap()
+                .routes
+                .is_empty()
+        );
         assert_rendered_yanked(&temporary, &catalog, "universe", "alpha");
 
         let removed_snapshot = snapshot(temporary.path());
@@ -2261,6 +2442,27 @@ mod tests {
             "core-invalid" => &["matrix-middle"],
             _ => &[],
         }
+    }
+
+    fn assert_download_catalog_regenerated(
+        root: &Path,
+        resolver: &FakeResolver,
+        replacement: Option<Vec<u8>>,
+        expected: &[u8],
+    ) {
+        if let Some(bytes) = replacement {
+            fs::write(root.join(DOWNLOAD_CATALOG_FILE), bytes).unwrap();
+        }
+        assert!(Catalog::load(root).is_err());
+        assert!(
+            reconcile_with(root, resolver, &FilesystemRenamer)
+                .unwrap()
+                .changed
+        );
+        assert_eq!(
+            fs::read(root.join(DOWNLOAD_CATALOG_FILE)).unwrap(),
+            expected
+        );
     }
 
     fn write_catalog(root: &Path, general: &str, matrix: &str, pkgre: &str) {

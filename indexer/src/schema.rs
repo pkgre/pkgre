@@ -10,6 +10,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::category::CategoryId;
+use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
 
 /// Supported human registry and generated lock schema version.
 pub const SCHEMA_VERSION: u32 = 3;
@@ -390,6 +391,8 @@ impl Catalog {
         }
         let catalog = catalog_from_inputs(root, &inputs)?;
         crate::update::validate_admission_inventory(&catalog)?;
+        let downloads = DownloadCatalog::load_from_root(root)?;
+        downloads.validate_against_catalog(&catalog)?;
         Ok(catalog)
     }
 }
@@ -550,6 +553,11 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
             continue;
         }
         match path.extension().and_then(|value| value.to_str()) {
+            Some("json") if path.file_name() == Some(OsStr::new(DOWNLOAD_CATALOG_FILE)) => ensure!(
+                metadata.file_type().is_file(),
+                "generated download catalog is not a regular file: {}",
+                path.display()
+            ),
             Some("toml") => ensure!(
                 metadata.file_type().is_file(),
                 "human registry input is not a regular file: {}",
@@ -569,7 +577,7 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
                 );
             }
             _ => bail!(
-                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files, categories/, objects/, and admissions/ are allowed",
+                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files, {DOWNLOAD_CATALOG_FILE}, categories/, objects/, and admissions/ are allowed",
                 root.display(),
                 path.display()
             ),
@@ -761,11 +769,14 @@ fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Res
         input.lock_path.display(),
         input.path.display()
     );
+    let before = lock.registry.download.as_str();
+    let after = input.file.registry.download.as_str();
+    let router = router_download_template(&input.file.registry.name);
     ensure!(
-        lock.registry.download == input.file.registry.download
-            || (lock.registry.download == PUBLISH_DOWNLOAD
-                && input.file.registry.download == MIRROR_DOWNLOAD),
-        "registry download in {} differs from {}; only the one-way mirror migration from {PUBLISH_DOWNLOAD:?} to {MIRROR_DOWNLOAD:?} is allowed",
+        before == after
+            || (before == PUBLISH_DOWNLOAD && after == MIRROR_DOWNLOAD)
+            || ((before == MIRROR_DOWNLOAD || before == PUBLISH_DOWNLOAD) && after == router),
+        "registry download in {} differs from {}; only a retained historical {PUBLISH_DOWNLOAD:?}→{MIRROR_DOWNLOAD:?} migration or a one-way source-specific→{router:?} migration is allowed",
         input.lock_path.display(),
         input.path.display()
     );

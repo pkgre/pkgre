@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use pkgre_indexer::artifact::{ArtifactMap, sha256_bytes};
 use pkgre_indexer::category::CategoryId;
+use pkgre_indexer::download::{
+    DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
+};
 use pkgre_indexer::index::{IndexRecord, index_path};
 use pkgre_indexer::render;
 use pkgre_indexer::schema::{
@@ -99,7 +102,35 @@ fn prepare_catalog(root: &Path, external_large_categories: bool) -> Vec<TestArti
         add_artifact(root, "pkgre", "tooling", "pkgre-top", Some("leaf-core")),
     ];
     write_locks(root, &artifacts);
+    write_downloads(root, &artifacts);
     artifacts
+}
+
+fn write_downloads(root: &Path, artifacts: &[TestArtifact]) {
+    let mut routes = artifacts
+        .iter()
+        .map(|artifact| DownloadRoute {
+            registry: artifact.registry.to_owned(),
+            name: artifact.name.to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+            sha256: artifact.archive_hash.clone(),
+            source: if artifact.registry == "pkgre" {
+                DownloadSource::GitTag
+            } else {
+                DownloadSource::CratesIo
+            },
+        })
+        .collect::<Vec<_>>();
+    routes.sort();
+    let downloads = DownloadCatalog {
+        schema: DOWNLOAD_CATALOG_SCHEMA,
+        routes,
+    };
+    fs::write(
+        root.join(DOWNLOAD_CATALOG_FILE),
+        downloads.canonical_bytes().unwrap(),
+    )
+    .unwrap();
 }
 
 struct TestArtifact {
