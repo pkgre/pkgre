@@ -482,7 +482,12 @@ pub fn validate_relative_path(path: &Path, allow_dot: bool) -> Result<()> {
     Ok(())
 }
 
-fn validate_registry_alias(name: &str) -> Result<()> {
+/// Validates a lowercase Cargo registry alias.
+///
+/// # Errors
+///
+/// Returns an error unless the alias is nonempty and contains only lowercase ASCII alphanumeric, `-`, or `_` characters.
+pub fn validate_registry_alias(name: &str) -> Result<()> {
     ensure!(
         !name.is_empty()
             && name.bytes().all(|byte| {
