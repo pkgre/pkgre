@@ -100,8 +100,22 @@ fn ensure_revalidation_matches(planned: &UpdatePlan, recomputed: &UpdatePlan) ->
     for candidate in &mut approved_evidence.candidates {
         candidate.approvals.clear();
     }
+
+    let mut current_evidence = recomputed.clone();
+    for (approved, current) in approved_evidence
+        .candidates
+        .iter()
+        .zip(&mut current_evidence.candidates)
+    {
+        if let (Some(approved_api), Some(current_api)) = (&approved.api, &mut current.api) {
+            // crates.io responses contain mutable counters and other non-decision fields. Retain the
+            // raw-response hash as planning provenance while revalidating every parsed API field.
+            current_api.response_sha256 = approved_api.response_sha256.clone();
+        }
+    }
+
     ensure!(
-        approved_evidence == *recomputed,
+        approved_evidence == current_evidence,
         "recomputed update evidence differs from the approved plan"
     );
     Ok(())
@@ -113,14 +127,21 @@ mod tests {
 
     use super::*;
     use crate::update::{
-        ArchiveSummary, DependencyDelta, PackageActivity, PlannedIdentity, SourceEvidence,
-        UPDATE_PLAN_SCHEMA, UpdateCandidate, UpdateDecision,
+        ApiEvidence, ApiVersionEvidence, ArchiveSummary, DependencyDelta, PackageActivity,
+        PlannedIdentity, SourceEvidence, TrustedPublishingEvidence, UPDATE_PLAN_SCHEMA,
+        UpdateCandidate, UpdateDecision,
     };
 
     #[test]
-    fn revalidation_ignores_only_approval_assertions() {
+    fn revalidation_ignores_approval_assertions_and_raw_api_response_hash() {
         let mut planned = plan();
-        let recomputed = planned.clone();
+        planned.candidates[0].api = Some(api_evidence());
+        let mut recomputed = planned.clone();
+        recomputed.candidates[0]
+            .api
+            .as_mut()
+            .unwrap()
+            .response_sha256 = "88".repeat(32);
         planned.candidates[0]
             .approvals
             .push(crate::update::UpdateApproval {
@@ -130,11 +151,81 @@ mod tests {
                 note: "reviewed".to_owned(),
                 note_sha256: "77".repeat(32),
             });
-        ensure_revalidation_matches(&planned, &recomputed).unwrap();
 
-        let mut drifted = recomputed;
-        drifted.candidates[0].candidate.crate_sha256 = "99".repeat(32);
-        assert!(ensure_revalidation_matches(&planned, &drifted).is_err());
+        ensure_revalidation_matches(&planned, &recomputed).unwrap();
+    }
+
+    #[test]
+    fn revalidation_rejects_stable_api_evidence_drift() {
+        let mut planned = plan();
+        planned.candidates[0].api = Some(api_evidence());
+
+        let mut publisher_drift = planned.clone();
+        publisher_drift.candidates[0]
+            .api
+            .as_mut()
+            .unwrap()
+            .candidate
+            .publisher_login = Some("different-publisher".to_owned());
+        assert!(ensure_revalidation_matches(&planned, &publisher_drift).is_err());
+
+        let mut repository_drift = planned.clone();
+        repository_drift.candidates[0]
+            .api
+            .as_mut()
+            .unwrap()
+            .candidate
+            .repository = Some("https://github.com/example/different".to_owned());
+        assert!(ensure_revalidation_matches(&planned, &repository_drift).is_err());
+
+        let mut trusted_publishing_drift = planned.clone();
+        trusted_publishing_drift.candidates[0]
+            .api
+            .as_mut()
+            .unwrap()
+            .candidate
+            .trusted_publishing
+            .as_mut()
+            .unwrap()
+            .commit = "99".repeat(20);
+        assert!(ensure_revalidation_matches(&planned, &trusted_publishing_drift).is_err());
+
+        let mut missing_api = planned.clone();
+        missing_api.candidates[0].api = None;
+        assert!(ensure_revalidation_matches(&planned, &missing_api).is_err());
+    }
+
+    #[test]
+    fn revalidation_rejects_archive_and_checksum_drift() {
+        let planned = plan();
+
+        let mut checksum_drift = planned.clone();
+        checksum_drift.candidates[0].candidate.crate_sha256 = "99".repeat(32);
+        assert!(ensure_revalidation_matches(&planned, &checksum_drift).is_err());
+
+        let mut archive_drift = planned.clone();
+        archive_drift.candidates[0]
+            .candidate_archive
+            .analysis_sha256 = "88".repeat(32);
+        assert!(ensure_revalidation_matches(&planned, &archive_drift).is_err());
+    }
+
+    fn api_evidence() -> ApiEvidence {
+        ApiEvidence {
+            response_sha256: "aa".repeat(32),
+            base: None,
+            candidate: ApiVersionEvidence {
+                publisher_id: Some(7),
+                publisher_login: Some("publisher".to_owned()),
+                repository: Some("https://github.com/example/demo".to_owned()),
+                trusted_publishing: Some(TrustedPublishingEvidence {
+                    provider: "github".to_owned(),
+                    repository: "https://github.com/example/demo".to_owned(),
+                    commit: "11".repeat(20),
+                    evidence_sha256: "bb".repeat(32),
+                }),
+            },
+        }
     }
 
     fn plan() -> UpdatePlan {

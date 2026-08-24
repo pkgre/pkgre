@@ -130,11 +130,14 @@ pub struct TrustedPublishingEvidence {
     pub evidence_sha256: String,
 }
 
-/// Exact API response and version-scoped metadata used for discontinuity checks.
+/// Parsed version-scoped API evidence plus raw-response provenance from planning.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct ApiEvidence {
-    /// SHA-256 of the exact public API response bytes.
+    /// SHA-256 of the exact public API response bytes observed during planning.
+    ///
+    /// The response may contain mutable non-decision fields, so apply revalidates the parsed fields
+    /// below rather than requiring this provenance hash to remain unchanged.
     pub response_sha256: String,
     /// Base version metadata, absent for a first-ever identity.
     pub base: Option<ApiVersionEvidence>,
