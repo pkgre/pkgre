@@ -1,5 +1,5 @@
 [workspace]
-members = ["indexer"]
+members = ["download-serve", "indexer"]
 resolver = "3"
 
 [workspace.package]
