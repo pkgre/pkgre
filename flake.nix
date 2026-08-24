@@ -90,45 +90,68 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./download-serve
               ./indexer
               ./rust-toolchain.toml
             ];
           };
-          indexer = rustPlatform.buildRustPackage {
-            pname = "pkgre-indexer";
-            version = "0.3.0";
-            src = source;
-            postPatch = ''
-              cp ${vendorLock} Cargo.lock
-            '';
-            inherit cargoDeps;
-            cargoBuildFlags = [
-              "--workspace"
-              "--locked"
-            ];
+          mkRustPackage =
+            {
+              packageDirectory,
+              description,
+              mainProgram,
+              nativeCheckInputs ? [ ],
+            }:
+            let
+              manifest = builtins.fromTOML (builtins.readFile ./${packageDirectory}/Cargo.toml);
+              packageName = manifest.package.name;
+            in
+            rustPlatform.buildRustPackage {
+              pname = packageName;
+              inherit (manifest.package) version;
+              src = source;
+              postPatch = ''
+                cp ${vendorLock} Cargo.lock
+              '';
+              inherit cargoDeps nativeCheckInputs;
+              cargoBuildFlags = [
+                "--package"
+                packageName
+                "--locked"
+              ];
+              PKGRE_CARGO = "${rustToolchain}/bin/cargo";
+              doCheck = true;
+              checkPhase = ''
+                runHook preCheck
+                cargo test --package ${packageName} --frozen
+                cargo clippy --package ${packageName} --all-targets --frozen -- -D warnings
+                runHook postCheck
+              '';
+              meta = {
+                inherit description mainProgram;
+                homepage = "https://github.com/pkgre/pkgre";
+                license = pkgs.lib.licenses.asl20;
+              };
+            };
+          indexer = mkRustPackage {
+            packageDirectory = "indexer";
+            description = "Declarative reconciler and renderer for curated Cargo sparse registries";
+            mainProgram = "pkgre-indexer";
             nativeCheckInputs = [
               pkgs.git
               pkgs.gnutar
             ];
-            PKGRE_CARGO = "${rustToolchain}/bin/cargo";
-            doCheck = true;
-            checkPhase = ''
-              runHook preCheck
-              cargo test --workspace --frozen
-              cargo clippy --workspace --all-targets --frozen -- -D warnings
-              runHook postCheck
-            '';
-            meta = {
-              description = "Declarative reconciler and renderer for curated Cargo sparse registries";
-              homepage = "https://github.com/pkgre/pkgre";
-              license = pkgs.lib.licenses.asl20;
-              mainProgram = "pkgre-indexer";
-            };
+          };
+          downloadServe = mkRustPackage {
+            packageDirectory = "download-serve";
+            description = "Stateless immutable download redirect service for pkgre registries";
+            mainProgram = "pkgre-download-serve";
           };
         in
         {
           default = indexer;
           inherit indexer;
+          download-serve = downloadServe;
         }
       );
 
@@ -147,6 +170,7 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./download-serve
               ./indexer
               ./rust-toolchain.toml
             ];
@@ -154,6 +178,7 @@
         in
         {
           build-and-test = self.packages.${system}.indexer;
+          download-serve = self.packages.${system}.download-serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source
             chmod -R u+w source
