@@ -14,12 +14,14 @@ use semver::Version;
 
 use crate::artifact::{ArtifactMap, require_absent, sha256_bytes, sha256_file};
 use crate::category::{CategoryId, category_for_v2_home};
+use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog};
 use crate::index::IndexRecord;
 use crate::policy::{canonical_category_dependencies, validate_catalog, validate_sha256};
 use crate::render;
 use crate::schema::{
     Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, MIRROR_DOWNLOAD, NameSource,
-    PUBLISH_DOWNLOAD, PackageHome, PackageState, RegistryLock, SCHEMA_VERSION, serialize_lock,
+    PUBLISH_DOWNLOAD, PackageHome, PackageState, RegistryLock, SCHEMA_VERSION, catalog_from_inputs,
+    load_registry_inputs, serialize_lock,
 };
 
 const UNIVERSE_INDEX: &str = "sparse+https://rust.pkg.re/universe/";
@@ -687,6 +689,10 @@ fn write_output(root: &Path, source: &Path, output: &MigrationOutput) -> Result<
             &root.join("objects/crates").join(format!("{hash}.crate")),
         )?;
     }
+    let inputs = load_registry_inputs(root)?;
+    let catalog = catalog_from_inputs(root, &inputs)?;
+    let downloads = DownloadCatalog::from_catalog(&catalog).canonical_bytes()?;
+    write_new(&root.join(DOWNLOAD_CATALOG_FILE), &downloads)?;
     Ok(())
 }
 

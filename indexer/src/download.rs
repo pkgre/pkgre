@@ -60,21 +60,26 @@ impl DownloadCatalog {
     /// Derives the complete canonical route set from active generated-lock approvals.
     #[must_use]
     pub fn from_catalog(catalog: &Catalog) -> Self {
-        let mut routes = catalog
-            .approvals
-            .iter()
-            .filter(|approval| approval.state == PackageState::Active)
-            .map(|approval| DownloadRoute {
-                registry: approval.registry.clone(),
-                name: approval.name.clone(),
-                version: approval.version.clone(),
-                sha256: approval.archive_sha256.clone(),
-                source: match approval.source {
-                    Source::CratesIo => DownloadSource::CratesIo,
-                    Source::GitTag { .. } => DownloadSource::GitTag,
-                },
-            })
-            .collect::<Vec<_>>();
+        Self::from_routes(
+            catalog
+                .approvals
+                .iter()
+                .filter(|approval| approval.state == PackageState::Active)
+                .map(|approval| DownloadRoute {
+                    registry: approval.registry.clone(),
+                    name: approval.name.clone(),
+                    version: approval.version.clone(),
+                    sha256: approval.archive_sha256.clone(),
+                    source: match approval.source {
+                        Source::CratesIo => DownloadSource::CratesIo,
+                        Source::GitTag { .. } => DownloadSource::GitTag,
+                    },
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn from_routes(mut routes: Vec<DownloadRoute>) -> Self {
         routes.sort_by(route_order);
         Self {
             schema: DOWNLOAD_CATALOG_SCHEMA,
@@ -90,8 +95,7 @@ impl DownloadCatalog {
     pub fn parse_canonical(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= MAX_DOWNLOAD_CATALOG_BYTES,
-            "download catalog exceeds {} bytes",
-            MAX_DOWNLOAD_CATALOG_BYTES
+            "download catalog exceeds {MAX_DOWNLOAD_CATALOG_BYTES} bytes"
         );
         let catalog: Self =
             serde_json::from_slice(bytes).context("parse canonical download catalog JSON")?;
@@ -132,19 +136,13 @@ impl DownloadCatalog {
                     "download routes are not in strict canonical order"
                 );
             }
-            let identity = (
-                route.registry.as_str(),
-                route.name.as_str(),
-                &route.version,
-                route.sha256.as_str(),
-            );
+            let identity = (route.registry.as_str(), route.name.as_str(), &route.version);
             ensure!(
                 identities.insert(identity),
-                "duplicate download route for {}/{}/{} / {}",
+                "duplicate download identity for {}/{}/{}",
                 route.registry,
                 route.name,
-                route.version,
-                route.sha256
+                route.version
             );
             previous = Some(route);
         }
@@ -276,9 +274,19 @@ mod tests {
 
         let duplicate = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
-            routes: vec![first.clone(), first],
+            routes: vec![first.clone(), first.clone()],
         };
         assert!(duplicate.validate().is_err());
+
+        let conflicting_checksum = DownloadCatalog {
+            schema: DOWNLOAD_CATALOG_SCHEMA,
+            routes: vec![
+                first.clone(),
+                route("alpha", "1.0.0", &"03".repeat(32), DownloadSource::GitTag),
+            ],
+        };
+        let error = conflicting_checksum.validate().unwrap_err();
+        assert!(format!("{error:#}").contains("duplicate download identity"));
 
         let mut invalid = route("alpha", "1.0.0", &"AB".repeat(32), DownloadSource::CratesIo);
         let catalog = DownloadCatalog {
@@ -292,6 +300,24 @@ mod tests {
             routes: vec![invalid],
         };
         assert!(catalog.validate().is_err());
+    }
+
+    #[test]
+    fn schema_size_and_wire_source_are_strict() {
+        let unsupported = DownloadCatalog {
+            schema: DOWNLOAD_CATALOG_SCHEMA + 1,
+            routes: Vec::new(),
+        };
+        assert!(unsupported.validate().is_err());
+        assert!(
+            DownloadCatalog::parse_canonical(&vec![b' '; MAX_DOWNLOAD_CATALOG_BYTES + 1]).is_err()
+        );
+
+        let unknown_source = format!(
+            "{{\n  \"schema\": 1,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"source\": \"arbitrary-url\"\n    }}\n  ]\n}}\n",
+            "01".repeat(32)
+        );
+        assert!(DownloadCatalog::parse_canonical(unknown_source.as_bytes()).is_err());
     }
 
     #[test]
