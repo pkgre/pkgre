@@ -40,6 +40,8 @@ Decision policy:
 
 ### Workflow
 
+The standalone production procedure—including deployed-pin selection, external evidence workspace, read-only proofs, complete archive review, transactional apply, diff/convergence/release audits, and curator-review PR boundary—is [`production-update-runbook.md`](production-update-runbook.md). The steps below are the policy-level command synopsis; use the runbook for a real catalog update.
+
 1. Choose the package's permanent `universe/<category>` home; inspect every direct dependency home + the category's exact `may-depend-on` set. For a first package identity, reserve only the name, then lock the empty anchor:
 
 ```toml

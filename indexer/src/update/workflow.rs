@@ -284,6 +284,15 @@ fn planning_targets(
                 .is_none_or(|names| names.contains(name.as_str()))
         })
         .filter(|(name, _)| catalog.name_sources.get(*name) == Some(&NameSource::Mirror))
+        .filter(|(name, _)| match request {
+            PlanRequest::Implicit => catalog.approvals.iter().any(|approval| {
+                approval.name == **name
+                    && approval.state == PackageState::Active
+                    && matches!(&approval.source, Source::CratesIo)
+                    && super::implicit_lane(&approval.version).is_some()
+            }),
+            PlanRequest::Exact { .. } | PlanRequest::Revalidate(_) => true,
+        })
         .map(|(name, home)| (name.clone(), home.clone()))
         .collect::<Vec<_>>();
     if let Some(requested) = requested {
@@ -964,6 +973,84 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use crate::schema::{Approval, HomesFile, PackageHome, RegistriesFile};
+
+    fn planning_catalog() -> Catalog {
+        let category: crate::category::CategoryId = "universe/general".parse().unwrap();
+        let names = ["active", "empty", "exact-only", "inactive"];
+        let homes = names
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_owned(),
+                    PackageHome {
+                        registry: "universe".to_owned(),
+                        category: category.clone(),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let approval = |name: &str, version: &str, state| Approval {
+            registry: "universe".to_owned(),
+            category: category.clone(),
+            name: name.to_owned(),
+            version: Version::parse(version).unwrap(),
+            archive_sha256: "00".repeat(32),
+            index_record_sha256: "11".repeat(32),
+            index_row_sha256: "22".repeat(32),
+            admission_sha256: None,
+            state,
+            source: Source::CratesIo,
+            declared_in: PathBuf::from("universe.lock"),
+        };
+        Catalog {
+            root: PathBuf::from("unused"),
+            registries: RegistriesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                cname: "rust.pkg.re".to_owned(),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+                registries: Vec::new(),
+            },
+            categories: BTreeMap::new(),
+            homes: HomesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                homes,
+            },
+            name_sources: names
+                .iter()
+                .map(|name| ((*name).to_owned(), NameSource::Mirror))
+                .collect(),
+            approvals: vec![
+                approval("active", "1.0.0", PackageState::Active),
+                approval("exact-only", "0.0.1", PackageState::Active),
+                approval("inactive", "1.0.0", PackageState::Removed),
+            ],
+        }
+    }
+
+    #[test]
+    fn implicit_planning_targets_only_active_compatibility_lanes() {
+        let catalog = planning_catalog();
+        let implicit = planning_targets(&catalog, &PlanRequest::Implicit)
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(implicit, ["active"]);
+
+        let exact = planning_targets(
+            &catalog,
+            &PlanRequest::Exact {
+                name: "inactive".to_owned(),
+                version: Version::parse("2.0.0").unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(exact[0].0, "inactive");
+    }
 
     fn dependency(package: &str, requirement: &str) -> IndexDependency {
         IndexDependency {

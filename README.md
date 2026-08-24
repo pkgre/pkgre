@@ -33,7 +33,8 @@ A registry is mirror-only or Git-only because Cargo exposes one index-wide `dl` 
 
 - `indexer/`: Rust reconciler, validator, schema-2→3 migrator, deterministic renderer, release verifier.
 - [`docs/catalog.md`](docs/catalog.md): schema-3 human files, inline/external categories, generated locks, objects, routing, removal.
-- [`docs/workflows.md`](docs/workflows.md): mirror review, Git-tag publication, removal, migration, release procedures.
+- [`docs/production-update-runbook.md`](docs/production-update-runbook.md): standalone production mirror-update procedure from deployed-pin selection through curator-review PR.
+- [`docs/workflows.md`](docs/workflows.md): mirror policy summary, Git-tag publication, removal, migration, release procedures.
 - [`docs/security.md`](docs/security.md): trust model, enforced invariants, exclusions.
 - Registry catalog/site: [`pkgre/rust`](https://github.com/pkgre/rust).
 
