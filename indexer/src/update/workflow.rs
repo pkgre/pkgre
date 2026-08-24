@@ -209,8 +209,8 @@ pub(crate) fn recompute_admission_plan_with<R: PlannerResolver>(
         );
         targets.push(RevalidationTarget {
             name: request.name.clone(),
+            lane: super::implicit_lane(&version),
             version,
-            lane: None,
         });
     }
     let plan = build_plan_with(
@@ -490,7 +490,13 @@ fn select_candidates(
             .iter()
             .filter(|target| target.name == name)
             .map(|target| {
-                if let Some(lane) = &target.lane {
+                let active_lane = target.lane.as_ref().filter(|lane| {
+                    locked.iter().any(|release| {
+                        release.active
+                            && super::implicit_lane(&release.version).as_ref() == Some(*lane)
+                    })
+                });
+                if let Some(lane) = active_lane {
                     let selected = super::policy::select_exact_implicit_candidate(
                         evaluated_at,
                         history,
@@ -1099,6 +1105,122 @@ mod tests {
         )
         .unwrap();
         assert_eq!(exact[0].0, "inactive");
+    }
+
+    fn timestamp(value: &str) -> UtcTimestamp {
+        UtcTimestamp::parse(value).unwrap()
+    }
+
+    fn release(version: &str, published_at: &str) -> PolicyRelease {
+        PolicyRelease {
+            version: Version::parse(version).unwrap(),
+            published_at: timestamp(published_at),
+            yanked: false,
+        }
+    }
+
+    fn locked(version: &str, published_at: &str, active: bool) -> LockedRelease {
+        LockedRelease {
+            version: Version::parse(version).unwrap(),
+            published_at: timestamp(published_at),
+            active,
+        }
+    }
+
+    #[test]
+    fn admission_revalidation_preserves_implicit_lane_base() {
+        let history = vec![
+            release("1.0.0", "2024-01-01T00:00:00Z"),
+            release("2.0.0", "2024-02-01T00:00:00Z"),
+            release("1.1.0", "2024-03-01T00:00:00Z"),
+        ];
+        let locked = vec![
+            locked("1.0.0", "2024-01-01T00:00:00Z", true),
+            locked("2.0.0", "2024-02-01T00:00:00Z", true),
+        ];
+        let request = PlanRequest::Revalidate(vec![RevalidationTarget {
+            name: "demo".to_owned(),
+            version: Version::parse("1.1.0").unwrap(),
+            lane: Some(CompatibilityLane::Major { major: 1 }),
+        }]);
+
+        let selected = select_candidates(
+            &request,
+            "demo",
+            &timestamp("2024-05-01T00:00:00Z"),
+            &history,
+            &locked,
+            PackageActivity::Active,
+        )
+        .unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            selected[0].base.as_ref().unwrap().version,
+            Version::parse("1.0.0").unwrap()
+        );
+        assert_eq!(
+            selected[0].lane,
+            Some(CompatibilityLane::Major { major: 1 })
+        );
+        assert!(!selected[0].explicit);
+    }
+
+    #[test]
+    fn admission_revalidation_falls_back_to_exact_for_new_lane() {
+        let history = vec![
+            release("1.0.0", "2024-01-01T00:00:00Z"),
+            release("2.0.0", "2024-02-01T00:00:00Z"),
+        ];
+        let locked = vec![locked("1.0.0", "2024-01-01T00:00:00Z", true)];
+        let request = PlanRequest::Revalidate(vec![RevalidationTarget {
+            name: "demo".to_owned(),
+            version: Version::parse("2.0.0").unwrap(),
+            lane: Some(CompatibilityLane::Major { major: 2 }),
+        }]);
+
+        let selected = select_candidates(
+            &request,
+            "demo",
+            &timestamp("2024-05-01T00:00:00Z"),
+            &history,
+            &locked,
+            PackageActivity::Active,
+        )
+        .unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            selected[0].base.as_ref().unwrap().version,
+            Version::parse("1.0.0").unwrap()
+        );
+        assert_eq!(selected[0].lane, None);
+        assert!(selected[0].explicit);
+    }
+
+    #[test]
+    fn admission_revalidation_supports_a_new_stable_package() {
+        let history = vec![release("1.0.0", "2024-01-01T00:00:00Z")];
+        let request = PlanRequest::Revalidate(vec![RevalidationTarget {
+            name: "demo".to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+            lane: Some(CompatibilityLane::Major { major: 1 }),
+        }]);
+
+        let selected = select_candidates(
+            &request,
+            "demo",
+            &timestamp("2024-05-01T00:00:00Z"),
+            &history,
+            &[],
+            PackageActivity::New,
+        )
+        .unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].base, None);
+        assert_eq!(selected[0].lane, None);
+        assert!(selected[0].explicit);
     }
 
     fn dependency(package: &str, requirement: &str) -> IndexDependency {
