@@ -13,7 +13,7 @@ Required:
 - Existing clean catalog checkout at current `origin/main`; no local/untracked files.
 - Existing clean tooling checkout able to resolve the workflow-pinned commit.
 - Candidate package names already permanently reserved in the correct registry/category. Routing/category changes are separate reviewed work and invalidate an existing plan.
-- Public-safe operation: no credentials, tokens, consuming-project names, private repository names, private paths, manifests, lockfiles, dependency-discovery output, or consumer metadata in plans, notes, logs, commits, or PR text. Approval notes become public catalog evidence.
+- Public-safe operation: no credentials, tokens, consuming-project names, private repository names, private paths, manifests, lockfiles, dependency-discovery output, or consumer metadata in commits, PR text, public issues, or published logs/artifacts. Keep local plans, notes, review trees, and logs private under the mode-`0700` workspace; approval-note text becomes public catalog evidence.
 
 Start one Bash session:
 
@@ -26,7 +26,7 @@ TOOL_REPO=/absolute/path/to/pkgre
 CATALOG_DIR="$CATALOG_REPO/registry"
 PAGES_WORKFLOW=.github/workflows/pages.yml
 
-for command in git gh nix curl jq tar sha256sum stat realpath sed grep awk cmp; do
+for command in sh git gh nix curl jq tar sha256sum stat realpath mktemp date sort comm sed grep awk cmp wc chmod cut mkdir tee cat; do
   command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
 
@@ -65,12 +65,21 @@ INDEXER="$ARTIFACTS/indexer-result/bin/pkgre-indexer"
 test -x "$INDEXER"
 INDEXER_VERSION="$(nix eval --raw "$TOOL_WORKTREE#indexer.version")"
 INDEXER_SHA256="$(sha256sum "$INDEXER" | cut -d' ' -f1)"
-printf 'indexer-version=%s\nindexer-binary-sha256=%s\nindexer-store-path=%s\n' "$INDEXER_VERSION" "$INDEXER_SHA256" "$(realpath "$ARTIFACTS/indexer-result")" >> "$ARTIFACTS/session.txt"
+INDEXER_STORE_PATH="$(realpath "$ARTIFACTS/indexer-result")"
+EXPECTED_CARGO_VERSION="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[[:space:]]*$/\1/p' "$TOOL_WORKTREE/rust-toolchain.toml")"
+test "$(printf '%s\n' "$EXPECTED_CARGO_VERSION" | grep -c .)" -eq 1
+PKGRE_CARGO="$(nix develop "$TOOL_WORKTREE" --command sh -c 'printf "%s\n" "$PKGRE_CARGO"')"
+test -x "$PKGRE_CARGO"
+CARGO_VERSION="$($PKGRE_CARGO --version)"
+printf '%s\n' "$CARGO_VERSION" | grep -Eq '^cargo [0-9]+\.[0-9]+\.[0-9]+ \([0-9a-f]{9} [0-9]{4}-[0-9]{2}-[0-9]{2}\)$'
+test "$(printf '%s\n' "$CARGO_VERSION" | awk '{print $2}')" = "$EXPECTED_CARGO_VERSION"
+export PKGRE_CARGO
+printf 'indexer-version=%s\nindexer-binary-sha256=%s\nindexer-store-path=%s\ncargo=%s\ncargo-version=%s\n' "$INDEXER_VERSION" "$INDEXER_SHA256" "$INDEXER_STORE_PATH" "$PKGRE_CARGO" "$CARGO_VERSION" >> "$ARTIFACTS/session.txt"
 "$INDEXER" check "$CATALOG_DIR" 2>&1 | tee "$ARTIFACTS/preflight-check.log"
 test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
 ```
 
-Build/version/hash mismatch, invalid catalog, dirty checkout, absent pin, or pin drift → abort; do not fall forward to another indexer revision.
+`PKGRE_CARGO` comes from the exact revision's pinned Nix development shell, is version-checked, exported before any indexer command, and prevents Git-package lock convergence from falling back to ambient `rustup`. Build/version/hash mismatch, invalid catalog, dirty checkout, absent pin, Cargo mismatch, or pin drift → abort; do not fall forward to another indexer/Cargo revision.
 
 ## 3. Catalog read-only guard
 
@@ -200,9 +209,12 @@ INPUT_PLAN="$OUTPUT_PLAN"
 
 # Repeat with a new absent OUTPUT_PLAN for each remaining review-required candidate.
 APPLY_PLAN="$INPUT_PLAN"
+EXPECTED_CANDIDATES="$(grep -c '^\[\[candidates\]\]$' "$APPLY_PLAN")"
+test "$EXPECTED_CANDIDATES" -gt 0
+printf 'candidate-count=%s\n' "$EXPECTED_CANDIDATES" >> "$ARTIFACTS/session.txt"
 ```
 
-Use `source-delta` instead of `full-archive` only when the table requires it. Automatic-only plan: `APPLY_PLAN="$PLAN"`. Read the final plan and require exactly one correct assertion per review-required candidate, none for automatic candidates, no blocked candidates, and no evidence changes other than approval assertions.
+Use `source-delta` instead of `full-archive` only when the table requires it. Automatic-only plan: `APPLY_PLAN="$PLAN"`, then run the same `EXPECTED_CANDIDATES` count/recording commands. Read the final plan and require exactly one correct assertion per review-required candidate, none for automatic candidates, no blocked candidates, and no evidence changes other than approval assertions. `EXPECTED_CANDIDATES` must equal the number of canonical top-level `[[candidates]]` entries; retain it for generated-path and release-count proofs.
 
 ## 7. Reconfirm base + create the catalog branch
 
@@ -252,6 +264,10 @@ git -C "$CATALOG_REPO" diff --check
 git -C "$CATALOG_REPO" diff --stat -- registry
 git -C "$CATALOG_REPO" diff --binary --full-index -- registry > "$ARTIFACTS/catalog.patch"
 test -s "$ARTIFACTS/catalog.patch"
+git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/objects/rows | LC_ALL=C sort > "$ARTIFACTS/new-rows.txt"
+git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/_reviews/admissions | LC_ALL=C sort > "$ARTIFACTS/new-admissions.txt"
+test "$(wc -l < "$ARTIFACTS/new-rows.txt")" -eq "$EXPECTED_CANDIDATES"
+test "$(wc -l < "$ARTIFACTS/new-admissions.txt")" -eq "$EXPECTED_CANDIDATES"
 test -z "$(git -C "$CATALOG_REPO" diff --name-only -- registry/objects/crates)"
 ```
 
@@ -304,7 +320,15 @@ jq -cS '.packages[]' "$SITE_NEXT/release.json" | LC_ALL=C sort > "$ARTIFACTS/pac
 comm -23 "$ARTIFACTS/packages-current.ndjson" "$ARTIFACTS/packages-next.ndjson" > "$ARTIFACTS/packages-missing.ndjson"
 comm -13 "$ARTIFACTS/packages-current.ndjson" "$ARTIFACTS/packages-next.ndjson" > "$ARTIFACTS/packages-added.ndjson"
 test ! -s "$ARTIFACTS/packages-missing.ndjson"
-printf 'current names=%s packages=%s\nnext names=%s packages=%s\n' "$(jq '.names|length' "$SITE_CURRENT/release.json")" "$(jq '.packages|length' "$SITE_CURRENT/release.json")" "$(jq '.names|length' "$SITE_NEXT/release.json")" "$(jq '.packages|length' "$SITE_NEXT/release.json")"
+CURRENT_NAME_COUNT="$(jq '.names|length' "$SITE_CURRENT/release.json")"
+NEXT_NAME_COUNT="$(jq '.names|length' "$SITE_NEXT/release.json")"
+CURRENT_PACKAGE_COUNT="$(jq '.packages|length' "$SITE_CURRENT/release.json")"
+NEXT_PACKAGE_COUNT="$(jq '.packages|length' "$SITE_NEXT/release.json")"
+ADDED_PACKAGE_COUNT="$(wc -l < "$ARTIFACTS/packages-added.ndjson")"
+test "$NEXT_NAME_COUNT" -eq "$CURRENT_NAME_COUNT"
+test "$NEXT_PACKAGE_COUNT" -eq "$((CURRENT_PACKAGE_COUNT + EXPECTED_CANDIDATES))"
+test "$ADDED_PACKAGE_COUNT" -eq "$EXPECTED_CANDIDATES"
+printf 'current names=%s packages=%s\nnext names=%s packages=%s\nadded packages=%s expected candidates=%s\n' "$CURRENT_NAME_COUNT" "$CURRENT_PACKAGE_COUNT" "$NEXT_NAME_COUNT" "$NEXT_PACKAGE_COUNT" "$ADDED_PACKAGE_COUNT" "$EXPECTED_CANDIDATES"
 cat "$ARTIFACTS/packages-added.ndjson"
 ```
 
@@ -340,10 +364,14 @@ test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
 
 ## 13. Push + open the curator-review PR
 
+Create `$ARTIFACTS/pr-body.md` before pushing; include the public-safe fields below and inspect the complete file. Then:
+
 ```bash
 git -C "$CATALOG_REPO" push --set-upstream origin "$BRANCH"
 cd "$CATALOG_REPO"
-PR_URL="$(gh pr create --base main --head "$BRANCH" --title 'registry: admit reviewed mirror update' --body-file "$ARTIFACTS/pr-body.md")"
+PR_BODY="$ARTIFACTS/pr-body.md"
+test -s "$PR_BODY"
+PR_URL="$(gh pr create --base main --head "$BRANCH" --title 'registry: admit reviewed mirror update' --body-file "$PR_BODY")"
 printf '%s\n' "$PR_URL"
 gh pr checks --watch "$PR_URL"
 ```
