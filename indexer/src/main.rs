@@ -182,6 +182,17 @@ fn update_apply(arguments: &[OsString]) -> Result<()> {
 fn log_update_plan(plan: &pkgre_indexer::update::UpdatePlan, output: &Path) {
     use pkgre_indexer::update::UpdateDecision;
 
+    for candidate in &plan.candidates {
+        info!(
+            registry = candidate.registry,
+            category = candidate.category,
+            package = candidate.name,
+            version = %candidate.candidate.version,
+            decision = ?candidate.decision,
+            reasons = ?candidate.reasons,
+            "planned update candidate"
+        );
+    }
     let automatic = plan
         .candidates
         .iter()
