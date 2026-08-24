@@ -615,7 +615,6 @@ fn build_candidate<R: PlannerResolver>(
         source,
         decision: decision_for_reasons(&reasons),
         reasons: reasons.into_iter().collect(),
-        approvals: Vec::new(),
     })
 }
 

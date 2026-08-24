@@ -479,7 +479,6 @@ mod tests {
             },
             decision: UpdateDecision::Automatic,
             reasons: Vec::new(),
-            approvals: Vec::new(),
         }
     }
 

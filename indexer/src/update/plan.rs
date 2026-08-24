@@ -16,9 +16,7 @@ use crate::index::IndexDependency;
 use super::{ArchiveAnalysis, CompatibilityLane, PackageActivity, PublicationGap, UtcTimestamp};
 
 /// Stable update-plan wire schema.
-pub const UPDATE_PLAN_SCHEMA: u32 = 1;
-/// Maximum accepted age of a plan at apply time.
-pub const MAX_PLAN_AGE_DAYS: u64 = 7;
+pub const UPDATE_PLAN_SCHEMA: u32 = 2;
 
 /// Canonical, catalog-bound result of one read-only update-planning run.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -191,7 +189,7 @@ pub enum SourceEvidence {
 pub enum UpdateDecision {
     /// May be admitted by an automatic batch after ordinary protected review.
     Automatic,
-    /// Requires an exact checksum-bound human archive/source review.
+    /// Merits prioritized human review before the complete registry PR is merged.
     ReviewRequired,
     /// Cannot be admitted by the routine update workflow.
     Blocked,
@@ -225,32 +223,6 @@ pub enum DecisionReason {
     SourceMismatch,
     /// Exact non-implicit identity was explicitly requested.
     ExplicitCandidate,
-}
-
-/// Human review assertion bound to one exact candidate and all decision-relevant evidence.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub struct UpdateApproval {
-    /// Review scope.
-    pub kind: ApprovalKind,
-    /// Candidate binding hash calculated by this indexer.
-    pub binding_sha256: String,
-    /// UTC time at which the local assertion was recorded.
-    pub approved_at: UtcTimestamp,
-    /// Public review note copied from the supplied note file.
-    pub note: String,
-    /// SHA-256 of the exact UTF-8 note.
-    pub note_sha256: String,
-}
-
-/// Explicit human review scope.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ApprovalKind {
-    /// Review of archive changes relative to the exact base.
-    SourceDelta,
-    /// Review of the complete exact candidate archive.
-    FullArchive,
 }
 
 /// Complete evidence and outcome for one exact selected update.
@@ -295,9 +267,6 @@ pub struct UpdateCandidate {
     pub decision: UpdateDecision,
     /// Canonically sorted decision reasons.
     pub reasons: Vec<DecisionReason>,
-    /// Canonically sorted exact human review assertions.
-    #[serde(default)]
-    pub approvals: Vec<UpdateApproval>,
 }
 
 impl ArchiveSummary {
@@ -327,7 +296,7 @@ impl ArchiveSummary {
 ///
 /// # Errors
 ///
-/// Returns an error for invalid schema/policy constants, duplicate candidate identity, noncanonical nested ordering, malformed hashes/approvals, or TOML serialization failure.
+/// Returns an error for invalid schema/policy constants, duplicate candidate identity, noncanonical nested ordering, malformed hashes, or TOML serialization failure.
 pub fn serialize_update_plan(plan: &UpdatePlan) -> Result<Vec<u8>> {
     validate_update_plan(plan)?;
     let text = toml::to_string_pretty(plan).context("serialize canonical update plan")?;
@@ -359,15 +328,13 @@ pub fn load_update_plan(path: &Path) -> Result<UpdatePlan> {
     Ok(plan)
 }
 
-/// Calculates the exact approval binding for one candidate, excluding mutable approval assertions.
+/// Calculates a stable hash of one complete candidate fact record.
 ///
 /// # Errors
 ///
 /// Returns an error if canonical JSON serialization fails.
-pub fn candidate_binding_sha256(candidate: &UpdateCandidate) -> Result<String> {
-    let mut bound = candidate.clone();
-    bound.approvals.clear();
-    let canonical = serde_json::to_vec(&bound).context("serialize candidate approval binding")?;
+pub fn candidate_facts_sha256(candidate: &UpdateCandidate) -> Result<String> {
+    let canonical = serde_json::to_vec(candidate).context("serialize candidate facts")?;
     Ok(sha256_bytes(&canonical))
 }
 
@@ -491,8 +458,7 @@ fn validate_candidate(plan: &UpdatePlan, candidate: &UpdateCandidate) -> Result<
         "candidate reasons are not canonical and unique"
     );
     validate_reason_consistency(candidate)?;
-    validate_decision(candidate)?;
-    validate_approvals(plan, candidate)
+    validate_decision(candidate)
 }
 
 fn validate_candidate_route(candidate: &UpdateCandidate) -> Result<()> {
@@ -611,48 +577,6 @@ fn validate_candidate_archives(candidate: &UpdateCandidate) -> Result<()> {
                     != candidate.candidate_archive.build_surface),
             "archive delta build-surface flag is inconsistent"
         );
-    }
-    Ok(())
-}
-
-fn validate_approvals(plan: &UpdatePlan, candidate: &UpdateCandidate) -> Result<()> {
-    let binding = candidate_binding_sha256(candidate)?;
-    let mut previous = None;
-    for approval in &candidate.approvals {
-        let key = (approval.kind, &approval.approved_at, approval.note.as_str());
-        ensure!(
-            previous.as_ref().is_none_or(|value| value < &key),
-            "candidate approvals are not canonical and unique"
-        );
-        previous = Some(key);
-        ensure!(
-            candidate.decision == UpdateDecision::ReviewRequired,
-            "only review-required candidates may carry approvals"
-        );
-        ensure!(
-            approval.binding_sha256 == binding,
-            "candidate approval binding does not match current evidence"
-        );
-        approval
-            .approved_at
-            .duration_since(&plan.evaluated_at)
-            .context("candidate approval predates plan evaluation")?;
-        ensure!(!approval.note.trim().is_empty(), "approval note is empty");
-        ensure!(
-            approval.note == approval.note.trim(),
-            "approval note has leading or trailing whitespace"
-        );
-        ensure!(
-            approval.note_sha256 == sha256_bytes(approval.note.as_bytes()),
-            "approval note hash mismatch"
-        );
-        validate_hash(&approval.note_sha256, "approval note hash")?;
-        if approval.kind == ApprovalKind::SourceDelta {
-            ensure!(
-                candidate.archive_delta.is_some(),
-                "source-delta approval requires a review base"
-            );
-        }
     }
     Ok(())
 }
@@ -1173,25 +1097,14 @@ mod tests {
     }
 
     #[test]
-    fn candidate_binding_excludes_approvals_but_canonical_plan_validates_them() {
+    fn candidate_facts_hash_binds_the_complete_approval_free_record() {
         let mut plan = sample_plan();
-        let binding = candidate_binding_sha256(&plan.candidates[0]).unwrap();
-        plan.candidates[0].approvals.push(UpdateApproval {
-            kind: ApprovalKind::FullArchive,
-            binding_sha256: binding.clone(),
-            approved_at: UtcTimestamp::parse("2026-08-23T20:00:00Z").unwrap(),
-            note: "Reviewed the complete archive.".to_owned(),
-            note_sha256: sha256_bytes(b"Reviewed the complete archive."),
-        });
-        assert_eq!(
-            binding,
-            candidate_binding_sha256(&plan.candidates[0]).unwrap()
-        );
-        let bytes = serialize_update_plan(&plan).unwrap();
-        let parsed: UpdatePlan = toml::from_slice(&bytes).unwrap();
-        assert_eq!(serialize_update_plan(&parsed).unwrap(), bytes);
+        let hash = candidate_facts_sha256(&plan.candidates[0]).unwrap();
+        let text = String::from_utf8(serialize_update_plan(&plan).unwrap()).unwrap();
+        assert!(!text.contains("approval"));
+        assert!(!text.contains("binding-sha256"));
         plan.candidates[0].candidate.crate_sha256 = "22".repeat(32);
-        assert!(serialize_update_plan(&plan).is_err());
+        assert_ne!(hash, candidate_facts_sha256(&plan.candidates[0]).unwrap());
     }
 
     #[test]
@@ -1290,7 +1203,6 @@ mod tests {
                     DecisionReason::SourceUnavailable,
                     DecisionReason::ExplicitCandidate,
                 ],
-                approvals: Vec::new(),
             }],
         }
     }

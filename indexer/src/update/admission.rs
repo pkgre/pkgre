@@ -349,12 +349,6 @@ fn validate_admission_lock(
             candidate.name,
             candidate.candidate.version
         );
-        ensure!(
-            candidate.approvals.is_empty(),
-            "generated admission candidate {} {} carries obsolete plan approvals",
-            candidate.name,
-            candidate.candidate.version
-        );
         let identity = candidate_identity(candidate);
         let request = requests.remove(&identity).with_context(|| {
             format!(
@@ -678,7 +672,6 @@ mod tests {
                 DecisionReason::SourceUnavailable,
                 DecisionReason::ExplicitCandidate,
             ],
-            approvals: Vec::new(),
         }
     }
 

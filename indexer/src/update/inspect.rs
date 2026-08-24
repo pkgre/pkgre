@@ -13,7 +13,7 @@ use crate::import;
 use super::workflow::{LivePlannerResolver, PlannerResolver, recompute_admission_plan_with};
 use super::{
     AdmissionManifest, ArchiveAnalysis, ArchiveDelta, SourceEvidence, UpdateCandidate, UpdatePlan,
-    UtcTimestamp, candidate_binding_sha256, compare_archive_analyses, inspect_crate_archive,
+    UtcTimestamp, candidate_facts_sha256, compare_archive_analyses, inspect_crate_archive,
     load_admission_manifest,
 };
 
@@ -28,7 +28,7 @@ struct InspectionReport<'a> {
     indexer_version: &'a str,
     catalog_sha256: &'a str,
     evaluated_at: &'a UtcTimestamp,
-    candidate_binding_sha256: String,
+    candidate_facts_sha256: String,
     candidate: &'a UpdateCandidate,
     candidate_analysis: &'a ArchiveAnalysis,
     base_analysis: Option<&'a ArchiveAnalysis>,
@@ -163,7 +163,7 @@ fn materialize_recomputed_candidate<R: InspectionResolver>(
         indexer_version: &plan.indexer_version,
         catalog_sha256: &plan.catalog_sha256,
         evaluated_at: &plan.evaluated_at,
-        candidate_binding_sha256: candidate_binding_sha256(candidate)?,
+        candidate_facts_sha256: candidate_facts_sha256(candidate)?,
         candidate,
         candidate_analysis: &candidate_analysis,
         base_analysis: base_analysis.as_ref(),
@@ -298,7 +298,7 @@ mod tests {
         assert!(!output.join("base.crate").exists());
         let report = fs::read_to_string(output.join("inspection.toml")).unwrap();
         assert!(report.contains("schema = 1"));
-        assert!(report.contains("candidate-binding-sha256"));
+        assert!(report.contains("candidate-facts-sha256"));
         assert!(report.contains("build.rs"));
         assert!(
             fs::read_to_string(output.join("README.txt"))
@@ -403,7 +403,6 @@ mod tests {
                 },
                 decision: UpdateDecision::ReviewRequired,
                 reasons,
-                approvals: Vec::new(),
             }],
         }
     }

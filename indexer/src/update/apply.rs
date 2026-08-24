@@ -100,10 +100,6 @@ pub(crate) fn apply_admission_manifest_with<
             candidate.name,
             candidate.candidate.version
         );
-        ensure!(
-            candidate.approvals.is_empty(),
-            "fresh admission facts unexpectedly carry obsolete approvals"
-        );
     }
     let (admission_lock, batch_sha256) = prepare_admission_lock(&manifest, &plan, admitted_at)?;
 
