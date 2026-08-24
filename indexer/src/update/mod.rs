@@ -7,6 +7,7 @@ mod approval;
 mod archive;
 mod declaration;
 mod inspect;
+mod manifest;
 mod plan;
 mod policy;
 mod source;
@@ -22,6 +23,10 @@ pub use apply::apply_update_plan;
 pub use approval::{approve_update_plan, required_approval_kind};
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};
 pub use inspect::inspect_update_candidate;
+pub use manifest::{
+    ADMISSION_MANIFEST_SCHEMA, AdmissionEvidence, AdmissionManifest, AdmissionRequest,
+    load_admission_manifest, serialize_admission_manifest,
+};
 pub use plan::{
     ApiEvidence, ApiVersionEvidence, ApprovalKind, ArchiveDelta, ArchiveSummary, DecisionReason,
     DependencyDelta, MAX_PLAN_AGE_DAYS, PlannedIdentity, SourceEvidence, TrustedPublishingEvidence,
