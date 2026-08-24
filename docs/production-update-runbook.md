@@ -1,6 +1,6 @@
 # Production mirror-admission runbook
 
-Purpose:execute one live crates.io mirror batch against `pkgre/rust` with the exact `pkgre-indexer` revision deployed by the catalog's main-branch Pages workflow; leave one complete registry-index PR unmerged for curator review.
+Purpose:execute one live crates.io mirror batch against `pkgre/rust` with the exact `pkgre-indexer` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
 
 Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 
@@ -98,6 +98,8 @@ catalog_manifest() {
 assert_catalog_clean() { test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"; }
 
 catalog_manifest "$ARTIFACTS/catalog-before-plan.manifest"
+test -f "$CATALOG_DIR/downloads.json"
+cp -- "$CATALOG_DIR/downloads.json" "$ARTIFACTS/downloads-before.json"
 assert_catalog_clean
 ```
 
@@ -215,7 +217,7 @@ Never rebase/carry a prepared manifest onto an unreviewed catalog base; restart 
 grep -Eq "packages_added=$EXPECTED_CANDIDATES([^0-9]|$)" "$ARTIFACTS/apply.log"
 ```
 
-Apply behavior:load canonical human requests; use current UTC policy clock; re-fetch/recompute every exact identity; reject young/yanked/locked/blocked/route-invalid/evidence-invalid requests; never substitute versions; calculate one generated batch lock; stage declarations, source rows, registry locks, exact human manifest, and generated lock; strict-load/object-verify/test-render complete staged catalog; atomically install with rollback. Failure → do not hand-edit generated state; restore/verify clean base and replan when needed.
+Apply behavior:load canonical human requests; use current UTC policy clock; re-fetch/recompute every exact identity; reject young/yanked/locked/blocked/route-invalid/evidence-invalid requests; never substitute versions; calculate one generated batch lock; stage declarations, source rows, registry locks, canonical generated `downloads.json`, exact human manifest, and generated lock; strict-load/object-verify/test-render complete staged catalog; atomically install with rollback. Failure → do not hand-edit generated state; restore/verify clean base and replan when needed.
 
 ## 8. Audit the exact catalog diff + batch binding
 
@@ -246,16 +248,26 @@ test "$(wc -l < "$ARTIFACTS/new-admission-hashes.txt")" -eq "$EXPECTED_CANDIDATE
 test "$(LC_ALL=C sort -u "$ARTIFACTS/new-admission-hashes.txt" | wc -l)" -eq 1
 test "$(head -n 1 "$ARTIFACTS/new-admission-hashes.txt")" = "$BATCH_HASH"
 printf 'batch-lock-sha256=%s\n' "$BATCH_HASH" >> "$ARTIFACTS/session.txt"
+
+jq -cS '.routes[]' "$ARTIFACTS/downloads-before.json" | LC_ALL=C sort > "$ARTIFACTS/download-routes-before.ndjson"
+jq -cS '.routes[]' "$CATALOG_DIR/downloads.json" | LC_ALL=C sort > "$ARTIFACTS/download-routes-after.ndjson"
+LC_ALL=C comm -23 "$ARTIFACTS/download-routes-before.ndjson" "$ARTIFACTS/download-routes-after.ndjson" > "$ARTIFACTS/download-routes-missing.ndjson"
+LC_ALL=C comm -13 "$ARTIFACTS/download-routes-before.ndjson" "$ARTIFACTS/download-routes-after.ndjson" > "$ARTIFACTS/download-routes-added.ndjson"
+test ! -s "$ARTIFACTS/download-routes-missing.ndjson"
+test "$(wc -l < "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
+test "$(jq -s '[.[] | select(.registry == "universe" and .source == "crates-io")] | length' "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
+cat "$ARTIFACTS/download-routes-added.ndjson"
 ```
 
 Account for every path/byte:
 
 - only intended category declaration arrays gain the exact manifest versions;
 - root generated registry locks gain exactly one active crates.io identity/request with exact route/archive/source-row/routed-row hashes + shared `$BATCH_HASH`;
+- canonical `downloads.json` gains exactly one active `crates-io` route/request with exact registry/name/version/archive hash; no prior route changes/disappears;
 - exactly one new canonical source-row object/request;
 - exactly one immutable `admissions/$BATCH.toml` + `admissions/$BATCH.lock` pair for the complete batch;
 - no `objects/crates/*` diff:mirror `.crate` bytes are verified then discarded and Cargo downloads through `https://static.crates.io/crates`;
-- no topology, `may-depend-on`, registry URL/download, name-home, prior identity/object, first-party archive, workflow/site, or unrelated change.
+- no topology, `may-depend-on`, registry URL/download, name-home, prior identity/object/route, first-party archive, workflow/site, or unrelated change.
 
 Unexpected churn/count/hash/route/object mismatch → abort; never normalize generated files by hand.
 
@@ -280,8 +292,10 @@ SITE_NEXT="$ARTIFACTS/site-next"
 SITE_CURRENT="$ARTIFACTS/site-current"
 "$INDEXER" render "$CATALOG_DIR" "$SITE_NEXT" 2>&1 | tee "$ARTIFACTS/render.log"
 "$INDEXER" verify "$CATALOG_DIR" "$SITE_NEXT" 2>&1 | tee "$ARTIFACTS/verify.log"
+cmp "$CATALOG_DIR/downloads.json" "$SITE_NEXT/downloads.json"
 mkdir "$SITE_CURRENT"
 curl --fail --silent --show-error --retry 3 https://rust.pkg.re/release.json --output "$SITE_CURRENT/release.json"
+curl --fail --silent --show-error --retry 3 https://rust.pkg.re/downloads.json --output "$SITE_CURRENT/downloads.json"
 "$INDEXER" verify-monotonic "$SITE_CURRENT" "$SITE_NEXT" 2>&1 | tee "$ARTIFACTS/verify-monotonic.log"
 
 jq -S '.registries' "$SITE_CURRENT/release.json" > "$ARTIFACTS/registries-current.json"
@@ -305,9 +319,17 @@ test "$NEXT_PACKAGE_COUNT" -eq "$((CURRENT_PACKAGE_COUNT + EXPECTED_CANDIDATES))
 test "$ADDED_PACKAGE_COUNT" -eq "$EXPECTED_CANDIDATES"
 printf 'current names=%s packages=%s\nnext names=%s packages=%s\nadded=%s expected=%s\n' "$CURRENT_NAME_COUNT" "$CURRENT_PACKAGE_COUNT" "$NEXT_NAME_COUNT" "$NEXT_PACKAGE_COUNT" "$ADDED_PACKAGE_COUNT" "$EXPECTED_CANDIDATES" | tee "$ARTIFACTS/release-counts.txt"
 cat "$ARTIFACTS/packages-added.ndjson"
+
+jq -cS '.routes[]' "$SITE_CURRENT/downloads.json" | LC_ALL=C sort > "$ARTIFACTS/live-routes-current.ndjson"
+jq -cS '.routes[]' "$SITE_NEXT/downloads.json" | LC_ALL=C sort > "$ARTIFACTS/live-routes-next.ndjson"
+LC_ALL=C comm -23 "$ARTIFACTS/live-routes-current.ndjson" "$ARTIFACTS/live-routes-next.ndjson" > "$ARTIFACTS/live-routes-missing.ndjson"
+LC_ALL=C comm -13 "$ARTIFACTS/live-routes-current.ndjson" "$ARTIFACTS/live-routes-next.ndjson" > "$ARTIFACTS/live-routes-added.ndjson"
+test ! -s "$ARTIFACTS/live-routes-missing.ndjson"
+test "$(wc -l < "$ARTIFACTS/live-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
+cmp "$ARTIFACTS/download-routes-added.ndjson" "$ARTIFACTS/live-routes-added.ndjson"
 ```
 
-Require byte reproduction, monotonicity, unchanged registry/category/index/download/allowlist topology, unchanged name inventory, no missing package, and exact intended additions/count. Any live/current-base mismatch → investigate/restart; do not bypass.
+Require byte reproduction, monotonicity, unchanged registry/category/index/download/allowlist topology, unchanged name inventory, no missing package/route, and exact intended package + download-route additions/count. Any live/current-base mismatch → investigate/restart; do not bypass.
 
 ## 11. Stage + commit one atomic registry change
 
@@ -328,7 +350,7 @@ Commit exact declarations + root locks + row objects + admission pair together. 
 
 ## 12. Push + open final curator-review PR
 
-Create a public-safe body. Include:batch manifest link/path; complete identity list or exact generated diff reference; candidate/automatic/review-required/blocked counts; catalog base SHA; deployed indexer SHA/version/binary SHA-256; review prioritization/optional evidence performed; admission-pair/shared-hash proof; exact added row/package counts; `check`; second-lock no-op; render/verify/verify-monotonic; no mirror archive objects; issue-closing statement when applicable. Exclude transient paths/raw logs/private data.
+Create a public-safe body. Include:batch manifest link/path; complete identity list or exact generated diff reference; candidate/automatic/review-required/blocked counts; catalog base SHA; deployed indexer SHA/version/binary SHA-256; review prioritization/optional evidence performed; admission-pair/shared-hash proof; exact added row/package/download-route counts; `check`; second-lock no-op; render/verify/verify-monotonic; no mirror archive objects; issue-closing statement when applicable. Exclude transient paths/raw logs/private data.
 
 ```bash
 git -C "$CATALOG_REPO" push --set-upstream origin "$BRANCH"

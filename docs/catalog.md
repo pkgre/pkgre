@@ -10,7 +10,7 @@
 - Irreversible history: old immutable lock fields remain exact; only additions + `active→removed` are valid; removed identities cannot reactivate.
 - Explicit routing: every reserved package name has one permanent registry/category home; every dependency edge is rewritten to that registry home + checked against the source category's exact `may-depend-on` set.
 - Exact artifacts: crates.io `.crate` bytes are fetched + checksum-verified but not stored; Git-tag packages are reproduced twice with pinned Cargo + retained by content hash.
-- Source-class separation: one registry is mirror-only or Git-only because Cargo exposes one `dl` URL per registry; mixed classes fail closed.
+- Source-aware downloads: Cargo exposes one `dl` URL per registry; a mixed mirror/Git registry must use its exact checksum-bearing immutable-router template, while a single-source registry may retain its fixed source-specific endpoint.
 
 ## Managed layout
 
@@ -20,6 +20,7 @@ registry/
 ├── universe.lock
 ├── pkgre.toml
 ├── pkgre.lock
+├── downloads.json
 ├── categories/
 │   └── universe/
 │       ├── general.toml
@@ -32,7 +33,7 @@ registry/
     └── rows/<source-row-sha256>.json
 ```
 
-`registry/` is exclusive managed state. Accepted entries: real regular registry `.toml` + adjacent `.lock` files; exact referenced category files; paired canonical admission `.toml`/`.lock` regular files; exact content-addressed objects. Orphan files/directories, nested admission entries, symlinks, special files, noncanonical content, locks without declarations, missing/extra admission pairs, and unexpected objects fail before network resolution. Keep proposals, transient admission manifests, inspection trees, scripts, logs, and rendered sites outside this directory.
+`registry/` is exclusive managed state. Accepted entries: real regular registry `.toml` + adjacent `.lock` files; canonical generated `downloads.json`; exact referenced category files; paired canonical admission `.toml`/`.lock` regular files; exact content-addressed objects. Orphan files/directories, nested admission entries, symlinks, special files, noncanonical content, locks without declarations, missing/extra admission pairs, and unexpected objects fail before network resolution. Keep proposals, transient admission manifests, inspection trees, scripts, logs, and rendered sites outside this directory.
 
 ## Human registry/category declarations
 
@@ -97,12 +98,34 @@ Declaration rules:
 - Filename stem = `[registry].name`; schema, aliases, URLs, source-class download, topology, and Cargo version are strict.
 - Category identity = `<registry>/<local-category>`; components are lowercase ASCII kebab-case, ≤64 bytes each, start/end alphanumeric, and qualified form contains exactly one `/`.
 - Inline category = `may-depend-on` + optional `mirror`/`publish`; external reference = only `file`; external file = `schema`, `may-depend-on`, optional `mirror`/`publish`.
-- `[mirror]`: package name → exact SemVer list; accepted in `universe`; source bytes + row come from crates.io.
-- `[publish]`: package name → credential-free HTTPS Git URL + literal tags; accepted in `pkgre`.
-- One registry is mirror-only or publish-only, including empty permanent name anchors.
+- `[mirror]`: package name → exact SemVer list; current production mirror names live in `universe`; source bytes + row come from crates.io.
+- `[publish]`: package name → credential-free HTTPS Git URL + literal tags; current production publishers live in `pkgre`.
+- Mirror + publish names may coexist in one registry only when `[registry].download` is exactly `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}`; a single-source registry may instead use its canonical source-specific endpoint.
 - Package names are permanent reservations under Cargo ASCII case + `-`/`_` normalization; a name cannot move registry/category or switch source class.
 - Retain a removed mirror key with `[]`; retain a removed publisher key, unchanged `git`, with `tags = []`.
 - Every canonical category must reserve ≥1 package name; SemVer build metadata does not distinguish Cargo registry identities.
+
+Mixed-source declaration example:
+
+```toml
+[registry]
+name = "universe"
+index = "sparse+https://rust.pkg.re/universe/"
+download = "https://dl.rust.pkg.re/v1/universe/{crate}/{version}/{sha256-checksum}"
+cargo-version = "1.95.0"
+
+[categories.general]
+may-depend-on = ["universe/general"]
+
+[categories.general.mirror]
+serde = ["1.0.229"]
+
+[categories.general.publish.example-first-party]
+git = "https://github.com/pkgre/example-first-party"
+tags = ["v1.0.0"]
+```
+
+The router template is registry-bound; copying the `universe` template into `pkgre`, omitting the checksum component, using another hostname/path, or retaining a direct source endpoint for a mixed registry fails locally before resolution/rendering. Existing permanent names still cannot switch source class.
 
 Canonical category policy:
 
@@ -171,6 +194,27 @@ cargo-version = "1.95.0"
 
 Never hand-edit generated locks. Local load validates canonical form, category/source anchors, provenance, object hashes, source-row identity/checksum, routed-row hash, and exact bidirectional batch↔package coverage before any fetch. Legacy/bootstrap mirror identities may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity once a catalog has any registry lock.
 
+## Generated download catalog
+
+Canonical `registry/downloads.json` is generated from active package locks only:
+
+```json
+{
+  "schema": 1,
+  "routes": [
+    {
+      "registry": "universe",
+      "name": "serde",
+      "version": "1.0.229",
+      "sha256": "<64-lowercase-hex>",
+      "source": "crates-io"
+    }
+  ]
+}
+```
+
+Route sort order + identity are strict; name remains case-sensitive; version must be canonical SemVer; source is closed to `crates-io|git-tag`; duplicate `(registry,name,version)`, unknown fields/schema/registry, noncanonical JSON, nonregular file, wrong/extra/missing routes, or >16 MiB fails `Catalog::load`/`check`. `lock` regenerates missing/stale catalog bytes transactionally. `render` writes the exact same active projection to the Pages root. Removed identities are excluded; archive/source-row objects remain governed by their existing retention rules. Destinations are not stored: the service derives one of two hardcoded origins from the closed source enum. Full service/proxy contract: [`download-routing.md`](download-routing.md).
+
 ## Human admission manifest
 
 `update-plan` emits a directly applyable compact template outside the catalog:
@@ -235,7 +279,7 @@ Planning facts are intentionally not authority: there is no stale machine-plan f
 
 ## Mirror materialization
 
-For each selected/admitted mirror identity, the indexer fetches the complete sparse history + exact `.crate` over HTTPS, selects exactly one matching row, rejects upstream-yanked/young/malformed identities, validates Cargo metadata, and requires archive SHA-256 = row `cksum`. Planning/apply also analyze bounded archive/dependency/API/source evidence. The exact selected row including trailing newline becomes a retained content-addressed object; verified archive bytes are discarded. Cargo later downloads through `https://static.crates.io/crates/<name>/<version>/download` and validates against the curated row checksum; crates.io controls availability, not accepted metadata/integrity.
+For each selected/admitted mirror identity, the indexer fetches the complete sparse history + exact `.crate` over HTTPS, selects exactly one matching row, rejects upstream-yanked/young/malformed identities, validates Cargo metadata, and requires archive SHA-256 = row `cksum`. Planning/apply also analyze bounded archive/dependency/API/source evidence. The exact selected row including trailing newline becomes a retained content-addressed object; verified archive bytes are discarded. Cargo later reaches `https://static.crates.io/crates/<name>/<version>/download` directly or through the immutable router and validates against the curated row checksum; crates.io controls availability, not accepted metadata/integrity.
 
 ## Reconciliation
 
@@ -247,7 +291,7 @@ For each selected/admitted mirror identity, the indexer fetches the complete spa
 4. Route dependencies against permanent homes; reject missing homes or forbidden category edges.
 5. Generate canonical locks; preserve old entries; mark no-longer-desired active entries `removed`.
 6. Build a complete sibling staging catalog; retain all source rows; retain archives used by ≥1 active Git identity; omit all mirror archives + unshared removed Git archives.
-7. Strictly reload, object-verify, and test-render staging.
+7. Regenerate canonical `downloads.json`; strictly reload, object-verify, and test-render staging.
 8. Install by same-parent rename with rollback + sync; remove guard.
 
 Unchanged second reconciliation = exact no-op. A crash can leave `.registry.pkgre-lock`; remove it only after confirming no reconciliation is active. Staging/backup siblings use `.registry.pkgre-*` names and are recovery state, not catalog entries.
@@ -287,13 +331,14 @@ site/
 ├── .nojekyll
 ├── CNAME
 ├── release.json
+├── downloads.json
 ├── universe/config.json
 ├── pkgre/config.json
 ├── <registry>/<Cargo sparse-index package paths>
 └── crates/<active-git-archive-sha256>.crate
 ```
 
-`release.json` schema 3 records exact topology, permanent name category/source anchors, and package identities. Schema-3→3 `verify-monotonic` requires topology + anchors + immutable fields unchanged and permits only additions + `active→removed`.
+`release.json` schema 3 records exact topology, permanent name category/source anchors, and package identities. Top-level `downloads.json` is the exact active-package route projection. Schema-3→3 `verify-monotonic` requires topology + anchors + immutable fields unchanged, authenticates the route projection, permits additions + `active→removed` + source-specific→exact-router `dl` migration, and forbids arbitrary download endpoints.
 
 ## Exact schema-2→3 migration
 

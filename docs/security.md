@@ -7,12 +7,13 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 ## Trust anchors
 
 - Curators: choose package/version/category home, inspect selected bytes/evidence proportionately, review generated catalog changes, authorize protected merges/removals.
-- Public catalog/index repository: reviewable desired state + immutable registry locks, row/archive objects, human admission manifests, generated admission locks; branch administration remains privileged.
+- Public catalog/index repository: reviewable desired state + immutable registry locks, generated download catalog, row/archive objects, human admission manifests, generated admission locks; branch administration remains privileged.
 - Human admission manifest: compact authorization intent containing exact category/name/version or tag + optional typed evidence; no mutable machine hashes.
 - Generated admission lock: complete current network-backed evidence recomputed at apply and bound by SHA-256 into every admitted package lock.
-- `pkgre-indexer`: enforces schema, update selection/policy, manifest↔batch↔package binding, lifecycle, artifact, routing, rendering, migration, and release invariants; bugs can invalidate guarantees.
+- `pkgre-indexer`: enforces schema, update selection/policy, manifest↔batch↔package binding, lifecycle, artifact, dependency routing, download-catalog generation, rendering, migration, and release invariants; bugs can invalidate guarantees.
+- `pkgre-download-serve`: maps an exact checksum-bearing route from a fully validated commit-pinned catalog to one of two hardcoded upstream forms; service/proxy bugs can invalidate availability or redirect guarantees.
 - Nix pins + Rust/Cargo `1.95.0`: tooling build inputs + first-party packaging semantics.
-- GitHub Pages + TLS/DNS: row/Git-archive availability/delivery; crates.io CDN: mirror-archive availability/delivery; Cargo checksums reject bytes differing from curated row.
+- GitHub Pages + TLS/DNS: row/Git-archive availability/delivery; GitHub ref/raw endpoints: router catalog freshness; download router + nginx: route authorization/delivery; crates.io CDN: mirror-archive availability/delivery; Cargo checksums reject bytes differing from curated row.
 - crates.io sparse/API/archive + public Git during plan/apply: candidate evidence origins; their current observations remain uncommitted until exact recomputation + transaction + protected PR review.
 
 ## Authority boundaries
@@ -37,7 +38,10 @@ Planning is candidate discovery, not authority. `update-plan` performs full curr
 
 ## Enforced invariants
 
-- Exactly two canonical registries/URLs/download classes: mirror-only `universe` uses `https://static.crates.io/crates`; publish-only `pkgre` uses pkg.re content-addressed template; mixed classes fail because Cargo has one index-wide `dl` URL.
+- Exactly two canonical registries/URLs. A single-source registry may use its canonical direct source endpoint; mirror+publish in one registry requires its exact `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}` template. Arbitrary download origins/templates fail.
+- Router route identity is exact registry + case-sensitive package name + canonical SemVer + lowercase 64-hex checksum. Only `GET|HEAD` can return `307`; destination is derived exclusively from `crates-io|git-tag`, never catalog/user URL data. Query/fragment/percent-encoding/malformed/oversized targets fail `404` without refresh.
+- Service catalog fetch is fixed HTTPS GitHub main-ref → validated 40-hex commit → immutable raw `registry/downloads.json`; redirects + environment proxies are disabled; bodies/timeouts are bounded; only canonical valid data replaces in-memory last-known-good. Refresh is minimum-interval/single-flight/cancellation-safe; failed freshness makes unknown routes `503`, not authoritative `404`.
+- Backend trusts one original-request-target header only across a private fixed nginx boundary. Backend exposure, forwarding a client-selected duplicate header, URI rewrite/normalization, or variable/user-controlled proxy upstream is forbidden; nginx must overwrite it with raw `$request_uri`.
 - New mirror candidates: non-yanked + at least 30 exact days old. Implicit planning selects only latest eligible stable release per active lane (`major≥1` by major; stable `0.minor`, `minor>0`, by minor). New/inactive names, prereleases, and `0.0.x` require exact planning.
 - A candidate after a ≥365-day adjacent publication gap from locked base is review-required; yanked/prerelease rows count as activity; gate persists through post-gap burst until one post-gap identity is locked.
 - New/inactive name, dormant wake-up, new dependency identity, build-surface change, publisher/repository discontinuity promote best-effort Git source correspondence. Unavailable promoted source = review-required; archive/source mismatch = blocked.
@@ -55,11 +59,11 @@ Planning is candidate discovery, not authority. `update-plan` performs full curr
 - Mirrored archive = crates.io artifact checksum in exact retained row; archive verified then discarded; upstream-yanked versions rejected.
 - First-party package binds HTTPS repository + literal tag + tag object + peeled commit + package/version/path + pinned Cargo version + reproducible archive.
 - First-party manifest sets exactly `publish = ["pkgre"]`; every dependency explicitly names `universe` or `pkgre`; path/Git/crates.io/unknown sources fail.
-- Exact archive/source-row/routed-active-row SHA-256 binds every package; only active Git-tag archive bytes retained locally.
+- Exact archive/source-row/routed-active-row SHA-256 binds every package; only active Git-tag archive bytes retained locally. Canonical generated `downloads.json` must equal the exact active-lock projection `(registry, case-sensitive name, canonical version, archive hash, closed source enum)` and is authenticated again by rendered-release verification.
 - Lifecycle append-only: additions + `active→removed`; removal retains source row + yanked history, removes unshared Git archive, cannot reverse.
 - Existing locks/objects/rows/admissions/category/name anchors pass complete local preflight before public fetch.
 - Complete replacement staged, strict-loaded, object-verified, test-rendered, then same-parent installed with rollback.
-- Root/category/admission/object boundaries reject unrelated entries, traversal, symlink substitution, nonregular inputs, missing/extra objects, orphan files, noncanonical generated files.
+- Root/category/admission/object boundaries reject unrelated entries, traversal, symlink substitution, nonregular inputs, missing/extra objects, orphan files, noncanonical generated files; generated download catalogs are size-bounded + canonical + exact.
 - Render output goes to absent path; `verify` requires byte identity; `verify-monotonic` rejects identity disappearance, immutable/category mutation, topology change, tombstone reactivation.
 - Schema-2→3 migration authenticates canonical old catalog, exact mapping, source objects, old/new routed hashes, and staged render; source never modified.
 
@@ -92,12 +96,12 @@ Cargo has no universal registry allowlist and cannot enforce pkg.re categories: 
 - No claim admitted code is benign, correct, maintained, vulnerability-free, or adequately reviewed.
 - No defense against malicious toolchain/kernel/hardware, compromised curator/repository/DNS/Pages credentials, or malicious protected-merge approval.
 - No registry authentication/write API, private-package ACL, or mutable `cargo publish` endpoint.
-- No mirror+Git mix in one registry yet; safe support needs pkg.re dispatch/redirect endpoint + permanent source/checksum semantics.
+- Mixed mirror+Git is supported only through the fixed immutable router; this does not permit a package name to move/switch source class or let catalog data choose an arbitrary URL.
 - Source correspondence is best-effort mechanical evidence, not semantic audit/provenance proof. Successful match cannot prove benign/complete source; unavailable public Git becomes review-required; mismatch blocks.
 - Planning/apply requires current crates.io sparse/API/archive + promoted public Git availability; outage/deletion/rate limit can stop admission.
 - No automatic re-fetch/reproduction of already locked Git tag during `check`; retained archive/row is operational authority.
 - No prevention of network/process behavior by admitted build scripts/proc macros/native/runtime code; isolate builds/credentials separately.
-- SHA-256 provides integrity, not availability; Pages/DNS outage stops index/Git archive; crates.io outage/removal stops mirror archive.
+- SHA-256 provides integrity, not availability; Pages/DNS outage stops index/Git archive; crates.io outage/removal stops mirror archive; router/GitHub ref/raw outage can stop unknown/new routes while last-known-good known routes continue in memory.
 - Removed rows remain visible as yanked; shared active Git content can keep identical archive downloadable; crates.io controls mirror availability.
 - Git dependencies bypass registry routing + remain unsupported.
 - Generated locks cannot distinguish authorized reviewed change from privileged actor replacing lock + matching objects without history review; branch protection, signed human commits if desired, monotonic releases, retained history provide boundary.
@@ -107,8 +111,10 @@ Cargo has no universal registry allowlist and cannot enforce pkg.re categories: 
 - Protect `main`; require CI + review; never force-push/bypass; minimize workflow permissions; pin actions/tooling by full SHA.
 - Keep catalog public + provenance-free: no consumer names, private paths/manifests/lockfiles/discovery output, credentials, or tokens.
 - Keep transient manifests, inspection trees, logs, notes outside `registry/`; `update-apply` copies exact final manifest into `admissions/` + generates its lock atomically.
-- Treat category declarations, registry locks, row/Git objects, and admission pairs as security-sensitive; reject hand edits/unexplained churn.
+- Treat category declarations, registry locks, generated download catalog, row/Git objects, and admission pairs as security-sensitive; reject hand edits/unexplained churn.
+- Bind `pkgre-download-serve` only to loopback/private namespace; nginx uses fixed `proxy_pass`, overwrites `X-Pkgre-Original-URI` from `$request_uri`, and exposes `/healthz` + `/status`; alert on not-ready/stale commit/refresh errors.
+- Publish catalog before deploying the service, verify service before switching any `dl`, and revert `dl` first during rollback; never make the live index depend on an unready router.
 - Compare candidate site with deployed `release.json` via `verify-monotonic` before publication.
-- Preserve prior rendered releases/backups; periodically verify live hashes + clean-cache builds across both registries/categories.
+- Preserve prior rendered releases/backups; periodically verify live hashes + router status/redirects + clean-cache builds across both registries/categories.
 - Confirm no active reconciliation before deleting stale guard.
 - Enable GitHub secret scanning/push protection; architecture requires no publication token.
