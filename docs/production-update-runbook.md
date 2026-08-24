@@ -1,21 +1,14 @@
-# Production mirror-update runbook
+# Production mirror-admission runbook
 
-Purpose: admit crates.io mirror identities into the production `pkgre/rust` catalog with the exact indexer revision deployed by its main-branch Pages workflow; preserve read-only planning, checksum-bound review, transactional catalog mutation, reproducibility, monotonic publication, and curator control.
+Purpose:execute one live crates.io mirror batch against `pkgre/rust` with the exact `pkgre-indexer` revision deployed by the catalog's main-branch Pages workflow; leave one complete registry-index PR unmerged for curator review.
 
-Scope: mirror updates only. First-party Git tags, removals, catalog migration, and category/name reservation use the procedures in [`workflows.md`](workflows.md). `automatic` means no separate approval assertion; every catalog change still requires complete source-control review + protected-branch CI. The actual catalog PR must remain unmerged until a curator explicitly reviews it.
+Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 
-## 1. Preconditions
+## 1. Preconditions + immutable inputs
 
-Required:
+Required:Linux; Bash; Nix flakes; Git; authenticated GitHub CLI; `curl`; `jq`; `sha256sum`; GNU coreutils/tar; public network; clean checkouts; push/PR permission. Privacy:never publish credentials/tokens, consumer names, private repository/path/manifest/lock/dependency data, or raw private logs. Transient manifests, inspections, logs, patches, and rendered trees stay in a mode-`0700` external workspace.
 
-- Linux; Bash; Nix with flakes; Git; GitHub CLI (`gh`); `curl`; `jq`; GNU `tar`; standard coreutils; public network access.
-- Authenticated push access to the tooling/catalog remotes + authenticated `gh` access for PR creation.
-- Existing clean catalog checkout at current `origin/main`; no local/untracked files.
-- Existing clean tooling checkout able to resolve the workflow-pinned commit.
-- Candidate package names already permanently reserved in the correct registry/category. Routing/category changes are separate reviewed work and invalidate an existing plan.
-- Public-safe operation: no credentials, tokens, consuming-project names, private repository names, private paths, manifests, lockfiles, dependency-discovery output, or consumer metadata in commits, PR text, public issues, or published logs/artifacts. Keep local plans, notes, review trees, and logs private under the mode-`0700` workspace; approval-note text becomes public catalog evidence.
-
-Start one Bash session:
+Start one Bash session; set absolute paths if different:
 
 ```bash
 set -euo pipefail
@@ -25,12 +18,16 @@ CATALOG_REPO=/absolute/path/to/pkgre-rust
 TOOL_REPO=/absolute/path/to/pkgre
 CATALOG_DIR="$CATALOG_REPO/registry"
 PAGES_WORKFLOW=.github/workflows/pages.yml
+BATCH="$(date -u +%F)-bulk"
+BRANCH="registry/$BATCH"
 
-for command in sh git gh nix curl jq tar sha256sum stat realpath mktemp date sort comm sed grep awk cmp wc chmod cut mkdir tee cat; do
+for command in sh git gh nix curl jq sha256sum stat realpath mktemp date sort comm sed grep awk cmp wc chmod cut head mkdir tee tar find uniq; do
   command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
+printf '%s\n' "$BATCH" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,126}[a-z0-9])?$'
 
 git -C "$CATALOG_REPO" fetch --prune origin
+git -C "$TOOL_REPO" fetch --prune origin
 test "$(git -C "$CATALOG_REPO" branch --show-current)" = main
 test "$(git -C "$CATALOG_REPO" rev-parse HEAD)" = "$(git -C "$CATALOG_REPO" rev-parse origin/main)"
 test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
@@ -42,20 +39,20 @@ printf '%s\n' "$INDEXER_REV" | grep -Eq '^[0-9a-f]{40}$'
 git -C "$TOOL_REPO" fetch origin "$INDEXER_REV"
 test "$(git -C "$TOOL_REPO" rev-parse "$INDEXER_REV^{commit}")" = "$INDEXER_REV"
 
-ARTIFACTS="$(mktemp -d "${TMPDIR:-/tmp}/pkgre-production-update.XXXXXX")"
+ARTIFACTS="$(mktemp -d "${TMPDIR:-/tmp}/pkgre-production-admission.XXXXXX")"
 chmod 0700 "$ARTIFACTS"
 ARTIFACTS="$(realpath "$ARTIFACTS")"
-case "$ARTIFACTS/" in
-  "$CATALOG_REPO/"*|"$TOOL_REPO/"*) echo "artifact workspace must be outside both repositories" >&2; exit 1 ;;
-esac
-printf 'catalog-base=%s\nindexer-rev=%s\nstarted-at=%s\n' "$CATALOG_BASE" "$INDEXER_REV" "$(date -u +%FT%TZ)" > "$ARTIFACTS/session.txt"
+case "$ARTIFACTS/" in "$CATALOG_REPO/"*|"$TOOL_REPO/"*) echo 'artifact workspace must be outside both repositories' >&2; exit 1;; esac
+test ! -e "$CATALOG_DIR/admissions/$BATCH.toml"
+test ! -e "$CATALOG_DIR/admissions/$BATCH.lock"
+printf 'catalog-base=%s\nindexer-rev=%s\nbatch=%s\nstarted-at=%s\n' "$CATALOG_BASE" "$INDEXER_REV" "$BATCH" "$(date -u +%FT%TZ)" > "$ARTIFACTS/session.txt"
 ```
 
-`INDEXER_REV` is authority: read the one full commit SHA from the production catalog's main-branch Pages workflow. Never substitute local `HEAD`, tooling `main`, a tag, a PR head, or “latest.” Record `CATALOG_BASE` + `INDEXER_REV` in private session evidence and the public-safe PR summary.
+If `$BATCH` already exists, choose a new descriptive lowercase kebab-case suffix; never overwrite/reuse an admission filename. `CATALOG_BASE` + the exact 40-hex `INDEXER_REV` are immutable session inputs. Never substitute local tooling `HEAD`, a tag, a PR head, or “latest.”
 
-## 2. Build + identify the deployed tool
+## 2. Build + identify the deployed indexer
 
-Use a detached worktree outside the catalog and build the exact workflow pin:
+Build the exact workflow pin in the external workspace; obtain Cargo from that revision's Nix shell:
 
 ```bash
 TOOL_WORKTREE="$ARTIFACTS/tooling"
@@ -79,11 +76,11 @@ printf 'indexer-version=%s\nindexer-binary-sha256=%s\nindexer-store-path=%s\ncar
 test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
 ```
 
-`PKGRE_CARGO` comes from the exact revision's pinned Nix development shell, is version-checked, exported before any indexer command, and prevents Git-package lock convergence from falling back to ambient `rustup`. Build/version/hash mismatch, invalid catalog, dirty checkout, absent pin, Cargo mismatch, or pin drift → abort; do not fall forward to another indexer/Cargo revision.
+Abort on pin/build/version/Cargo mismatch, invalid catalog, dirty checkout, or fallback temptation. All indexer commands below use this `$INDEXER` and exported `$PKGRE_CARGO`.
 
-## 3. Catalog read-only guard
+## 3. Prove planning/inspection read-only
 
-Hash every tracked catalog file before/after planning and inspection; Git cleanliness detects added/deleted/untracked paths:
+Hash every tracked catalog file; Git status separately detects additions/deletions/untracked paths:
 
 ```bash
 catalog_manifest() {
@@ -98,162 +95,131 @@ catalog_manifest() {
     done
   ) > "$output"
 }
-
-assert_catalog_clean() {
-  test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
-}
+assert_catalog_clean() { test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"; }
 
 catalog_manifest "$ARTIFACTS/catalog-before-plan.manifest"
 assert_catalog_clean
 ```
 
-All plans, approved-plan variants, approval notes, inert review trees, logs, patches, and rendered sites stay under mode-`0700` `$ARTIFACTS`, never under `registry/`. Every indexer output path must be absent; the commands fail rather than overwrite evidence.
+Every transient output path must be absent. Do not place the template under `registry/`; `update-apply` installs the final exact manifest only after recomputation.
 
-## 4. Plan without mutation
+## 4. Generate one broad directly-applyable template
 
-Choose exactly one mode:
-
-```bash
-PLAN="$ARTIFACTS/plan.toml"
-
-# Broad: latest eligible stable candidate per active compatibility lane.
-"$INDEXER" update-plan "$CATALOG_DIR" "$PLAN" 2>&1 | tee "$ARTIFACTS/plan.log"
-
-# Exact alternative: required for a new/inactive reserved name, prerelease, or 0.0.x identity.
-# PACKAGE=example
-# VERSION=1.2.3
-# "$INDEXER" update-plan-exact "$CATALOG_DIR" "$PACKAGE" "$VERSION" "$PLAN" 2>&1 | tee "$ARTIFACTS/plan.log"
-```
-
-Selection rules:
-
-- Every candidate: non-yanked + at least 30 exact days old at `evaluated-at`; future publication times fail.
-- Broad planning: at most one latest eligible stable candidate per active lane (`major` for `major≥1`; `minor` for stable `0.minor.patch`, `minor>0`).
-- Exact planning: one requested eligible identity; mandatory for new/inactive reservations, prereleases, and `0.0.x`.
-- Every plan binds exact catalog fingerprint, fixed evaluation time, policy constants, sparse history, base/candidate rows, archive/dependency/API/source evidence, decision, and reasons. The raw crates.io API response hash is planning provenance; security-relevant version-scoped API fields are separately parsed and bound.
-- Apply deadline: no more than seven exact days after `evaluated-at` (inclusive). Approval does not extend it; an expired plan requires complete replanning/reinspection/reapproval.
-
-Prove planning read-only:
+Broad mode scans every active mirror compatibility lane and chooses at most the latest eligible stable release per lane:
 
 ```bash
+MANIFEST="$ARTIFACTS/$BATCH.toml"
+PLAN_LOG="$ARTIFACTS/plan.log"
+"$INDEXER" update-plan "$CATALOG_DIR" "$MANIFEST" 2>&1 | tee "$PLAN_LOG"
+
+test -f "$MANIFEST"
 catalog_manifest "$ARTIFACTS/catalog-after-plan.manifest"
 cmp "$ARTIFACTS/catalog-before-plan.manifest" "$ARTIFACTS/catalog-after-plan.manifest"
 assert_catalog_clean
-test -s "$PLAN"
+
+AUTOMATIC="$(grep -c 'planned update candidate.*decision=Automatic' "$PLAN_LOG" || true)"
+REVIEW_REQUIRED="$(grep -c 'planned update candidate.*decision=ReviewRequired' "$PLAN_LOG" || true)"
+BLOCKED="$(grep -c 'planned update candidate.*decision=Blocked' "$PLAN_LOG" || true)"
+TOTAL_LOGGED="$(grep -c 'planned update candidate' "$PLAN_LOG" || true)"
+EXPECTED_CANDIDATES="$(grep -c '^\[\[admit\]\]$' "$MANIFEST" || true)"
+test "$TOTAL_LOGGED" -eq "$((AUTOMATIC + REVIEW_REQUIRED + BLOCKED))"
+test "$EXPECTED_CANDIDATES" -eq "$((AUTOMATIC + REVIEW_REQUIRED))"
+printf 'automatic=%s\nreview-required=%s\nblocked=%s\nlogged=%s\nmanifest=%s\n' "$AUTOMATIC" "$REVIEW_REQUIRED" "$BLOCKED" "$TOTAL_LOGGED" "$EXPECTED_CANDIDATES" | tee "$ARTIFACTS/counts.txt"
 ```
 
-Zero candidates → stop without a catalog PR. Any catalog byte/status change → preserve evidence, abort, and investigate.
+Selection/guardrails:
 
-## 5. Review every candidate
+- candidate non-yanked + at least 30×24 hours old at command UTC time; future timestamps fail;
+- broad mode only active stable lanes: `major` for `major≥1`; `minor` for stable `0.minor.patch` where `minor>0`;
+- dormant wake-up = first ≥365-day adjacent publication gap after locked base; all upstream rows, including yanked/prerelease, count as activity;
+- evidence = complete sparse history, exact base/candidate rows + checksum-verified archives, bounded archive/build/dependency delta, version-scoped crates.io API facts, and promoted public-source correspondence;
+- `automatic`:no escalation reason; included;
+- `review-required`:new/inactive/dormant/new-dependency/build-surface/publisher/repository/source-unavailable escalation; included and directly applyable;
+- `blocked`:unknown dependency home, forbidden category edge, or source mismatch; logged but omitted; never add it manually.
 
-Read the complete canonical plan, not only command counts/logs. For every `[[candidates]]` entry record + inspect:
+`EXPECTED_CANDIDATES=0` → stop without branch/catalog PR. `BLOCKED>0` → preserve log, verify every blocked identity is absent from the manifest, report/fix separately; the nonblocked batch may proceed only if its scope remains intended. Count mismatch/catalog mutation → abort.
 
-- Exact `registry`, `category`, `name`, `activity`, compatibility `lane`, `base`, `candidate`, age, sparse/history hashes, and dormant gap.
-- `decision` + every `reason`; `blocked` makes the plan inadmissible. Fix routing/upstream evidence separately and create a new plan; never approve around a block.
-- Candidate/base checksum + source-row hashes; candidate/base archive summaries; complete archive delta.
-- Complete dependency delta including optional/dev/build/target-specific/renamed edges; every dependency's permanent home; exact category `may-depend-on` permission.
-- crates.io API publisher/repository/Trusted Publishing evidence + discontinuities.
-- Promoted source evidence: verified correspondence, unavailable reason, or mismatch. `source-mismatch` blocks. `source-unavailable` requires human judgment; never treat source correspondence as a substitute for reviewing crates.io archive bytes.
+## 5. Review scope without per-crate ceremony
 
-Materialize inert evidence for every exact candidate into a separate absent directory:
+Read the complete manifest + every structured candidate log line:
 
 ```bash
-PACKAGE=exact-name
+cat "$MANIFEST"
+grep 'planned update candidate' "$PLAN_LOG" | tee "$ARTIFACTS/candidates.log"
+grep 'decision=ReviewRequired\|decision=Blocked' "$PLAN_LOG" | tee "$ARTIFACTS/escalated.log" || true
+```
+
+Verify each requested name/version/category is intended; remove unwanted complete `[[admit]]` blocks while preserving canonical ordering/format. Do not add a blocked identity. Prioritize review-required identities, especially `SourceUnavailable`, `DormantWakeup`, publisher/repository discontinuity, build/proc-macro/native surface change, new dependency packages, and unusually large/risky projects. A generated template needs no repetitive approval notes.
+
+Optional inert inspection for any exact manifest request:
+
+```bash
+PACKAGE=exact-package
 VERSION=exact.version
 REVIEW="$ARTIFACTS/review-$PACKAGE-$VERSION"
-"$INDEXER" update-inspect "$PLAN" "$PACKAGE" "$VERSION" "$REVIEW" 2>&1 | tee "$ARTIFACTS/inspect-$PACKAGE-$VERSION.log"
+"$INDEXER" update-inspect "$CATALOG_DIR" "$MANIFEST" "$PACKAGE" "$VERSION" "$REVIEW" 2>&1 | tee "$ARTIFACTS/inspect-$PACKAGE-$VERSION.log"
 ```
 
-Repeat for every candidate. `update-inspect` downloads checksum-bound candidate/base archives, reparses them without extraction/execution, and requires equality with plan evidence. Then prove inspection did not touch the catalog:
+Inspection re-plans one exact request, emits checksum-bound `candidate.crate`, optional `base.crate`, `inspection.toml`, and `README.txt`, and never executes Cargo/compiler/package/repository code. Treat archives as untrusted. Review relevant manifest/build/dependency/source fields and archive members with inert tools only; never run build scripts, proc macros, tests, examples, binaries, or hooks.
 
-```bash
-catalog_manifest "$ARTIFACTS/catalog-after-inspection.manifest"
-cmp "$ARTIFACTS/catalog-before-plan.manifest" "$ARTIFACTS/catalog-after-inspection.manifest"
-assert_catalog_clean
+Optional typed evidence belongs under its request and must preserve canonical TOML:
+
+```toml
+[[admit.evidence]]
+kind = "manual-full-archive"
+note = "Reviewed every regular archive member and normalized manifest."
 ```
 
-For each review tree:
+```toml
+[[admit.evidence]]
+kind = "manual-source-delta"
+base = "1.2.2"
+note = "Reviewed the complete archive delta from 1.2.2."
+```
 
-1. Read `README.txt` + complete `inspection.toml`; match candidate binding, identity, plan/catalog hashes, file list, file sizes/modes/hashes/binary flags, build surface, delta, and source evidence.
-2. Recompute `sha256sum candidate.crate`; require the plan's `candidate.crate-sha256`. Do the same for `base.crate` when present.
-3. List archive metadata without extraction or execution: `tar --list --verbose --file "$REVIEW/candidate.crate" | sed -n l`. Reconcile every regular member with `candidate-analysis.files`.
-4. Review every regular member. Read one exact member without writing archive-controlled paths: `tar --extract --to-stdout --file "$REVIEW/candidate.crate" -- 'exact/root/member' | sed -n l`; use inert hex/string inspection for binary members. Never run Cargo, compiler/linker, tests, examples, binaries, build scripts, proc macros, repository hooks, or package code.
-5. Inspect publisher `Cargo.toml.orig` + normalized `Cargo.toml`: identity/version/repository/license; package/build settings; libraries/binaries/examples/tests/benches; proc-macro status; features; targets; all dependency kinds/sources/versions/features.
-6. Inspect `build.rs`, executable-mode files, proc-macro/native-link surface, bundled binaries/generated data, unsafe code, process spawning, filesystem/network behavior, environment/credential access, and licensing. Absence from the plan's bounded build-surface summary is not proof of benign runtime behavior.
-7. For a base, compare every added/removed/changed file + mode and the dependency/build-surface/API/source deltas. For `full-archive`, review the complete candidate independently; for `source-delta`, still account for the complete candidate and scrutinize every delta.
+`manual-source-delta` must match the exact recomputed base. Evidence notes:public-safe, specific, trimmed, nonempty UTF-8, ≤16 KiB. Unknown evidence fails. Optional evidence strengthens the record; absence does not make the generated template invalid.
 
-Review disagreement, unexplained file/hash/mode, unsafe archive, suspicious code, unavailable evidence that cannot be judged safely, wrong route, or stale/mismatched evidence → abort. Never edit the plan.
-
-## 6. Add required approval assertions
-
-Decision handling:
-
-| Decision | Approval action |
-|---|---|
-| `automatic` | No `update-approve`; retain ordinary evidence review + full catalog diff review. |
-| `review-required`, active identity with meaningful base/archive delta | Exactly one `source-delta` assertion. |
-| `review-required`, new/inactive identity or no meaningful base | Exactly one `full-archive` assertion. |
-| `blocked` | Abort; approval impossible. |
-
-Write one specific public-safe UTF-8 note ≤16 KiB per review-required candidate. State exact identity/checksum; review scope; files/delta/build surface; dependency/category result; publisher/repository/source result; material risks + why accepted. Generic “looks good” is insufficient. Keep the note outside the catalog; its trimmed text is copied into immutable admission evidence.
-
-Chain absent approved-plan outputs for multiple candidates:
+After any edit, recount + prove read-only:
 
 ```bash
-INPUT_PLAN="$PLAN"
-NOTE="$ARTIFACTS/note-$PACKAGE-$VERSION.txt"
-printf '%s\n' 'Specific public-safe review conclusion for this exact checksum-bound candidate.' > "$NOTE"
-OUTPUT_PLAN="$ARTIFACTS/approved-001.toml"
-"$INDEXER" update-approve "$INPUT_PLAN" "$OUTPUT_PLAN" "$PACKAGE" "$VERSION" full-archive "$NOTE" 2>&1 | tee "$ARTIFACTS/approve-$PACKAGE-$VERSION.log"
-INPUT_PLAN="$OUTPUT_PLAN"
-
-# Repeat with a new absent OUTPUT_PLAN for each remaining review-required candidate.
-APPLY_PLAN="$INPUT_PLAN"
-EXPECTED_CANDIDATES="$(grep -c '^\[\[candidates\]\]$' "$APPLY_PLAN")"
+EXPECTED_CANDIDATES="$(grep -c '^\[\[admit\]\]$' "$MANIFEST" || true)"
 test "$EXPECTED_CANDIDATES" -gt 0
-printf 'candidate-count=%s\n' "$EXPECTED_CANDIDATES" >> "$ARTIFACTS/session.txt"
+catalog_manifest "$ARTIFACTS/catalog-after-review.manifest"
+cmp "$ARTIFACTS/catalog-before-plan.manifest" "$ARTIFACTS/catalog-after-review.manifest"
+assert_catalog_clean
+printf 'final-manifest-count=%s\n' "$EXPECTED_CANDIDATES" >> "$ARTIFACTS/session.txt"
 ```
 
-Use `source-delta` instead of `full-archive` only when the table requires it. Automatic-only plan: `APPLY_PLAN="$PLAN"`, then run the same `EXPECTED_CANDIDATES` count/recording commands. Read the final plan and require exactly one correct assertion per review-required candidate, none for automatic candidates, no blocked candidates, and no evidence changes other than approval assertions. `EXPECTED_CANDIDATES` must equal the number of canonical top-level `[[candidates]]` entries; retain it for generated-path and release-count proofs.
+Manifest parse/canonicality is enforced again by inspection/apply. Suspicious/unexplained evidence, unsafe archive, wrong route, source mismatch, or unacceptable package behavior/license → remove candidate or abort; never weaken policy/generated facts.
 
-## 7. Reconfirm base + create the catalog branch
+## 6. Reconfirm base + create catalog branch
 
-Do not create/mutate a catalog branch until evidence review is complete:
+Do not mutate/create the catalog branch until template review is complete:
 
 ```bash
 git -C "$CATALOG_REPO" fetch --prune origin
 CURRENT_MAIN="$(git -C "$CATALOG_REPO" rev-parse origin/main^{commit})"
-test "$CURRENT_MAIN" = "$CATALOG_BASE" || { echo "catalog main drifted; discard plan and restart" >&2; exit 1; }
+test "$CURRENT_MAIN" = "$CATALOG_BASE" || { echo 'catalog main drifted; restart from a fresh plan' >&2; exit 1; }
 catalog_manifest "$ARTIFACTS/catalog-before-apply.manifest"
 cmp "$ARTIFACTS/catalog-before-plan.manifest" "$ARTIFACTS/catalog-before-apply.manifest"
 assert_catalog_clean
-
-BRANCH=registry/update-descriptive-name
 git -C "$CATALOG_REPO" switch --create "$BRANCH" "$CATALOG_BASE"
 ```
 
-Main/catalog drift → abort and restart from the new base. Never rebase an evidence-bound plan onto changed catalog bytes.
+Never rebase/carry a prepared manifest onto an unreviewed catalog base; restart planning when main changes.
 
-## 8. Apply transactionally
+## 7. Apply once transactionally
 
 ```bash
-"$INDEXER" update-apply "$CATALOG_DIR" "$APPLY_PLAN" 2>&1 | tee "$ARTIFACTS/apply.log"
+"$INDEXER" update-apply "$CATALOG_DIR" "$MANIFEST" 2>&1 | tee "$ARTIFACTS/apply.log"
+grep -Eq "packages_added=$EXPECTED_CANDIDATES([^0-9]|$)" "$ARTIFACTS/apply.log"
 ```
 
-Apply requirements/enforcement:
+Apply behavior:load canonical human requests; use current UTC policy clock; re-fetch/recompute every exact identity; reject young/yanked/locked/blocked/route-invalid/evidence-invalid requests; never substitute versions; calculate one generated batch lock; stage declarations, source rows, registry locks, exact human manifest, and generated lock; strict-load/object-verify/test-render complete staged catalog; atomically install with rollback. Failure → do not hand-edit generated state; restore/verify clean base and replan when needed.
 
-- Catalog fingerprint exactly equals the plan.
-- Plan is nonfuture + ≤7 days old.
-- Complete evidence is recomputed for only the planned identities at original `evaluated-at`; upstream/candidate/evidence drift fails rather than substituting a newer release. The sole upstream exception is the raw crates.io API response hash because responses contain mutable non-decision fields; planned base/candidate identities and checksums must still agree with the current API response, and parsed publishers, repositories, and Trusted Publishing evidence must remain identical.
-- All decisions/approvals valid; blocked candidates rejected.
-- Whole replacement catalog staged, strictly loaded, object-verified, test-rendered, then atomically installed with rollback.
-- Human declarations, generated locks, source-row objects, and immutable admission records installed together; no hand editing.
+## 8. Audit the exact catalog diff + batch binding
 
-Failure → do not repair locks/rows/admissions manually. Confirm recovery per `workflows.md`, restore a clean base if needed, and replan when required.
-
-## 9. Audit the complete catalog diff
-
-Expose newly created files to `git diff` without staging their contents yet:
+Make added files visible to ordinary `git diff` without staging their content:
 
 ```bash
 git -C "$CATALOG_REPO" add --intent-to-add -- registry
@@ -264,25 +230,36 @@ git -C "$CATALOG_REPO" diff --check
 git -C "$CATALOG_REPO" diff --stat -- registry
 git -C "$CATALOG_REPO" diff --binary --full-index -- registry > "$ARTIFACTS/catalog.patch"
 test -s "$ARTIFACTS/catalog.patch"
+
 git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/objects/rows | LC_ALL=C sort > "$ARTIFACTS/new-rows.txt"
-git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/_reviews/admissions | LC_ALL=C sort > "$ARTIFACTS/new-admissions.txt"
+git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/admissions | LC_ALL=C sort > "$ARTIFACTS/new-admission-files.txt"
 test "$(wc -l < "$ARTIFACTS/new-rows.txt")" -eq "$EXPECTED_CANDIDATES"
-test "$(wc -l < "$ARTIFACTS/new-admissions.txt")" -eq "$EXPECTED_CANDIDATES"
+test "$(wc -l < "$ARTIFACTS/new-admission-files.txt")" -eq 2
+test "$(grep -c "^registry/admissions/$BATCH.toml$" "$ARTIFACTS/new-admission-files.txt")" -eq 1
+test "$(grep -c "^registry/admissions/$BATCH.lock$" "$ARTIFACTS/new-admission-files.txt")" -eq 1
 test -z "$(git -C "$CATALOG_REPO" diff --name-only -- registry/objects/crates)"
+
+BATCH_LOCK="$CATALOG_DIR/admissions/$BATCH.lock"
+BATCH_HASH="$(sha256sum "$BATCH_LOCK" | cut -d' ' -f1)"
+git -C "$CATALOG_REPO" diff --unified=0 -- 'registry/*.lock' | sed -n 's/^+admission-sha256 = "\([0-9a-f]\{64\}\)"$/\1/p' > "$ARTIFACTS/new-admission-hashes.txt"
+test "$(wc -l < "$ARTIFACTS/new-admission-hashes.txt")" -eq "$EXPECTED_CANDIDATES"
+test "$(LC_ALL=C sort -u "$ARTIFACTS/new-admission-hashes.txt" | wc -l)" -eq 1
+test "$(head -n 1 "$ARTIFACTS/new-admission-hashes.txt")" = "$BATCH_HASH"
+printf 'batch-lock-sha256=%s\n' "$BATCH_HASH" >> "$ARTIFACTS/session.txt"
 ```
 
-Account for every byte/path:
+Account for every path/byte:
 
-- Only intended category declarations change; each candidate adds its exact version under its permanent reserved name.
-- Generated registry lock adds one active crates.io identity per candidate with exact route/version/archive/source-row/routed-row hashes + `admission-sha256`.
-- Exactly one new canonical `objects/rows/<source-row-sha256>.json` per candidate; row checksum/identity/dependencies match the plan and declaration.
-- Exactly one new canonical `_reviews/admissions/<candidate-binding-sha256>.toml` per candidate; filename matches candidate binding; record identity/route/checksum/row hash/decision/reasons/approval match the final plan; lock `admission-sha256` points back to it.
-- Mirror admissions add no `objects/crates/*`; mirror bytes remain served by `https://static.crates.io/crates` and are integrity-bound by curated row checksum.
-- No registry/category topology, `may-depend-on`, index URL, download URL, existing identity, existing object, tombstone, first-party archive, landing page, workflow, or unrelated file changes.
+- only intended category declaration arrays gain the exact manifest versions;
+- root generated registry locks gain exactly one active crates.io identity/request with exact route/archive/source-row/routed-row hashes + shared `$BATCH_HASH`;
+- exactly one new canonical source-row object/request;
+- exactly one immutable `admissions/$BATCH.toml` + `admissions/$BATCH.lock` pair for the complete batch;
+- no `objects/crates/*` diff:mirror `.crate` bytes are verified then discarded and Cargo downloads through `https://static.crates.io/crates`;
+- no topology, `may-depend-on`, registry URL/download, name-home, prior identity/object, first-party archive, workflow/site, or unrelated change.
 
-Unexplained churn, missing/extra row/admission, retained mirror archive, route/hash mismatch, or unrelated change → abort; do not normalize by hand.
+Unexpected churn/count/hash/route/object mismatch → abort; never normalize generated files by hand.
 
-## 10. Prove validity + convergence
+## 9. Prove catalog validity + convergence
 
 ```bash
 "$INDEXER" check "$CATALOG_DIR" 2>&1 | tee "$ARTIFACTS/check.log"
@@ -294,11 +271,9 @@ cmp "$ARTIFACTS/diff-before-lock.patch" "$ARTIFACTS/diff-after-lock.patch"
 git -C "$CATALOG_REPO" diff --check
 ```
 
-The second lock must report `changed=false` + preserve the exact complete diff. Any mutation/failure means nonconvergence → abort.
+Second `lock` must be exact no-op. Optional idempotence check:rerun `update-apply` with the identical external manifest; it must report `changed=false` and preserve the exact diff. Do not rerun under a different manifest with the same filename.
 
-## 11. Render, reproduce, and compare the release
-
-All output paths must be absent:
+## 10. Render, reproduce, compare live release
 
 ```bash
 SITE_NEXT="$ARTIFACTS/site-next"
@@ -317,8 +292,8 @@ jq -cS '.names[]' "$SITE_NEXT/release.json" | LC_ALL=C sort > "$ARTIFACTS/names-
 cmp "$ARTIFACTS/names-current.ndjson" "$ARTIFACTS/names-next.ndjson"
 jq -cS '.packages[]' "$SITE_CURRENT/release.json" | LC_ALL=C sort > "$ARTIFACTS/packages-current.ndjson"
 jq -cS '.packages[]' "$SITE_NEXT/release.json" | LC_ALL=C sort > "$ARTIFACTS/packages-next.ndjson"
-comm -23 "$ARTIFACTS/packages-current.ndjson" "$ARTIFACTS/packages-next.ndjson" > "$ARTIFACTS/packages-missing.ndjson"
-comm -13 "$ARTIFACTS/packages-current.ndjson" "$ARTIFACTS/packages-next.ndjson" > "$ARTIFACTS/packages-added.ndjson"
+LC_ALL=C comm -23 "$ARTIFACTS/packages-current.ndjson" "$ARTIFACTS/packages-next.ndjson" > "$ARTIFACTS/packages-missing.ndjson"
+LC_ALL=C comm -13 "$ARTIFACTS/packages-current.ndjson" "$ARTIFACTS/packages-next.ndjson" > "$ARTIFACTS/packages-added.ndjson"
 test ! -s "$ARTIFACTS/packages-missing.ndjson"
 CURRENT_NAME_COUNT="$(jq '.names|length' "$SITE_CURRENT/release.json")"
 NEXT_NAME_COUNT="$(jq '.names|length' "$SITE_NEXT/release.json")"
@@ -328,22 +303,13 @@ ADDED_PACKAGE_COUNT="$(wc -l < "$ARTIFACTS/packages-added.ndjson")"
 test "$NEXT_NAME_COUNT" -eq "$CURRENT_NAME_COUNT"
 test "$NEXT_PACKAGE_COUNT" -eq "$((CURRENT_PACKAGE_COUNT + EXPECTED_CANDIDATES))"
 test "$ADDED_PACKAGE_COUNT" -eq "$EXPECTED_CANDIDATES"
-printf 'current names=%s packages=%s\nnext names=%s packages=%s\nadded packages=%s expected candidates=%s\n' "$CURRENT_NAME_COUNT" "$CURRENT_PACKAGE_COUNT" "$NEXT_NAME_COUNT" "$NEXT_PACKAGE_COUNT" "$ADDED_PACKAGE_COUNT" "$EXPECTED_CANDIDATES"
+printf 'current names=%s packages=%s\nnext names=%s packages=%s\nadded=%s expected=%s\n' "$CURRENT_NAME_COUNT" "$CURRENT_PACKAGE_COUNT" "$NEXT_NAME_COUNT" "$NEXT_PACKAGE_COUNT" "$ADDED_PACKAGE_COUNT" "$EXPECTED_CANDIDATES" | tee "$ARTIFACTS/release-counts.txt"
 cat "$ARTIFACTS/packages-added.ndjson"
 ```
 
-Require:
+Require byte reproduction, monotonicity, unchanged registry/category/index/download/allowlist topology, unchanged name inventory, no missing package, and exact intended additions/count. Any live/current-base mismatch → investigate/restart; do not bypass.
 
-- `verify` exact byte-for-byte reproduction.
-- `verify-monotonic` success; every prior identity retained unchanged.
-- Exact registry/category topology, index URLs, download URLs, + category `may-depend-on` arrays unchanged (`.registries` byte-equivalent after canonical JSON sorting).
-- Exact reserved name inventory unchanged (`.names` equivalent).
-- Package count increases by exactly admitted candidate count; `packages-added.ndjson` contains only reviewed identities with exact category/checksum/row/source/yank fields; `packages-missing.ndjson` empty.
-- Complete rendered tree contains only expected registry output; mirror rows route dependencies only to canonical curated registries and config keeps universe download at crates.io.
-
-Any release/count/topology/download mismatch, missing prior package, unexpected addition, failed reproduction, or failed monotonicity → abort.
-
-## 12. Stage + commit the atomic catalog change
+## 11. Stage + commit one atomic registry change
 
 ```bash
 git -C "$CATALOG_REPO" add -- registry
@@ -353,46 +319,42 @@ git -C "$CATALOG_REPO" diff --cached --binary --full-index -- registry > "$ARTIF
 cmp "$ARTIFACTS/diff-after-lock.patch" "$ARTIFACTS/staged.patch"
 git -C "$CATALOG_REPO" diff --quiet
 git -C "$CATALOG_REPO" diff --cached --stat
-```
 
-Commit declaration + lock + row + admission evidence together. Follow repository attribution policy: `Assisted-by:` lists only models/specialized analysis tools that materially contributed; never use `Co-Authored-By:` or agent-generated `Signed-off-by:`.
-
-```bash
-git -C "$CATALOG_REPO" commit -m "registry: admit reviewed mirror update" -m "Assisted-by: actual-model-id"
+git -C "$CATALOG_REPO" commit -m "registry: admit $BATCH mirror updates" -m 'Assisted-by: actual-contributing-model-ids'
 test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
 ```
 
-## 13. Push + open the curator-review PR
+Commit exact declarations + root locks + row objects + admission pair together. Attribution:one `Assisted-by:` trailer listing only actual contributing models/specialized analysis tools; never `Co-Authored-By:` or agent-generated `Signed-off-by:`.
 
-Create `$ARTIFACTS/pr-body.md` before pushing; include the public-safe fields below and inspect the complete file. Then:
+## 12. Push + open final curator-review PR
+
+Create a public-safe body. Include:batch manifest link/path; complete identity list or exact generated diff reference; candidate/automatic/review-required/blocked counts; catalog base SHA; deployed indexer SHA/version/binary SHA-256; review prioritization/optional evidence performed; admission-pair/shared-hash proof; exact added row/package counts; `check`; second-lock no-op; render/verify/verify-monotonic; no mirror archive objects; issue-closing statement when applicable. Exclude transient paths/raw logs/private data.
 
 ```bash
 git -C "$CATALOG_REPO" push --set-upstream origin "$BRANCH"
-cd "$CATALOG_REPO"
 PR_BODY="$ARTIFACTS/pr-body.md"
 test -s "$PR_BODY"
-PR_URL="$(gh pr create --base main --head "$BRANCH" --title 'registry: admit reviewed mirror update' --body-file "$PR_BODY")"
+cd "$CATALOG_REPO"
+PR_URL="$(gh pr create --base main --head "$BRANCH" --title "registry: admit $BATCH mirror updates" --body-file "$PR_BODY")"
 printf '%s\n' "$PR_URL"
 gh pr checks --watch "$PR_URL"
 ```
 
-Public PR body: exact candidate identities; catalog base SHA; deployed indexer SHA + binary hash/version; decisions/reasons; approval scope; archive/dependency/build/source conclusions; exact generated path summary; `check`/no-op `lock`/`verify`/`verify-monotonic` results; release count delta. Exclude artifact paths, raw plans/logs, credentials, and all private consumer data.
+After CI:inspect remote PR head/base/diff/checks one final time. Do **not** enable auto-merge; do **not** merge; do **not** bypass protection. Send the PR URL to the curator and request review. If main/upstream evidence/PR diff changes materially, rerun from a fresh base/template rather than force-updating trusted generated facts.
 
-CI must pass. Do not enable auto-merge, do not merge the actual catalog/index update PR, and do not bypass protection. Ask the curator to review the PR; retain private artifacts until review resolves. If `origin/main`, upstream evidence, or the PR diff changes, rerun the applicable workflow from a fresh plan rather than force-updating trusted evidence.
+## 13. Recovery + abort matrix
 
-## 14. Abort matrix
+Normal command failure removes staging + leaves the original catalog exact; installation failure attempts rollback. Killed reconciliation may leave sibling `.registry.pkgre-lock`, `.registry.pkgre-stage-*`, or `.registry.pkgre-backup-*` paths. Confirm no indexer process is active; preserve backup evidence; restore last complete catalog if needed; remove only verified stale guard/disposable stage; run `check`; compare Git; then restart. Never delete a guard while another process is active.
 
-Abort + preserve evidence on any of:
+Abort/preserve evidence on:wrong/non-full pin; build/version/Cargo uncertainty; dirty/stale/drifted base; catalog mutation during planning/inspection; malformed/noncanonical/empty unintended manifest; blocked identity manually present; young/yanked/locked/wrong identity; source mismatch; unknown/forbidden dependency route; unexplained archive/build/API/source evidence; apply/recovery failure; hand-edit temptation; missing/extra row/admission/hash binding; mirror `.crate` addition; topology/name/prior-history drift; failed check/no-op/reproduction/monotonicity/count; secret/private-data exposure; CI failure; curator rejection.
 
-- Wrong/non-full tooling pin; pin/build/version/hash uncertainty; attempted fallback to unpinned tooling.
-- Dirty/stale catalog base; catalog bytes/status changed during planning/inspection; main drift before apply.
-- Expired/future/noncanonical plan; zero intended candidates; unexpected identity; upstream/catalog/evidence drift.
-- `blocked` decision; source mismatch; unknown dependency home; forbidden category edge; wrong registry/category/source class.
-- Unexplained archive file/hash/mode/binary/build surface/dependency/API/source evidence; unsafe or unacceptable package behavior/license.
-- Missing/wrong/duplicate approval; vague/private note; wrong `source-delta`/`full-archive` scope.
-- Apply/recovery error; hand-edit temptation; unexpected file/object/admission/lock/declaration churn; any mirror `.crate` addition.
-- Failed `check`; second `lock` not `changed=false`; diff changed after lock; failed render/reproduction/monotonicity.
-- Registry/category/index/download/name topology drift; unexpected package count/identity/hash/yank/source change.
-- Secret/private-data exposure; CI failure; protected-base change; curator rejects or requests material changes.
+No failure permits identity substitution, policy relaxation, generated-file editing, force push, branch-protection bypass, or automatic merge of the registry-index PR.
 
-No failure permits switching candidates, relaxing policy, editing generated state, bypassing review, or merging the catalog PR automatically.
+## 14. Private evidence retention + cleanup
+
+Retain `$ARTIFACTS` privately until curator review resolves. After merge/closure and any needed audit extraction, remove the detached worktree before deleting artifacts:
+
+```bash
+git -C "$TOOL_REPO" worktree remove "$TOOL_WORKTREE"
+# Review retention requirements, then securely remove ordinary transient artifacts as appropriate.
+```

@@ -1,66 +1,107 @@
-//! Evidence-bound transactional application of approved update plans.
+//! Transactional application of compact human admission manifests.
 
+use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
 
 use crate::category::CategoryId;
 use crate::lock::{self, MirrorAdmission, ReconcileSummary};
+use crate::schema::Catalog;
 
-use super::admission::{validate_admissible_candidate, validate_plan_age, write_admission_record};
+use super::admission::{prepare_admission_lock, write_admission_pair};
 use super::declaration::append_mirror_version;
-use super::workflow::{LivePlannerResolver, revalidate_update_plan_with};
-use super::{
-    UpdatePlan, UtcTimestamp, candidate_binding_sha256, catalog_fingerprint, load_update_plan,
-};
+use super::workflow::{LivePlannerResolver, recompute_admission_plan_with};
+use super::{UpdateDecision, UtcTimestamp, load_admission_manifest, serialize_admission_manifest};
 
-/// Revalidates and atomically admits every exact candidate in one canonical approved plan.
+/// Revalidates and atomically admits every exact request in one compact human manifest.
 ///
-/// Network-backed evidence is recomputed at the plan's immutable evaluation time before a guarded
-/// catalog transaction begins. The declaration edits, immutable admission records, generated locks,
-/// and objects are installed as one complete directory replacement.
+/// Complete network-backed facts are recomputed at apply time before a guarded catalog transaction.
+/// The immutable human manifest, generated fact lock, declaration edits, registry locks, and source
+/// rows are installed as one complete directory replacement.
 ///
 /// # Errors
 ///
-/// Returns an error for an empty, stale, future-dated, blocked, incorrectly approved, or drifted
-/// plan; catalog fingerprint drift; changed upstream evidence; reconciliation failure; or an invalid
-/// staged catalog. Any failure before installation leaves the live catalog unchanged.
-pub fn apply_update_plan(root: &Path, plan_path: &Path) -> Result<ReconcileSummary> {
+/// Returns an error for an empty/noncanonical manifest, unsupported Git-tag request, blocked/young/
+/// yanked/drifted candidate, route mismatch, invalid optional evidence, existing filename collision,
+/// catalog drift, reconciliation failure, or invalid staged catalog. Any failure before installation
+/// leaves the live catalog unchanged.
+pub fn apply_admission_manifest(root: &Path, manifest_path: &Path) -> Result<ReconcileSummary> {
     let admitted_at = UtcTimestamp::now().context("read update admission time")?;
-    apply_update_plan_with(
+    apply_admission_manifest_with(
         root,
-        plan_path,
+        manifest_path,
         &LivePlannerResolver,
         &lock::LiveResolver,
         &admitted_at,
     )
 }
 
-pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: lock::Resolver>(
+pub(crate) fn apply_admission_manifest_with<
+    P: super::workflow::PlannerResolver,
+    L: lock::Resolver,
+>(
     root: &Path,
-    plan_path: &Path,
+    manifest_path: &Path,
     planner_resolver: &P,
     lock_resolver: &L,
     admitted_at: &UtcTimestamp,
 ) -> Result<ReconcileSummary> {
-    let plan = load_update_plan(plan_path).context("load approved update plan")?;
+    super::manifest::validate_admission_filename(manifest_path, "toml")?;
+    let manifest = load_admission_manifest(manifest_path).context("load admission manifest")?;
     ensure!(
-        !plan.candidates.is_empty(),
-        "update plan contains no candidates"
+        !manifest.entries.is_empty(),
+        "admission manifest contains no requests"
     );
-
-    validate_plan_age(&plan, admitted_at)?;
-    for candidate in &plan.candidates {
-        validate_admissible_candidate(candidate)?;
+    let manifest_bytes = serialize_admission_manifest(&manifest)?;
+    let filename = manifest_path
+        .file_name()
+        .context("admission manifest path has no filename")?;
+    let installed_manifest = root.join("admissions").join(filename);
+    let installed_lock = installed_manifest.with_extension("lock");
+    match (
+        fs::symlink_metadata(&installed_manifest),
+        fs::symlink_metadata(&installed_lock),
+    ) {
+        (Ok(manifest_metadata), Ok(lock_metadata)) => {
+            ensure!(
+                manifest_metadata.file_type().is_file() && lock_metadata.file_type().is_file(),
+                "installed admission pair is not made of regular files"
+            );
+            ensure!(
+                fs::read(&installed_manifest).with_context(|| format!(
+                    "read installed admission manifest {}",
+                    installed_manifest.display()
+                ))? == manifest_bytes,
+                "installed admission manifest with this filename has different content"
+            );
+            Catalog::load(root).context("validate already-applied admission manifest")?;
+            return Ok(ReconcileSummary::default());
+        }
+        (Err(manifest_error), Err(lock_error))
+            if manifest_error.kind() == std::io::ErrorKind::NotFound
+                && lock_error.kind() == std::io::ErrorKind::NotFound => {}
+        (manifest_result, lock_result) => {
+            let manifest_state = path_state(manifest_result.as_ref());
+            let lock_state = path_state(lock_result.as_ref());
+            anyhow::bail!(
+                "admission filename collision has incomplete or unsafe installed pair: manifest={manifest_state}, lock={lock_state}"
+            );
+        }
     }
-    ensure!(
-        catalog_fingerprint(root)? == plan.catalog_sha256,
-        "catalog fingerprint differs from the approved update plan"
-    );
 
-    let recomputed = revalidate_update_plan_with(root, &plan, planner_resolver)
-        .context("revalidate exact update-plan evidence")?;
-    ensure_revalidation_matches(&plan, &recomputed)?;
+    let plan =
+        recompute_admission_plan_with(root, &manifest, planner_resolver, admitted_at.clone())
+            .context("recompute exact admission facts")?;
+    for candidate in &plan.candidates {
+        ensure!(
+            candidate.decision != UpdateDecision::Blocked,
+            "blocked candidate {} {} cannot be admitted",
+            candidate.name,
+            candidate.candidate.version
+        );
+    }
+    let (admission_lock, batch_sha256) = prepare_admission_lock(&manifest, &plan, admitted_at)?;
 
     lock::transact_catalog(root, &plan.catalog_sha256, |staged| {
         let mut admissions = Vec::with_capacity(plan.candidates.len());
@@ -68,12 +109,6 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
             append_mirror_version(staged, candidate).with_context(|| {
                 format!(
                     "declare admitted candidate {} {}",
-                    candidate.name, candidate.candidate.version
-                )
-            })?;
-            write_admission_record(staged, &plan, candidate, admitted_at).with_context(|| {
-                format!(
-                    "retain admission evidence for {} {}",
                     candidate.name, candidate.candidate.version
                 )
             })?;
@@ -87,202 +122,27 @@ pub(crate) fn apply_update_plan_with<P: super::workflow::PlannerResolver, L: loc
                 version: candidate.candidate.version.clone(),
                 crate_sha256: candidate.candidate.crate_sha256.clone(),
                 source_row_sha256: candidate.candidate.source_row_sha256.clone(),
-                binding_sha256: candidate_binding_sha256(candidate)?,
+                binding_sha256: batch_sha256.clone(),
             });
         }
+        write_admission_pair(
+            staged,
+            Path::new(filename),
+            &manifest_bytes,
+            &admission_lock,
+        )
+        .context("retain immutable admission manifest and generated facts")?;
         lock::reconcile_admitted_with(staged, &admissions, lock_resolver)
             .context("reconcile exact admitted mirror identities")
     })
 }
 
-fn ensure_revalidation_matches(planned: &UpdatePlan, recomputed: &UpdatePlan) -> Result<()> {
-    let mut approved_evidence = planned.clone();
-    for candidate in &mut approved_evidence.candidates {
-        candidate.approvals.clear();
-    }
-
-    let mut current_evidence = recomputed.clone();
-    for (approved, current) in approved_evidence
-        .candidates
-        .iter()
-        .zip(&mut current_evidence.candidates)
-    {
-        if let (Some(approved_api), Some(current_api)) = (&approved.api, &mut current.api) {
-            // crates.io responses contain mutable counters and other non-decision fields. Retain the
-            // raw-response hash as planning provenance while revalidating every parsed API field.
-            current_api
-                .response_sha256
-                .clone_from(&approved_api.response_sha256);
-        }
-    }
-
-    ensure!(
-        approved_evidence == current_evidence,
-        "recomputed update evidence differs from the approved plan"
-    );
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use super::*;
-    use crate::update::{
-        ApiEvidence, ApiVersionEvidence, ArchiveSummary, DependencyDelta, PackageActivity,
-        PlannedIdentity, SourceEvidence, TrustedPublishingEvidence, UPDATE_PLAN_SCHEMA,
-        UpdateCandidate, UpdateDecision,
-    };
-
-    #[test]
-    fn revalidation_ignores_approval_assertions_and_raw_api_response_hash() {
-        let mut planned = plan();
-        planned.candidates[0].api = Some(api_evidence());
-        let mut recomputed = planned.clone();
-        recomputed.candidates[0]
-            .api
-            .as_mut()
-            .unwrap()
-            .response_sha256 = "88".repeat(32);
-        planned.candidates[0]
-            .approvals
-            .push(crate::update::UpdateApproval {
-                kind: crate::update::ApprovalKind::FullArchive,
-                binding_sha256: "66".repeat(32),
-                approved_at: UtcTimestamp::parse("2025-02-01T00:00:00Z").unwrap(),
-                note: "reviewed".to_owned(),
-                note_sha256: "77".repeat(32),
-            });
-
-        ensure_revalidation_matches(&planned, &recomputed).unwrap();
-    }
-
-    #[test]
-    fn revalidation_rejects_stable_api_evidence_drift() {
-        let mut planned = plan();
-        planned.candidates[0].api = Some(api_evidence());
-
-        let mut publisher_drift = planned.clone();
-        publisher_drift.candidates[0]
-            .api
-            .as_mut()
-            .unwrap()
-            .candidate
-            .publisher_login = Some("different-publisher".to_owned());
-        assert!(ensure_revalidation_matches(&planned, &publisher_drift).is_err());
-
-        let mut repository_drift = planned.clone();
-        repository_drift.candidates[0]
-            .api
-            .as_mut()
-            .unwrap()
-            .candidate
-            .repository = Some("https://github.com/example/different".to_owned());
-        assert!(ensure_revalidation_matches(&planned, &repository_drift).is_err());
-
-        let mut trusted_publishing_drift = planned.clone();
-        trusted_publishing_drift.candidates[0]
-            .api
-            .as_mut()
-            .unwrap()
-            .candidate
-            .trusted_publishing
-            .as_mut()
-            .unwrap()
-            .commit = "99".repeat(20);
-        assert!(ensure_revalidation_matches(&planned, &trusted_publishing_drift).is_err());
-
-        let mut missing_api = planned.clone();
-        missing_api.candidates[0].api = None;
-        assert!(ensure_revalidation_matches(&planned, &missing_api).is_err());
-    }
-
-    #[test]
-    fn revalidation_rejects_archive_and_checksum_drift() {
-        let planned = plan();
-
-        let mut checksum_drift = planned.clone();
-        checksum_drift.candidates[0].candidate.crate_sha256 = "99".repeat(32);
-        assert!(ensure_revalidation_matches(&planned, &checksum_drift).is_err());
-
-        let mut archive_drift = planned.clone();
-        archive_drift.candidates[0]
-            .candidate_archive
-            .analysis_sha256 = "88".repeat(32);
-        assert!(ensure_revalidation_matches(&planned, &archive_drift).is_err());
-    }
-
-    fn api_evidence() -> ApiEvidence {
-        ApiEvidence {
-            response_sha256: "aa".repeat(32),
-            base: None,
-            candidate: ApiVersionEvidence {
-                publisher_id: Some(7),
-                publisher_login: Some("publisher".to_owned()),
-                repository: Some("https://github.com/example/demo".to_owned()),
-                trusted_publishing: Some(TrustedPublishingEvidence {
-                    provider: "github".to_owned(),
-                    repository: "https://github.com/example/demo".to_owned(),
-                    commit: "11".repeat(20),
-                    evidence_sha256: "bb".repeat(32),
-                }),
-            },
-        }
-    }
-
-    fn plan() -> UpdatePlan {
-        UpdatePlan {
-            schema: UPDATE_PLAN_SCHEMA,
-            indexer_version: env!("CARGO_PKG_VERSION").to_owned(),
-            catalog_sha256: "00".repeat(32),
-            evaluated_at: UtcTimestamp::parse("2025-01-31T00:00:00Z").unwrap(),
-            min_release_age_days: super::super::MIN_RELEASE_AGE_DAYS,
-            dormant_release_gap_days: super::super::DORMANT_RELEASE_GAP_DAYS,
-            candidates: vec![UpdateCandidate {
-                registry: "universe".to_owned(),
-                category: "universe/general".to_owned(),
-                name: "demo".to_owned(),
-                activity: PackageActivity::New,
-                lane: None,
-                base: None,
-                candidate: PlannedIdentity {
-                    version: "1.0.0".parse().unwrap(),
-                    published_at: UtcTimestamp::parse("2025-01-01T00:00:00Z").unwrap(),
-                    source_row_sha256: "11".repeat(32),
-                    crate_sha256: "22".repeat(32),
-                },
-                sparse_index_sha256: "33".repeat(32),
-                decision_history_sha256: "44".repeat(32),
-                age_seconds: 30 * 24 * 60 * 60,
-                dormant_gap: None,
-                base_archive: None,
-                candidate_archive: ArchiveSummary {
-                    analysis_sha256: "55".repeat(32),
-                    compressed_bytes: 1,
-                    unpacked_bytes: 1,
-                    files: 1,
-                    build_surface: BTreeMap::default(),
-                    vcs_commit: None,
-                    vcs_path: None,
-                },
-                archive_delta: None,
-                dependencies: DependencyDelta {
-                    added: Vec::new(),
-                    removed: Vec::new(),
-                    new_packages: Vec::new(),
-                },
-                api: None,
-                source: SourceEvidence::Unavailable {
-                    reason: "not promoted".to_owned(),
-                },
-                decision: UpdateDecision::ReviewRequired,
-                reasons: vec![
-                    crate::update::DecisionReason::NewPackage,
-                    crate::update::DecisionReason::SourceUnavailable,
-                    crate::update::DecisionReason::ExplicitCandidate,
-                ],
-                approvals: Vec::new(),
-            }],
-        }
+fn path_state(result: Result<&fs::Metadata, &std::io::Error>) -> &'static str {
+    match result {
+        Ok(metadata) if metadata.file_type().is_file() => "regular-file",
+        Ok(metadata) if metadata.file_type().is_dir() => "directory",
+        Ok(_) => "special",
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "missing",
+        Err(_) => "unreadable",
     }
 }

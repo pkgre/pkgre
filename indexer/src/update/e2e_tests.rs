@@ -1,4 +1,4 @@
-//! Deterministic end-to-end coverage for the complete update admission workflow.
+//! Deterministic end-to-end coverage for compact admission manifests and generated facts.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -16,8 +16,9 @@ use serde_json::json;
 use super::inspect::InspectionResolver;
 use super::workflow::PlannerResolver;
 use super::{
-    ApprovalKind, SourceEvidence, UtcTimestamp, apply::apply_update_plan_with, approve_update_plan,
-    inspect::inspect_update_candidate_with, serialize_update_plan, validate_admission_inventory,
+    AdmissionEvidence, AdmissionManifest, SourceEvidence, UtcTimestamp,
+    apply::apply_admission_manifest_with, inspect::inspect_update_candidate_with,
+    load_admission_manifest, serialize_admission_manifest, validate_admission_inventory,
     workflow::plan_exact_update_with,
 };
 use crate::artifact::{ArtifactMap, sha256_bytes};
@@ -30,8 +31,9 @@ use crate::schema::{Catalog, LockedSource, Source};
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn exact_update_lifecycle_is_inert_evidence_bound_and_convergent() {
-    let temporary = TemporaryDirectory::new("pkgre-update-e2e-success");
+#[allow(clippy::too_many_lines)]
+fn compact_manifest_lifecycle_is_inert_transactional_bound_and_convergent() {
+    let temporary = TemporaryDirectory::new("pkgre-admission-v2-success");
     let catalog_root = temporary.path().join("catalog");
     write_catalog(&catalog_root, &["demo"]);
     assert_eq!(
@@ -46,15 +48,63 @@ fn exact_update_lifecycle_is_inert_evidence_bound_and_convergent() {
     let marker = temporary.path().join("archive-code-must-not-run");
     let fixture = malicious_build_fixture(&marker);
     let version = Version::parse("1.0.0").unwrap();
-    let approved_path =
-        prepare_approved_plan(temporary.path(), &catalog_root, &fixture, &version, &marker);
-    let admitted_at = UtcTimestamp::now().unwrap();
-    let summary = apply_update_plan_with(
+    let manifest_path = temporary.path().join("2026-08-24-demo.toml");
+    let plan = plan_exact_update_with(
         &catalog_root,
-        &approved_path,
+        "demo",
+        &version,
+        &manifest_path,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(plan.candidates.len(), 1);
+    let mut manifest = load_admission_manifest(&manifest_path).unwrap();
+    assert_eq!(manifest.entries.len(), 1);
+    let template = fs::read_to_string(&manifest_path).unwrap();
+    assert!(template.contains("[[admit]]"));
+    assert!(template.contains("category = \"universe/general\""));
+    assert!(template.contains("version = \"1.0.0\""));
+    assert!(!template.contains("sha256"));
+
+    let review = temporary.path().join("review");
+    let before_inspection = super::catalog_fingerprint(&catalog_root).unwrap();
+    inspect_update_candidate_with(
+        &catalog_root,
+        &manifest_path,
+        "demo",
+        &version,
+        &review,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        super::catalog_fingerprint(&catalog_root).unwrap(),
+        before_inspection
+    );
+    assert!(!marker.exists());
+    assert_eq!(
+        fs::read(review.join("candidate.crate")).unwrap(),
+        fixture.package("demo", &version).unwrap().archive
+    );
+    assert!(!review.join("base.crate").exists());
+
+    manifest.entries[0].evidence = vec![AdmissionEvidence::ManualFullArchive {
+        note: "Reviewed every regular archive member and relevant metadata.".to_owned(),
+    }];
+    fs::write(
+        &manifest_path,
+        serialize_admission_manifest(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let summary = apply_admission_manifest_with(
+        &catalog_root,
+        &manifest_path,
         &fixture,
         &fixture,
-        &admitted_at,
+        &UtcTimestamp::now().unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -66,85 +116,108 @@ fn exact_update_lifecycle_is_inert_evidence_bound_and_convergent() {
         }
     );
     assert_eq!(fixture.lock_calls.get(), 1);
+    assert!(
+        fixture.source_calls.get() >= 3,
+        "plan, inspect, and apply must each recompute evidence"
+    );
 
-    assert_admitted_catalog(&catalog_root, &fixture, &version);
+    assert_admitted_catalog(&catalog_root, &fixture, &["demo"], "2026-08-24-demo");
+    let applied_snapshot = snapshot_tree(&catalog_root).unwrap();
+    assert_eq!(
+        apply_admission_manifest_with(
+            &catalog_root,
+            &manifest_path,
+            &fixture,
+            &fixture,
+            &UtcTimestamp::now().unwrap(),
+        )
+        .unwrap(),
+        ReconcileSummary::default()
+    );
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), applied_snapshot);
+
+    manifest.entries[0].evidence = vec![AdmissionEvidence::ManualFullArchive {
+        note: "A different review note must not reuse an installed batch name.".to_owned(),
+    }];
+    fs::write(
+        &manifest_path,
+        serialize_admission_manifest(&manifest).unwrap(),
+    )
+    .unwrap();
+    let collision = apply_admission_manifest_with(
+        &catalog_root,
+        &manifest_path,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert!(format!("{collision:#}").contains("filename has different content"));
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), applied_snapshot);
+
     assert_render_and_lock_convergence(&catalog_root, &temporary.path().join("site"));
-    assert_admission_failures_reach_ordinary_catalog_verification(&catalog_root);
+    assert_admission_failures_reach_ordinary_catalog_verification(&catalog_root, "2026-08-24-demo");
     assert!(!marker.exists());
 }
 
 #[test]
-fn apply_rejects_catalog_drift_without_mutating_live_tree() {
-    let temporary = TemporaryDirectory::new("pkgre-update-e2e-drift");
+fn one_generated_batch_binds_multiple_locks_to_its_complete_hash() {
+    let temporary = TemporaryDirectory::new("pkgre-admission-v2-batch");
     let catalog_root = temporary.path().join("catalog");
-    write_catalog(&catalog_root, &["demo"]);
+    write_catalog(&catalog_root, &["alpha", "beta"]);
     lock::reconcile(&catalog_root).unwrap();
-    let fixture = malicious_build_fixture(&temporary.path().join("inert-marker"));
-    let version = Version::parse("1.0.0").unwrap();
-    let approved_path = prepare_approved_plan(
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n"),
+    ]);
+    let manifest_path = prepare_manifest(
         temporary.path(),
         &catalog_root,
         &fixture,
-        &version,
-        &temporary.path().join("inert-marker"),
+        &["alpha", "beta"],
+        "2026-08-24-routine",
     );
-    fs::OpenOptions::new()
-        .append(true)
-        .open(catalog_root.join("universe.toml"))
-        .unwrap()
-        .write_all(b"\n# harmless post-approval drift\n")
-        .unwrap();
-    let before = snapshot_tree(&catalog_root).unwrap();
 
-    let error = apply_update_plan_with(
+    let summary = apply_admission_manifest_with(
         &catalog_root,
-        &approved_path,
+        &manifest_path,
         &fixture,
         &fixture,
         &UtcTimestamp::now().unwrap(),
     )
-    .unwrap_err();
-
-    assert!(format!("{error:#}").contains("catalog fingerprint differs"));
-    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
-}
-
-#[test]
-fn apply_rejects_changed_upstream_evidence_without_mutating_live_tree() {
-    let temporary = TemporaryDirectory::new("pkgre-update-e2e-evidence-drift");
-    let catalog_root = temporary.path().join("catalog");
-    write_catalog(&catalog_root, &["demo"]);
-    lock::reconcile(&catalog_root).unwrap();
-    let marker = temporary.path().join("inert-marker");
-    let planned = malicious_build_fixture(&marker);
-    let version = Version::parse("1.0.0").unwrap();
-    let approved_path =
-        prepare_approved_plan(temporary.path(), &catalog_root, &planned, &version, &marker);
-    let changed = FixtureResolver::new(vec![FixturePackage::new(
-        "demo",
-        "1.0.0",
-        "build.rs",
-        b"fn main() { println!(\"changed upstream bytes\"); }\n",
-    )]);
-    let before = snapshot_tree(&catalog_root).unwrap();
-
-    let error = apply_update_plan_with(
+    .unwrap();
+    assert_eq!(summary.packages_added, 2);
+    assert_admitted_catalog(
         &catalog_root,
-        &approved_path,
-        &changed,
-        &planned,
-        &UtcTimestamp::now().unwrap(),
-    )
-    .unwrap_err();
+        &fixture,
+        &["alpha", "beta"],
+        "2026-08-24-routine",
+    );
 
-    assert!(format!("{error:#}").contains("recomputed update evidence differs"));
-    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
-    assert_eq!(planned.lock_calls.get(), 0);
+    let lock_bytes = fs::read(catalog_root.join("admissions/2026-08-24-routine.lock")).unwrap();
+    let batch_hash = sha256_bytes(&lock_bytes);
+    let catalog = Catalog::load(&catalog_root).unwrap();
+    let bindings = catalog
+        .approvals
+        .iter()
+        .filter(|approval| approval.name == "alpha" || approval.name == "beta")
+        .map(|approval| approval.admission_sha256.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bindings,
+        vec![Some(batch_hash.as_str()), Some(batch_hash.as_str())]
+    );
+    assert_eq!(
+        fs::read_dir(catalog_root.join("admissions"))
+            .unwrap()
+            .count(),
+        2
+    );
 }
 
 #[test]
-fn second_candidate_failure_rolls_back_complete_multi_candidate_apply() {
-    let temporary = TemporaryDirectory::new("pkgre-update-e2e-second-failure");
+fn later_resolution_failure_rolls_back_complete_multi_candidate_apply() {
+    let temporary = TemporaryDirectory::new("pkgre-admission-v2-rollback");
     let catalog_root = temporary.path().join("catalog");
     write_catalog(&catalog_root, &["alpha", "beta"]);
     lock::reconcile(&catalog_root).unwrap();
@@ -155,17 +228,18 @@ fn second_candidate_failure_rolls_back_complete_multi_candidate_apply() {
     let planner = FixtureResolver::new(packages.clone());
     let lock_resolver =
         FixtureResolver::new(packages).with_lock_failure("beta", &Version::parse("1.0.0").unwrap());
-    let approved_path = prepare_multi_candidate_plan(
+    let manifest_path = prepare_manifest(
         temporary.path(),
         &catalog_root,
         &planner,
         &["alpha", "beta"],
+        "2026-08-24-failing",
     );
     let before = snapshot_tree(&catalog_root).unwrap();
 
-    let error = apply_update_plan_with(
+    let error = apply_admission_manifest_with(
         &catalog_root,
-        &approved_path,
+        &manifest_path,
         &planner,
         &lock_resolver,
         &UtcTimestamp::now().unwrap(),
@@ -174,6 +248,54 @@ fn second_candidate_failure_rolls_back_complete_multi_candidate_apply() {
 
     assert!(format!("{error:#}").contains("injected lock resolution failure for beta 1.0.0"));
     assert_eq!(lock_resolver.lock_calls.get(), 2);
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
+}
+
+#[test]
+fn apply_rejects_upstream_yank_and_route_drift_without_mutating_catalog() {
+    let temporary = TemporaryDirectory::new("pkgre-admission-v2-drift");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let package = FixturePackage::new("demo", "1.0.0", "src/lib.rs", b"pub fn demo() {}\n");
+    let planned = FixtureResolver::new(vec![package.clone()]);
+    let manifest_path = prepare_manifest(
+        temporary.path(),
+        &catalog_root,
+        &planned,
+        &["demo"],
+        "2026-08-24-drift",
+    );
+    let before = snapshot_tree(&catalog_root).unwrap();
+
+    let yanked = FixtureResolver::new(vec![package.with_yanked(true)]);
+    let error = apply_admission_manifest_with(
+        &catalog_root,
+        &manifest_path,
+        &yanked,
+        &planned,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("yanked"));
+    assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
+
+    let mut manifest = load_admission_manifest(&manifest_path).unwrap();
+    manifest.entries[0].category = "universe/matrix".parse().unwrap();
+    fs::write(
+        &manifest_path,
+        serialize_admission_manifest(&manifest).unwrap(),
+    )
+    .unwrap();
+    let error = apply_admission_manifest_with(
+        &catalog_root,
+        &manifest_path,
+        &planned,
+        &planned,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("route differs from permanent home"));
     assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
 }
 
@@ -190,73 +312,18 @@ fn malicious_build_fixture(marker: &Path) -> FixtureResolver {
     )])
 }
 
-fn prepare_approved_plan(
-    temporary: &Path,
-    catalog_root: &Path,
-    fixture: &FixtureResolver,
-    version: &Version,
-    marker: &Path,
-) -> PathBuf {
-    let plan_path = temporary.join("plan.toml");
-    let plan = plan_exact_update_with(
-        catalog_root,
-        "demo",
-        version,
-        &plan_path,
-        fixture,
-        UtcTimestamp::now().unwrap(),
-    )
-    .unwrap();
-    assert_eq!(plan.candidates.len(), 1);
-    assert_eq!(fixture.source_calls.get(), 1);
-
-    let review = temporary.join("review");
-    let catalog_before_inspection = super::catalog_fingerprint(catalog_root).unwrap();
-    inspect_update_candidate_with(&plan_path, "demo", version, &review, fixture).unwrap();
-    assert_eq!(
-        super::catalog_fingerprint(catalog_root).unwrap(),
-        catalog_before_inspection,
-        "review inspection must remain outside catalog state"
-    );
-    assert!(!marker.exists());
-    assert!(review.join("README.txt").is_file());
-    assert!(review.join("inspection.toml").is_file());
-    assert_eq!(
-        fs::read(review.join("candidate.crate")).unwrap(),
-        fixture.package("demo", version).unwrap().archive
-    );
-    assert!(!review.join("base.crate").exists());
-
-    let note_path = temporary.join("review-note.txt");
-    fs::write(
-        &note_path,
-        b"Reviewed every file in the checksum-bound candidate archive.\n",
-    )
-    .unwrap();
-    let approved_path = temporary.join("approved.toml");
-    let approved = approve_update_plan(
-        &plan_path,
-        &approved_path,
-        "demo",
-        version,
-        ApprovalKind::FullArchive,
-        &note_path,
-    )
-    .unwrap();
-    assert_eq!(approved.candidates[0].approvals.len(), 1);
-    approved_path
-}
-
-fn prepare_multi_candidate_plan(
+fn prepare_manifest(
     temporary: &Path,
     catalog_root: &Path,
     resolver: &FixtureResolver,
     names: &[&str],
+    stem: &str,
 ) -> PathBuf {
     let evaluated_at = UtcTimestamp::now().unwrap();
     let version = Version::parse("1.0.0").unwrap();
-    let mut plans = names.iter().map(|name| {
-        let path = temporary.join(format!("{name}-plan.toml"));
+    let mut entries = Vec::new();
+    for name in names {
+        let path = temporary.join(format!("{stem}-{name}.toml"));
         plan_exact_update_with(
             catalog_root,
             name,
@@ -265,122 +332,128 @@ fn prepare_multi_candidate_plan(
             resolver,
             evaluated_at.clone(),
         )
-        .unwrap()
-    });
-    let mut merged = plans.next().unwrap();
-    for plan in plans {
-        assert_eq!(plan.catalog_sha256, merged.catalog_sha256);
-        assert_eq!(plan.evaluated_at, merged.evaluated_at);
-        merged.candidates.extend(plan.candidates);
+        .unwrap();
+        entries.extend(load_admission_manifest(&path).unwrap().entries);
     }
-    merged.candidates.sort_by(|left, right| {
+    entries.sort_by(|left, right| {
         (
-            left.registry.as_str(),
+            left.category.to_string(),
+            left.name.to_ascii_lowercase(),
             left.name.as_str(),
-            &left.candidate.version,
+            left.version.as_ref(),
         )
             .cmp(&(
-                right.registry.as_str(),
+                right.category.to_string(),
+                right.name.to_ascii_lowercase(),
                 right.name.as_str(),
-                &right.candidate.version,
+                right.version.as_ref(),
             ))
     });
-    let merged_path = temporary.join("merged-plan.toml");
-    fs::write(&merged_path, serialize_update_plan(&merged).unwrap()).unwrap();
-    let note_path = temporary.join("multi-review-note.txt");
-    fs::write(
-        &note_path,
-        b"Reviewed every file in each exact candidate archive.\n",
-    )
-    .unwrap();
-    let mut input = merged_path;
-    for (index, name) in names.iter().enumerate() {
-        let output = temporary.join(format!("approved-{index}.toml"));
-        approve_update_plan(
-            &input,
-            &output,
-            name,
-            &version,
-            ApprovalKind::FullArchive,
-            &note_path,
-        )
-        .unwrap();
-        input = output;
-    }
-    input
+    let manifest = AdmissionManifest {
+        schema: super::ADMISSION_MANIFEST_SCHEMA,
+        entries,
+    };
+    let path = temporary.join(format!("{stem}.toml"));
+    fs::write(&path, serialize_admission_manifest(&manifest).unwrap()).unwrap();
+    path
 }
 
-fn assert_admitted_catalog(root: &Path, fixture: &FixtureResolver, version: &Version) {
+fn assert_admitted_catalog(
+    root: &Path,
+    fixture: &FixtureResolver,
+    names: &[&str],
+    batch_stem: &str,
+) {
     let catalog = Catalog::load(root).unwrap();
     validate_catalog(&catalog).unwrap();
     ArtifactMap::load(&catalog).unwrap();
     validate_admission_inventory(&catalog).unwrap();
-    assert_eq!(catalog.approvals.len(), 1);
-    let locked = &catalog.approvals[0];
-    let package = fixture.package("demo", version).unwrap();
-    assert_eq!(locked.registry, "universe");
-    assert_eq!(locked.category.to_string(), "universe/general");
-    assert_eq!(locked.archive_sha256, sha256_bytes(&package.archive));
-    assert!(locked.admission_sha256.is_some());
-    assert_eq!(
-        locked.index_record_sha256,
-        sha256_bytes(&package.source_row)
-    );
-    assert!(matches!(locked.source, Source::CratesIo));
-    assert_eq!(
-        fs::read(
-            root.join("objects/rows")
-                .join(format!("{}.json", locked.index_record_sha256))
-        )
-        .unwrap(),
-        package.source_row
-    );
+    let lock_path = root.join("admissions").join(format!("{batch_stem}.lock"));
+    let batch_hash = sha256_bytes(&fs::read(&lock_path).unwrap());
+    for name in names {
+        let version = Version::parse("1.0.0").unwrap();
+        let locked = catalog
+            .approvals
+            .iter()
+            .find(|approval| approval.name == *name && approval.version == version)
+            .unwrap();
+        let package = fixture.package(name, &version).unwrap();
+        assert_eq!(locked.registry, "universe");
+        assert_eq!(locked.category.to_string(), "universe/general");
+        assert_eq!(locked.archive_sha256, sha256_bytes(&package.archive));
+        assert_eq!(
+            locked.admission_sha256.as_deref(),
+            Some(batch_hash.as_str())
+        );
+        assert_eq!(
+            locked.index_record_sha256,
+            sha256_bytes(&package.source_row)
+        );
+        assert!(matches!(locked.source, Source::CratesIo));
+        assert_eq!(
+            fs::read(
+                root.join("objects/rows")
+                    .join(format!("{}.json", locked.index_record_sha256))
+            )
+            .unwrap(),
+            package.source_row
+        );
+        assert!(
+            fs::read_to_string(root.join("universe.toml"))
+                .unwrap()
+                .contains(&format!("{name} = [\"1.0.0\"]"))
+        );
+    }
     assert_eq!(
         fs::read_dir(root.join("objects/crates")).unwrap().count(),
         0,
         "mirror archives must not be retained in the catalog"
     );
-    assert_eq!(
-        fs::read_dir(root.join("_reviews/admissions"))
-            .unwrap()
-            .count(),
-        1
-    );
     assert!(
-        fs::read_to_string(root.join("universe.toml"))
-            .unwrap()
-            .contains("demo = [\"1.0.0\"]")
+        root.join("admissions")
+            .join(format!("{batch_stem}.toml"))
+            .is_file()
     );
+    assert!(lock_path.is_file());
 }
 
-fn assert_admission_failures_reach_ordinary_catalog_verification(root: &Path) {
-    let admissions = root.join("_reviews/admissions");
-    let mut records = fs::read_dir(&admissions)
-        .unwrap()
-        .collect::<std::io::Result<Vec<_>>>()
-        .unwrap();
-    records.sort_by_key(fs::DirEntry::file_name);
-    assert_eq!(records.len(), 1);
-    let path = records[0].path();
-    let bytes = fs::read(&path).unwrap();
+fn assert_admission_failures_reach_ordinary_catalog_verification(root: &Path, stem: &str) {
+    let admissions = root.join("admissions");
+    let manifest = admissions.join(format!("{stem}.toml"));
+    let lock = admissions.join(format!("{stem}.lock"));
+    let manifest_bytes = fs::read(&manifest).unwrap();
+    let lock_bytes = fs::read(&lock).unwrap();
 
     fs::OpenOptions::new()
         .append(true)
-        .open(&path)
+        .open(&manifest)
         .unwrap()
         .write_all(b"\n")
         .unwrap();
     assert!(Catalog::load(root).is_err());
-    fs::write(&path, &bytes).unwrap();
+    fs::write(&manifest, &manifest_bytes).unwrap();
 
-    fs::remove_file(&path).unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&lock)
+        .unwrap()
+        .write_all(b"\n")
+        .unwrap();
     assert!(Catalog::load(root).is_err());
-    fs::write(&path, &bytes).unwrap();
+    fs::write(&lock, &lock_bytes).unwrap();
 
-    let unexpected = admissions.join(format!("{}.toml", "00".repeat(32)));
-    fs::write(&unexpected, &bytes).unwrap();
+    fs::remove_file(&manifest).unwrap();
     assert!(Catalog::load(root).is_err());
-    fs::remove_file(unexpected).unwrap();
+    fs::write(&manifest, &manifest_bytes).unwrap();
+
+    fs::remove_file(&lock).unwrap();
+    assert!(Catalog::load(root).is_err());
+    fs::write(&lock, &lock_bytes).unwrap();
+
+    let orphan = admissions.join("unexpected.toml");
+    fs::write(&orphan, &manifest_bytes).unwrap();
+    assert!(Catalog::load(root).is_err());
+    fs::remove_file(orphan).unwrap();
     Catalog::load(root).unwrap();
 }
 
@@ -437,6 +510,32 @@ impl FixturePackage {
             source_row,
             history,
         }
+    }
+
+    fn with_yanked(mut self, yanked: bool) -> Self {
+        let mut source_row = serde_json::to_vec(&json!({
+            "name": self.name,
+            "vers": self.version.to_string(),
+            "deps": [],
+            "cksum": sha256_bytes(&self.archive),
+            "features": {},
+            "yanked": yanked,
+            "pubtime": "2020-01-01T00:00:00Z",
+        }))
+        .unwrap();
+        source_row.push(b'\n');
+        let record = IndexRecord::parse(&source_row).unwrap();
+        record.validate_structure().unwrap();
+        self.source_row = source_row.clone();
+        self.history = CratesIoHistory {
+            bytes: source_row.clone(),
+            sha256: sha256_bytes(&source_row),
+            rows: vec![SparseIndexRow {
+                bytes: source_row,
+                record,
+            }],
+        };
+        self
     }
 }
 

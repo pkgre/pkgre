@@ -128,14 +128,14 @@ fn transact_catalog_with<T, N: Renamer>(
     let _guard = CatalogGuard::acquire(&root)?;
     ensure!(
         crate::update::catalog_fingerprint(&root)? == expected_sha256,
-        "catalog fingerprint differs from the update plan before transaction"
+        "catalog fingerprint differs from the recomputed admission facts before transaction"
     );
 
     let staging = TemporaryCatalog::sibling_of(&root, "transaction")?;
     copy_optional_tree(&root, staging.path(), "catalog transaction tree")?;
     ensure!(
         crate::update::catalog_fingerprint(staging.path())? == expected_sha256,
-        "private catalog copy differs from the update plan"
+        "private catalog copy differs from the recomputed admission facts"
     );
 
     let output = mutate(staging.path()).context("mutate private catalog transaction")?;
@@ -1040,9 +1040,9 @@ fn stage_catalog(
         "external category tree",
     )?;
     copy_optional_tree(
-        &root.join("_reviews"),
-        &staging.path().join("_reviews"),
-        "admission review tree",
+        &root.join("admissions"),
+        &staging.path().join("admissions"),
+        "admission batch tree",
     )?;
 
     let crates = catalog
@@ -1467,7 +1467,7 @@ mod tests {
     }
 
     #[test]
-    fn admitted_reconciliation_requires_catalog_owned_record() {
+    fn admitted_reconciliation_requires_catalog_owned_batch() {
         let temporary = TemporaryDirectory::new("pkgre-lock-exact-admission");
         let root = temporary.path().join("catalog");
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
@@ -1490,13 +1490,15 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(format!("{error:#}").contains("missing update-admission records"));
+        assert!(
+            format!("{error:#}").contains("generated locks reference missing admission batches")
+        );
         assert_eq!(resolver.calls(), 2);
         assert_eq!(snapshot(temporary.path()), before);
     }
 
     #[test]
-    fn reconciliation_retains_external_categories_and_admission_directories() {
+    fn reconciliation_retains_external_categories() {
         let temporary = TemporaryDirectory::new("pkgre-lock-auxiliary-trees");
         let root = temporary.path().join("catalog");
         let declarations = "[mirror]\nalpha = [\"1.0.0\"]\n";
@@ -1530,8 +1532,6 @@ mod tests {
         fs::write(&category_path, category).unwrap();
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        fs::create_dir_all(root.join("_reviews/admissions")).unwrap();
-
         let removed_category = category.replace("alpha = [\"1.0.0\"]", "alpha = []");
         fs::write(&category_path, &removed_category).unwrap();
         let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
@@ -1541,7 +1541,6 @@ mod tests {
             fs::read_to_string(&category_path).unwrap(),
             removed_category
         );
-        assert!(root.join("_reviews/admissions").is_dir());
         let before = snapshot(temporary.path());
         assert_eq!(
             reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
@@ -2022,13 +2021,17 @@ mod tests {
         let expected = crate::update::catalog_fingerprint(&root).unwrap();
 
         let returned = transact_catalog(&root, &expected, |staged| {
-            fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+            fs::OpenOptions::new()
+                .append(true)
+                .open(staged.join("universe.toml"))
+                .unwrap()
+                .write_all(b"\n# catalog transaction marker\n")
+                .unwrap();
             Ok(42)
         })
         .unwrap();
 
         assert_eq!(returned, 42);
-        assert!(root.join("_reviews/admissions").is_dir());
         Catalog::load(&root).unwrap();
     }
 
@@ -2042,7 +2045,12 @@ mod tests {
         let before = snapshot(temporary.path());
 
         let error = transact_catalog(&root, &expected, |staged| -> Result<()> {
-            fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+            fs::OpenOptions::new()
+                .append(true)
+                .open(staged.join("universe.toml"))
+                .unwrap()
+                .write_all(b"\n# failed transaction marker\n")
+                .unwrap();
             bail!("synthetic private mutation failure")
         })
         .unwrap_err();
@@ -2085,7 +2093,12 @@ mod tests {
             &root,
             &expected,
             |staged| {
-                fs::create_dir_all(staged.join("_reviews/admissions")).unwrap();
+                fs::OpenOptions::new()
+                    .append(true)
+                    .open(staged.join("universe.toml"))
+                    .unwrap()
+                    .write_all(b"\n# failed install marker\n")
+                    .unwrap();
                 Ok(())
             },
             &renamer,

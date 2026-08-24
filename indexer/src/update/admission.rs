@@ -1,7 +1,6 @@
-//! Immutable catalog-owned evidence for crates.io update admissions.
+//! Immutable catalog-owned admission manifests and generated machine facts.
 
-use std::collections::BTreeSet;
-use std::ffi::OsStr;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,331 +8,449 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{Catalog, Source, version_identity};
+use crate::artifact::sha256_bytes;
+use crate::schema::{Approval, Catalog, Source, version_identity};
 
 use super::plan::validate_historical_update_plan;
 use super::{
-    MAX_PLAN_AGE_DAYS, UpdateCandidate, UpdateDecision, UpdatePlan, UtcTimestamp,
-    candidate_binding_sha256, required_approval_kind,
+    AdmissionEvidence, AdmissionManifest, AdmissionRequest, UpdateCandidate, UpdateDecision,
+    UpdatePlan, UtcTimestamp,
 };
 
-/// Stable admission-record wire schema.
-const ADMISSION_RECORD_SCHEMA: u32 = 1;
-const REVIEWS_DIRECTORY: &str = "_reviews";
+/// Stable generated admission-lock wire schema.
+const ADMISSION_LOCK_SCHEMA: u32 = 2;
 const ADMISSIONS_DIRECTORY: &str = "admissions";
 
-/// Immutable evidence retained beside the catalog lock admitted by one update plan.
+type AdmissionIdentity = (String, (u64, u64, u64, String));
+
+/// Complete generated facts for one human admission batch.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-pub(crate) struct AdmissionRecord {
-    pub(crate) schema: u32,
-    pub(crate) indexer_version: String,
-    pub(crate) catalog_sha256: String,
-    pub(crate) evaluated_at: UtcTimestamp,
-    pub(crate) admitted_at: UtcTimestamp,
-    pub(crate) min_release_age_days: u64,
-    pub(crate) dormant_release_gap_days: u64,
-    pub(crate) candidate: UpdateCandidate,
+struct AdmissionLock {
+    schema: u32,
+    manifest_sha256: String,
+    admitted_at: UtcTimestamp,
+    plan: UpdatePlan,
+    #[serde(rename = "admit")]
+    requests: Vec<AdmissionRequest>,
 }
 
-/// Validates that the optional admission-evidence tree contains only expected real directories and regular files.
+/// Serializes a canonical generated admission lock and returns its complete-content SHA-256.
+pub(crate) fn prepare_admission_lock(
+    manifest: &AdmissionManifest,
+    plan: &UpdatePlan,
+    admitted_at: &UtcTimestamp,
+) -> Result<(Vec<u8>, String)> {
+    let manifest_bytes = super::serialize_admission_manifest(manifest)?;
+    let lock = AdmissionLock {
+        schema: ADMISSION_LOCK_SCHEMA,
+        manifest_sha256: sha256_bytes(&manifest_bytes),
+        admitted_at: admitted_at.clone(),
+        plan: plan.clone(),
+        requests: manifest.entries.clone(),
+    };
+    let bytes = serialize_admission_lock(&lock, Some(manifest))?;
+    let binding = sha256_bytes(&bytes);
+    Ok((bytes, binding))
+}
+
+/// Writes one absent immutable manifest/lock pair and returns the catalog-relative manifest path.
+pub(crate) fn write_admission_pair(
+    root: &Path,
+    filename: &Path,
+    manifest_bytes: &[u8],
+    lock_bytes: &[u8],
+) -> Result<PathBuf> {
+    super::manifest::validate_admission_filename(filename, "toml")?;
+    let filename = filename
+        .file_name()
+        .context("admission manifest path has no filename")?;
+    let relative = PathBuf::from(ADMISSIONS_DIRECTORY).join(filename);
+    let lock_relative = relative.with_extension("lock");
+    let directory = root.join(ADMISSIONS_DIRECTORY);
+    create_or_validate_directory(&directory, "admission directory")?;
+    let manifest_path = root.join(&relative);
+    let lock_path = root.join(&lock_relative);
+    ensure_absent(&manifest_path)?;
+    ensure_absent(&lock_path)?;
+    write_new(&manifest_path, manifest_bytes, "admission manifest")?;
+    if let Err(error) = write_new(&lock_path, lock_bytes, "generated admission lock") {
+        let _ = fs::remove_file(&manifest_path);
+        return Err(error);
+    }
+    File::open(&directory)
+        .with_context(|| format!("open admission directory {}", directory.display()))?
+        .sync_all()
+        .with_context(|| format!("sync admission directory {}", directory.display()))?;
+    Ok(relative)
+}
+
+/// Validates that the optional admission tree contains only paired regular canonical files.
 pub(crate) fn validate_admission_tree_structure(root: &Path) -> Result<()> {
-    let review_root = root.join(REVIEWS_DIRECTORY);
-    let Some(()) = optional_real_directory(&review_root, "admission review root")? else {
+    let directory = root.join(ADMISSIONS_DIRECTORY);
+    let Some(()) = optional_real_directory(&directory, "admission directory")? else {
         return Ok(());
     };
-    let entries = sorted_entries(&review_root)?;
+    let entries = sorted_entries(&directory)?;
     ensure!(
-        entries.len() == 1 && entries[0].file_name() == Some(OsStr::new(ADMISSIONS_DIRECTORY)),
-        "admission review root {} must contain only {ADMISSIONS_DIRECTORY}/",
-        review_root.display()
+        !entries.is_empty(),
+        "admission directory is empty: {}",
+        directory.display()
     );
-    let approvals = &entries[0];
-    let metadata = fs::symlink_metadata(approvals)
-        .with_context(|| format!("inspect admission directory {}", approvals.display()))?;
-    ensure!(
-        metadata.file_type().is_dir(),
-        "admission path is not a real directory: {}",
-        approvals.display()
-    );
-    for path in sorted_entries(approvals)? {
+    let mut pairs = HashMap::<String, u8>::with_capacity(entries.len());
+    for path in entries {
         let metadata = fs::symlink_metadata(&path)
-            .with_context(|| format!("inspect admission record {}", path.display()))?;
+            .with_context(|| format!("inspect admission file {}", path.display()))?;
         ensure!(
             metadata.file_type().is_file(),
-            "admission record is not a regular file: {}",
+            "admission path is not a regular file: {}",
             path.display()
         );
-        admission_binding_from_filename(&path)?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .with_context(|| {
+                format!("admission extension is not valid UTF-8: {}", path.display())
+            })?;
+        let bit = match extension {
+            "toml" => 1,
+            "lock" => 2,
+            _ => bail!(
+                "admission file must have lowercase .toml or .lock extension: {}",
+                path.display()
+            ),
+        };
+        super::manifest::validate_admission_filename(&path, extension)?;
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("validated admission filename has a UTF-8 stem")
+            .to_owned();
+        let present = pairs.entry(stem).or_default();
+        ensure!(
+            *present & bit == 0,
+            "admission pair repeats a .{extension} file: {}",
+            path.display()
+        );
+        *present |= bit;
+    }
+    for (stem, present) in pairs {
+        ensure!(
+            present == 3,
+            "admission batch {stem:?} must have exactly one .toml manifest and one .lock"
+        );
     }
     Ok(())
 }
 
-/// Loads and validates all optional admission records against immutable locked identities.
+/// Loads and validates every admission pair against all admission-bound catalog locks.
 pub(crate) fn validate_admission_inventory(catalog: &Catalog) -> Result<()> {
     validate_admission_tree_structure(&catalog.root)?;
-    let expected_bindings = expected_admission_bindings(catalog)?;
-    let approvals = catalog
-        .root
-        .join(REVIEWS_DIRECTORY)
-        .join(ADMISSIONS_DIRECTORY);
-    let Some(()) = optional_real_directory(&approvals, "admission directory")? else {
+    let mut expected = admission_bound_approvals(catalog)?;
+    let directory = catalog.root.join(ADMISSIONS_DIRECTORY);
+    let Some(()) = optional_real_directory(&directory, "admission directory")? else {
         ensure!(
-            expected_bindings.is_empty(),
-            "generated locks reference missing update-admission records"
+            expected.is_empty(),
+            "generated locks reference missing admission batches"
         );
         return Ok(());
     };
-    let mut bindings = BTreeSet::new();
-    let mut identities = BTreeSet::new();
-    for path in sorted_entries(&approvals)? {
-        let filename_binding = admission_binding_from_filename(&path)?;
-        let record = load_admission_record(&path)?;
-        let binding = candidate_binding_sha256(&record.candidate)?;
+
+    let mut stems = sorted_entries(&directory)?
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|value| value == "toml"))
+        .map(|path| path.with_extension(""))
+        .collect::<Vec<_>>();
+    stems.sort();
+    let mut covered = HashSet::new();
+    let mut batch_hashes = HashSet::new();
+    for stem in stems {
+        let manifest_path = stem.with_extension("toml");
+        let lock_path = stem.with_extension("lock");
+        let manifest = super::load_admission_manifest(&manifest_path)?;
+        let manifest_bytes = super::serialize_admission_manifest(&manifest)?;
+        let (lock, lock_bytes) = load_admission_lock(&lock_path, &manifest)?;
         ensure!(
-            binding == filename_binding,
-            "admission record filename does not match candidate binding: {}",
-            path.display()
+            lock.manifest_sha256 == sha256_bytes(&manifest_bytes),
+            "generated admission lock does not bind its adjacent manifest: {}",
+            lock_path.display()
         );
+        let batch_hash = sha256_bytes(&lock_bytes);
         ensure!(
-            bindings.insert(binding.clone()),
-            "duplicate admission candidate binding in {}",
-            path.display()
+            batch_hashes.insert(batch_hash.clone()),
+            "two admission batches have identical generated lock bytes"
         );
-        let identity = (
-            record.candidate.name.to_ascii_lowercase().replace('-', "_"),
-            version_identity(&record.candidate.candidate.version),
-        );
-        ensure!(
-            identities.insert(identity),
-            "more than one admission record covers {} {}",
-            record.candidate.name,
-            record.candidate.candidate.version
-        );
-        let locked = catalog
-            .approvals
-            .iter()
-            .find(|approval| {
-                approval.name == record.candidate.name
-                    && version_identity(&approval.version)
-                        == version_identity(&record.candidate.candidate.version)
-            })
-            .with_context(|| {
+        for candidate in &lock.plan.candidates {
+            let identity = candidate_identity(candidate);
+            ensure!(
+                covered.insert(identity.clone()),
+                "more than one admission batch covers {} {}",
+                candidate.name,
+                candidate.candidate.version
+            );
+            let approval = expected.remove(&identity).with_context(|| {
                 format!(
-                    "admission record {} has no locked identity {} {}",
-                    path.display(),
-                    record.candidate.name,
-                    record.candidate.candidate.version
+                    "admission batch {} has no admission-bound locked identity {} {}",
+                    lock_path.display(),
+                    candidate.name,
+                    candidate.candidate.version
                 )
             })?;
-        ensure!(
-            locked.registry == record.candidate.registry
-                && locked.category.to_string() == record.candidate.category
-                && locked.archive_sha256 == record.candidate.candidate.crate_sha256
-                && locked.index_record_sha256 == record.candidate.candidate.source_row_sha256
-                && locked.admission_sha256.as_deref() == Some(binding.as_str())
-                && matches!(locked.source, Source::CratesIo),
-            "admission record {} differs from immutable locked route, hashes, or binding",
-            path.display()
-        );
+            validate_candidate_lock(candidate, approval, &batch_hash, &lock_path)?;
+        }
     }
     ensure!(
-        bindings == expected_bindings,
-        "update-admission inventory differs from generated-lock bindings; missing={:?}, unexpected={:?}",
-        expected_bindings.difference(&bindings).collect::<Vec<_>>(),
-        bindings.difference(&expected_bindings).collect::<Vec<_>>()
+        expected.is_empty(),
+        "generated locks contain identities not covered by an admission batch: {:?}",
+        expected
+            .values()
+            .map(|approval| format!("{} {}", approval.name, approval.version))
+            .collect::<Vec<_>>()
     );
     Ok(())
 }
 
-fn expected_admission_bindings(catalog: &Catalog) -> Result<BTreeSet<String>> {
-    let mut bindings = BTreeSet::new();
+fn admission_bound_approvals(catalog: &Catalog) -> Result<HashMap<AdmissionIdentity, &Approval>> {
+    let mut expected = HashMap::with_capacity(catalog.approvals.len());
     for approval in &catalog.approvals {
         let Some(binding) = &approval.admission_sha256 else {
             continue;
         };
         crate::policy::validate_sha256(binding).with_context(|| {
             format!(
-                "invalid update-admission binding for {} {}",
+                "invalid admission-lock binding for {} {}",
                 approval.name, approval.version
             )
         })?;
         ensure!(
             matches!(approval.source, Source::CratesIo),
-            "non-crates.io identity {} {} references update-admission evidence",
+            "non-crates.io identity {} {} references mirror admission facts",
             approval.name,
             approval.version
         );
+        let identity = approval_identity(approval);
         ensure!(
-            bindings.insert(binding.clone()),
-            "generated locks repeat update-admission binding {binding}"
+            expected.insert(identity, approval).is_none(),
+            "generated locks repeat admission-bound identity {} {}",
+            approval.name,
+            approval.version
         );
     }
-    Ok(bindings)
+    Ok(expected)
 }
 
-/// Writes one canonical immutable admission record and returns its catalog-relative path.
-pub(crate) fn write_admission_record(
-    root: &Path,
-    plan: &UpdatePlan,
+fn validate_candidate_lock(
     candidate: &UpdateCandidate,
-    admitted_at: &UtcTimestamp,
-) -> Result<PathBuf> {
-    let record = AdmissionRecord {
-        schema: ADMISSION_RECORD_SCHEMA,
-        indexer_version: plan.indexer_version.clone(),
-        catalog_sha256: plan.catalog_sha256.clone(),
-        evaluated_at: plan.evaluated_at.clone(),
-        admitted_at: admitted_at.clone(),
-        min_release_age_days: plan.min_release_age_days,
-        dormant_release_gap_days: plan.dormant_release_gap_days,
-        candidate: candidate.clone(),
-    };
-    let bytes = serialize_admission_record(&record)?;
-    let binding = candidate_binding_sha256(candidate)?;
-    let relative = PathBuf::from(REVIEWS_DIRECTORY)
-        .join(ADMISSIONS_DIRECTORY)
-        .join(format!("{binding}.toml"));
-    let review_root = root.join(REVIEWS_DIRECTORY);
-    create_or_validate_directory(&review_root, "admission review root")?;
-    let approvals = review_root.join(ADMISSIONS_DIRECTORY);
-    create_or_validate_directory(&approvals, "admission directory")?;
-    let path = root.join(&relative);
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .with_context(|| format!("create immutable admission record {}", path.display()))?;
-    output
-        .write_all(&bytes)
-        .with_context(|| format!("write admission record {}", path.display()))?;
-    output
-        .sync_all()
-        .with_context(|| format!("sync admission record {}", path.display()))?;
-    File::open(&approvals)
-        .with_context(|| format!("open admission directory {}", approvals.display()))?
-        .sync_all()
-        .with_context(|| format!("sync admission directory {}", approvals.display()))?;
-    File::open(&review_root)
-        .with_context(|| format!("open admission root {}", review_root.display()))?
-        .sync_all()
-        .with_context(|| format!("sync admission root {}", review_root.display()))?;
-    Ok(relative)
-}
-
-fn load_admission_record(path: &Path) -> Result<AdmissionRecord> {
-    let bytes =
-        fs::read(path).with_context(|| format!("read admission record {}", path.display()))?;
-    let record: AdmissionRecord = toml::from_slice(&bytes)
-        .with_context(|| format!("parse admission record {}", path.display()))?;
-    let canonical = serialize_admission_record(&record)?;
+    approval: &Approval,
+    batch_hash: &str,
+    path: &Path,
+) -> Result<()> {
     ensure!(
-        bytes == canonical,
-        "admission record is not in canonical form: {}",
+        approval.registry == candidate.registry
+            && approval.category.to_string() == candidate.category
+            && approval.name == candidate.name
+            && version_identity(&approval.version)
+                == version_identity(&candidate.candidate.version)
+            && approval.archive_sha256 == candidate.candidate.crate_sha256
+            && approval.index_record_sha256 == candidate.candidate.source_row_sha256
+            && approval.admission_sha256.as_deref() == Some(batch_hash)
+            && matches!(approval.source, Source::CratesIo),
+        "admission facts {} differ from immutable locked route, identity, hashes, or batch binding",
         path.display()
     );
-    Ok(record)
+    Ok(())
 }
 
-fn serialize_admission_record(record: &AdmissionRecord) -> Result<Vec<u8>> {
-    validate_admission_record(record)?;
-    let text = toml::to_string_pretty(record).context("serialize canonical admission record")?;
+fn load_admission_lock(
+    path: &Path,
+    manifest: &AdmissionManifest,
+) -> Result<(AdmissionLock, Vec<u8>)> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("inspect generated admission lock {}", path.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "generated admission lock is not a regular file: {}",
+        path.display()
+    );
+    let bytes = fs::read(path)
+        .with_context(|| format!("read generated admission lock {}", path.display()))?;
+    let lock: AdmissionLock = toml::from_slice(&bytes)
+        .with_context(|| format!("parse generated admission lock {}", path.display()))?;
+    let canonical = serialize_admission_lock(&lock, Some(manifest))?;
+    ensure!(
+        bytes == canonical,
+        "generated admission lock is not in canonical form: {}",
+        path.display()
+    );
+    Ok((lock, bytes))
+}
+
+fn serialize_admission_lock(
+    lock: &AdmissionLock,
+    manifest: Option<&AdmissionManifest>,
+) -> Result<Vec<u8>> {
+    validate_admission_lock(lock, manifest)?;
+    let text = toml::to_string_pretty(lock).context("serialize canonical admission lock")?;
     Ok(text.into_bytes())
 }
 
-fn validate_admission_record(record: &AdmissionRecord) -> Result<()> {
+fn validate_admission_lock(
+    lock: &AdmissionLock,
+    manifest: Option<&AdmissionManifest>,
+) -> Result<()> {
     ensure!(
-        record.schema == ADMISSION_RECORD_SCHEMA,
-        "unsupported admission-record schema {}; expected {ADMISSION_RECORD_SCHEMA}",
-        record.schema
+        lock.schema == ADMISSION_LOCK_SCHEMA,
+        "unsupported admission-lock schema {}; expected {ADMISSION_LOCK_SCHEMA}",
+        lock.schema
     );
-    let plan = UpdatePlan {
-        schema: super::UPDATE_PLAN_SCHEMA,
-        indexer_version: record.indexer_version.clone(),
-        catalog_sha256: record.catalog_sha256.clone(),
-        evaluated_at: record.evaluated_at.clone(),
-        min_release_age_days: record.min_release_age_days,
-        dormant_release_gap_days: record.dormant_release_gap_days,
-        candidates: vec![record.candidate.clone()],
+    crate::policy::validate_sha256(&lock.manifest_sha256)
+        .context("invalid admission manifest hash")?;
+    validate_historical_update_plan(&lock.plan).context("validate generated admission facts")?;
+    ensure!(
+        !lock.plan.candidates.is_empty(),
+        "generated admission lock contains no candidates"
+    );
+    lock.admitted_at
+        .duration_since(&lock.plan.evaluated_at)
+        .context("admission time predates evidence evaluation")?;
+    let requests_manifest = AdmissionManifest {
+        schema: super::ADMISSION_MANIFEST_SCHEMA,
+        entries: lock.requests.clone(),
     };
-    validate_historical_update_plan(&plan).context("validate admission candidate evidence")?;
-    record
-        .admitted_at
-        .duration_since(&record.evaluated_at)
-        .context("admission time predates plan evaluation")?;
-    for approval in &record.candidate.approvals {
-        record
-            .admitted_at
-            .duration_since(&approval.approved_at)
-            .context("admission time predates candidate approval")?;
+    super::serialize_admission_manifest(&requests_manifest)
+        .context("validate generated admission request bindings")?;
+    if let Some(manifest) = manifest {
+        ensure!(
+            &requests_manifest == manifest,
+            "generated admission request bindings differ from the adjacent manifest"
+        );
+        ensure!(
+            lock.manifest_sha256 == sha256_bytes(&super::serialize_admission_manifest(manifest)?),
+            "generated admission manifest hash is stale"
+        );
     }
-    validate_admissible_candidate(&record.candidate)
+
+    let mut requests = HashMap::with_capacity(lock.requests.len());
+    for request in &lock.requests {
+        let identity = request_identity(request)?;
+        ensure!(
+            requests.insert(identity, request).is_none(),
+            "generated admission requests repeat an identity"
+        );
+    }
+    ensure!(
+        requests.len() == lock.plan.candidates.len(),
+        "generated admission request and candidate counts differ"
+    );
+    for candidate in &lock.plan.candidates {
+        ensure!(
+            candidate.decision != UpdateDecision::Blocked,
+            "blocked candidate {} {} cannot be retained as admitted",
+            candidate.name,
+            candidate.candidate.version
+        );
+        let identity = candidate_identity(candidate);
+        let request = requests.remove(&identity).with_context(|| {
+            format!(
+                "generated facts have no matching request for {} {}",
+                candidate.name, candidate.candidate.version
+            )
+        })?;
+        ensure!(
+            request.name == candidate.name && request.category.to_string() == candidate.category,
+            "generated facts route differs from request for {} {}",
+            candidate.name,
+            candidate.candidate.version
+        );
+        validate_request_evidence(request, candidate)?;
+    }
+    ensure!(
+        requests.is_empty(),
+        "generated admission requests contain unmatched identities"
+    );
+    Ok(())
 }
 
-pub(crate) fn validate_admissible_candidate(candidate: &UpdateCandidate) -> Result<()> {
-    match candidate.decision {
-        UpdateDecision::Blocked => bail!(
-            "blocked candidate {} {} cannot be admitted",
-            candidate.name,
-            candidate.candidate.version
-        ),
-        UpdateDecision::Automatic => ensure!(
-            candidate.approvals.is_empty(),
-            "automatic candidate {} {} unexpectedly carries approvals",
-            candidate.name,
-            candidate.candidate.version
-        ),
-        UpdateDecision::ReviewRequired => {
-            ensure!(
-                candidate.approvals.len() == 1,
-                "review-required candidate {} {} must carry exactly one approval",
-                candidate.name,
-                candidate.candidate.version
-            );
-            let expected = required_approval_kind(candidate);
-            ensure!(
-                candidate.approvals[0].kind == expected,
-                "candidate {} {} requires {expected:?} approval",
-                candidate.name,
-                candidate.candidate.version
-            );
+fn validate_request_evidence(
+    request: &AdmissionRequest,
+    candidate: &UpdateCandidate,
+) -> Result<()> {
+    for evidence in &request.evidence {
+        match evidence {
+            AdmissionEvidence::ManualFullArchive { .. } => {}
+            AdmissionEvidence::ManualSourceDelta { base, .. } => {
+                let candidate_base = candidate.base.as_ref().with_context(|| {
+                    format!(
+                        "manual source-delta evidence for {} {} has no exact base",
+                        candidate.name, candidate.candidate.version
+                    )
+                })?;
+                ensure!(
+                    version_identity(base) == version_identity(&candidate_base.version)
+                        && candidate.archive_delta.is_some(),
+                    "manual source-delta base for {} {} differs from recomputed exact base {}",
+                    candidate.name,
+                    candidate.candidate.version,
+                    candidate_base.version
+                );
+            }
         }
     }
     Ok(())
 }
 
-/// Rejects a plan evaluation time in the future or older than the compiled apply window.
-pub(crate) fn validate_plan_age(plan: &UpdatePlan, now: &UtcTimestamp) -> Result<()> {
-    let age = now
-        .duration_since(&plan.evaluated_at)
-        .context("update plan evaluation time is in the future")?;
-    ensure!(
-        age <= MAX_PLAN_AGE_DAYS * 24 * 60 * 60,
-        "update plan is older than the {MAX_PLAN_AGE_DAYS}-day apply window"
-    );
-    Ok(())
+fn request_identity(request: &AdmissionRequest) -> Result<AdmissionIdentity> {
+    match (&request.version, &request.tag) {
+        (Some(version), None) => Ok((package_identity(&request.name), version_identity(version))),
+        (None, Some(tag)) => bail!(
+            "Git-tag admission for {} tag {tag:?} is not yet supported",
+            request.name
+        ),
+        _ => bail!(
+            "admission request for {} does not have exactly one target",
+            request.name
+        ),
+    }
 }
 
-fn admission_binding_from_filename(path: &Path) -> Result<String> {
-    ensure!(
-        path.extension() == Some(OsStr::new("toml")),
-        "admission record must have lowercase .toml extension: {}",
-        path.display()
-    );
-    let binding = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .with_context(|| format!("admission filename is not valid UTF-8: {}", path.display()))?;
-    ensure!(
-        binding.len() == 64
-            && binding
-                .as_bytes()
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)),
-        "admission filename is not a lowercase SHA-256 binding: {}",
-        path.display()
-    );
-    Ok(binding.to_owned())
+fn candidate_identity(candidate: &UpdateCandidate) -> AdmissionIdentity {
+    (
+        package_identity(&candidate.name),
+        version_identity(&candidate.candidate.version),
+    )
+}
+
+fn approval_identity(approval: &Approval) -> AdmissionIdentity {
+    (
+        package_identity(&approval.name),
+        version_identity(&approval.version),
+    )
+}
+
+fn package_identity(value: &str) -> String {
+    value.to_ascii_lowercase().replace('-', "_")
+}
+
+fn ensure_absent(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => bail!("admission file already exists: {}", path.display()),
+        Err(error) => Err(error).with_context(|| format!("inspect {}", path.display())),
+    }
+}
+
+fn write_new(path: &Path, bytes: &[u8], description: &str) -> Result<()> {
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("create {description} {}", path.display()))?;
+    output
+        .write_all(bytes)
+        .with_context(|| format!("write {description} {}", path.display()))?;
+    output
+        .sync_all()
+        .with_context(|| format!("sync {description} {}", path.display()))
 }
 
 fn optional_real_directory(path: &Path, description: &str) -> Result<Option<()>> {
@@ -386,211 +503,120 @@ mod tests {
 
     use super::*;
     use crate::category::CategoryId;
-    use crate::schema::{
-        Approval, HomesFile, PackageState, RegistriesFile, SCHEMA_VERSION, Source,
-    };
+    use crate::schema::{HomesFile, PackageState, RegistriesFile, SCHEMA_VERSION};
     use crate::update::{
-        ApprovalKind, ArchiveSummary, DecisionReason, DependencyDelta, MIN_RELEASE_AGE_DAYS,
-        PackageActivity, PlannedIdentity, SourceEvidence, UPDATE_PLAN_SCHEMA, UpdateApproval,
+        ArchiveSummary, DecisionReason, DependencyDelta, MIN_RELEASE_AGE_DAYS, PackageActivity,
+        PlannedIdentity, SourceEvidence, UPDATE_PLAN_SCHEMA,
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
-    fn admissibility_requires_exact_decision_specific_approval_set() {
-        let automatic = candidate(UpdateDecision::Automatic);
-        validate_admissible_candidate(&automatic).unwrap();
-        let mut approved_automatic = automatic.clone();
-        approved_automatic.approvals.push(approval_for(&automatic));
-        assert!(validate_admissible_candidate(&approved_automatic).is_err());
-
-        let reviewed = candidate(UpdateDecision::ReviewRequired);
-        assert!(validate_admissible_candidate(&reviewed).is_err());
-        let mut approved = reviewed.clone();
-        approved.approvals.push(approval_for(&reviewed));
-        validate_admissible_candidate(&approved).unwrap();
-        approved.approvals.push(approval_for(&reviewed));
-        assert!(validate_admissible_candidate(&approved).is_err());
-        let mut wrong_kind = reviewed;
-        let mut approval = approval_for(&wrong_kind);
-        approval.kind = ApprovalKind::SourceDelta;
-        wrong_kind.approvals.push(approval);
-        assert!(validate_admissible_candidate(&wrong_kind).is_err());
-
-        let mut blocked = candidate(UpdateDecision::Blocked);
-        blocked.approvals.push(approval_for(&blocked));
-        assert!(validate_admissible_candidate(&blocked).is_err());
-    }
-
-    #[test]
-    fn plan_age_rejects_future_and_over_seven_days() {
-        let mut plan = update_plan(approved_review_candidate());
-        plan.evaluated_at = UtcTimestamp::parse("2025-01-01T00:00:00Z").unwrap();
-        validate_plan_age(&plan, &UtcTimestamp::parse("2025-01-08T00:00:00Z").unwrap()).unwrap();
-        assert!(
-            validate_plan_age(&plan, &UtcTimestamp::parse("2025-01-08T00:00:01Z").unwrap())
-                .is_err()
-        );
-        plan.evaluated_at = UtcTimestamp::parse("2025-01-09T00:00:00Z").unwrap();
-        assert!(
-            validate_plan_age(&plan, &UtcTimestamp::parse("2025-01-08T00:00:00Z").unwrap())
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn admission_record_is_canonical_content_addressed_and_inventory_bound() {
-        let root = temporary_directory("record");
-        let candidate = approved_review_candidate();
-        let plan = update_plan(candidate.clone());
-        let relative = write_admission_record(
-            &root,
+    fn canonical_pair_is_complete_content_bound_and_inventory_checked() {
+        let root = temporary_directory("pair");
+        let manifest = manifest();
+        let plan = plan();
+        let manifest_bytes = super::super::serialize_admission_manifest(&manifest).unwrap();
+        let (lock_bytes, binding) = prepare_admission_lock(
+            &manifest,
             &plan,
-            &candidate,
             &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            relative,
-            PathBuf::from("_reviews/admissions").join(format!(
-                "{}.toml",
-                candidate_binding_sha256(&candidate).unwrap()
-            ))
-        );
-        let record = load_admission_record(&root.join(&relative)).unwrap();
-        assert_eq!(record.candidate, candidate);
-
-        let mut catalog = catalog_for(&root, &record.candidate);
-        validate_admission_inventory(&catalog).unwrap();
-        catalog.approvals[0].archive_sha256 = "ff".repeat(32);
-        assert!(validate_admission_inventory(&catalog).is_err());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn historical_indexer_version_remains_valid_and_chronology_is_enforced() {
-        let root = temporary_directory("historical");
-        let candidate = approved_review_candidate();
-        let mut plan = update_plan(candidate.clone());
-        plan.indexer_version = "0.1.0".to_owned();
-        write_admission_record(
+        write_admission_pair(
             &root,
-            &plan,
-            &candidate,
-            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
+            Path::new("2025-02-01-demo.toml"),
+            &manifest_bytes,
+            &lock_bytes,
         )
         .unwrap();
-        validate_admission_inventory(&catalog_for(&root, &candidate)).unwrap();
+        assert_eq!(sha256_bytes(&lock_bytes), binding);
+        validate_admission_inventory(&catalog_for(&root, Some(binding))).unwrap();
 
-        let record = AdmissionRecord {
-            schema: ADMISSION_RECORD_SCHEMA,
-            indexer_version: plan.indexer_version,
-            catalog_sha256: plan.catalog_sha256,
-            evaluated_at: plan.evaluated_at,
-            admitted_at: UtcTimestamp::parse("2025-02-01T00:30:00Z").unwrap(),
-            min_release_age_days: plan.min_release_age_days,
-            dormant_release_gap_days: plan.dormant_release_gap_days,
-            candidate,
-        };
-        assert!(serialize_admission_record(&record).is_err());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn inventory_rejects_noncanonical_binding_and_duplicate_identity() {
-        let root = temporary_directory("inventory");
-        let candidate = approved_review_candidate();
-        let plan = update_plan(candidate.clone());
-        let relative = write_admission_record(
-            &root,
-            &plan,
-            &candidate,
-            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
-        )
-        .unwrap();
-        let path = root.join(&relative);
+        let path = root.join("admissions/2025-02-01-demo.lock");
         fs::OpenOptions::new()
             .append(true)
             .open(&path)
             .unwrap()
             .write_all(b"\n")
             .unwrap();
-        assert!(validate_admission_inventory(&catalog_for(&root, &candidate)).is_err());
-        fs::remove_dir_all(&root).unwrap();
-
-        let root = temporary_directory("duplicate");
-        let candidate = approved_review_candidate();
-        let plan = update_plan(candidate.clone());
-        write_admission_record(
-            &root,
-            &plan,
-            &candidate,
-            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
-        )
-        .unwrap();
-        let mut other = candidate.clone();
-        other.sparse_index_sha256 = "09".repeat(32);
-        other.approvals.clear();
-        other.approvals.push(approval_for(&other));
-        write_admission_record(
-            &root,
-            &update_plan(other.clone()),
-            &other,
-            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
-        )
-        .unwrap();
-        assert!(validate_admission_inventory(&catalog_for(&root, &candidate)).is_err());
+        assert!(validate_admission_inventory(&catalog_for(&root, None)).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn inventory_requires_exact_reverse_lock_binding() {
-        let root = temporary_directory("reverse-binding");
-        let candidate = approved_review_candidate();
-        let mut catalog = catalog_for(&root, &candidate);
-        let error = validate_admission_inventory(&catalog).unwrap_err();
-        assert!(format!("{error:#}").contains("missing update-admission records"));
+    fn inventory_requires_exact_reverse_coverage_and_rejects_duplicate_batches() {
+        let root = temporary_directory("reverse");
+        let manifest = manifest();
+        let plan = plan();
+        let manifest_bytes = super::super::serialize_admission_manifest(&manifest).unwrap();
+        let first_time = UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap();
+        let (first, binding) = prepare_admission_lock(&manifest, &plan, &first_time).unwrap();
+        write_admission_pair(&root, Path::new("first.toml"), &manifest_bytes, &first).unwrap();
+        assert!(validate_admission_inventory(&catalog_for(&root, None)).is_err());
 
-        write_admission_record(
-            &root,
-            &update_plan(candidate.clone()),
-            &candidate,
-            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
-        )
-        .unwrap();
-        catalog.approvals[0].admission_sha256 = None;
-        let error = validate_admission_inventory(&catalog).unwrap_err();
-        assert!(format!("{error:#}").contains("binding"));
+        let second_time = UtcTimestamp::parse("2025-02-01T03:00:00Z").unwrap();
+        let (second, _) = prepare_admission_lock(&manifest, &plan, &second_time).unwrap();
+        write_admission_pair(&root, Path::new("second.toml"), &manifest_bytes, &second).unwrap();
+        assert!(validate_admission_inventory(&catalog_for(&root, Some(binding))).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn review_tree_rejects_unexpected_nested_and_non_regular_entries() {
+    fn tree_rejects_unpaired_nested_and_symlink_entries() {
         let root = temporary_directory("tree");
-        fs::create_dir_all(root.join("_reviews/admissions/nested")).unwrap();
+        fs::create_dir(root.join("admissions")).unwrap();
+        fs::write(root.join("admissions/only.toml"), b"schema = 2\n").unwrap();
         assert!(validate_admission_tree_structure(&root).is_err());
         fs::remove_dir_all(&root).unwrap();
 
-        let root = temporary_directory("unexpected");
-        fs::create_dir(root.join("_reviews")).unwrap();
-        fs::create_dir(root.join("_reviews/other")).unwrap();
+        let root = temporary_directory("nested");
+        fs::create_dir_all(root.join("admissions/nested")).unwrap();
         assert!(validate_admission_tree_structure(&root).is_err());
-        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let root = temporary_directory("symlink");
+            fs::create_dir(root.join("target")).unwrap();
+            symlink(root.join("target"), root.join("admissions")).unwrap();
+            assert!(validate_admission_tree_structure(&root).is_err());
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
-    #[cfg(unix)]
     #[test]
-    fn review_tree_rejects_symlinks() {
-        use std::os::unix::fs::symlink;
-
-        let root = temporary_directory("symlink");
-        fs::create_dir(root.join("target")).unwrap();
-        symlink(root.join("target"), root.join("_reviews")).unwrap();
-        assert!(validate_admission_tree_structure(&root).is_err());
-        fs::remove_dir_all(root).unwrap();
+    fn source_delta_evidence_binds_the_recomputed_base() {
+        let mut manifest = manifest();
+        manifest.entries[0].evidence = vec![AdmissionEvidence::ManualSourceDelta {
+            base: Version::parse("0.9.0").unwrap(),
+            note: "Reviewed the complete source delta.".to_owned(),
+        }];
+        assert!(
+            prepare_admission_lock(
+                &manifest,
+                &plan(),
+                &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap()
+            )
+            .is_err()
+        );
     }
 
-    fn update_plan(candidate: UpdateCandidate) -> UpdatePlan {
+    fn manifest() -> AdmissionManifest {
+        AdmissionManifest {
+            schema: super::super::ADMISSION_MANIFEST_SCHEMA,
+            entries: vec![AdmissionRequest {
+                category: "universe/general".parse().unwrap(),
+                name: "demo".to_owned(),
+                version: Some(Version::parse("1.0.0").unwrap()),
+                tag: None,
+                evidence: Vec::new(),
+            }],
+        }
+    }
+
+    fn plan() -> UpdatePlan {
         UpdatePlan {
             schema: UPDATE_PLAN_SCHEMA,
             indexer_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -598,59 +624,16 @@ mod tests {
             evaluated_at: UtcTimestamp::parse("2025-02-01T00:00:00Z").unwrap(),
             min_release_age_days: MIN_RELEASE_AGE_DAYS,
             dormant_release_gap_days: super::super::DORMANT_RELEASE_GAP_DAYS,
-            candidates: vec![candidate],
+            candidates: vec![candidate()],
         }
     }
 
-    fn approved_review_candidate() -> UpdateCandidate {
-        let mut candidate = candidate(UpdateDecision::ReviewRequired);
-        candidate.approvals.push(approval_for(&candidate));
-        candidate
-    }
-
-    fn approval_for(candidate: &UpdateCandidate) -> UpdateApproval {
-        UpdateApproval {
-            kind: ApprovalKind::FullArchive,
-            binding_sha256: candidate_binding_sha256(candidate).unwrap(),
-            approved_at: UtcTimestamp::parse("2025-02-01T01:00:00Z").unwrap(),
-            note: "Reviewed all files.".to_owned(),
-            note_sha256: crate::artifact::sha256_bytes(b"Reviewed all files."),
-        }
-    }
-
-    fn candidate(decision: UpdateDecision) -> UpdateCandidate {
-        let (activity, source, reasons) = match decision {
-            UpdateDecision::Automatic => (
-                PackageActivity::Active,
-                SourceEvidence::Unavailable {
-                    reason: "not-promoted".to_owned(),
-                },
-                Vec::new(),
-            ),
-            UpdateDecision::ReviewRequired => (
-                PackageActivity::New,
-                SourceEvidence::Unavailable {
-                    reason: "source-verification-error".to_owned(),
-                },
-                vec![
-                    DecisionReason::NewPackage,
-                    DecisionReason::SourceUnavailable,
-                    DecisionReason::ExplicitCandidate,
-                ],
-            ),
-            UpdateDecision::Blocked => (
-                PackageActivity::Active,
-                SourceEvidence::Mismatch {
-                    comparison_sha256: "06".repeat(32),
-                },
-                vec![DecisionReason::SourceMismatch],
-            ),
-        };
+    fn candidate() -> UpdateCandidate {
         UpdateCandidate {
             registry: "universe".to_owned(),
             category: "universe/general".to_owned(),
             name: "demo".to_owned(),
-            activity,
+            activity: PackageActivity::New,
             lane: None,
             base: None,
             candidate: PlannedIdentity {
@@ -680,14 +663,19 @@ mod tests {
                 new_packages: Vec::new(),
             },
             api: None,
-            source,
-            decision,
-            reasons,
-            approvals: Vec::new(),
+            source: SourceEvidence::Unavailable {
+                reason: "source-verification-error".to_owned(),
+            },
+            decision: UpdateDecision::ReviewRequired,
+            reasons: vec![
+                DecisionReason::NewPackage,
+                DecisionReason::SourceUnavailable,
+                DecisionReason::ExplicitCandidate,
+            ],
         }
     }
 
-    fn catalog_for(root: &Path, candidate: &UpdateCandidate) -> Catalog {
+    fn catalog_for(root: &Path, binding: Option<String>) -> Catalog {
         Catalog {
             root: root.to_path_buf(),
             registries: RegistriesFile {
@@ -702,19 +690,22 @@ mod tests {
                 homes: BTreeMap::new(),
             },
             name_sources: BTreeMap::new(),
-            approvals: vec![Approval {
-                registry: candidate.registry.clone(),
-                category: CategoryId::new(&candidate.registry, "general").unwrap(),
-                name: candidate.name.clone(),
-                version: candidate.candidate.version.clone(),
-                archive_sha256: candidate.candidate.crate_sha256.clone(),
-                index_record_sha256: candidate.candidate.source_row_sha256.clone(),
-                index_row_sha256: "08".repeat(32),
-                admission_sha256: Some(candidate_binding_sha256(candidate).unwrap()),
-                state: PackageState::Active,
-                source: Source::CratesIo,
-                declared_in: root.join("universe.lock"),
-            }],
+            approvals: binding
+                .map(|binding| Approval {
+                    registry: "universe".to_owned(),
+                    category: CategoryId::new("universe", "general").unwrap(),
+                    name: "demo".to_owned(),
+                    version: Version::parse("1.0.0").unwrap(),
+                    archive_sha256: "02".repeat(32),
+                    index_record_sha256: "01".repeat(32),
+                    index_row_sha256: "08".repeat(32),
+                    admission_sha256: Some(binding),
+                    state: PackageState::Active,
+                    source: Source::CratesIo,
+                    declared_in: root.join("universe.lock"),
+                })
+                .into_iter()
+                .collect(),
         }
     }
 
