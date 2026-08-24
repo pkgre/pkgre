@@ -110,7 +110,9 @@ fn ensure_revalidation_matches(planned: &UpdatePlan, recomputed: &UpdatePlan) ->
         if let (Some(approved_api), Some(current_api)) = (&approved.api, &mut current.api) {
             // crates.io responses contain mutable counters and other non-decision fields. Retain the
             // raw-response hash as planning provenance while revalidating every parsed API field.
-            current_api.response_sha256 = approved_api.response_sha256.clone();
+            current_api
+                .response_sha256
+                .clone_from(&approved_api.response_sha256);
         }
     }
 
