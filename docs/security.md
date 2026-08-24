@@ -12,7 +12,7 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 - `pkgre-indexer`: resolves candidates, recomputes evidence, and enforces schema, update policy, approval/admission binding, lifecycle, artifact, category routing, rendering, migration, and release invariants; implementation bugs can invalidate guarantees.
 - Nix pins + Rust/Cargo `1.95.0`: tooling build inputs and first-party packaging semantics.
 - GitHub Pages + TLS/DNS: availability + delivery of rows/Git-tag archives; crates.io CDN: availability + delivery of mirror archives; Cargo checksums reject bytes that differ from a trusted curated row.
-- crates.io sparse/API/archive + public Git upstreams during planning/apply: metadata/source origins whose exact observations are bound into the plan, revalidated before admission, and remain uncommitted until policy/review passes; crates.io remains the mirror-byte availability provider, constrained by the permanently locked checksum.
+- crates.io sparse/API/archive + public Git upstreams during planning/apply: metadata/source origins whose security-relevant observations are bound into the plan, revalidated before admission, and remain uncommitted until policy/review passes; the raw crates.io API response hash is retained as planning provenance but is not required to remain stable because responses include mutable non-decision fields; crates.io remains the mirror-byte availability provider, constrained by the permanently locked checksum.
 
 ## Authority boundaries
 

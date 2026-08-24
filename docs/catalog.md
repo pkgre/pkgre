@@ -173,7 +173,7 @@ Locks are generated artifacts: never hand-edit them. Reconciliation copies every
 
 ## Update admission evidence
 
-`update-plan`/`update-plan-exact` create canonical read-only plans outside the catalog. Each candidate binds permanent route, exact version/pubtime/row/archive hashes, complete observed sparse-history hash, decision-relevant history hash, age/lane/dormancy, bounded base/candidate archive analyses + delta, dependencies, crates.io API facts, promoted source correspondence, decision, and reasons. Candidate-binding SHA-256 covers all of that while excluding later approval assertions.
+`update-plan`/`update-plan-exact` create canonical read-only plans outside the catalog. Each candidate binds permanent route, exact version/pubtime/row/archive hashes, complete observed sparse-history hash, decision-relevant history hash, age/lane/dormancy, bounded base/candidate archive analyses + delta, dependencies, parsed crates.io API facts, raw API response-hash provenance, promoted source correspondence, decision, and reasons. Candidate-binding SHA-256 covers all of that while excluding later approval assertions. Apply permits the raw API hash to change because the response includes mutable non-decision fields, but requires every parsed version-scoped API fact to remain identical.
 
 `update-inspect` re-fetches checksum-bound candidate/base archives + verifies planned analyses/delta before creating an inert review tree. `update-approve` can append exactly one required review assertion to a new plan: `source-delta` for an active name with a base, otherwise `full-archive`; the assertion binds candidate hash, canonical note + note hash, and timestamp. `automatic` candidates require no assertion; `blocked` candidates cannot be admitted.
 
