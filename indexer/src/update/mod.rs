@@ -3,7 +3,6 @@
 mod admission;
 mod api;
 mod apply;
-mod approval;
 mod archive;
 mod declaration;
 mod inspect;
@@ -19,8 +18,7 @@ mod e2e_tests;
 
 pub(crate) use admission::{validate_admission_inventory, validate_admission_tree_structure};
 pub use api::parse_crates_io_api_evidence;
-pub use apply::apply_update_plan;
-pub use approval::{approve_update_plan, required_approval_kind};
+pub use apply::apply_admission_manifest;
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};
 pub use inspect::inspect_update_candidate;
 pub use manifest::{

@@ -234,7 +234,7 @@ pub struct LockedPackage {
     pub source_row_sha256: String,
     /// SHA-256 of the canonical routed row with `yanked = false`.
     pub index_row_sha256: String,
-    /// Candidate-binding SHA-256 for an identity admitted by the update workflow.
+    /// SHA-256 of the complete generated admission lock that authorized this identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_sha256: Option<String>,
     /// Immutable origin evidence.
@@ -303,7 +303,7 @@ pub struct Approval {
     pub index_record_sha256: String,
     /// SHA-256 of the canonical routed row with `yanked = false`.
     pub index_row_sha256: String,
-    /// Candidate-binding SHA-256 for an identity admitted by the update workflow.
+    /// SHA-256 of the complete generated admission lock that authorized this identity.
     pub admission_sha256: Option<String>,
     /// Active or irreversibly removed state.
     pub state: PackageState,
@@ -540,7 +540,7 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
     for path in paths {
         let metadata = fs::symlink_metadata(path)
             .with_context(|| format!("inspect catalog entry {}", path.display()))?;
-        if matches!(path.file_name(), Some(name) if name == OsStr::new("objects") || name == OsStr::new("categories") || name == OsStr::new("_reviews"))
+        if matches!(path.file_name(), Some(name) if name == OsStr::new("objects") || name == OsStr::new("categories") || name == OsStr::new("admissions"))
         {
             ensure!(
                 metadata.file_type().is_dir(),
@@ -569,7 +569,7 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
                 );
             }
             _ => bail!(
-                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files, categories/, objects/, and _reviews/ are allowed",
+                "unexpected entry in catalog root {}: {}; only registry .toml/.lock files, categories/, objects/, and admissions/ are allowed",
                 root.display(),
                 path.display()
             ),

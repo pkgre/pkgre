@@ -84,7 +84,7 @@ impl AdmissionRequest {
 /// Builds the compact human template for every non-blocked mirror candidate in a machine plan.
 #[must_use]
 pub fn manifest_from_candidates(candidates: &[super::UpdateCandidate]) -> AdmissionManifest {
-    let entries = candidates
+    let mut entries = candidates
         .iter()
         .filter(|candidate| candidate.decision != super::UpdateDecision::Blocked)
         .map(|candidate| AdmissionRequest {
@@ -97,7 +97,8 @@ pub fn manifest_from_candidates(candidates: &[super::UpdateCandidate]) -> Admiss
             tag: None,
             evidence: Vec::new(),
         })
-        .collect();
+        .collect::<Vec<_>>();
+    entries.sort_by_key(AdmissionRequest::key);
     AdmissionManifest {
         schema: ADMISSION_MANIFEST_SCHEMA,
         entries,
@@ -217,8 +218,7 @@ fn validate_admission_manifest(manifest: &AdmissionManifest) -> Result<()> {
             (Some(version), None) => {
                 ensure!(
                     version.build.is_empty(),
-                    "admission version {} contains unsupported build metadata",
-                    version
+                    "admission version {version} contains unsupported build metadata"
                 );
                 ensure!(
                     identities.insert((

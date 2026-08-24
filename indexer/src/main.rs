@@ -9,7 +9,7 @@ use pkgre_indexer::render;
 use pkgre_indexer::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer update-plan <catalog> <plan>\n  pkgre-indexer update-plan-exact <catalog> <package> <version> <plan>\n  pkgre-indexer update-inspect <plan> <package> <version> <output-directory>\n  pkgre-indexer update-approve <plan> <approved-plan> <package> <version> <source-delta|full-archive> <note-file>\n  pkgre-indexer update-apply <catalog> <approved-plan>";
+const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer update-plan <catalog> <admission-manifest>\n  pkgre-indexer update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-indexer update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-indexer update-apply <catalog> <admission-manifest>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -39,7 +39,6 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("update-plan") => update_plan(&values),
         Some("update-plan-exact") => update_plan_exact(&values),
         Some("update-inspect") => update_inspect(&values),
-        Some("update-approve") => update_approve(&values),
         Some("update-apply") => update_apply(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
@@ -142,33 +141,9 @@ fn update_plan_exact(arguments: &[OsString]) -> Result<()> {
 }
 
 fn update_inspect(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 4)?;
-    let plan = Path::new(&arguments[0]);
-    let name = arguments[1]
-        .to_str()
-        .context("package name is not valid UTF-8")?;
-    let version = arguments[2]
-        .to_str()
-        .context("package version is not valid UTF-8")?
-        .parse()
-        .context("package version is not valid SemVer")?;
-    let output = Path::new(&arguments[3]);
-    pkgre_indexer::update::inspect_update_candidate(plan, name, &version, output)?;
-    info!(
-        package = name,
-        version = %version,
-        path = %output.display(),
-        "materialized inert exact update evidence"
-    );
-    Ok(())
-}
-
-fn update_approve(arguments: &[OsString]) -> Result<()> {
-    use pkgre_indexer::update::ApprovalKind;
-
-    ensure_arity(arguments, 6)?;
-    let input = Path::new(&arguments[0]);
-    let output = Path::new(&arguments[1]);
+    ensure_arity(arguments, 5)?;
+    let catalog = Path::new(&arguments[0]);
+    let manifest = Path::new(&arguments[1]);
     let name = arguments[2]
         .to_str()
         .context("package name is not valid UTF-8")?;
@@ -177,20 +152,13 @@ fn update_approve(arguments: &[OsString]) -> Result<()> {
         .context("package version is not valid UTF-8")?
         .parse()
         .context("package version is not valid SemVer")?;
-    let kind = match arguments[4].to_str() {
-        Some("source-delta") => ApprovalKind::SourceDelta,
-        Some("full-archive") => ApprovalKind::FullArchive,
-        Some(value) => bail!("unknown approval kind {value:?}\n{USAGE}"),
-        None => bail!("approval kind is not valid UTF-8\n{USAGE}"),
-    };
-    let note = Path::new(&arguments[5]);
-    pkgre_indexer::update::approve_update_plan(input, output, name, &version, kind, note)?;
+    let output = Path::new(&arguments[4]);
+    pkgre_indexer::update::inspect_update_candidate(catalog, manifest, name, &version, output)?;
     info!(
         package = name,
         version = %version,
-        review_kind = ?kind,
         path = %output.display(),
-        "created evidence-bound approved update plan"
+        "materialized inert exact admission evidence"
     );
     Ok(())
 }
@@ -198,15 +166,15 @@ fn update_approve(arguments: &[OsString]) -> Result<()> {
 fn update_apply(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 2)?;
     let catalog = Path::new(&arguments[0]);
-    let plan = Path::new(&arguments[1]);
-    let summary = pkgre_indexer::update::apply_update_plan(catalog, plan)?;
+    let manifest = Path::new(&arguments[1]);
+    let summary = pkgre_indexer::update::apply_admission_manifest(catalog, manifest)?;
     info!(
         changed = summary.changed,
         names_added = summary.names_added,
         packages_added = summary.packages_added,
         packages_removed = summary.packages_removed,
         path = %catalog.display(),
-        "atomically applied evidence-bound update plan"
+        "atomically applied admission manifest"
     );
     Ok(())
 }
@@ -235,7 +203,7 @@ fn log_update_plan(plan: &pkgre_indexer::update::UpdatePlan, output: &Path) {
         review_required,
         blocked,
         path = %output.display(),
-        "created canonical read-only update plan"
+        "created canonical admission template"
     );
 }
 

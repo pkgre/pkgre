@@ -422,11 +422,18 @@ fn validate_update_plan_with(plan: &UpdatePlan, require_current_indexer: bool) -
             env!("CARGO_PKG_VERSION")
         );
     }
-    ensure!(
-        plan.min_release_age_days == super::MIN_RELEASE_AGE_DAYS
-            && plan.dormant_release_gap_days == super::DORMANT_RELEASE_GAP_DAYS,
-        "update plan policy constants differ from this indexer"
-    );
+    if require_current_indexer {
+        ensure!(
+            plan.min_release_age_days == super::MIN_RELEASE_AGE_DAYS
+                && plan.dormant_release_gap_days == super::DORMANT_RELEASE_GAP_DAYS,
+            "update plan policy constants differ from this indexer"
+        );
+    } else {
+        ensure!(
+            plan.min_release_age_days > 0 && plan.dormant_release_gap_days > 0,
+            "historical update plan contains a zero policy threshold"
+        );
+    }
     validate_hash(&plan.catalog_sha256, "catalog fingerprint")?;
     let mut identities = BTreeSet::new();
     let mut previous = None;
@@ -470,7 +477,7 @@ fn validate_candidate(plan: &UpdatePlan, candidate: &UpdateCandidate) -> Result<
     validate_candidate_archives(candidate)?;
     validate_dependency_delta(&candidate.dependencies)?;
     if let Some(gap) = &candidate.dormant_gap {
-        validate_publication_gap(gap, candidate)?;
+        validate_publication_gap(gap, candidate, plan.dormant_release_gap_days)?;
     }
     if let Some(api) = &candidate.api {
         validate_api_evidence(api, candidate.base.is_some())?;
@@ -514,9 +521,13 @@ fn validate_candidate_release(plan: &UpdatePlan, candidate: &UpdateCandidate) ->
                 .context("candidate publication is in the future")?,
         "candidate age does not match evaluation and publication times"
     );
+    let release_age_floor = plan
+        .min_release_age_days
+        .checked_mul(24 * 60 * 60)
+        .context("update-plan release-age threshold overflows seconds")?;
     ensure!(
-        candidate.age_seconds >= plan.min_release_age_days * 24 * 60 * 60,
-        "candidate is younger than the compiled release-age floor"
+        candidate.age_seconds >= release_age_floor,
+        "candidate is younger than the recorded release-age floor"
     );
     if let Some(base) = &candidate.base {
         validate_identity(base)?;
@@ -731,7 +742,11 @@ fn validate_dependency_delta(delta: &DependencyDelta) -> Result<()> {
     Ok(())
 }
 
-fn validate_publication_gap(gap: &PublicationGap, candidate: &UpdateCandidate) -> Result<()> {
+fn validate_publication_gap(
+    gap: &PublicationGap,
+    candidate: &UpdateCandidate,
+    dormant_release_gap_days: u64,
+) -> Result<()> {
     ensure!(
         gap.before_published_at < gap.after_published_at,
         "dormant publication gap is not chronological"
@@ -743,9 +758,12 @@ fn validate_publication_gap(gap: &PublicationGap, candidate: &UpdateCandidate) -
                 .duration_since(&gap.before_published_at)?,
         "dormant publication gap seconds are inconsistent"
     );
+    let dormant_gap_floor = dormant_release_gap_days
+        .checked_mul(24 * 60 * 60)
+        .context("update-plan dormant-gap threshold overflows seconds")?;
     ensure!(
-        gap.seconds >= super::DORMANT_RELEASE_GAP_DAYS * 24 * 60 * 60,
-        "dormant publication gap is below the policy threshold"
+        gap.seconds >= dormant_gap_floor,
+        "dormant publication gap is below the recorded policy threshold"
     );
     ensure!(
         gap.after_published_at <= candidate.candidate.published_at,
@@ -1139,6 +1157,19 @@ mod tests {
         std::os::unix::fs::symlink("target", root.join("link")).unwrap();
         assert!(catalog_fingerprint(&root).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn historical_plan_validation_uses_recorded_positive_policy_thresholds() {
+        let mut plan = sample_plan();
+        plan.min_release_age_days = 1;
+        plan.dormant_release_gap_days = 2;
+
+        assert!(validate_update_plan(&plan).is_err());
+        validate_historical_update_plan(&plan).unwrap();
+
+        plan.min_release_age_days = 0;
+        assert!(validate_historical_update_plan(&plan).is_err());
     }
 
     #[test]

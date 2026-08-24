@@ -1,8 +1,7 @@
 //! Read-only crates.io update planning and policy-evidence integration.
 
-use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
@@ -22,8 +21,7 @@ use super::{
     PolicyRelease, PublicationGap, SourceEvidence, UPDATE_PLAN_SCHEMA, UpdateCandidate,
     UpdateDecision, UpdatePlan, UtcTimestamp, catalog_fingerprint, classify_package,
     compare_archive_analyses, inspect_crate_archive, parse_crates_io_api_evidence,
-    select_exact_candidate, select_implicit_candidates, serialize_update_plan,
-    verify_source_correspondence,
+    select_exact_candidate, select_implicit_candidates, verify_source_correspondence,
 };
 
 /// Creates a canonical read-only plan for every eligible implicit compatibility-lane update.
@@ -37,13 +35,16 @@ use super::{
 /// Returns an error for catalog drift, invalid retained/upstream evidence, unsafe archives, policy
 /// calculation failures, or an existing output path.
 pub fn plan_updates(root: &Path, output: &Path) -> Result<UpdatePlan> {
-    plan_with(
-        root,
-        output,
-        &LivePlannerResolver,
-        UtcTimestamp::now()?,
-        &PlanRequest::Implicit,
-    )
+    plan_updates_with(root, output, &LivePlannerResolver, UtcTimestamp::now()?)
+}
+
+pub(crate) fn plan_updates_with<R: PlannerResolver>(
+    root: &Path,
+    output: &Path,
+    resolver: &R,
+    evaluated_at: UtcTimestamp,
+) -> Result<UpdatePlan> {
+    plan_with(root, output, resolver, evaluated_at, &PlanRequest::Implicit)
 }
 
 /// Creates a canonical read-only plan for one exact age-eligible crates.io identity.
@@ -167,37 +168,97 @@ fn plan_with<R: PlannerResolver>(
     evaluated_at: UtcTimestamp,
     request: &PlanRequest,
 ) -> Result<UpdatePlan> {
+    validate_manifest_output(root, output)?;
     let plan = build_plan_with(root, resolver, evaluated_at, request)?;
-    let bytes = serialize_update_plan(&plan)?;
+    let manifest = super::manifest::manifest_from_candidates(&plan.candidates);
     ensure!(
         catalog_fingerprint(root)? == plan.catalog_sha256,
-        "catalog changed before the update plan could be emitted"
+        "catalog changed before the admission template could be emitted"
     );
-    write_new(output, &bytes)?;
+    super::manifest::write_admission_manifest(output, &manifest)?;
     Ok(plan)
 }
 
-pub(crate) fn revalidate_update_plan_with<R: PlannerResolver>(
+/// Recomputes complete current machine facts for every exact request in a human manifest.
+pub(crate) fn recompute_admission_plan_with<R: PlannerResolver>(
     root: &Path,
-    plan: &UpdatePlan,
+    manifest: &super::AdmissionManifest,
     resolver: &R,
+    evaluated_at: UtcTimestamp,
 ) -> Result<UpdatePlan> {
-    super::plan::validate_update_plan(plan)?;
-    let targets = plan
-        .candidates
-        .iter()
-        .map(|candidate| RevalidationTarget {
-            name: candidate.name.clone(),
-            version: candidate.candidate.version.clone(),
-            lane: candidate.lane.clone(),
-        })
-        .collect();
-    build_plan_with(
+    super::serialize_admission_manifest(manifest).context("validate admission manifest")?;
+    let mut requests = BTreeMap::new();
+    let mut targets = Vec::with_capacity(manifest.entries.len());
+    for request in &manifest.entries {
+        let version = match (&request.version, &request.tag) {
+            (Some(version), None) => version.clone(),
+            (None, Some(tag)) => anyhow::bail!(
+                "Git-tag admission for {} tag {tag:?} is not supported by the mirror updater",
+                request.name
+            ),
+            _ => unreachable!("validated admission request has exactly one target"),
+        };
+        let key = (
+            request.name.to_ascii_lowercase().replace('-', "_"),
+            version_identity(&version),
+        );
+        ensure!(
+            requests.insert(key, request).is_none(),
+            "admission manifest repeats Cargo identity {} {version}",
+            request.name
+        );
+        targets.push(RevalidationTarget {
+            name: request.name.clone(),
+            version,
+            lane: None,
+        });
+    }
+    let plan = build_plan_with(
         root,
         resolver,
-        plan.evaluated_at.clone(),
+        evaluated_at,
         &PlanRequest::Revalidate(targets),
-    )
+    )?;
+    ensure!(
+        plan.candidates.len() == manifest.entries.len(),
+        "recomputed candidate inventory differs from admission requests"
+    );
+    for candidate in &plan.candidates {
+        let key = (
+            candidate.name.to_ascii_lowercase().replace('-', "_"),
+            version_identity(&candidate.candidate.version),
+        );
+        let request = requests.get(&key).with_context(|| {
+            format!(
+                "recomputed candidate {} {} was not requested",
+                candidate.name, candidate.candidate.version
+            )
+        })?;
+        ensure!(
+            request.name == candidate.name && request.category.to_string() == candidate.category,
+            "admission route differs from permanent home for {} {}",
+            candidate.name,
+            candidate.candidate.version
+        );
+    }
+    Ok(plan)
+}
+
+fn validate_manifest_output(root: &Path, output: &Path) -> Result<()> {
+    super::manifest::validate_admission_filename(output, "toml")?;
+    let catalog = fs::canonicalize(root)
+        .with_context(|| format!("resolve catalog root {}", root.display()))?;
+    let parent = output
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = fs::canonicalize(parent)
+        .with_context(|| format!("resolve admission-template parent {}", parent.display()))?;
+    ensure!(
+        !parent.starts_with(&catalog),
+        "admission template must be created outside the managed catalog"
+    );
+    Ok(())
 }
 
 fn build_plan_with<R: PlannerResolver>(
@@ -956,18 +1017,6 @@ fn package_identity(value: &str) -> String {
 
 fn package_order(value: &str) -> (String, &str) {
     (value.to_ascii_lowercase(), value)
-}
-
-fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .with_context(|| format!("create update plan {}", path.display()))?;
-    file.write_all(bytes)
-        .with_context(|| format!("write update plan {}", path.display()))?;
-    file.sync_all()
-        .with_context(|| format!("sync update plan {}", path.display()))
 }
 
 #[cfg(test)]

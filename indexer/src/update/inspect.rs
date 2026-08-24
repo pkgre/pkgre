@@ -1,4 +1,4 @@
-//! Inert materialization of exact update-plan archives and review evidence.
+//! Inert materialization of exact admission-candidate archives and review evidence.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -10,13 +10,15 @@ use serde::Serialize;
 
 use crate::import;
 
+use super::workflow::{LivePlannerResolver, PlannerResolver, recompute_admission_plan_with};
 use super::{
-    ArchiveAnalysis, ArchiveDelta, SourceEvidence, UpdateCandidate, UtcTimestamp,
-    candidate_binding_sha256, compare_archive_analyses, inspect_crate_archive, load_update_plan,
+    AdmissionManifest, ArchiveAnalysis, ArchiveDelta, SourceEvidence, UpdateCandidate, UpdatePlan,
+    UtcTimestamp, candidate_binding_sha256, compare_archive_analyses, inspect_crate_archive,
+    load_admission_manifest,
 };
 
 const INSPECTION_SCHEMA: u32 = 1;
-const README: &str = "pkgre inert update inspection\n\nThe .crate files are untrusted upstream input retained for human review.\nDo not execute package files, build scripts, examples, binaries, or repository hooks.\ninspection.toml contains bounded parser results and evidence bound to the update plan.\n";
+const README: &str = "pkgre inert admission inspection\n\nThe .crate files are untrusted upstream input retained for human review.\nDo not execute package files, build scripts, examples, binaries, or repository hooks.\ninspection.toml contains bounded parser results from a fresh recomputation of the admission request.\n";
 
 /// Canonical bounded evidence emitted beside exact untrusted `.crate` archives.
 #[derive(Debug, Serialize)]
@@ -38,15 +40,13 @@ pub(crate) trait InspectionResolver {
     fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>>;
 }
 
-struct LiveInspectionResolver;
-
-impl InspectionResolver for LiveInspectionResolver {
+impl InspectionResolver for LivePlannerResolver {
     fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>> {
         import::fetch_crates_io_archive(name, version, checksum)
     }
 }
 
-/// Downloads and inertly inspects one exact plan candidate into a new review directory.
+/// Recomputes and inertly inspects one exact request from a compact admission manifest.
 ///
 /// The command never invokes Cargo, a compiler, a build script, a package binary, or repository
 /// code. It emits the checksum-verified candidate/base archives, a bounded canonical analysis
@@ -54,38 +54,72 @@ impl InspectionResolver for LiveInspectionResolver {
 ///
 /// # Errors
 ///
-/// Returns an error for a noncanonical plan, missing candidate, unsafe archive, checksum/evidence
-/// mismatch, unsafe output parent, existing output, or filesystem failure.
+/// Returns an error for a noncanonical manifest, missing request, blocked/young/yanked/drifted
+/// candidate, unsafe archive, checksum/evidence mismatch, unsafe output parent, existing output, or
+/// filesystem failure.
 pub fn inspect_update_candidate(
-    plan_path: &Path,
+    root: &Path,
+    manifest_path: &Path,
     name: &str,
     version: &Version,
     output: &Path,
 ) -> Result<()> {
-    inspect_update_candidate_with(plan_path, name, version, output, &LiveInspectionResolver)
+    inspect_update_candidate_with(
+        root,
+        manifest_path,
+        name,
+        version,
+        output,
+        &LivePlannerResolver,
+        UtcTimestamp::now().context("read update inspection time")?,
+    )
 }
 
-pub(crate) fn inspect_update_candidate_with<R: InspectionResolver>(
-    plan_path: &Path,
+pub(crate) fn inspect_update_candidate_with<R: PlannerResolver + InspectionResolver>(
+    root: &Path,
+    manifest_path: &Path,
     name: &str,
     version: &Version,
     output: &Path,
     resolver: &R,
+    evaluated_at: UtcTimestamp,
 ) -> Result<()> {
-    let plan = load_update_plan(plan_path).context("load update plan for inspection")?;
-    let mut matches = plan
-        .candidates
-        .iter()
-        .filter(|candidate| candidate.name == name && candidate.candidate.version == *version);
-    let candidate = matches
+    let manifest =
+        load_admission_manifest(manifest_path).context("load admission manifest for inspection")?;
+    let mut requests = manifest.entries.iter().filter(|request| {
+        request.name == name && request.version.as_ref() == Some(version) && request.tag.is_none()
+    });
+    let request = requests
         .next()
-        .with_context(|| format!("update plan has no exact candidate {name} {version}"))?;
+        .with_context(|| format!("admission manifest has no exact request {name} {version}"))?;
     ensure!(
-        matches.next().is_none(),
-        "update plan repeats exact candidate {name} {version}"
+        requests.next().is_none(),
+        "admission manifest repeats exact request {name} {version}"
     );
     validate_output_destination(output)?;
 
+    let exact_manifest = AdmissionManifest {
+        schema: manifest.schema,
+        entries: vec![request.clone()],
+    };
+    let plan = recompute_admission_plan_with(root, &exact_manifest, resolver, evaluated_at)
+        .context("recompute exact admission facts for inspection")?;
+    ensure!(
+        plan.candidates.len() == 1,
+        "exact admission recomputation did not produce one candidate"
+    );
+    materialize_recomputed_candidate(&plan, &plan.candidates[0], output, resolver)
+}
+
+fn materialize_recomputed_candidate<R: InspectionResolver>(
+    plan: &UpdatePlan,
+    candidate: &UpdateCandidate,
+    output: &Path,
+    resolver: &R,
+) -> Result<()> {
+    validate_output_destination(output)?;
+    let name = &candidate.name;
+    let version = &candidate.candidate.version;
     let candidate_archive = resolver
         .archive(name, version, &candidate.candidate.crate_sha256)
         .with_context(|| format!("fetch inspection candidate {name} {version}"))?;
@@ -93,7 +127,7 @@ pub(crate) fn inspect_update_candidate_with<R: InspectionResolver>(
         .with_context(|| format!("inertly inspect candidate {name} {version}"))?;
     ensure!(
         super::ArchiveSummary::from_analysis(&candidate_analysis)? == candidate.candidate_archive,
-        "candidate archive analysis differs from update-plan evidence"
+        "candidate archive analysis differs from recomputed admission evidence"
     );
 
     let (base_archive, base_analysis, delta) = match (&candidate.base, &candidate.base_archive) {
@@ -105,12 +139,12 @@ pub(crate) fn inspect_update_candidate_with<R: InspectionResolver>(
                 .with_context(|| format!("inertly inspect base {name} {}", base.version))?;
             ensure!(
                 super::ArchiveSummary::from_analysis(&analysis)? == *expected_analysis,
-                "base archive analysis differs from update-plan evidence"
+                "base archive analysis differs from recomputed admission evidence"
             );
             let delta = compare_archive_analyses(&analysis, &candidate_analysis)?;
             ensure!(
                 candidate.archive_delta.as_ref() == Some(&delta),
-                "archive delta differs from update-plan evidence"
+                "archive delta differs from recomputed admission evidence"
             );
             (Some(archive), Some(analysis), Some(delta))
         }
@@ -215,7 +249,7 @@ mod tests {
     use crate::artifact::sha256_bytes;
     use crate::update::{
         ArchiveSummary, DecisionReason, DependencyDelta, PackageActivity, PlannedIdentity,
-        UpdateDecision, UpdatePlan, serialize_update_plan,
+        UpdateDecision, UpdatePlan,
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -246,13 +280,12 @@ mod tests {
         let marker = root.join("must-not-exist");
         let payload = format!("fn main() {{ /* {} */ }}\n", marker.display());
         let archive = crate_archive("demo-1.0.0/build.rs", payload.as_bytes(), 0o755);
-        let plan = write_plan(&root, &archive);
+        let plan = make_plan(&archive);
         let output = root.join("review");
 
-        inspect_update_candidate_with(
+        materialize_recomputed_candidate(
             &plan,
-            "demo",
-            &Version::parse("1.0.0").unwrap(),
+            &plan.candidates[0],
             &output,
             &FakeResolver {
                 archive: archive.clone(),
@@ -274,14 +307,8 @@ mod tests {
         );
 
         assert!(
-            inspect_update_candidate_with(
-                &plan,
-                "demo",
-                &Version::parse("1.0.0").unwrap(),
-                &output,
-                &PanicResolver,
-            )
-            .is_err()
+            materialize_recomputed_candidate(&plan, &plan.candidates[0], &output, &PanicResolver,)
+                .is_err()
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -291,12 +318,11 @@ mod tests {
         let root = temporary_directory("mismatch");
         let planned_archive = crate_archive("demo-1.0.0/lib.rs", b"planned\n", 0o644);
         let observed_archive = crate_archive("demo-1.0.0/lib.rs", b"changed\n", 0o644);
-        let plan = write_plan(&root, &planned_archive);
+        let plan = make_plan(&planned_archive);
         let output = root.join("review");
-        let error = inspect_update_candidate_with(
+        let error = materialize_recomputed_candidate(
             &plan,
-            "demo",
-            &Version::parse("1.0.0").unwrap(),
+            &plan.candidates[0],
             &output,
             &FakeResolver {
                 archive: observed_archive,
@@ -315,27 +341,21 @@ mod tests {
 
         let root = temporary_directory("symlink-parent");
         let archive = crate_archive("demo-1.0.0/lib.rs", b"safe\n", 0o644);
-        let plan = write_plan(&root, &archive);
+        let plan = make_plan(&archive);
         let real = root.join("real");
         fs::create_dir(&real).unwrap();
         let linked = root.join("linked");
         symlink(&real, &linked).unwrap();
         let output = linked.join("review");
         assert!(
-            inspect_update_candidate_with(
-                &plan,
-                "demo",
-                &Version::parse("1.0.0").unwrap(),
-                &output,
-                &PanicResolver,
-            )
-            .is_err()
+            materialize_recomputed_candidate(&plan, &plan.candidates[0], &output, &PanicResolver,)
+                .is_err()
         );
         assert!(!real.join("review").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn write_plan(root: &Path, archive: &[u8]) -> std::path::PathBuf {
+    fn make_plan(archive: &[u8]) -> UpdatePlan {
         let version = Version::parse("1.0.0").unwrap();
         let analysis = inspect_crate_archive("demo", &version, archive).unwrap();
         let build_surface_changed = !analysis.build_surface.is_empty();
@@ -345,7 +365,7 @@ mod tests {
         }
         reasons.push(DecisionReason::SourceUnavailable);
         reasons.push(DecisionReason::ExplicitCandidate);
-        let plan = UpdatePlan {
+        UpdatePlan {
             schema: super::super::UPDATE_PLAN_SCHEMA,
             indexer_version: env!("CARGO_PKG_VERSION").to_owned(),
             catalog_sha256: "00".repeat(32),
@@ -385,10 +405,7 @@ mod tests {
                 reasons,
                 approvals: Vec::new(),
             }],
-        };
-        let path = root.join("plan.toml");
-        fs::write(&path, serialize_update_plan(&plan).unwrap()).unwrap();
-        path
+        }
     }
 
     fn crate_archive(path: &str, contents: &[u8], mode: u32) -> Vec<u8> {
