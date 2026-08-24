@@ -130,7 +130,7 @@ Selection rules:
 - Every candidate: non-yanked + at least 30 exact days old at `evaluated-at`; future publication times fail.
 - Broad planning: at most one latest eligible stable candidate per active lane (`major` for `major≥1`; `minor` for stable `0.minor.patch`, `minor>0`).
 - Exact planning: one requested eligible identity; mandatory for new/inactive reservations, prereleases, and `0.0.x`.
-- Every plan binds exact catalog fingerprint, fixed evaluation time, policy constants, sparse history, base/candidate rows, archive/dependency/API/source evidence, decision, and reasons.
+- Every plan binds exact catalog fingerprint, fixed evaluation time, policy constants, sparse history, base/candidate rows, archive/dependency/API/source evidence, decision, and reasons. The raw crates.io API response hash is planning provenance; security-relevant version-scoped API fields are separately parsed and bound.
 - Apply deadline: no more than seven exact days after `evaluated-at` (inclusive). Approval does not extend it; an expired plan requires complete replanning/reinspection/reapproval.
 
 Prove planning read-only:
@@ -244,7 +244,7 @@ Apply requirements/enforcement:
 
 - Catalog fingerprint exactly equals the plan.
 - Plan is nonfuture + ≤7 days old.
-- Complete evidence is recomputed for only the planned identities at original `evaluated-at`; upstream/candidate/evidence drift fails rather than substituting a newer release.
+- Complete evidence is recomputed for only the planned identities at original `evaluated-at`; upstream/candidate/evidence drift fails rather than substituting a newer release. The sole upstream exception is the raw crates.io API response hash because responses contain mutable non-decision fields; planned base/candidate identities and checksums must still agree with the current API response, and parsed publishers, repositories, and Trusted Publishing evidence must remain identical.
 - All decisions/approvals valid; blocked candidates rejected.
 - Whole replacement catalog staged, strictly loaded, object-verified, test-rendered, then atomically installed with rollback.
 - Human declarations, generated locks, source-row objects, and immutable admission records installed together; no hand editing.

@@ -85,7 +85,7 @@ $ pkgre-indexer update-approve approved-1.toml approved-2.toml existing-package 
 $ pkgre-indexer update-apply registry approved-2.toml
 ```
 
-Apply requires an unchanged catalog fingerprint; recomputes complete upstream evidence for the exact planned identities at the original evaluation time; rejects any difference except approval assertions; then uses a guarded whole-catalog transaction to edit only the target category declarations, retain rows/admission evidence, generate locks, strict-load/object-verify/test-render staging, and atomically install with rollback. It never substitutes a newer candidate.
+Apply requires an unchanged catalog fingerprint; recomputes complete upstream evidence for the exact planned identities at the original evaluation time; rejects any difference except approval assertions and the raw crates.io API response hash; then uses a guarded whole-catalog transaction to edit only the target category declarations, retain rows/admission evidence, generate locks, strict-load/object-verify/test-render staging, and atomically install with rollback. crates.io API responses contain mutable non-decision fields, so the raw hash remains planning provenance; planned identities/checksums must still agree with the current API response, and parsed publishers, repositories, and Trusted Publishing evidence must match exactly. Apply never substitutes a newer candidate.
 
 6. Review + commit each declaration/lock/row/admission change together. Every admitted updater identity has `admission-sha256` in its generated lock and exactly one canonical `_reviews/admissions/<candidate-binding-sha256>.toml`; `check` rejects missing, modified, duplicate, or unexpected records. Then prove validity + convergence:
 
