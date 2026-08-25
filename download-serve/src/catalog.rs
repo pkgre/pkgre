@@ -5,8 +5,6 @@ use pkgre_indexer::download::{DownloadCatalog, DownloadSource};
 use pkgre_indexer::policy::{validate_package_name, validate_registry_alias, validate_sha256};
 use semver::Version;
 
-pub const SUPPORTED_REGISTRIES: [&str; 2] = ["pkgre", "universe"];
-
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RouteKey {
     registry: String,
@@ -20,7 +18,7 @@ impl RouteKey {
     ///
     /// # Errors
     ///
-    /// Returns an error unless every component is supported and in its canonical wire form.
+    /// Returns an error unless every component is in its canonical wire form.
     pub fn parse_canonical(
         registry: &str,
         name: &str,
@@ -28,10 +26,6 @@ impl RouteKey {
         sha256: &str,
     ) -> Result<Self> {
         validate_registry_alias(registry).context("invalid registry")?;
-        ensure!(
-            SUPPORTED_REGISTRIES.contains(&registry),
-            "unsupported registry"
-        );
         validate_package_name(name).context("invalid package name")?;
         let version = Version::parse(version_text).context("invalid package version")?;
         ensure!(
@@ -60,7 +54,7 @@ impl RouteTable {
     ///
     /// # Errors
     ///
-    /// Returns an error for malformed, noncanonical, unsupported, or duplicate route data.
+    /// Returns an error for malformed, noncanonical, or duplicate route data.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let catalog = DownloadCatalog::parse_canonical(bytes)?;
         Self::from_catalog(catalog)
@@ -70,18 +64,13 @@ impl RouteTable {
     ///
     /// # Errors
     ///
-    /// Returns an error for unsupported registries or invalid route identities.
+    /// Returns an error for invalid or duplicate route identities.
     pub fn from_catalog(catalog: DownloadCatalog) -> Result<Self> {
         catalog.validate()?;
         let mut routes = BTreeMap::new();
         let mut crates_io_routes = 0;
         let mut git_tag_routes = 0;
         for route in catalog.routes {
-            ensure!(
-                SUPPORTED_REGISTRIES.contains(&route.registry.as_str()),
-                "unsupported download registry {:?}",
-                route.registry
-            );
             let key = RouteKey::parse_canonical(
                 &route.registry,
                 &route.name,
@@ -159,31 +148,38 @@ mod tests {
     #[test]
     fn exact_routes_derive_only_hardcoded_destinations() {
         let table = RouteTable::from_catalog(catalog(vec![
-            route("pkgre", "First_Party", DownloadSource::GitTag),
-            route("universe", "mirror-crate", DownloadSource::CratesIo),
+            route("main", "First_Party", DownloadSource::GitTag),
+            route("main", "mirror-crate", DownloadSource::CratesIo),
+            route("staging", "future-crate", DownloadSource::CratesIo),
         ]))
         .unwrap();
-        assert_eq!(table.route_count(), 2);
-        assert_eq!(table.crates_io_route_count(), 1);
+        assert_eq!(table.route_count(), 3);
+        assert_eq!(table.crates_io_route_count(), 2);
         assert_eq!(table.git_tag_route_count(), 1);
 
         let mirror =
-            RouteKey::parse_canonical("universe", "mirror-crate", "1.2.3", &"01".repeat(32))
-                .unwrap();
+            RouteKey::parse_canonical("main", "mirror-crate", "1.2.3", &"01".repeat(32)).unwrap();
         assert_eq!(
             table.destination(&mirror).unwrap(),
             "https://static.crates.io/crates/mirror-crate/1.2.3/download"
         );
         let published =
-            RouteKey::parse_canonical("pkgre", "First_Party", "1.2.3", &"01".repeat(32)).unwrap();
+            RouteKey::parse_canonical("main", "First_Party", "1.2.3", &"01".repeat(32)).unwrap();
         assert_eq!(
             table.destination(&published).unwrap(),
             format!("https://rust.pkg.re/crates/{}.crate", "01".repeat(32))
         );
+        let future =
+            RouteKey::parse_canonical("staging", "future-crate", "1.2.3", &"01".repeat(32))
+                .unwrap();
+        assert_eq!(
+            table.destination(&future).unwrap(),
+            "https://static.crates.io/crates/future-crate/1.2.3/download"
+        );
         assert!(
             table
                 .destination(
-                    &RouteKey::parse_canonical("pkgre", "first_party", "1.2.3", &"01".repeat(32))
+                    &RouteKey::parse_canonical("main", "first_party", "1.2.3", &"01".repeat(32))
                         .unwrap()
                 )
                 .is_none()
@@ -191,13 +187,13 @@ mod tests {
     }
 
     #[test]
-    fn route_keys_reject_aliases_and_noncanonical_components() {
+    fn route_keys_reject_noncanonical_components() {
         for (registry, name, version, sha256) in [
-            ("core", "crate", "1.2.3", "01".repeat(32)),
-            ("universe", "crate", "1.2.3+", "01".repeat(32)),
-            ("universe", "crate", "01.2.3", "01".repeat(32)),
-            ("universe", "Crate%2fother", "1.2.3", "01".repeat(32)),
-            ("universe", "crate", "1.2.3", "AB".repeat(32)),
+            ("Main", "crate", "1.2.3", "01".repeat(32)),
+            ("main", "crate", "1.2.3+", "01".repeat(32)),
+            ("main", "crate", "01.2.3", "01".repeat(32)),
+            ("main", "Crate%2fother", "1.2.3", "01".repeat(32)),
+            ("main", "crate", "1.2.3", "AB".repeat(32)),
         ] {
             assert!(
                 RouteKey::parse_canonical(registry, name, version, &sha256).is_err(),
@@ -207,13 +203,17 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_manifest_registry_fails_closed() {
-        let error = RouteTable::from_catalog(catalog(vec![route(
+    fn canonical_future_manifest_registry_is_supported() {
+        let table = RouteTable::from_catalog(catalog(vec![route(
             "future",
             "crate",
             DownloadSource::CratesIo,
         )]))
-        .unwrap_err();
-        assert!(format!("{error:#}").contains("unsupported download registry"));
+        .unwrap();
+        let key = RouteKey::parse_canonical("future", "crate", "1.2.3", &"01".repeat(32)).unwrap();
+        assert_eq!(
+            table.destination(&key).unwrap(),
+            "https://static.crates.io/crates/crate/1.2.3/download"
+        );
     }
 }

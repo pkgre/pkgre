@@ -294,7 +294,7 @@ mod tests {
         DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
             routes: vec![DownloadRoute {
-                registry: "universe".to_owned(),
+                registry: "main".to_owned(),
                 name: "serde".to_owned(),
                 version: Version::parse("1.0.0").unwrap(),
                 sha256: "01".repeat(32),
