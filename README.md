@@ -37,7 +37,7 @@ Current categories:
 ## Components
 
 - `rust/`:Rust reconciler, validator, admission planner/applicator, schema migrators, deterministic renderer, download-catalog generator, release verifier.
-- `download-serve/`:stateless exact-route service; fetches a commit-pinned generated catalog and returns only hardcoded crates.io/content-addressed redirects.
+- `rust/proxy/`:stateless exact-route service; fetches a commit-pinned generated catalog and returns only hardcoded crates.io/content-addressed redirects.
 - [`docs/catalog.md`](docs/catalog.md):schema-4 declarations, inline/external categories, locks, admissions, routing, removal, exact migration.
 - [`docs/download-routing.md`](docs/download-routing.md):router wire contract, fetch/refresh/LKG semantics, proxy boundary, deployment + rollback.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production mirror-update procedure ending in an unmerged curator-review PR.

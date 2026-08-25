@@ -90,7 +90,6 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
-              ./download-serve
               ./rust
               ./rust-toolchain.toml
             ];
@@ -143,7 +142,7 @@
             ];
           };
           downloadServe = mkRustPackage {
-            packageDirectory = "download-serve";
+            packageDirectory = "rust/proxy";
             description = "Stateless immutable download redirect service for pkgre registries";
             mainProgram = "pkgre-download-serve";
           };
@@ -171,7 +170,6 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
-              ./download-serve
               ./rust
               ./rust-toolchain.toml
             ];
