@@ -38,7 +38,7 @@ Ordinary package removal omits metadata but retains marker/object availability f
 
 Every canary/marker operation:
 
-1. Resolves only literal `pkgre.github.io:443`;accepts at most 16 answers;deduplicates IPs;rejects loopback,private,link-local,multicast,documentation,benchmark,transition,and other nonpublic address classes.
+1. Resolves only literal `pkgre.github.io:443`;accepts at most 16 answers;deduplicates IPs;admits only global-unicast addresses after a conservative local special-purpose filter. IPv4 rejects all of `0/8`,`100.64/10`,`192.0.0/24`,`192.88.99/24`,`198.18/15`,private,loopback,link-local,documentation,multicast,and reserved ranges;the whole `192.0.0/24` is rejected despite globally reachable `.9`/`.10`. IPv6 admits only `2000::/3` after rejecting the whole `2001::/23` despite its global exceptions,`2001:db8::/32`,`2002::/16`,and `3fff::/20`;boundaries+current GitHub Pages IPv4/IPv6 answers are fixture-tested.
 2. Selects public host only from the parsed route:Rust→`rust.pkg.re`;JS→`js.pkg.re`.
 3. Connects to a validated resolved Pages IP on port 443 while URL authority,TLS SNI,WebPKI certificate hostname verification,and HTTP Host all remain the selected public host.
 4. Sends `GET` for the unchanged canonical root-relative path,including when the public request is `HEAD`;forwards no client body,authorization,cookies,or arbitrary headers.

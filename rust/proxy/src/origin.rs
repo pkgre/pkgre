@@ -328,7 +328,7 @@ fn is_public_ip(address: IpAddr) -> bool {
 
 fn is_public_ipv4(address: Ipv4Addr) -> bool {
     let [a, b, c, _] = address.octets();
-    !address.is_unspecified()
+    a != 0
         && !address.is_loopback()
         && !address.is_private()
         && !address.is_link_local()
@@ -337,19 +337,20 @@ fn is_public_ipv4(address: Ipv4Addr) -> bool {
         && !address.is_documentation()
         && !(a == 100 && (64..=127).contains(&b))
         && !(a == 192 && b == 0 && c == 0)
+        && !(a == 192 && b == 88 && c == 99)
         && !(a == 198 && (b == 18 || b == 19))
         && a < 240
 }
 
 fn is_public_ipv6(address: Ipv6Addr) -> bool {
-    let value = u128::from(address);
-    let global_unicast = value >> 125 == 0b001;
+    let [a, b, ..] = address.segments();
+    let global_unicast = (0x2000..=0x3fff).contains(&a);
     global_unicast
-        && value >> 96 != 0x2001_0db8
-        && value >> 80 != 0x2001_0002_0000
-        && value >> 96 != 0x2001_0000
-        && value >> 100 != 0x0200_1002
-        && value >> 112 != 0x2002
+        // Reject the whole special-purpose block, including its globally reachable exceptions.
+        && !(a == 0x2001 && b < 0x0200)
+        && !(a == 0x2001 && b == 0x0db8)
+        && a != 0x2002
+        && !(a == 0x3fff && b < 0x1000)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -513,31 +514,54 @@ mod tests {
     }
 
     #[test]
-    fn public_address_filter_is_conservative() {
+    fn public_address_filter_rejects_special_purpose_ranges() {
         for address in [
             "0.0.0.0",
+            "0.0.0.1",
+            "0.255.255.255",
             "10.0.0.1",
-            "100.64.0.1",
+            "100.64.0.0",
+            "100.127.255.255",
             "127.0.0.1",
             "169.254.1.1",
             "172.16.0.1",
+            "192.0.0.0",
             "192.0.0.9",
+            "192.0.0.10",
+            "192.0.0.255",
             "192.0.2.1",
+            "192.88.99.0",
+            "192.88.99.2",
+            "192.88.99.255",
             "192.168.0.1",
-            "198.18.0.1",
+            "198.18.0.0",
+            "198.19.255.255",
             "198.51.100.1",
             "203.0.113.1",
             "224.0.0.1",
+            "239.255.255.255",
             "240.0.0.1",
             "255.255.255.255",
             "::",
             "::1",
             "::ffff:192.0.2.1",
+            "64:ff9b:1::1",
+            "100::1",
+            "100:0:0:1::1",
+            "1fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
             "2001::1",
+            "2001:1::1",
+            "2001:1ff:ffff:ffff:ffff:ffff:ffff:ffff",
             "2001:2::1",
-            "2001:db8::1",
+            "2001:10::1",
             "2001:20::1",
+            "2001:30::1",
+            "2001:db8::1",
             "2002::1",
+            "3fff::1",
+            "3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff",
+            "4000::1",
+            "5f00::1",
             "fc00::1",
             "fe80::1",
             "ff02::1",
@@ -547,11 +571,35 @@ mod tests {
                 "accepted {address}"
             );
         }
+    }
+
+    #[test]
+    fn public_address_filter_accepts_global_unicast_and_pages_addresses() {
         for address in [
             "1.1.1.1",
+            "100.63.255.255",
+            "100.128.0.0",
             "185.199.108.153",
+            "185.199.109.153",
+            "185.199.110.153",
+            "185.199.111.153",
+            "192.0.1.1",
+            "192.88.98.255",
+            "192.88.100.0",
+            "198.17.255.255",
+            "198.20.0.0",
+            "223.255.255.255",
+            "2000::1",
+            "2001:200::1",
+            "2001:db7:ffff::1",
+            "2001:db9::1",
+            "2003::1",
+            "3fff:1000::1",
             "2606:4700:4700::1111",
             "2606:50c0:8000::153",
+            "2606:50c0:8001::153",
+            "2606:50c0:8002::153",
+            "2606:50c0:8003::153",
         ] {
             assert!(is_public_ip(address.parse().unwrap()), "rejected {address}");
         }
