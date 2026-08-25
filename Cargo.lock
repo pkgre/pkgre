@@ -659,7 +659,6 @@ dependencies = [
  "anyhow",
  "axum",
  "http-body-util",
- "pkgre-rust",
  "reqwest",
  "semver",
  "serde",

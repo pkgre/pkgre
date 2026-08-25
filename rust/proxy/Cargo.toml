@@ -14,11 +14,8 @@ workspace = true
 [dependencies]
 anyhow = { version = "1.0", registry = "pkgre" }
 axum = { version = "0.8", registry = "pkgre" }
-pkgre-rust = { path = ".." }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], registry = "pkgre" }
 semver = { version = "1.0", registry = "pkgre" }
-serde = { version = "1.0", features = ["derive"], registry = "pkgre" }
-serde_json = { version = "1.0", registry = "pkgre" }
 sha2 = { version = "0.10", registry = "pkgre" }
 tokio = { version = "1.50", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"], registry = "pkgre" }
 tracing = { version = "0.1", registry = "pkgre" }
@@ -26,4 +23,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [dev-dependencies]
 http-body-util = { version = "0.1", registry = "pkgre" }
+serde = { version = "1.0", features = ["derive"], registry = "pkgre" }
+serde_json = { version = "1.0", registry = "pkgre" }
 tower = { version = "0.5", features = ["util"], registry = "pkgre" }
