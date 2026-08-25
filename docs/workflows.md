@@ -13,36 +13,35 @@ pkgre-indexer render <catalog> <new-output>
 pkgre-indexer verify <catalog> <existing-output>
 pkgre-indexer verify-monotonic <previous-site> <next-site>
 pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
+pkgre-indexer migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
 ```
 
-`update-plan`, `update-plan-exact`, and `update-inspect` never mutate the catalog; every output must be absent and outside managed `registry/`. `update-apply` is the only established-catalog path for new mirror identities: it re-fetches/recomputes exact facts + mutates transactionally. `lock` mutates only for initial bootstrap, empty name reservations, removals, first-party Git tags, and canonical download-catalog convergence; it rejects direct new-mirror admission after any registry lock exists. `check` is local-only. `migrate-v2-to-v3` never modifies source. Render output must be absent. Use the registry directory itself as `<catalog>`, not its repository parent.
+Planning/inspection never mutates catalog; output must be absent + outside `registry/`. `update-apply` is the established-catalog path for mirror additions. `lock` mutates only bootstrap, empty reservations, removals, Git tags, and downloads convergence. `check` is local-only. Migrations never modify source. Render output must be absent. `<catalog>` is the registry directory, not repository parent.
 
 ## Admit crates.io mirror updates
 
-### Selection + guardrails
+### Guardrails
 
-- Release-age floor: every implicit/exact candidate must be non-yanked + ≥30×24 hours old at the command's UTC evaluation time; future timestamps fail.
-- Implicit lanes: `update-plan` considers only active existing mirror packages and selects at most one latest eligible stable update per active compatibility lane: one lane per `major` for `major≥1`; one lane per `minor` for stable `0.minor.patch`, `minor>0`.
-- Exact selection: `update-plan-exact` supports new/inactive reserved names, prereleases, and `0.0.x`; it cannot select locked, yanked, young, or history-inconsistent identities.
-- Dormancy: a ≥365-day adjacent publication gap between locked base and candidate requires review; yanked/prerelease publications count as activity; a post-gap burst stays gated until one post-gap identity is admitted.
-- Evidence: complete crates.io sparse history; exact candidate/base rows + checksum-verified archives; bounded path/type/size/mode/hash/build-surface analysis; dependency delta + category routes; version-scoped publisher/repository/API facts; promoted public-source correspondence.
-- Source promotion triggers: new/inactive package, dormant wake-up, new dependency package, build-surface change, publisher discontinuity, repository discontinuity.
+- Release age:non-yanked + ≥30×24 hours at command UTC time; future timestamps fail.
+- Implicit lanes:`update-plan` scans active mirror names + selects at most latest eligible stable per compatibility lane:major for `major≥1`; minor for stable `0.minor.patch` where `minor>0`.
+- Exact mode:`update-plan-exact` supports reserved new/inactive names, prereleases, `0.0.x`; locked/yanked/young/history-inconsistent identity rejected.
+- Dormancy:≥365-day adjacent publication gap after locked base requires review; yanked/prerelease activity counts; gate persists until one post-gap identity admitted.
+- Evidence:complete sparse history; exact base/candidate rows + checksum-verified archives; bounded path/type/size/mode/hash/build analysis; dependency/category delta; version-scoped publisher/repository/API facts; promoted source correspondence.
+- Promotion triggers:new/inactive package, dormant wake-up, new dependency package, build-surface change, publisher/repository discontinuity.
 
-Decision policy:
-
-| Decision | Meaning in generated facts | Manifest/apply behavior |
+| Decision | Meaning | Manifest/apply |
 |---|---|---|
-| `automatic` | no configured escalation reason | included in template; applyable |
-| `review-required` | one or more escalation reasons, including promoted source unavailable | included in template; applyable; prioritize human review + optionally record typed evidence |
-| `blocked` | unknown dependency home, forbidden category edge, or source mismatch | omitted from template; impossible to apply until catalog/upstream issue is fixed |
+| `automatic` | no escalation signal | included; applyable |
+| `review-required` | escalation/source unavailable | included; applyable; prioritize review/evidence |
+| `blocked` | missing/ambiguous home, forbidden edge, source mismatch | omitted; impossible until fixed |
 
-Every registry PR requires protected source-control review regardless of decision. `review-required` does not require repetitive per-crate approval records: reviewing/merging the complete generated catalog PR is authorization. Optional manifest evidence records useful additional work and enables future integrations such as cargo-vet. Unsafe/malformed archives, changed locked history, checksum inconsistency, duplicate identities, or catalog drift fail the command rather than producing a candidate.
+Every registry PR requires review. `review-required` does not require per-crate approval files; complete generated PR review authorizes batch. Optional evidence records genuine extra work. Unsafe/malformed archives, changed history, checksum inconsistency, duplicate identity, or catalog drift fail command.
 
-### Compact admission workflow
+### Compact single-PR workflow
 
-The standalone live-production procedure is [`production-update-runbook.md`](production-update-runbook.md). Policy-level synopsis:
+Standalone production procedure:[`production-update-runbook.md`](production-update-runbook.md).
 
-1. Choose/permanently reserve each package's `universe/<category>` home. For a first identity, add only an empty name anchor and reconcile it separately:
+1. Choose permanent `main/<category>` home. New package:add empty anchor + reconcile separately:
 
 ```toml
 [mirror]
@@ -53,43 +52,39 @@ new-package = []
 $ pkgre-indexer lock registry
 ```
 
-2. Create one canonical, hash-free manifest outside `registry/`. Implicit planning scans active existing mirror lanes; exact planning targets one reserved package/version:
+2. Generate one hash-free manifest outside catalog:
 
 ```console
 $ pkgre-indexer update-plan registry 2026-08-24-routine.toml
 $ pkgre-indexer update-plan-exact registry new-package 1.2.3 2026-08-24-new-package.toml
 ```
 
-Generated template:
-
 ```toml
 schema = 2
 
 [[admit]]
-category = "universe/general"
+category = "main/general"
 name = "example"
 version = "1.2.3"
 ```
 
-The command performs full current evaluation but writes only category/name/version requests. It includes automatic + review-required candidates, omits blocked candidates, refuses an existing output, and proves the catalog fingerprint stayed stable before writing.
+Template includes automatic + review-required, omits blocked, refuses existing output, and proves catalog fingerprint stable.
 
-3. Review planner counts/logs and manifest scope. Remove any candidate not intended for this batch. Keep canonical ordering. For suspicious/review-required identities, materialize a private inert inspection tree:
+3. Review scope/logs; remove unwanted complete request blocks; keep canonical order. Inspect selected exact request:
 
 ```console
 $ pkgre-indexer update-inspect registry 2026-08-24-routine.toml example 1.2.3 review-example-1.2.3
 ```
 
-The tree contains `candidate.crate`, optional `base.crate`, `inspection.toml`, and `README.txt`. The indexer re-plans that exact request, re-fetches checksum-bound archives, verifies analyses/delta, and never invokes Cargo, compilers, build scripts, package binaries, repository hooks, or package code. Treat archive files as untrusted input.
+Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted.
 
-4. Optionally record specific review/tool evidence directly beneath an `[[admit]]` entry:
+4. Optionally add typed evidence beneath request:
 
 ```toml
 [[admit.evidence]]
 kind = "manual-full-archive"
 note = "Reviewed every archive member, manifest, and build surface."
 ```
-
-or:
 
 ```toml
 [[admit.evidence]]
@@ -98,17 +93,17 @@ base = "1.2.2"
 note = "Reviewed the complete archive delta from 1.2.2."
 ```
 
-`manual-source-delta` must match the exact base + archive delta recomputed during apply. Evidence is optional; an unedited generated template is valid + mergeable.
+Unedited template remains valid. Delta base must equal apply's recomputation.
 
-5. Apply the exact manifest:
+5. Apply exact manifest once:
 
 ```console
 $ pkgre-indexer update-apply registry 2026-08-24-routine.toml
 ```
 
-Apply loads only canonical human requests, re-fetches/recomputes all current facts, rejects any young/yanked/blocked/route-invalid/evidence-invalid request, then executes one catalog transaction. It appends versions, generates one complete admission lock, hashes that complete lock, assigns the shared hash to every admitted package, writes `admissions/2026-08-24-routine.{toml,lock}`, reconciles rows/registry locks + canonical `downloads.json`, strict-loads + test-renders staging, and atomically installs it. Failure before installation leaves live catalog unchanged. Apply never substitutes a newer version.
+Apply re-fetches/recomputes every request; rejects young/yanked/blocked/route/evidence failures; appends declarations; writes source rows, registry locks, downloads, `admissions/<batch>.{toml,lock}`; binds full batch-lock hash into packages; strict-loads + test-renders staging; atomically installs. It never substitutes another version.
 
-6. Review + commit declarations, registry locks, canonical `downloads.json`, row objects, and exactly one admission pair together. Verify every added active identity has one exact route and no `.crate` mirror objects exist. Every new package's `admission-sha256` must equal `sha256sum admissions/<batch>.lock`. Then prove validity + convergence:
+6. Review + commit all catalog changes together. Required:a new active package/request; one exact `main` crates.io route/request; one row object/request; exactly one admission pair/batch; no mirror `.crate`; every new package `admission-sha256 = sha256(admissions/<batch>.lock)`.
 
 ```console
 $ pkgre-indexer check registry
@@ -117,112 +112,127 @@ $ pkgre-indexer lock registry
 $ git diff --check
 ```
 
-The second `lock` must report `changed=false` + preserve the exact diff. Missing/tampered/orphan admission files or wrong/reused bindings fail ordinary load/check. Reapplying the identical installed manifest is a validated no-op; same filename with different content fails.
+Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, and `verify-monotonic`; this enforces that a PR cannot merge a manifest/template without fully applied state. Reapplying identical installed manifest no-ops; same filename/different content fails.
 
-### Bulk-update review strategy
+### Bulk review
 
-For hundreds of routine existing-package updates, avoid per-crate ceremony:
+1. Generate one broad manifest; count automatic/review-required/blocked logs.
+2. Require manifest entries=`automatic + review-required`; blocked absent.
+3. Prioritize source-unavailable, dormancy, publisher/repository discontinuity, build/proc-macro/native changes, new dependencies, large deltas.
+4. Keep evidence only where useful; no boilerplate notes.
+5. Apply once; review one generated lock + shared binding + exact diff.
+6. Open one registry PR; leave unmerged for curator.
 
-1. Generate one broad manifest; count automatic/review-required/blocked from structured planner logs.
-2. Confirm manifest entry count = automatic + review-required; blocked = omitted.
-3. Prioritize inspection: source mismatch never appears because blocked; inspect source-unavailable, dormant wake-ups, publisher/repository discontinuities, build/proc-macro/native surface changes, new dependencies, and unusually large deltas.
-4. Keep optional evidence only where useful; do not manufacture boilerplate notes for every package.
-5. Apply once; review one generated lock + shared batch binding + exact catalog diff.
-6. Open one registry PR and leave it unmerged for curator review.
+## Publish first-party/fork Git tag
 
-## Publish a first-party Git tag
+Preconditions:
 
-Tagged source preconditions:
-
-- credential-free HTTPS repository + immutable reviewed release tag;
-- selected package version = tag final component with optional `v` prefix;
-- selected manifest declares exactly `publish = ["pkgre"]`;
-- every dependency explicitly names `registry = "universe"|"pkgre"`; path/Git/crates.io/unknown sources fail, including optional/dev/build/target-specific;
-- every dependency category allowed by `pkgre/tooling` (`pkgre/tooling` or `universe/general`);
-- lockfile present; no submodules, symlinks, special/unsafe paths, ambiguous package names, or generated dirty state;
+- credential-free HTTPS repository + immutable reviewed tag;
+- selected package version = tag final component, optional `v` prefix;
+- source manifest exactly `publish = ["pkgre"]`;
+- every dependency explicitly `registry = "pkgre"`; path/Git/crates.io/unknown sources fail, including optional/dev/build/target-specific;
+- catalog home usually `main/pkgre`; its rule permits only `main/pkgre|main/general` currently;
+- lockfile present; no submodules, symlinks, unsafe/special paths, ambiguity, or generated dirty state;
 - reproducible archive under Cargo `1.95.0`.
 
 Workflow:
 
-1. Review + merge release commit through protected `main`; create/push immutable tag after merge.
-2. Add tag to retained declaration:
+1. Review + merge release commit; create/push immutable tag after merge.
+2. Add tag:
 
 ```toml
-[categories.tooling.publish.pkgre-indexer]
+[categories.pkgre.publish.pkgre-indexer]
 git = "https://github.com/pkgre/pkgre"
-tags = ["indexer/v0.3.0"]
+tags = ["indexer/v0.4.0"]
 ```
 
-3. Set `PKGRE_CARGO=/absolute/path/to/cargo` or provide rustup toolchain `1.95.0`; executable must report `cargo 1.95.0 ...`.
-4. Run `pkgre-indexer lock registry`. It fetches exact tag, locks tag object + peeled commit, discovers package/path/version, runs isolated locked metadata, packages twice into distinct targets, requires byte-identical archives, generates source row, routes dependencies, and locks all hashes.
-5. Verify URL/tag/object/commit/package/path/Cargo version + exact archive/row; compare with reviewed tag.
-6. Run `check`, second no-op `lock`, verify the added exact Git route in `downloads.json`, render/release validation, then commit declaration/lock/catalog/objects together.
+3. Set absolute `PKGRE_CARGO` or provide rustup toolchain `1.95.0`; reported version must match.
+4. Run `lock`:fetch tag; lock tag object/commit; discover package/path/version; run isolated locked metadata; package twice; require byte identity; generate source row; route dependencies; lock hashes.
+5. Verify URL/tag/object/commit/package/path/Cargo + archive/row against reviewed tag.
+6. Run `check`, no-op `lock`, verify exact Git route in downloads, render/verify/monotonicity; commit declaration/lock/catalog/objects together.
 
-Pinned Cargo selection: absolute canonical regular-file `PKGRE_CARGO` first; otherwise absolute result of `rustup which --toolchain <cargo-version> cargo`. Nix builds set `PKGRE_CARGO` to the pinned toolchain. Existing Git identities validate retained bytes/provenance locally without recontacting upstream.
+Self-publication normally uses prior immutable indexer release. A schema/bootstrap release unreadable by predecessor uses reviewed build from exact merged/tagged release commit, then locks same tag.
 
-Self-publication: normally reconcile a new indexer tag with the prior immutable release. A schema/bootstrap release unreadable by its predecessor uses a reviewed build from the exact merged/tagged release commit, then locks that same tag.
+## Remove version/tag
 
-## Remove a version/tag
+1. Remove exact version/tag from array; retain key in original registry/category.
+2. Run `lock`.
+3. Verify only intended packages become `active→removed`; rows remain; unshared Git archive disappears; mirror archive set remains empty.
+4. Rendered history retains `yanked = true`; reactivation forbidden.
+5. Run `check`, no-op `lock`, render, `verify`, `verify-monotonic`; commit.
 
-1. Remove exact version/tag from its array; never delete/move package key.
-2. Run `pkgre-indexer lock registry`.
-3. Verify only intended lock entries changed `active→removed`; source rows remain; unshared Git archive disappears; mirror archive set remains empty.
-4. Rendered history retains row as `yanked = true`; reactivation is permanently rejected.
-5. Run `check`, second no-op `lock`, `render`, `verify`, `verify-monotonic`; commit.
+Changing home/source class/publisher URL, deleting key, or re-adding removed identity fails before fetch.
 
-Changing package home/source class, changing locked publisher URL, deleting key, or re-adding removed identity fails before network access.
+## Migrations
 
-## Migrate canonical schema 2
+### Schema 2→3 historical
 
-1. Require clean source catalog + record sorted file hashes.
-2. Choose absent sibling destination.
-3. Run `pkgre-indexer migrate-v2-to-v3 registry registry-v3`.
-4. Require strict old-catalog authentication, exact old→new category mapping, object byte preservation, policy validation, staged render/reproduction.
-5. Inspect new declarations/locks/category membership/counts + exact retained Git archives.
-6. Run `check`, `render`, `verify`, and `verify-monotonic` against old rendered site.
-7. Replace source only after review + rerun validation at final path; commit. Source is never modified by migration.
+```console
+$ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
+```
 
-## Migrate registry downloads to the immutable router
+Require clean strict source + absent destination. Authenticate inventory/objects/rows/hashes; inspect old→new category mapping; run check/render/verify/monotonicity; source remains unchanged.
 
-A download-configuration migration is staged separately from service deployment; full contract + rollback: [`download-routing.md`](download-routing.md).
+### Schema 3→4 single root main
 
-1. Generate + merge `registry/downloads.json` while current direct `dl` endpoints remain live; render/verify/monotonicity must prove no package/topology mutation.
-2. Deploy `pkgre-download-serve` behind fixed nginx without changing registry declarations. Require readiness + expected catalog commit/hash + exact redirect/malformed-path probes.
-3. Replace each `[registry].download` with its own exact router template. Never reuse another registry alias or use an arbitrary hostname/path.
-4. Run `lock`; only declaration/registry-lock download fields + regenerated release/config bytes may change; exact routes/checksums/sources must not. Run `check`, exact second-lock no-op, render, verify, and `verify-monotonic`.
-5. Merge/publish, validate live config/router, then run clean-cache Cargo E2E across representative crates.io + Git-tag packages.
+```console
+$ pkgre-indexer migrate-v3-to-v4 registry-v3 registry-v4
+```
 
-Rollback:revert/publish `dl` values first; current direct endpoints are safe only for single-source registries. After no live config references the router, service rollback is independent. Never mutate checksum/source routes as a routing workaround.
+Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; files become `main.toml`/`main.lock`; index becomes root; download becomes `v1/main`. Migration preserves immutable artifacts/provenance, recomputes registry-dependent routed hashes, rewrites/rebinds admissions, strict-loads/renders/reproduces staging, installs absent destination only.
+
+Validation:
+
+```console
+$ pkgre-indexer check registry-v4
+$ pkgre-indexer lock registry-v4            # changed=false
+$ pkgre-indexer render registry-v4 site-next
+$ pkgre-indexer verify registry-v4 site-next
+$ pkgre-indexer verify-monotonic site-v3 site-next
+```
+
+Replace source catalog only after review + rerun at final path. Never hand-edit migration output.
+
+## Add future registry/category
+
+Schema 4 allows additions without weakening prior identities:
+
+1. Add `<alias>.toml` with exact index `sparse+https://rust.pkg.re/<alias>/`, categories, and inhabited package reservations; `main` remains.
+2. Use exact router template or one allowed single-source endpoint.
+3. Ensure every cross-registry dependency category edge is explicit. Same-name resolution prefers local registry; a dependency originating in a third registry fails if multiple external homes exist.
+4. Bootstrap/reconcile, then check/render/verify/monotonicity. New alias renders below `/<alias>/`; download route uses `/v1/<alias>/...`.
+5. Add consumer Cargo alias only where that registry should be selected directly.
 
 ## Release gate
 
 ```console
 $ pkgre-indexer check registry
+$ pkgre-indexer lock registry                  # exact no-op
 $ pkgre-indexer render registry site-next
 $ pkgre-indexer verify registry site-next
 $ pkgre-indexer verify-monotonic site-current site-next
 ```
 
-Required: `git diff --check`; exact second-lock no-op; tooling format/test/lint/Nix checks; prior release name/package identities retained; additions/removals intentional; topology/anchors/immutable fields unchanged; every active package has one exact canonical generated route; each registry uses its canonical source-specific or exact router `dl`; rendered inventory limited to expected files; protected CI passes; normal merge without force/bypass.
+Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use own router; rendered inventory expected; protected CI passes; normal merge without force/bypass.
 
-Deploy only rendered `site/`, never `registry/`. Workflow should independently run check/render/verify, fetch prior live `release.json`, run `verify-monotonic`, then publish with read-only source + minimum Pages permissions.
+Deploy only rendered site, never catalog. Workflow independently checks/renders/verifies, fetches prior live release, verifies monotonicity, then publishes with read-only source + minimum Pages permission.
 
 ## Post-deployment verification
 
-- Fetch `https://rust.pkg.re/{universe,pkgre}/config.json`; after router migration require exact registry-bound `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}` values.
-- Fetch representative rows across categories; compare checksum/routes/yank state with `release.json`.
-- Fetch `https://dl.rust.pkg.re/healthz` + `/status`; require ready, expected source commit/manifest hash/route counts, and no refresh error.
-- Request representative exact mirror + Git-tag router URLs; require `307` to static.crates.io + content-addressed pkg.re respectively; independently download + verify SHA-256. Alter case/checksum and add query/encoding; require `404`; unsupported method → `405`.
-- Compare live `release.json` + `downloads.json` with committed candidate; require schema/topology/anchors + exact active route projection.
-- Use fresh Cargo home/cache + failure-closed config; build `--locked`/`--frozen` across both registries.
+- Fetch root `https://rust.pkg.re/config.json`; require `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`.
+- Fetch rows across categories; compare checksums/routes/yank state with `release.json`.
+- Fetch router `/healthz` + `/status`; require ready, expected commit/hash/counts, no refresh error.
+- Exact mirror + Git routes→`307` to static.crates.io + content-addressed pkg.re; download + verify SHA-256. Alter case/checksum/query/encoding→`404`; unsupported method→`405`.
+- Compare live release/downloads with committed candidate; require exact active projection.
+- Fresh Cargo home/cache + only `[registries.pkgre] index = "sparse+https://rust.pkg.re/"`; build `--locked` across mirror + Git packages; confirm `Cargo.lock` source is root URL.
 
-Keep consumer validation private: public commits/logs/issues must not expose consumer repositories, paths, manifests, lockfiles, dependency-discovery output, credentials, or tokens.
+Keep consumer validation private:no consumer names/paths/manifests/locks/dependency discovery/credentials/tokens in public logs/issues.
 
-## Interrupted reconciliation recovery
+## Interrupted reconciliation
 
-Normal failure removes guard/staging + leaves original exact. A killed process can leave `.registry.pkgre-lock`, staging, or backup siblings.
+Failure normally removes staging + leaves original. Killed process can leave `.registry.pkgre-lock`, stage, backup.
 
 1. Confirm no indexer process active.
-2. Inspect `registry/` + siblings; preserve/restore last reviewed complete catalog if installation interrupted.
-3. Remove only verified stale guard + disposable `.registry.pkgre-stage-*`/`.registry.pkgre-render-*`; retain `.registry.pkgre-backup-*` until integrity confirmed.
-4. Run `check`, compare source control, retry.
+2. Inspect catalog + siblings; preserve/restore last reviewed complete catalog if installation interrupted.
+3. Remove only verified stale guard/disposable stage; retain backup until integrity confirmed.
+4. Run `check`, compare Git, retry.

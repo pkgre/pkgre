@@ -282,7 +282,7 @@ mod tests {
         let catalog = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
             routes: vec![DownloadRoute {
-                registry: "universe".to_owned(),
+                registry: "main".to_owned(),
                 name: name.to_owned(),
                 version: Version::parse("1.0.0").unwrap(),
                 sha256: "01".repeat(32),
@@ -304,7 +304,7 @@ mod tests {
     }
 
     fn key(name: &str) -> RouteKey {
-        RouteKey::parse_canonical("universe", name, "1.0.0", &"01".repeat(32)).unwrap()
+        RouteKey::parse_canonical("main", name, "1.0.0", &"01".repeat(32)).unwrap()
     }
 
     #[tokio::test(start_paused = true)]

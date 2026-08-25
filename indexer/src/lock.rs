@@ -20,8 +20,8 @@ use crate::policy::{
     Policy, validate_catalog, validate_git_tag, validate_https_repository, validate_tag_version,
 };
 use crate::schema::{
-    Catalog, LockedName, LockedPackage, LockedSource, NameSource, PackageState, RegistryInput,
-    RegistryLock, Source, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
+    Catalog, LockedName, LockedPackage, LockedSource, PackageState, RegistryInput, RegistryLock,
+    Source, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
     validate_input_for_update, version_identity,
 };
 
@@ -84,7 +84,7 @@ pub(crate) fn reconcile_admitted_with<R: Resolver>(
 ) -> Result<ReconcileSummary> {
     let mut indexed = BTreeMap::new();
     for admission in admissions {
-        let identity = package_identity(&admission.name, &admission.version);
+        let identity = package_identity(&admission.registry, &admission.name, &admission.version);
         ensure!(
             indexed.insert(identity, admission.clone()).is_none(),
             "update admission repeats Cargo identity {} {}",
@@ -252,7 +252,7 @@ struct DesiredState {
 }
 
 type VersionIdentity = (u64, u64, u64, String);
-type Identity = (String, VersionIdentity);
+type Identity = (String, String, VersionIdentity);
 type GitIdentity = (String, String, String, String);
 
 type OldPackages = BTreeMap<Identity, (String, CategoryId, LockedPackage)>;
@@ -503,7 +503,7 @@ fn collect_desired_packages(inputs: &[RegistryInput]) -> Result<DesiredState> {
         for category in input.file.category_values() {
             for (name, versions) in &category.mirror {
                 for version in versions {
-                    let identity = package_identity(name, version);
+                    let identity = package_identity(registry, name, version);
                     ensure!(
                         desired
                             .mirrors
@@ -585,7 +585,8 @@ fn collect_old_packages(inputs: &[RegistryInput]) -> Result<OldPackages> {
             })?;
             let category = CategoryId::new(&input.file.registry.name, *local)
                 .context("locked package has invalid category anchor")?;
-            let identity = package_identity(&package.name, &package.version);
+            let identity =
+                package_identity(&input.file.registry.name, &package.name, &package.version);
             ensure!(
                 old.insert(
                     identity,
@@ -724,17 +725,12 @@ fn prepare_next_locks(
                 category
                     .mirror
                     .keys()
-                    .map(|name| LockedName {
-                        name: name.clone(),
-                        category: local.clone(),
-                        source: NameSource::Mirror,
-                    })
-                    .chain(category.publish.keys().map(|name| LockedName {
-                        name: name.clone(),
-                        category: local.clone(),
-                        source: NameSource::Publish,
-                    }))
+                    .chain(category.publish.keys())
+                    .map(move |name| (name.clone(), local.clone()))
             })
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .map(|(name, category)| LockedName { name, category })
             .collect();
         next.names.sort_by(|left, right| {
             (left.name.to_ascii_lowercase(), left.name.as_str())
@@ -750,7 +746,7 @@ fn prepare_next_locks(
             let remains_desired = match &package.source {
                 LockedSource::CratesIo {} => desired
                     .mirrors
-                    .get(&package_identity(&package.name, &package.version))
+                    .get(&package_identity(registry, &package.name, &package.version))
                     .is_some_and(|declaration| {
                         declaration.registry == *registry
                             && declaration.category.registry() == registry
@@ -830,7 +826,7 @@ fn lock_resolved_package(
         crate::policy::validate_sha256(binding).context("validate update-admission binding")?;
     }
 
-    let identity = package_identity(&resolved.name, &resolved.version);
+    let identity = package_identity(registry, &resolved.name, &resolved.version);
     ensure!(
         identities.insert(identity),
         "new package {} {} conflicts with an existing Cargo package identity",
@@ -895,8 +891,9 @@ fn insert_pending_object(
     Ok(())
 }
 
-fn package_identity(name: &str, version: &Version) -> Identity {
+fn package_identity(registry: &str, name: &str, version: &Version) -> Identity {
     (
+        registry.to_owned(),
         name.to_ascii_lowercase().replace('-', "_"),
         version_identity(version),
     )
@@ -1011,9 +1008,9 @@ fn routed_row_hash(
         "source row checksum for {name} {version} differs from archive hash {archive_sha256}"
     );
     record.set_yanked(false);
-    let routes = record.route_dependencies(
+    let routes = record.route_dependencies_scoped(
         source_category.registry(),
-        &catalog.homes.homes,
+        &catalog.homes,
         &policy.registry_urls,
     )?;
     for (package, home) in routes {
@@ -1388,7 +1385,6 @@ mod tests {
     use crate::index::index_path;
     use crate::schema::{MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, load_lock};
 
-    const UNIVERSE_URL: &str = "sparse+https://rust.pkg.re/universe/";
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
@@ -1423,19 +1419,146 @@ mod tests {
                 .iter()
                 .all(|package| package.state == PackageState::Active)
         );
-        assert_routed_registry(&temporary, &catalog, "universe", "matrix-middle", None);
-        assert_routed_registry(
-            &temporary,
-            &catalog,
-            "pkgre",
-            "pkgre-tool",
-            Some(UNIVERSE_URL),
-        );
+        assert_routed_registry(&temporary, &catalog, "main", "matrix-middle", None);
+        assert_routed_registry(&temporary, &catalog, "main", "pkgre-tool", None);
 
         let before = snapshot(temporary.path());
         let second = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
         assert_eq!(second, ReconcileSummary::default());
         assert_eq!(resolver.calls(), 3);
+        assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn one_name_can_transition_from_mirror_to_git_in_later_version() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-source-transition");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            concat!(
+                "[mirror]\n",
+                "mixed-source = [\"1.0.0\"]\n\n",
+                "[publish.mixed-source]\n",
+                "git = \"https://github.com/pkgre/mixed-source\"\n",
+                "tags = [\"v1.0.1\"]\n",
+            ),
+            "",
+            "",
+        );
+        let resolver = FakeResolver::default();
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_added, 2);
+        assert_eq!(resolver.calls(), 2);
+        let lock = load_lock(&root.join("main.lock")).unwrap();
+        let versions = lock
+            .packages
+            .iter()
+            .filter(|package| package.name == "mixed-source")
+            .map(|package| (package.version.to_string(), package.source.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(versions.len(), 2);
+        assert!(versions.iter().any(|(version, source)| {
+            version == "1.0.0" && matches!(source, LockedSource::CratesIo {})
+        }));
+        assert!(versions.iter().any(|(version, source)| {
+            version == "1.0.1" && matches!(source, LockedSource::GitTag { .. })
+        }));
+
+        let catalog = Catalog::load(&root).unwrap();
+        let downloads = DownloadCatalog::from_catalog(&catalog);
+        assert_eq!(downloads.routes.len(), 2);
+        assert!(downloads.routes.iter().any(|route| {
+            route.version == Version::parse("1.0.0").unwrap()
+                && route.source == DownloadSource::CratesIo
+        }));
+        assert!(downloads.routes.iter().any(|route| {
+            route.version == Version::parse("1.0.1").unwrap()
+                && route.source == DownloadSource::GitTag
+        }));
+    }
+
+    #[test]
+    fn identical_cargo_identities_in_distinct_registries_reconcile_and_render() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-registry-scoped-identity");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nshared-name = [\"1.0.0\"]\n", "", "");
+        write_registry(
+            &root,
+            "staging",
+            MIRROR_DOWNLOAD,
+            concat!(
+                "[categories.general]\n",
+                "may-depend-on = [\"staging/general\"]\n\n",
+                "[categories.general.mirror]\n",
+                "shared_name = [\"1.0.0\"]\n",
+            ),
+        );
+
+        let summary = reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_added, 2);
+        assert_eq!(
+            locked_package(&root, "main", "shared-name").version,
+            Version::new(1, 0, 0)
+        );
+        assert_eq!(
+            locked_package(&root, "staging", "shared_name").version,
+            Version::new(1, 0, 0)
+        );
+        let catalog = Catalog::load(&root).unwrap();
+        assert_eq!(
+            catalog
+                .approvals
+                .iter()
+                .filter(|package| {
+                    package.name.to_ascii_lowercase().replace('-', "_") == "shared_name"
+                        && package.version == Version::new(1, 0, 0)
+                })
+                .count(),
+            2
+        );
+        let artifacts = ArtifactMap::load(&catalog).unwrap();
+        let site = temporary.path().join("site-registry-scoped-identity");
+        crate::render::render(&catalog, &artifacts, &site).unwrap();
+        assert!(site.join(index_path("shared-name")).is_file());
+        assert!(
+            site.join("staging")
+                .join(index_path("shared_name"))
+                .is_file()
+        );
+        assert_eq!(
+            reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+    }
+
+    #[test]
+    fn mirror_and_git_cannot_resolve_to_the_same_cargo_identity() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-source-collision");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            concat!(
+                "[mirror]\n",
+                "mixed-source = [\"1.0.0\"]\n\n",
+                "[publish.mixed-source]\n",
+                "git = \"https://github.com/pkgre/mixed-source\"\n",
+                "tags = [\"v1.0.0\"]\n",
+            ),
+            "",
+            "",
+        );
+        let resolver = FakeResolver::default();
+        let before = snapshot(temporary.path());
+
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+
+        assert!(format!("{error:#}").contains(
+            "new package mixed-source 1.0.0 conflicts with an existing Cargo package identity"
+        ));
+        assert_eq!(resolver.calls(), 2);
         assert_eq!(snapshot(temporary.path()), before);
     }
 
@@ -1517,7 +1640,7 @@ mod tests {
 
         let mut extra = parsed;
         extra.routes.push(crate::download::DownloadRoute {
-            registry: "universe".to_owned(),
+            registry: "main".to_owned(),
             name: "zeta".to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             sha256: "04".repeat(32),
@@ -1570,10 +1693,10 @@ mod tests {
         let inputs = load_registry_inputs(&root).unwrap();
         let pkgre = inputs
             .iter()
-            .find(|input| input.file.registry.name == "pkgre")
+            .find(|input| input.file.registry.name == "main")
             .unwrap();
         fs::write(
-            root.join("pkgre.lock"),
+            root.join("main.lock"),
             serialize_lock(&empty_lock(&pkgre.file)).unwrap(),
         )
         .unwrap();
@@ -1602,7 +1725,7 @@ mod tests {
             "",
             "",
         );
-        let admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+        let admissions = fake_admission_map(&[("main", "general", "beta", "1.0.0")]);
         let before = snapshot(temporary.path());
 
         let error = reconcile_with_mode(
@@ -1628,15 +1751,15 @@ mod tests {
         write_catalog(&root, declarations, "", "");
         let inline = mirror_category(
             "general",
-            &["universe/general"],
+            &["main/general"],
             declarations,
             "reserved-general",
         );
         let external_reference = concat!(
             "[categories.general]\n",
-            "file = \"categories/universe/general.toml\"\n\n",
+            "file = \"categories/main/general.toml\"\n\n",
         );
-        let universe_path = root.join("universe.toml");
+        let universe_path = root.join("main.toml");
         let universe = fs::read_to_string(&universe_path).unwrap();
         assert!(universe.contains(&inline));
         fs::write(
@@ -1644,14 +1767,14 @@ mod tests {
             universe.replacen(&inline, external_reference, 1),
         )
         .unwrap();
-        fs::create_dir_all(root.join("categories/universe")).unwrap();
+        fs::create_dir_all(root.join("categories/main")).unwrap();
         let category = concat!(
-            "schema = 3\n",
-            "may-depend-on = [\"universe/general\"]\n\n",
+            "schema = 4\n",
+            "may-depend-on = [\"main/general\"]\n\n",
             "[mirror]\n",
             "alpha = [\"1.0.0\"]\n",
         );
-        let category_path = root.join("categories/universe/general.toml");
+        let category_path = root.join("categories/main/general.toml");
         fs::write(&category_path, category).unwrap();
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
@@ -1679,8 +1802,8 @@ mod tests {
             (
                 "pkgre-lock-extra-admission",
                 vec![
-                    ("universe", "general", "beta", "1.0.0"),
-                    ("universe", "general", "gamma", "1.0.0"),
+                    ("main", "general", "beta", "1.0.0"),
+                    ("main", "general", "gamma", "1.0.0"),
                 ],
             ),
         ] {
@@ -1727,7 +1850,7 @@ mod tests {
             "",
             "",
         );
-        let admissions = fake_admission_map(&[("universe", "matrix", "beta", "1.0.0")]);
+        let admissions = fake_admission_map(&[("main", "matrix", "beta", "1.0.0")]);
         let before = snapshot(temporary.path());
 
         let error = reconcile_with_mode(
@@ -1763,7 +1886,7 @@ mod tests {
                 "",
                 "",
             );
-            let mut admissions = fake_admission_map(&[("universe", "general", "beta", "1.0.0")]);
+            let mut admissions = fake_admission_map(&[("main", "general", "beta", "1.0.0")]);
             let admission = admissions.values_mut().next().unwrap();
             if wrong_archive {
                 admission.crate_sha256 = "00".repeat(32);
@@ -1815,11 +1938,11 @@ mod tests {
         assert_eq!(summary.packages_added, 1);
         assert_eq!(resolver.calls(), 2);
         assert_eq!(
-            locked_package(&root, "pkgre", "beta").version.to_string(),
+            locked_package(&root, "main", "beta").version.to_string(),
             "1.0.0"
         );
         assert!(
-            load_lock(&root.join("pkgre.lock"))
+            load_lock(&root.join("main.lock"))
                 .unwrap()
                 .packages
                 .iter()
@@ -1853,6 +1976,12 @@ mod tests {
             "",
             "",
         );
+        let declaration = fs::read_to_string(root.join("main.toml")).unwrap();
+        fs::write(
+            root.join("main.toml"),
+            declaration.replace(&router_download_template("main"), MIRROR_DOWNLOAD),
+        )
+        .unwrap();
         let resolver = FakeResolver::default();
         let before = snapshot(temporary.path());
 
@@ -1861,10 +1990,10 @@ mod tests {
         assert_eq!(resolver.calls(), 0);
         assert_eq!(snapshot(temporary.path()), before);
 
-        let declaration = fs::read_to_string(root.join("universe.toml")).unwrap();
+        let declaration = fs::read_to_string(root.join("main.toml")).unwrap();
         fs::write(
-            root.join("universe.toml"),
-            declaration.replace(MIRROR_DOWNLOAD, &router_download_template("universe")),
+            root.join("main.toml"),
+            declaration.replace(MIRROR_DOWNLOAD, &router_download_template("main")),
         )
         .unwrap();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
@@ -1890,7 +2019,7 @@ mod tests {
         );
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let mirror = locked_package(&root, "universe", "alpha");
+        let mirror = locked_package(&root, "main", "alpha");
         let mirror_archive = root
             .join("objects/crates")
             .join(format!("{}.crate", mirror.crate_sha256));
@@ -1910,7 +2039,7 @@ mod tests {
         );
         assert_eq!(resolver.calls(), 2);
         assert!(!mirror_archive.exists());
-        let git = locked_package(&root, "pkgre", "beta");
+        let git = locked_package(&root, "main", "beta");
         assert!(
             root.join("objects/crates")
                 .join(format!("{}.crate", git.crate_sha256))
@@ -1933,14 +2062,10 @@ mod tests {
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let mut core_lock = load_lock(&root.join("universe.lock")).unwrap();
+        let mut core_lock = load_lock(&root.join("main.lock")).unwrap();
         core_lock.registry.download = PUBLISH_DOWNLOAD.to_owned();
-        fs::write(
-            root.join("universe.lock"),
-            serialize_lock(&core_lock).unwrap(),
-        )
-        .unwrap();
-        let mirror = locked_package(&root, "universe", "alpha");
+        fs::write(root.join("main.lock"), serialize_lock(&core_lock).unwrap()).unwrap();
+        let mirror = locked_package(&root, "main", "alpha");
         let mirror_archive = root
             .join("objects/crates")
             .join(format!("{}.crate", mirror.crate_sha256));
@@ -1954,11 +2079,11 @@ mod tests {
         assert!(summary.changed);
         assert_eq!(resolver.calls(), 1);
         assert_eq!(
-            load_lock(&root.join("universe.lock"))
+            load_lock(&root.join("main.lock"))
                 .unwrap()
                 .registry
                 .download,
-            MIRROR_DOWNLOAD
+            router_download_template("main")
         );
         assert!(!mirror_archive.exists());
     }
@@ -1968,30 +2093,36 @@ mod tests {
         let temporary = TemporaryDirectory::new("pkgre-lock-router-migration");
         let root = temporary.path().join("catalog");
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let declaration = fs::read_to_string(root.join("main.toml")).unwrap();
+        fs::write(
+            root.join("main.toml"),
+            declaration.replace(&router_download_template("main"), MIRROR_DOWNLOAD),
+        )
+        .unwrap();
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
 
-        let declaration = fs::read_to_string(root.join("universe.toml")).unwrap();
+        let declaration = fs::read_to_string(root.join("main.toml")).unwrap();
         fs::write(
-            root.join("universe.toml"),
-            declaration.replace(MIRROR_DOWNLOAD, &router_download_template("universe")),
+            root.join("main.toml"),
+            declaration.replace(MIRROR_DOWNLOAD, &router_download_template("main")),
         )
         .unwrap();
         let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
         assert!(summary.changed);
         assert_eq!(resolver.calls(), 1);
         assert_eq!(
-            load_lock(&root.join("universe.lock"))
+            load_lock(&root.join("main.lock"))
                 .unwrap()
                 .registry
                 .download,
-            router_download_template("universe")
+            router_download_template("main")
         );
 
-        let routed = fs::read_to_string(root.join("universe.toml")).unwrap();
+        let routed = fs::read_to_string(root.join("main.toml")).unwrap();
         fs::write(
-            root.join("universe.toml"),
-            routed.replace(&router_download_template("universe"), MIRROR_DOWNLOAD),
+            root.join("main.toml"),
+            routed.replace(&router_download_template("main"), MIRROR_DOWNLOAD),
         )
         .unwrap();
         let before = snapshot(temporary.path());
@@ -2008,7 +2139,7 @@ mod tests {
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let original = locked_package(&root, "universe", "alpha");
+        let original = locked_package(&root, "main", "alpha");
         let archive = root
             .join("objects/crates")
             .join(format!("{}.crate", original.crate_sha256));
@@ -2020,7 +2151,7 @@ mod tests {
         let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
         assert_eq!(summary.packages_removed, 1);
         assert!(summary.changed);
-        let removed = locked_package(&root, "universe", "alpha");
+        let removed = locked_package(&root, "main", "alpha");
         assert_eq!(removed.state, PackageState::Removed);
         let mut retained = removed.clone();
         retained.state = PackageState::Active;
@@ -2035,7 +2166,7 @@ mod tests {
                 .routes
                 .is_empty()
         );
-        assert_rendered_yanked(&temporary, &catalog, "universe", "alpha");
+        assert_rendered_yanked(&temporary, &catalog, "main", "alpha");
 
         let removed_snapshot = snapshot(temporary.path());
         assert_eq!(
@@ -2074,10 +2205,11 @@ mod tests {
             "",
             "",
         );
-        let core = root.join("universe.toml");
-        let changed = fs::read_to_string(&core)
-            .unwrap()
-            .replace(UNIVERSE_URL, "sparse+https://example.invalid/universe/");
+        let core = root.join("main.toml");
+        let changed = fs::read_to_string(&core).unwrap().replace(
+            "sparse+https://rust.pkg.re/",
+            "sparse+https://example.invalid/",
+        );
         fs::write(&core, changed).unwrap();
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
         assert!(format!("{error:#}").contains("immutable registry identity"));
@@ -2089,9 +2221,9 @@ mod tests {
             "",
             "",
         );
-        let mut lock = load_lock(&root.join("universe.lock")).unwrap();
+        let mut lock = load_lock(&root.join("main.lock")).unwrap();
         lock.packages[0].index_row_sha256 = "00".repeat(32);
-        fs::write(root.join("universe.lock"), serialize_lock(&lock).unwrap()).unwrap();
+        fs::write(root.join("main.lock"), serialize_lock(&lock).unwrap()).unwrap();
         let before = snapshot(temporary.path());
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
         assert!(format!("{error:#}").contains("routed index-row hash mismatch"));
@@ -2132,7 +2264,7 @@ mod tests {
         write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
         let resolver = FakeResolver::default();
         reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
-        let package = locked_package(&root, "universe", "alpha");
+        let package = locked_package(&root, "main", "alpha");
         write_catalog(
             &root,
             "[mirror]\nalpha = [\"1.0.0\"]\nbeta = [\"1.0.0\"]\n",
@@ -2204,7 +2336,7 @@ mod tests {
         let returned = transact_catalog(&root, &expected, |staged| {
             fs::OpenOptions::new()
                 .append(true)
-                .open(staged.join("universe.toml"))
+                .open(staged.join("main.toml"))
                 .unwrap()
                 .write_all(b"\n# catalog transaction marker\n")
                 .unwrap();
@@ -2228,7 +2360,7 @@ mod tests {
         let error = transact_catalog(&root, &expected, |staged| -> Result<()> {
             fs::OpenOptions::new()
                 .append(true)
-                .open(staged.join("universe.toml"))
+                .open(staged.join("main.toml"))
                 .unwrap()
                 .write_all(b"\n# failed transaction marker\n")
                 .unwrap();
@@ -2276,7 +2408,7 @@ mod tests {
             |staged| {
                 fs::OpenOptions::new()
                     .append(true)
-                    .open(staged.join("universe.toml"))
+                    .open(staged.join("main.toml"))
                     .unwrap()
                     .write_all(b"\n# failed install marker\n")
                     .unwrap();
@@ -2389,7 +2521,7 @@ mod tests {
                     source_row_sha256: sha256_bytes(&resolved.source_row_bytes),
                     binding_sha256: "ab".repeat(32),
                 };
-                (package_identity(name, &version), admission)
+                (package_identity(registry, name, &version), admission)
             })
             .collect()
     }
@@ -2467,55 +2599,44 @@ mod tests {
 
     fn write_catalog(root: &Path, general: &str, matrix: &str, pkgre: &str) {
         fs::create_dir_all(root).unwrap();
-        let mut universe_categories = String::new();
-        universe_categories.push_str(&mirror_category(
+        let mut categories = String::new();
+        categories.push_str(&mirror_category(
             "general",
-            &["universe/general"],
+            &["main/general"],
             general,
             "reserved-general",
         ));
-        universe_categories.push_str(&mirror_category(
+        categories.push_str(&mirror_category(
             "matrix",
-            &["universe/matrix", "universe/general"],
+            &["main/matrix", "main/general"],
             matrix,
             "reserved-matrix",
         ));
         for (local, dependencies) in [
-            ("acp", &["universe/acp", "universe/general"] as &[_]),
-            (
-                "filesystem",
-                &["universe/filesystem", "universe/general"] as &[_],
-            ),
-            (
-                "mcp",
-                &["universe/mcp", "universe/sse", "universe/general"] as &[_],
-            ),
-            ("sse", &["universe/sse", "universe/general"] as &[_]),
-            (
-                "terminal",
-                &["universe/terminal", "universe/general"] as &[_],
-            ),
-            ("yaml", &["universe/yaml", "universe/general"] as &[_]),
+            ("acp", &["main/acp", "main/general"] as &[_]),
+            ("filesystem", &["main/filesystem", "main/general"] as &[_]),
+            ("mcp", &["main/mcp", "main/sse", "main/general"] as &[_]),
+            ("sse", &["main/sse", "main/general"] as &[_]),
+            ("terminal", &["main/terminal", "main/general"] as &[_]),
+            ("yaml", &["main/yaml", "main/general"] as &[_]),
         ] {
-            universe_categories.push_str(&mirror_category(
+            categories.push_str(&mirror_category(
                 local,
                 dependencies,
                 "",
                 &format!("reserved-{local}"),
             ));
         }
-        write_registry(root, "universe", MIRROR_DOWNLOAD, &universe_categories);
 
-        let tooling = if pkgre.trim().is_empty() {
-            "[categories.tooling.publish.pkgre-category-anchor]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = []\n"
-                .to_owned()
+        let pkgre = if pkgre.trim().is_empty() {
+            "[categories.pkgre.mirror]\npkgre-category-anchor = []\n".to_owned()
         } else {
-            scope_declarations("tooling", pkgre)
+            scope_declarations("pkgre", pkgre)
         };
-        let pkgre_categories = format!(
-            "[categories.tooling]\nmay-depend-on = [\"pkgre/tooling\", \"universe/general\"]\n\n{tooling}"
-        );
-        write_registry(root, "pkgre", PUBLISH_DOWNLOAD, &pkgre_categories);
+        categories
+            .push_str("[categories.pkgre]\nmay-depend-on = [\"main/pkgre\", \"main/general\"]\n\n");
+        categories.push_str(&pkgre);
+        write_registry(root, "main", &router_download_template("main"), &categories);
     }
 
     fn mirror_category(
@@ -2544,10 +2665,15 @@ mod tests {
     }
 
     fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
+        let index = if name == "main" {
+            "sparse+https://rust.pkg.re/".to_owned()
+        } else {
+            format!("sparse+https://rust.pkg.re/{name}/")
+        };
         fs::write(
             root.join(format!("{name}.toml")),
             format!(
-                "schema = 3\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
+                "schema = 4\n\n[registry]\nname = {name:?}\nindex = {index:?}\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
             ),
         )
         .unwrap();
@@ -2572,8 +2698,13 @@ mod tests {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join(format!("site-{registry}-{name}"));
         crate::render::render(catalog, &artifacts, &site).unwrap();
+        let registry_site = if registry == "main" {
+            site.clone()
+        } else {
+            site.join(registry)
+        };
         let row: Value =
-            serde_json::from_slice(&fs::read(site.join(registry).join(index_path(name))).unwrap())
+            serde_json::from_slice(&fs::read(registry_site.join(index_path(name))).unwrap())
                 .unwrap();
         assert_eq!(row["deps"][0]["registry"].as_str(), expected);
     }
@@ -2587,8 +2718,13 @@ mod tests {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join("removed-site");
         crate::render::render(catalog, &artifacts, &site).unwrap();
+        let registry_site = if registry == "main" {
+            site.clone()
+        } else {
+            site.join(registry)
+        };
         let row: Value =
-            serde_json::from_slice(&fs::read(site.join(registry).join(index_path(name))).unwrap())
+            serde_json::from_slice(&fs::read(registry_site.join(index_path(name))).unwrap())
                 .unwrap();
         assert_eq!(row["yanked"], true);
     }

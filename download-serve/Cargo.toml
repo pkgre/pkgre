@@ -12,18 +12,18 @@ publish = false
 workspace = true
 
 [dependencies]
-anyhow = { version = "1.0", registry = "universe" }
-axum = { version = "0.8", registry = "universe" }
+anyhow = { version = "1.0", registry = "pkgre" }
+axum = { version = "0.8", registry = "pkgre" }
 pkgre-indexer = { path = "../indexer" }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], registry = "universe" }
-semver = { version = "1.0", registry = "universe" }
-serde = { version = "1.0", features = ["derive"], registry = "universe" }
-serde_json = { version = "1.0", registry = "universe" }
-sha2 = { version = "0.10", registry = "universe" }
-tokio = { version = "1.50", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"], registry = "universe" }
-tracing = { version = "0.1", registry = "universe" }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"], registry = "universe" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], registry = "pkgre" }
+semver = { version = "1.0", registry = "pkgre" }
+serde = { version = "1.0", features = ["derive"], registry = "pkgre" }
+serde_json = { version = "1.0", registry = "pkgre" }
+sha2 = { version = "0.10", registry = "pkgre" }
+tokio = { version = "1.50", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "test-util", "time"], registry = "pkgre" }
+tracing = { version = "0.1", registry = "pkgre" }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"], registry = "pkgre" }
 
 [dev-dependencies]
-http-body-util = { version = "0.1", registry = "universe" }
-tower = { version = "0.5", features = ["util"], registry = "universe" }
+http-body-util = { version = "0.1", registry = "pkgre" }
+tower = { version = "0.5", features = ["util"], registry = "pkgre" }

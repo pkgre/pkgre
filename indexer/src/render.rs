@@ -17,8 +17,8 @@ use crate::download::{
 };
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{
-    CARGO_VERSION, REGISTRIES, canonical_category_dependencies, validate_catalog,
-    validate_package_name, validate_sha256,
+    CARGO_VERSION, SCHEMA3_REGISTRIES, canonical_category_dependencies, canonical_registry_index,
+    validate_catalog, validate_package_name, validate_registry_alias, validate_sha256,
 };
 use crate::schema::{
     Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, RELEASE_SCHEMA_VERSION,
@@ -38,6 +38,24 @@ struct Release {
     registries: Vec<ReleaseRegistry>,
     names: Vec<ReleaseName>,
     packages: Vec<ReleasePackage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseV4 {
+    schema: u32,
+    cname: String,
+    registries: Vec<ReleaseRegistry>,
+    names: Vec<ReleaseNameV4>,
+    packages: Vec<ReleasePackage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseNameV4 {
+    name: String,
+    registry: String,
+    category: CategoryId,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -180,6 +198,7 @@ enum LoadedRelease {
     Schema1(LegacyRelease),
     Schema2(ReleaseV2),
     Schema3(Release),
+    Schema4(ReleaseV4),
 }
 
 impl LoadedRelease {
@@ -188,7 +207,16 @@ impl LoadedRelease {
             Self::Schema1(release) => release.schema,
             Self::Schema2(release) => release.schema,
             Self::Schema3(release) => release.schema,
+            Self::Schema4(release) => release.schema,
         }
+    }
+}
+
+fn registry_site_root(root: &Path, registry: &str) -> PathBuf {
+    if registry == "main" {
+        root.to_path_buf()
+    } else {
+        root.join(registry)
     }
 }
 
@@ -199,10 +227,23 @@ impl LoadedRelease {
 /// Returns an error for invalid policy or artifacts, unsafe filesystem state, dependency-category violations, or I/O failures. An existing output path is never overwritten.
 pub fn render(catalog: &Catalog, artifacts: &ArtifactMap, output: &Path) -> Result<()> {
     let policy = validate_catalog(catalog)?;
+    render_with_policy(catalog, artifacts, &policy, output)
+}
+
+/// Renders a catalog already validated by a historical policy implementation.
+///
+/// This compatibility entry point exists only for exact one-way schema migrations. Callers must
+/// validate the catalog and construct the matching routing policy before invoking it.
+pub(crate) fn render_with_policy(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    policy: &crate::policy::Policy,
+    output: &Path,
+) -> Result<()> {
     artifacts.verify(catalog)?;
     require_absent(output)?;
     fs::create_dir(output).with_context(|| format!("create output {}", output.display()))?;
-    let result = render_into(catalog, artifacts, &policy, output);
+    let result = render_into(catalog, artifacts, policy, output);
     if result.is_err() {
         let _ = fs::remove_dir_all(output);
     }
@@ -226,7 +267,10 @@ fn render_into(
         }))
         .context("serialize registry config")?;
         config.push(b'\n');
-        write_new(&output.join(&registry.name).join("config.json"), &config)?;
+        write_new(
+            &registry_site_root(output, &registry.name).join("config.json"),
+            &config,
+        )?;
     }
     let downloads = DownloadCatalog::from_catalog(catalog).canonical_bytes()?;
     write_new(&output.join(DOWNLOAD_CATALOG_FILE), &downloads)?;
@@ -245,9 +289,9 @@ fn render_into(
         })?;
         let mut record = IndexRecord::parse(&source)?;
         record.set_yanked(false);
-        let routed = record.route_dependencies(
+        let routed = record.route_dependencies_scoped(
             &approval.registry,
-            &catalog.homes.homes,
+            &catalog.homes,
             &policy.registry_urls,
         )?;
         for (package, home) in routed {
@@ -293,12 +337,13 @@ fn render_into(
         for (_, line) in versions {
             contents.extend_from_slice(&line);
         }
-        write_new(&output.join(registry).join(relative), &contents)?;
+        write_new(
+            &registry_site_root(output, &registry).join(relative),
+            &contents,
+        )?;
     }
 
-    let release = release_from_catalog(catalog);
-    let mut release_json =
-        serde_json::to_vec_pretty(&release).context("serialize release manifest")?;
+    let mut release_json = release_bytes_from_catalog(catalog)?;
     release_json.push(b'\n');
     write_new(&output.join(RELEASE_MANIFEST), &release_json)?;
     Ok(())
@@ -310,14 +355,25 @@ fn render_into(
 ///
 /// Returns an error when rendering fails or the existing output has any missing, extra, non-regular, or byte-different entry.
 pub fn verify(catalog: &Catalog, artifacts: &ArtifactMap, output: &Path) -> Result<()> {
+    let policy = validate_catalog(catalog)?;
+    verify_with_policy(catalog, artifacts, &policy, output)
+}
+
+/// Re-renders a catalog already validated by a historical policy and compares it byte-for-byte.
+pub(crate) fn verify_with_policy(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    policy: &crate::policy::Policy,
+    output: &Path,
+) -> Result<()> {
     let temporary = TemporaryDirectory::sibling_of(output)?;
-    render(catalog, artifacts, temporary.path())?;
+    render_with_policy(catalog, artifacts, policy, temporary.path())?;
     compare_trees(temporary.path(), output)
 }
 
 /// Requires a release transition to preserve every permanent name and package invariant.
 ///
-/// Supported transitions are historical `1→2`, exact catalog migration `2→3`, and normal monotonic `3→3`.
+/// Supported transitions are historical `1→2`, exact catalog migrations `2→3` and `3→4`, plus normal monotonic `3→3` and `4→4`.
 ///
 /// # Errors
 ///
@@ -335,6 +391,12 @@ pub fn verify_monotonic(previous_site: &Path, next_site: &Path) -> Result<()> {
         (LoadedRelease::Schema3(previous), LoadedRelease::Schema3(next)) => {
             verify_v3_to_v3(previous, next, next_site)
         }
+        (LoadedRelease::Schema3(previous), LoadedRelease::Schema4(next)) => {
+            verify_v3_to_v4(previous, next, next_site)
+        }
+        (LoadedRelease::Schema4(previous), LoadedRelease::Schema4(next)) => {
+            verify_v4_to_v4(previous, next, next_site)
+        }
         _ => bail!(
             "unsupported release manifest schema transition {} -> {}",
             previous.schema(),
@@ -343,8 +405,100 @@ pub fn verify_monotonic(previous_site: &Path, next_site: &Path) -> Result<()> {
     }
 }
 
-fn release_from_catalog(catalog: &Catalog) -> Release {
-    let registries = catalog
+fn release_bytes_from_catalog(catalog: &Catalog) -> Result<Vec<u8>> {
+    match catalog.registries.schema {
+        3 => serde_json::to_vec_pretty(&release_v3_from_catalog(catalog))
+            .context("serialize schema-3 release manifest"),
+        4 => serde_json::to_vec_pretty(&release_from_catalog(catalog))
+            .context("serialize schema-4 release manifest"),
+        schema => bail!("cannot render release manifest for catalog schema {schema}"),
+    }
+}
+
+fn release_v3_from_catalog(catalog: &Catalog) -> Release {
+    let registries = release_registries(catalog);
+    let mut names = catalog
+        .homes
+        .homes
+        .iter()
+        .map(|(key, home)| {
+            let source = match (
+                catalog.mirror_names.contains(key),
+                catalog.publish_names.contains(key),
+            ) {
+                (true, false) => NameSource::Mirror,
+                (false, true) => NameSource::Publish,
+                _ => {
+                    panic!("validated schema-3 compatibility catalog has one source class per name")
+                }
+            };
+            ReleaseName {
+                name: key.name.clone(),
+                registry: home.registry.clone(),
+                category: home.category.clone(),
+                source,
+            }
+        })
+        .collect::<Vec<_>>();
+    names.sort_by(|left, right| {
+        (
+            left.registry.as_str(),
+            &left.category,
+            left.name.to_ascii_lowercase(),
+            left.name.as_str(),
+        )
+            .cmp(&(
+                right.registry.as_str(),
+                &right.category,
+                right.name.to_ascii_lowercase(),
+                right.name.as_str(),
+            ))
+    });
+    Release {
+        schema: 3,
+        cname: catalog.registries.cname.clone(),
+        registries,
+        names,
+        packages: release_packages(catalog),
+    }
+}
+
+fn release_from_catalog(catalog: &Catalog) -> ReleaseV4 {
+    let mut names = catalog
+        .homes
+        .homes
+        .iter()
+        .map(|(key, home)| ReleaseNameV4 {
+            name: key.name.clone(),
+            registry: home.registry.clone(),
+            category: home.category.clone(),
+        })
+        .collect::<Vec<_>>();
+    names.sort_by(|left, right| {
+        (
+            left.registry.as_str(),
+            &left.category,
+            left.name.to_ascii_lowercase(),
+            left.name.as_str(),
+        )
+            .cmp(&(
+                right.registry.as_str(),
+                &right.category,
+                right.name.to_ascii_lowercase(),
+                right.name.as_str(),
+            ))
+    });
+    ReleaseV4 {
+        schema: RELEASE_SCHEMA_VERSION,
+        cname: catalog.registries.cname.clone(),
+        registries: release_registries(catalog),
+        names,
+        packages: release_packages(catalog),
+    }
+}
+
+fn release_registries(catalog: &Catalog) -> Vec<ReleaseRegistry> {
+    catalog
         .registries
         .registries
         .iter()
@@ -366,36 +520,11 @@ fn release_from_catalog(catalog: &Catalog) -> Release {
                 })
                 .collect(),
         })
-        .collect();
-    let mut names = catalog
-        .homes
-        .homes
-        .iter()
-        .map(|(name, home)| ReleaseName {
-            name: name.clone(),
-            registry: home.registry.clone(),
-            category: home.category.clone(),
-            source: *catalog
-                .name_sources
-                .get(name)
-                .expect("validated catalog has a source class for every name"),
-        })
-        .collect::<Vec<_>>();
-    names.sort_by(|left, right| {
-        (
-            left.registry.as_str(),
-            &left.category,
-            left.name.to_ascii_lowercase(),
-            left.name.as_str(),
-        )
-            .cmp(&(
-                right.registry.as_str(),
-                &right.category,
-                right.name.to_ascii_lowercase(),
-                right.name.as_str(),
-            ))
-    });
-    let packages = sorted_approvals(catalog)
+        .collect()
+}
+
+fn release_packages(catalog: &Catalog) -> Vec<ReleasePackage> {
+    sorted_approvals(catalog)
         .into_iter()
         .map(|approval| ReleasePackage {
             registry: approval.registry.clone(),
@@ -430,14 +559,7 @@ fn release_from_catalog(catalog: &Catalog) -> Release {
                 },
             },
         })
-        .collect();
-    Release {
-        schema: RELEASE_SCHEMA_VERSION,
-        cname: catalog.registries.cname.clone(),
-        registries,
-        names,
-        packages,
-    }
+        .collect()
 }
 
 fn sorted_approvals(catalog: &Catalog) -> Vec<&Approval> {
@@ -476,6 +598,9 @@ fn load_release(path: &Path) -> Result<LoadedRelease> {
         Some(3) => serde_json::from_value(value)
             .map(LoadedRelease::Schema3)
             .with_context(|| format!("parse schema-3 release manifest {}", path.display())),
+        Some(4) => serde_json::from_value(value)
+            .map(LoadedRelease::Schema4)
+            .with_context(|| format!("parse schema-4 release manifest {}", path.display())),
         Some(schema) => bail!(
             "unsupported release manifest schema {schema} in {}",
             path.display()
@@ -673,6 +798,454 @@ fn verify_v3_to_v3(previous: &Release, next: &Release, next_site: &Path) -> Resu
     verify_v3_rows(next, next_site)
 }
 
+fn verify_v3_to_v4(previous: &Release, next: &ReleaseV4, next_site: &Path) -> Result<()> {
+    ensure!(
+        previous.schema == 3 && next.schema == 4,
+        "invalid 3→4 transition"
+    );
+    ensure!(
+        previous.cname == next.cname,
+        "CNAME changed across releases"
+    );
+    validate_v3_release(previous)?;
+    validate_v4_release(next)?;
+
+    ensure!(
+        next.registries.len() == 1,
+        "schema-3 migration must produce exactly the main registry"
+    );
+    let main = &next.registries[0];
+    ensure!(
+        main.name == "main"
+            && main.index == canonical_registry_index("main")
+            && main.download == router_download_template("main"),
+        "schema-3 migration must produce the canonical routed main registry"
+    );
+    let mut expected_categories = previous
+        .registries
+        .iter()
+        .flat_map(|registry| &registry.categories)
+        .map(|category| {
+            let mut may_depend_on = category
+                .may_depend_on
+                .iter()
+                .map(migrate_v3_category)
+                .collect::<Result<Vec<_>>>()?;
+            may_depend_on.sort();
+            Ok(ReleaseCategory {
+                id: migrate_v3_category(&category.id)?,
+                may_depend_on,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    expected_categories.sort_by(|left, right| left.id.cmp(&right.id));
+    ensure!(
+        main.categories == expected_categories,
+        "schema-3 categories or dependency rules were not mapped exactly into main"
+    );
+
+    let previous_names = name_map(&previous.names)?;
+    let next_names = name_map_v4(&next.names)?;
+    ensure!(
+        previous_names.len() == next_names.len(),
+        "schema-3 migration changed the permanent package-name count"
+    );
+    for (name, prior) in previous_names {
+        let current = next_names
+            .get(&("main", name))
+            .with_context(|| format!("schema-3 package name {name:?} was not migrated"))?;
+        ensure!(
+            current.registry == "main" && current.category == migrate_v3_category(&prior.category)?,
+            "schema-3 package name {name:?} mapped to the wrong main category"
+        );
+    }
+
+    let previous_packages = package_map(&previous.packages)?;
+    let next_packages = package_map(&next.packages)?;
+    ensure!(
+        previous_packages.len() == next_packages.len(),
+        "schema-3 migration changed the locked package count"
+    );
+    for (_, prior) in previous_packages {
+        let key = ("main".to_owned(), prior.name.clone(), prior.version.clone());
+        let current = next_packages.get(&key).with_context(|| {
+            format!(
+                "schema-3 package {} {} in {} was not migrated",
+                prior.name, prior.version, prior.registry
+            )
+        })?;
+        ensure!(
+            current.category == migrate_v3_category(&prior.category)?
+                && current.name == prior.name
+                && current.version == prior.version
+                && current.archive_sha256 == prior.archive_sha256
+                && current.index_record_sha256 == prior.index_record_sha256
+                && current.yanked == prior.yanked
+                && current.source == prior.source,
+            "immutable schema-3 package changed while migrating {} {} from {}",
+            prior.name,
+            prior.version,
+            prior.registry
+        );
+    }
+    verify_v4_rows(next, next_site)
+}
+
+fn migrate_v3_category(category: &CategoryId) -> Result<CategoryId> {
+    match (category.registry(), category.local()) {
+        ("pkgre", "tooling") => "main/pkgre".parse(),
+        ("universe", local) => CategoryId::new("main", local),
+        _ => bail!("unexpected schema-3 category {category}"),
+    }
+}
+
+fn verify_v4_to_v4(previous: &ReleaseV4, next: &ReleaseV4, next_site: &Path) -> Result<()> {
+    ensure!(
+        previous.schema == 4 && next.schema == 4,
+        "invalid 4→4 transition"
+    );
+    ensure!(
+        previous.cname == next.cname,
+        "CNAME changed across releases"
+    );
+    validate_v4_release(previous)?;
+    validate_v4_release(next)?;
+
+    let next_registries = next
+        .registries
+        .iter()
+        .map(|registry| (registry.name.as_str(), registry))
+        .collect::<BTreeMap<_, _>>();
+    for before in &previous.registries {
+        let after = next_registries
+            .get(before.name.as_str())
+            .with_context(|| format!("registry {:?} was removed", before.name))?;
+        ensure!(
+            before.index == after.index,
+            "registry {:?} index changed",
+            before.name
+        );
+        let router = router_download_template(&before.name);
+        ensure!(
+            before.download == after.download
+                || ((before.download == MIRROR_DOWNLOAD || before.download == PUBLISH_DOWNLOAD)
+                    && after.download == router),
+            "registry {:?} has an unsupported download transition from {:?} to {:?}",
+            before.name,
+            before.download,
+            after.download
+        );
+        let next_categories = after
+            .categories
+            .iter()
+            .map(|category| (&category.id, category))
+            .collect::<BTreeMap<_, _>>();
+        for prior in &before.categories {
+            let current = next_categories
+                .get(&prior.id)
+                .with_context(|| format!("category {} was removed", prior.id))?;
+            ensure!(
+                prior == *current,
+                "category {} changed its may-depend-on rule",
+                prior.id
+            );
+        }
+    }
+
+    let previous_names = name_map_v4(&previous.names)?;
+    let next_names = name_map_v4(&next.names)?;
+    for ((registry, name), prior) in previous_names {
+        let current = next_names
+            .get(&(registry, name))
+            .with_context(|| format!("permanent package name {registry}/{name} was removed"))?;
+        ensure!(
+            prior == *current,
+            "permanent package name {registry}/{name} changed registry or category"
+        );
+    }
+    let previous_packages = package_map(&previous.packages)?;
+    let next_packages = package_map(&next.packages)?;
+    for (key, prior) in previous_packages {
+        let current = next_packages.get(&key).with_context(|| {
+            format!(
+                "previously published package {} {} in {} was removed",
+                prior.name, prior.version, prior.registry
+            )
+        })?;
+        ensure!(
+            same_immutable_package(prior, current),
+            "immutable release identity changed for {} {} in {}",
+            prior.name,
+            prior.version,
+            prior.registry
+        );
+        ensure!(
+            !prior.yanked || current.yanked,
+            "removed package {} {} in {} was reactivated",
+            prior.name,
+            prior.version,
+            prior.registry
+        );
+    }
+    verify_v4_rows(next, next_site)
+}
+
+fn validate_v4_release(release: &ReleaseV4) -> Result<()> {
+    ensure!(release.schema == 4, "schema-4 release has wrong schema");
+    ensure!(
+        release.cname == "rust.pkg.re",
+        "release CNAME is noncanonical"
+    );
+    let categories = validate_v4_registry_topology(release)?;
+    let names = validate_v4_names(release, &categories)?;
+    validate_v4_packages(release, &names)
+}
+
+fn validate_v4_registry_topology(
+    release: &ReleaseV4,
+) -> Result<BTreeMap<CategoryId, &ReleaseCategory>> {
+    ensure!(
+        !release.registries.is_empty(),
+        "schema-4 release has no registries"
+    );
+    ensure!(
+        release
+            .registries
+            .windows(2)
+            .all(|pair| pair[0].name < pair[1].name),
+        "schema-4 registries are not in canonical unique order"
+    );
+    let mut registry_names = BTreeSet::new();
+    let mut categories = BTreeMap::new();
+    for registry in &release.registries {
+        validate_v4_registry(registry, &mut registry_names, &mut categories)?;
+    }
+    ensure!(
+        registry_names.contains("main"),
+        "schema-4 release has no main registry"
+    );
+    for category in categories.values() {
+        for dependency in &category.may_depend_on {
+            ensure!(
+                categories.contains_key(dependency),
+                "category {} may depend on unknown category {dependency}",
+                category.id
+            );
+        }
+    }
+    Ok(categories)
+}
+
+fn validate_v4_registry<'a>(
+    registry: &'a ReleaseRegistry,
+    registry_names: &mut BTreeSet<&'a str>,
+    categories: &mut BTreeMap<CategoryId, &'a ReleaseCategory>,
+) -> Result<()> {
+    validate_registry_alias(&registry.name)?;
+    ensure!(
+        registry.index == canonical_registry_index(&registry.name),
+        "release registry {:?} has a noncanonical index",
+        registry.name
+    );
+    ensure!(
+        registry.download == MIRROR_DOWNLOAD
+            || registry.download == PUBLISH_DOWNLOAD
+            || registry.download == router_download_template(&registry.name),
+        "release registry {:?} has a noncanonical download template",
+        registry.name
+    );
+    ensure!(
+        registry_names.insert(registry.name.as_str()),
+        "duplicate release registry"
+    );
+    ensure!(
+        registry
+            .categories
+            .windows(2)
+            .all(|pair| pair[0].id < pair[1].id),
+        "categories for registry {:?} are not in canonical unique order",
+        registry.name
+    );
+    for category in &registry.categories {
+        ensure!(
+            category.id.registry() == registry.name,
+            "category {} is listed below the wrong registry",
+            category.id
+        );
+        ensure!(
+            category
+                .may_depend_on
+                .windows(2)
+                .all(|pair| pair[0] < pair[1]),
+            "category {} may-depend-on is not canonical and unique",
+            category.id
+        );
+        ensure!(
+            categories.insert(category.id.clone(), category).is_none(),
+            "duplicate category {}",
+            category.id
+        );
+    }
+    Ok(())
+}
+
+fn validate_v4_names<'a>(
+    release: &'a ReleaseV4,
+    categories: &BTreeMap<CategoryId, &ReleaseCategory>,
+) -> Result<BTreeMap<(&'a str, &'a str), &'a ReleaseNameV4>> {
+    let names = name_map_v4(&release.names)?;
+    let inhabited = names
+        .values()
+        .map(|name| &name.category)
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        categories
+            .keys()
+            .all(|category| inhabited.contains(category)),
+        "every release category must reserve at least one package name"
+    );
+    for name in names.values() {
+        ensure!(
+            categories.contains_key(&name.category),
+            "release name {:?} has unknown category {}",
+            name.name,
+            name.category
+        );
+    }
+    Ok(names)
+}
+
+fn validate_v4_packages(
+    release: &ReleaseV4,
+    names: &BTreeMap<(&str, &str), &ReleaseNameV4>,
+) -> Result<()> {
+    let packages = package_map(&release.packages)?;
+    let mut cargo_identities = BTreeSet::new();
+    for package in packages.values() {
+        validate_v4_package(package, names, &mut cargo_identities)?;
+    }
+    for registry in &release.registries {
+        validate_release_registry_download_v4(registry, packages.values().copied())?;
+    }
+    Ok(())
+}
+
+fn validate_v4_package(
+    package: &ReleasePackage,
+    names: &BTreeMap<(&str, &str), &ReleaseNameV4>,
+    cargo_identities: &mut BTreeSet<(String, String, u64, u64, u64, String)>,
+) -> Result<()> {
+    validate_sha256(&package.archive_sha256)?;
+    validate_sha256(&package.index_record_sha256)?;
+    validate_sha256(&package.index_row_sha256)?;
+    let anchor = names
+        .get(&(package.registry.as_str(), package.name.as_str()))
+        .with_context(|| {
+            format!(
+                "release package {}/{} {} has no permanent name anchor",
+                package.registry, package.name, package.version
+            )
+        })?;
+    ensure!(
+        anchor.registry == package.registry && anchor.category == package.category,
+        "release package {} {} differs from its permanent name anchor",
+        package.name,
+        package.version
+    );
+    ensure!(
+        cargo_identities.insert((
+            package.registry.clone(),
+            package.name.to_ascii_lowercase().replace('-', "_"),
+            package.version.major,
+            package.version.minor,
+            package.version.patch,
+            package.version.pre.to_string(),
+        )),
+        "duplicate Cargo package identity {} {} in schema-4 release",
+        package.name,
+        package.version
+    );
+    if let ReleaseSource::GitTag { cargo_version, .. } = &package.source {
+        ensure!(
+            cargo_version.to_string() == CARGO_VERSION,
+            "Git package used unsupported Cargo {cargo_version}"
+        );
+    }
+    Ok(())
+}
+
+fn validate_release_registry_download_v4<'a>(
+    registry: &ReleaseRegistry,
+    packages: impl Iterator<Item = &'a ReleasePackage>,
+) -> Result<()> {
+    let mut has_mirror = false;
+    let mut has_publish = false;
+    for package in packages.filter(|package| package.registry == registry.name) {
+        match package.source {
+            ReleaseSource::CratesIo => has_mirror = true,
+            ReleaseSource::GitTag { .. } => has_publish = true,
+        }
+    }
+    let router = router_download_template(&registry.name);
+    if registry.download == router || (!has_mirror && !has_publish) {
+        return Ok(());
+    }
+    ensure!(
+        !(has_mirror && has_publish),
+        "release registry {:?} mixes source classes and requires download {router:?}",
+        registry.name
+    );
+    let expected = if has_publish {
+        PUBLISH_DOWNLOAD
+    } else {
+        MIRROR_DOWNLOAD
+    };
+    ensure!(
+        registry.download == expected,
+        "release registry {:?} download must be {expected:?} for its locked package source class, or {router:?} for the immutable router",
+        registry.name
+    );
+    Ok(())
+}
+
+fn name_map_v4(names: &[ReleaseNameV4]) -> Result<BTreeMap<(&str, &str), &ReleaseNameV4>> {
+    let mut result = BTreeMap::new();
+    let mut normalized = BTreeMap::new();
+    for name in names {
+        validate_package_name(&name.name)?;
+        ensure!(
+            name.registry == name.category.registry(),
+            "release name {:?} has a category outside registry {:?}",
+            name.name,
+            name.registry
+        );
+        ensure!(
+            result
+                .insert((name.registry.as_str(), name.name.as_str()), name)
+                .is_none(),
+            "duplicate permanent package name in release manifest: {}/{}",
+            name.registry,
+            name.name,
+        );
+        let key = (
+            name.registry.as_str(),
+            name.name.to_ascii_lowercase().replace('-', "_"),
+        );
+        if let Some(previous) = normalized.insert(key, name.name.as_str()) {
+            bail!(
+                "release package names {previous:?} and {:?} collide under Cargo normalization in registry {:?}",
+                name.name,
+                name.registry,
+            );
+        }
+    }
+    Ok(result)
+}
+
+fn verify_v4_rows(release: &ReleaseV4, site: &Path) -> Result<()> {
+    verify_release_rows(&release.packages, site)
+}
+
 fn validate_v2_topology(release: &ReleaseV2) -> Result<()> {
     let expected = [
         ReleaseRegistryV2 {
@@ -702,20 +1275,19 @@ fn validate_v2_topology(release: &ReleaseV2) -> Result<()> {
 }
 
 fn validate_v3_release(release: &Release) -> Result<()> {
-    ensure!(
-        release.schema == RELEASE_SCHEMA_VERSION,
-        "schema-3 release has wrong schema"
-    );
+    ensure!(release.schema == 3, "schema-3 release has wrong schema");
     ensure!(
         release.cname == "rust.pkg.re",
         "release CNAME is noncanonical"
     );
     let expected_categories = canonical_category_dependencies();
     ensure!(
-        release.registries.len() == REGISTRIES.len(),
+        release.registries.len() == SCHEMA3_REGISTRIES.len(),
         "schema-3 release does not have the exact canonical registry/category topology"
     );
-    for (registry, (expected_name, expected_index)) in release.registries.iter().zip(REGISTRIES) {
+    for (registry, (expected_name, expected_index)) in
+        release.registries.iter().zip(SCHEMA3_REGISTRIES)
+    {
         let expected_registry_categories = expected_categories
             .iter()
             .filter(|(category, _)| category.registry() == expected_name)
@@ -928,8 +1500,11 @@ fn same_v2_v3_source(previous: &ReleaseSourceV2, next: &ReleaseSource) -> bool {
 }
 
 fn verify_v3_rows(release: &Release, site: &Path) -> Result<()> {
-    let routes = release
-        .packages
+    verify_release_rows(&release.packages, site)
+}
+
+fn verify_release_rows(packages: &[ReleasePackage], site: &Path) -> Result<()> {
+    let routes = packages
         .iter()
         .filter(|package| !package.yanked)
         .map(|package| DownloadRoute {
@@ -950,8 +1525,8 @@ fn verify_v3_rows(release: &Release, site: &Path) -> Result<()> {
         "rendered download catalog differs from active release packages"
     );
 
-    for package in &release.packages {
-        let path = site.join(&package.registry).join(index_path(&package.name));
+    for package in packages {
+        let path = registry_site_root(site, &package.registry).join(index_path(&package.name));
         let bytes = fs::read(&path).with_context(|| {
             format!(
                 "read rendered index row for {} {} at {}",
@@ -1274,7 +1849,7 @@ mod tests {
 
     fn schema_three_registries() -> Vec<ReleaseRegistry> {
         let dependencies = canonical_category_dependencies();
-        REGISTRIES
+        SCHEMA3_REGISTRIES
             .iter()
             .map(|(name, index)| ReleaseRegistry {
                 name: (*name).to_owned(),
@@ -1402,6 +1977,133 @@ mod tests {
         }
     }
 
+    fn inhabit_all_schema_three_categories(release: &mut Release) {
+        for registry in &release.registries {
+            for category in &registry.categories {
+                if release
+                    .names
+                    .iter()
+                    .any(|name| name.category == category.id)
+                {
+                    continue;
+                }
+                release.names.push(ReleaseName {
+                    name: format!(
+                        "reserved-{}-{}",
+                        category.id.registry(),
+                        category.id.local()
+                    ),
+                    registry: registry.name.clone(),
+                    category: category.id.clone(),
+                    source: if registry.name == "pkgre" {
+                        NameSource::Publish
+                    } else {
+                        NameSource::Mirror
+                    },
+                });
+            }
+        }
+    }
+
+    fn migrate_test_release_to_schema_four(previous: &Release) -> ReleaseV4 {
+        let mut categories = previous
+            .registries
+            .iter()
+            .flat_map(|registry| &registry.categories)
+            .map(|category| {
+                let mut may_depend_on = category
+                    .may_depend_on
+                    .iter()
+                    .map(|dependency| migrate_v3_category(dependency).unwrap())
+                    .collect::<Vec<_>>();
+                may_depend_on.sort();
+                ReleaseCategory {
+                    id: migrate_v3_category(&category.id).unwrap(),
+                    may_depend_on,
+                }
+            })
+            .collect::<Vec<_>>();
+        categories.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut names = previous
+            .names
+            .iter()
+            .map(|name| ReleaseNameV4 {
+                name: name.name.clone(),
+                registry: "main".to_owned(),
+                category: migrate_v3_category(&name.category).unwrap(),
+            })
+            .collect::<Vec<_>>();
+        names.sort_by(|left, right| left.name.cmp(&right.name));
+
+        let mut packages = previous
+            .packages
+            .iter()
+            .map(|package| ReleasePackage {
+                registry: "main".to_owned(),
+                category: migrate_v3_category(&package.category).unwrap(),
+                name: package.name.clone(),
+                version: package.version.clone(),
+                archive_sha256: package.archive_sha256.clone(),
+                index_record_sha256: package.index_record_sha256.clone(),
+                index_row_sha256: package.index_row_sha256.clone(),
+                yanked: package.yanked,
+                source: package.source.clone(),
+            })
+            .collect::<Vec<_>>();
+        packages.sort_by(|left, right| {
+            (left.name.as_str(), &left.version).cmp(&(right.name.as_str(), &right.version))
+        });
+
+        ReleaseV4 {
+            schema: 4,
+            cname: previous.cname.clone(),
+            registries: vec![ReleaseRegistry {
+                name: "main".to_owned(),
+                index: canonical_registry_index("main"),
+                download: router_download_template("main"),
+                categories,
+            }],
+            names,
+            packages,
+        }
+    }
+
+    fn write_schema_four_site(path: &Path, release: &ReleaseV4) {
+        write_manifest(path, release);
+        let routes = release
+            .packages
+            .iter()
+            .filter(|package| !package.yanked)
+            .map(|package| DownloadRoute {
+                registry: package.registry.clone(),
+                name: package.name.clone(),
+                version: package.version.clone(),
+                sha256: package.archive_sha256.clone(),
+                source: match package.source {
+                    ReleaseSource::CratesIo => DownloadSource::CratesIo,
+                    ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+                },
+            })
+            .collect::<Vec<_>>();
+        let downloads = DownloadCatalog::from_routes(routes);
+        fs::write(
+            path.join(DOWNLOAD_CATALOG_FILE),
+            downloads.canonical_bytes().unwrap(),
+        )
+        .unwrap();
+        let mut rows = BTreeMap::<PathBuf, Vec<Vec<u8>>>::new();
+        for package in &release.packages {
+            rows.entry(registry_site_root(path, &package.registry).join(index_path(&package.name)))
+                .or_default()
+                .push(test_release_row(package));
+        }
+        for (path, versions) in rows {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, versions.concat()).unwrap();
+        }
+    }
+
     #[test]
     fn canonical_schema_two_release_migrates_to_schema_three() {
         let root = temporary_test_root("v2-v3");
@@ -1413,6 +2115,170 @@ mod tests {
 
         verify_monotonic(&previous, &next).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_three_categories_migrate_to_canonical_schema_four_order() {
+        let root = temporary_test_root("v3-v4");
+        let previous_site = root.join("previous");
+        let next_site = root.join("next");
+        let package = schema_two_crate("serde", false);
+        let mut previous = migrate_test_release(&package);
+        inhabit_all_schema_three_categories(&mut previous);
+        let next = migrate_test_release_to_schema_four(&previous);
+        assert_eq!(previous.registries[0].name, "pkgre");
+        assert_eq!(
+            next.registries[0].categories[0].id,
+            "main/acp".parse().unwrap()
+        );
+        write_schema_three_site(&previous_site, &previous);
+        write_schema_four_site(&next_site, &next);
+
+        verify_monotonic(&previous_site, &next_site).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_four_can_add_but_not_remove_a_future_registry() {
+        let root = temporary_test_root("v4-future-registry");
+        let previous_site = root.join("previous");
+        let expanded_site = root.join("expanded");
+        let removed_site = root.join("removed");
+        let package = |registry: &str, category: &str, name: &str| {
+            let mut package = ReleasePackage {
+                registry: registry.to_owned(),
+                category: category.parse().unwrap(),
+                name: name.to_owned(),
+                version: Version::new(1, 0, 0),
+                archive_sha256: "a".repeat(64),
+                index_record_sha256: "b".repeat(64),
+                index_row_sha256: String::new(),
+                yanked: false,
+                source: ReleaseSource::CratesIo,
+            };
+            package.index_row_sha256 = active_row_hash(&test_release_row(&package));
+            package
+        };
+        let main = package("main", "main/general", "shared-name");
+        let staging = package("staging", "staging/general", "shared_name");
+        let expanded = ReleaseV4 {
+            schema: 4,
+            cname: "rust.pkg.re".to_owned(),
+            registries: vec![
+                ReleaseRegistry {
+                    name: "main".to_owned(),
+                    index: canonical_registry_index("main"),
+                    download: MIRROR_DOWNLOAD.to_owned(),
+                    categories: vec![ReleaseCategory {
+                        id: "main/general".parse().unwrap(),
+                        may_depend_on: vec!["main/general".parse().unwrap()],
+                    }],
+                },
+                ReleaseRegistry {
+                    name: "staging".to_owned(),
+                    index: canonical_registry_index("staging"),
+                    download: MIRROR_DOWNLOAD.to_owned(),
+                    categories: vec![ReleaseCategory {
+                        id: "staging/general".parse().unwrap(),
+                        may_depend_on: vec!["staging/general".parse().unwrap()],
+                    }],
+                },
+            ],
+            names: vec![
+                ReleaseNameV4 {
+                    name: main.name.clone(),
+                    registry: main.registry.clone(),
+                    category: main.category.clone(),
+                },
+                ReleaseNameV4 {
+                    name: staging.name.clone(),
+                    registry: staging.registry.clone(),
+                    category: staging.category.clone(),
+                },
+            ],
+            packages: vec![main, staging],
+        };
+        let mut main_only = expanded.clone();
+        main_only
+            .registries
+            .retain(|registry| registry.name == "main");
+        main_only.names.retain(|name| name.registry == "main");
+        main_only
+            .packages
+            .retain(|package| package.registry == "main");
+
+        write_schema_four_site(&previous_site, &main_only);
+        write_schema_four_site(&expanded_site, &expanded);
+        verify_monotonic(&previous_site, &expanded_site).unwrap();
+        assert!(expanded_site.join(index_path("shared-name")).is_file());
+        assert!(
+            expanded_site
+                .join("staging")
+                .join(index_path("shared_name"))
+                .is_file()
+        );
+
+        write_schema_four_site(&removed_site, &main_only);
+        let error = verify_monotonic(&expanded_site, &removed_site).unwrap_err();
+        assert!(format!("{error:#}").contains("registry \"staging\" was removed"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_four_download_template_matches_locked_package_sources() {
+        let package = schema_two_crate("serde", false);
+        let previous = migrate_test_release(&package);
+        let mut mirror = previous.packages[0].clone();
+        mirror.registry = "main".to_owned();
+        mirror.category = "main/general".parse().unwrap();
+        let mut published = mirror.clone();
+        published.name = "first-party".to_owned();
+        published.source = ReleaseSource::GitTag {
+            repository: "https://github.com/pkgre/pkgre".to_owned(),
+            tag: "test/v1.0.0".to_owned(),
+            tag_oid: "a".repeat(40),
+            commit: "b".repeat(40),
+            package: "first-party".to_owned(),
+            subdir: ".".to_owned(),
+            cargo_version: Version::parse(CARGO_VERSION).unwrap(),
+        };
+        let mut registry = ReleaseRegistry {
+            name: "main".to_owned(),
+            index: canonical_registry_index("main"),
+            download: MIRROR_DOWNLOAD.to_owned(),
+            categories: Vec::new(),
+        };
+
+        validate_release_registry_download_v4(&registry, [&mirror].into_iter()).unwrap();
+        registry.download = PUBLISH_DOWNLOAD.to_owned();
+        let error =
+            validate_release_registry_download_v4(&registry, [&mirror].into_iter()).unwrap_err();
+        assert!(format!("{error:#}").contains("locked package source class"));
+
+        validate_release_registry_download_v4(&registry, [&published].into_iter()).unwrap();
+        registry.download = MIRROR_DOWNLOAD.to_owned();
+        let error =
+            validate_release_registry_download_v4(&registry, [&published].into_iter()).unwrap_err();
+        assert!(format!("{error:#}").contains("locked package source class"));
+
+        registry.download = router_download_template("main");
+        validate_release_registry_download_v4(&registry, [&mirror, &published].into_iter())
+            .unwrap();
+        registry.download = MIRROR_DOWNLOAD.to_owned();
+        let error =
+            validate_release_registry_download_v4(&registry, [&mirror, &published].into_iter())
+                .unwrap_err();
+        assert!(format!("{error:#}").contains("mixes source classes"));
+
+        for download in [
+            MIRROR_DOWNLOAD.to_owned(),
+            PUBLISH_DOWNLOAD.to_owned(),
+            router_download_template("main"),
+        ] {
+            registry.download = download;
+            validate_release_registry_download_v4(&registry, std::iter::empty::<&ReleasePackage>())
+                .unwrap();
+        }
     }
 
     #[test]

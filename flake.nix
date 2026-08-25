@@ -39,17 +39,17 @@
             cargo = rustToolchain;
             rustc = rustToolchain;
           };
-          universeRegistry = "sparse+https://rust.pkg.re/universe/";
+          pkgreRegistry = "sparse+https://rust.pkg.re/";
           cargoVendorRegistry = "registry+https://github.com/rust-lang/crates.io-index";
           lockText = builtins.readFile ./Cargo.lock;
           lock = builtins.fromTOML lockText;
           vendorLock = builtins.toFile "pkgre-indexer-vendor-Cargo.lock" (
-            builtins.replaceStrings [ universeRegistry ] [ cargoVendorRegistry ] lockText
+            builtins.replaceStrings [ pkgreRegistry ] [ cargoVendorRegistry ] lockText
           );
           registryPackages = builtins.filter (package: package ? source) lock.package;
           registryArchives = map (
             package:
-            assert package.source == universeRegistry;
+            assert package.source == pkgreRegistry;
             {
               inherit package;
               archive = pkgs.fetchurl {
@@ -63,8 +63,8 @@
             cp ${vendorLock} "$out/Cargo.lock"
             cat > "$out/.cargo/config.toml" <<'EOF'
             # Cargo normalizes unqualified dependencies in imported manifests to crates.io.
-            # A synthetic offline identity unifies those with explicit `registry = "universe"` dependencies.
-            [registries.universe]
+            # A synthetic offline identity unifies those with explicit `registry = "pkgre"` dependencies.
+            [registries.pkgre]
             index = "https://github.com/rust-lang/crates.io-index"
 
             [source.crates-io]

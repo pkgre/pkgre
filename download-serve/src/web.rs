@@ -190,10 +190,7 @@ mod tests {
                     Ok(fetched(&[], 'a'))
                 } else {
                     self.release.notified().await;
-                    Ok(fetched(
-                        &[("universe", "new", DownloadSource::CratesIo)],
-                        'b',
-                    ))
+                    Ok(fetched(&[("main", "new", DownloadSource::CratesIo)], 'b'))
                 }
             })
         }
@@ -225,7 +222,7 @@ mod tests {
     }
 
     fn route(name: &str) -> String {
-        route_in("universe", name)
+        route_in("main", name)
     }
 
     fn request(method: Method, target: &str) -> Request<Body> {
@@ -259,8 +256,8 @@ mod tests {
     async fn known_get_and_head_routes_redirect_without_fetching() {
         let fetcher = FakeFetcher::new(vec![Ok(fetched(
             &[
-                ("pkgre", "published", DownloadSource::GitTag),
-                ("universe", "mirror", DownloadSource::CratesIo),
+                ("main", "mirror", DownloadSource::CratesIo),
+                ("main", "published", DownloadSource::GitTag),
             ],
             'a',
         ))]);
@@ -281,7 +278,7 @@ mod tests {
             assert_eq!(headers.get(CACHE_CONTROL).unwrap(), "no-store");
             assert!(body.is_empty());
         }
-        let (_, headers, _) = response(&app, Method::GET, &route_in("pkgre", "published")).await;
+        let (_, headers, _) = response(&app, Method::GET, &route_in("main", "published")).await;
         assert_eq!(
             headers.get(LOCATION).unwrap().to_str().unwrap(),
             format!("https://rust.pkg.re/crates/{}.crate", "01".repeat(32))
@@ -292,7 +289,7 @@ mod tests {
     #[tokio::test]
     async fn exact_name_and_checksum_identity_are_required() {
         let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[("universe", "Mirror", DownloadSource::CratesIo)],
+            &[("main", "Mirror", DownloadSource::CratesIo)],
             'a',
         ))]);
         let coordinator = Arc::new(RefreshCoordinator::new(
@@ -303,7 +300,7 @@ mod tests {
         let app = application(coordinator);
 
         let wrong_case = route("mirror");
-        let wrong_checksum = format!("/v1/universe/Mirror/1.0.0/{}", "02".repeat(32));
+        let wrong_checksum = format!("/v1/main/Mirror/1.0.0/{}", "02".repeat(32));
         for target in [wrong_case, wrong_checksum] {
             let (status, _, _) = response(&app, Method::GET, &target).await;
             assert_eq!(status, StatusCode::NOT_FOUND);
@@ -323,18 +320,18 @@ mod tests {
         let digest = "01".repeat(32);
         for target in [
             "/",
-            "/v1/universe/name/1.0.0",
-            &format!("/v1/universe/name/1.0.0/{digest}/"),
-            &format!("//v1/universe/name/1.0.0/{digest}"),
+            "/v1/main/name/1.0.0",
+            &format!("/v1/main/name/1.0.0/{digest}/"),
+            &format!("//v1/main/name/1.0.0/{digest}"),
             &format!("/v1//name/1.0.0/{digest}"),
-            &format!("/v1/core/name/1.0.0/{digest}"),
-            &format!("/v1/universe/Name%2fname/1.0.0/{digest}"),
-            &format!("/v1/universe/name/1.0.0/{digest}%3fignored"),
-            &format!("/v1/universe/name/01.0.0/{digest}"),
-            &format!("/v1/universe/name/1.0.0/{}", "AB".repeat(32)),
-            &format!("/v1/universe/name/1.0.0/{digest}?"),
-            &format!("/v1/universe/name/1.0.0/{digest}?query"),
-            &format!("/v1/universe/name/1.0.0/{digest}#fragment"),
+            &format!("/v1/Main/name/1.0.0/{digest}"),
+            &format!("/v1/main/Name%2fname/1.0.0/{digest}"),
+            &format!("/v1/main/name/1.0.0/{digest}%3fignored"),
+            &format!("/v1/main/name/01.0.0/{digest}"),
+            &format!("/v1/main/name/1.0.0/{}", "AB".repeat(32)),
+            &format!("/v1/main/name/1.0.0/{digest}?"),
+            &format!("/v1/main/name/1.0.0/{digest}?query"),
+            &format!("/v1/main/name/1.0.0/{digest}#fragment"),
         ] {
             let (status, headers, _) = response(&app, Method::GET, target).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{target}");
@@ -365,7 +362,7 @@ mod tests {
         let fetcher = FakeFetcher::new(vec![
             Ok(fetched(&[], 'a')),
             Ok(fetched(
-                &[("universe", "new", DownloadSource::CratesIo)],
+                &[("staging", "new", DownloadSource::CratesIo)],
                 'b',
             )),
         ]);
@@ -377,7 +374,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(120)).await;
         let app = application(coordinator);
 
-        let (status, headers, _) = response(&app, Method::GET, &route("new")).await;
+        let (status, headers, _) = response(&app, Method::GET, &route_in("staging", "new")).await;
         assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
         assert_eq!(
             headers.get(LOCATION).unwrap(),
@@ -444,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn health_and_status_reflect_readiness_without_refreshing() {
         let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[("universe", "mirror", DownloadSource::CratesIo)],
+            &[("main", "mirror", DownloadSource::CratesIo)],
             'a',
         ))]);
         let coordinator = Arc::new(RefreshCoordinator::new(
@@ -487,7 +484,7 @@ mod tests {
         }
 
         let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[("universe", "mirror", DownloadSource::CratesIo)],
+            &[("main", "mirror", DownloadSource::CratesIo)],
             'a',
         ))]);
         let coordinator = Arc::new(RefreshCoordinator::new(
@@ -511,10 +508,7 @@ mod tests {
                 .contains("location: https://static.crates.io/crates/mirror/1.0.0/download\r\n")
         );
         for (target, header) in [
-            (
-                format!("//v1/universe/mirror/1.0.0/{}", "01".repeat(32)),
-                None,
-            ),
+            (format!("//v1/main/mirror/1.0.0/{}", "01".repeat(32)), None),
             (format!("{exact}?query"), None),
             (format!("{exact}%3fquery"), None),
             ("/frontend-normalized".to_owned(), Some(format!("{exact}?"))),
