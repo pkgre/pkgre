@@ -17,11 +17,13 @@ test("npm 12 lock is canonical and dependency-free", async () => {
   assert.equal(lock.text, `${JSON.stringify(lock.value, null, 2)}\n`);
   assert.equal(manifest.value.packageManager, "npm@12.0.2");
   assert.deepEqual(manifest.value.engines, { node: ">=24.15.0", npm: ">=12.0.2" });
+  assert.deepEqual(manifest.value.os, ["linux"]);
   assert.equal(lock.value.lockfileVersion, 3);
   assert.equal(lock.value.requires, true);
   assert.deepEqual(Object.keys(lock.value.packages), [""]);
   assert.equal(lock.value.packages[""].name, manifest.value.name);
   assert.equal(lock.value.packages[""].version, manifest.value.version);
+  assert.deepEqual(lock.value.packages[""].os, ["linux"]);
 
   for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     assert.equal(Object.hasOwn(manifest.value, field), false);

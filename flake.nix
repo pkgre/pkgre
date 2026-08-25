@@ -147,6 +147,7 @@
             description = "Stateless immutable download redirect service for pkgre registries";
             mainProgram = "pkgre-proxy";
           };
+          jsCompatibilityClients = import ./nix/js-compatibility-clients.nix { inherit pkgs system; };
           jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
           jsSource = pkgs.lib.fileset.toSource {
             root = ./.;
@@ -191,6 +192,12 @@
           rust = rustIndexer;
           indexer = rustIndexer;
           js = pkgreJs;
+          js-client-node-minimum = jsCompatibilityClients.nodeMinimum;
+          js-client-node-current = jsCompatibilityClients.nodeCurrent;
+          js-client-bun-minimum = jsCompatibilityClients.bunMinimum;
+          js-client-bun-current = jsCompatibilityClients.bunCurrent;
+          js-client-deno-minimum = jsCompatibilityClients.denoMinimum;
+          js-client-deno-current = jsCompatibilityClients.denoCurrent;
           proxy = pkgreProxy;
           download-serve = pkgreProxy;
         }
@@ -206,6 +213,25 @@
           rustToolchain = pkgs.rust-bin.stable."1.95.0".default.override {
             extensions = [ "rustfmt" ];
           };
+          jsCompatibilitySource = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = ./js;
+          };
+          jsCompatibilityNode = self.packages.${system}.js-client-node-minimum;
+          mkJsCompatibilityCheck =
+            {
+              name,
+              client,
+              package,
+              executable,
+            }:
+            pkgs.runCommand "pkgre-js-compatibility-${name}" { nativeBuildInputs = [ package ]; } ''
+              cp -R ${jsCompatibilitySource} source
+              chmod -R u+w source
+              cd source
+              ${jsCompatibilityNode}/bin/node js/compatibility/fixture.js ${client} ${package}/bin/${executable}
+              touch "$out"
+            '';
           source = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
@@ -220,6 +246,42 @@
         {
           build-and-test = self.packages.${system}.rust;
           js = self.packages.${system}.js;
+          js-compatibility-node-minimum = mkJsCompatibilityCheck {
+            name = "node-minimum";
+            client = "npm";
+            package = self.packages.${system}.js-client-node-minimum;
+            executable = "npm";
+          };
+          js-compatibility-node-current = mkJsCompatibilityCheck {
+            name = "node-current";
+            client = "npm";
+            package = self.packages.${system}.js-client-node-current;
+            executable = "npm";
+          };
+          js-compatibility-bun-minimum = mkJsCompatibilityCheck {
+            name = "bun-minimum";
+            client = "bun";
+            package = self.packages.${system}.js-client-bun-minimum;
+            executable = "bun";
+          };
+          js-compatibility-bun-current = mkJsCompatibilityCheck {
+            name = "bun-current";
+            client = "bun";
+            package = self.packages.${system}.js-client-bun-current;
+            executable = "bun";
+          };
+          js-compatibility-deno-minimum = mkJsCompatibilityCheck {
+            name = "deno-minimum";
+            client = "deno";
+            package = self.packages.${system}.js-client-deno-minimum;
+            executable = "deno";
+          };
+          js-compatibility-deno-current = mkJsCompatibilityCheck {
+            name = "deno-current";
+            client = "deno";
+            package = self.packages.${system}.js-client-deno-current;
+            executable = "deno";
+          };
           proxy = self.packages.${system}.proxy;
           download-serve = self.packages.${system}.download-serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''

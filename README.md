@@ -4,7 +4,7 @@ Security-oriented tooling + policy for curated Rust and JavaScript package regis
 
 ## Purpose
 
-pkg.re builds deterministic,read-only package install planes from reviewed declarations+immutable evidence. The Rust implementation converts exact crates.io mirror versions+immutable first-party Git tags into a Cargo sparse index. The JavaScript implementation is currently a dependency-free skeleton;P7 will add the minimal self-hosting npm-compatible catalog. No mutable registry API or package-manager publish operation is authoritative.
+pkg.re builds deterministic,read-only package install planes from reviewed declarations+immutable evidence. The Rust implementation converts exact crates.io mirror versions+immutable first-party Git tags into a Cargo sparse index. The JavaScript implementation validates a closed exact-version catalog+audited archives,then deterministically renders npm-compatible packuments,same-host immutable redirect markers,and first-party content-addressed objects. No mutable registry API,package-manager publish operation,or upstream metadata fallback is authoritative.
 
 Rust removal replaces curator-controlled yanking:delete a version/tag from desired state but retain its package key;reconciliation preserves an irreversible tombstone+source evidence and renders the row as yanked. Target P9 marker publication retains ordinary removed identities so exact historical locks stay cold-installable;emergency route revocation remains a separate explicit operation.
 
@@ -47,7 +47,8 @@ Current Rust categories:
 
 - `rust/`:Rust reconciler,validator,admission planner/applicator,schema migrators,deterministic renderer,download-catalog generator,release verifier.
 - `rust/proxy/`:cross-ecosystem static-marker translator+fixed GitHub Pages custom-host origin adapter;closed Rust/JS routes and destinations only.
-- `js/`:dependency-free plain-ESM `pkgre-js` indexer skeleton with built-in Node tests.
+- `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,and isolated npm/Bun/Deno fixture.
+- [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,two-stage publication,consumer configuration,compatibility matrix,bootstrap+activation gate.
 - `fixtures/redirect-marker-v1/`:provider-neutral exact marker bytes consumed independently by Rust+JavaScript tests;synthetic routes only.
 - [`docs/catalog.md`](docs/catalog.md):current schema-4 Rust declarations,categories,locks,admissions,routing,removal,migration.
 - [`docs/download-routing.md`](docs/download-routing.md):same-host marker wire contract,origin adapter,proxy boundary,publication+migration rules.
@@ -70,7 +71,7 @@ $ nix run .#proxy -- --help
 
 Transitional `.#indexer` aliases `.#rust`;`.#download-serve` aliases `.#proxy` through the deployment rollback horizon.
 
-Pinned semantics:Cargo `1.95.0`;Node 24;JS minimum metadata Node `24.15.0`+npm `12.0.2`;Nix locks build inputs;Cargo inputs become fixed-output Nix fetches;Rust+JS checks run offline after fetching.
+Pinned semantics:Cargo `1.95.0`;JS index authority=Node `24.15.0`+npm `12.0.2`;compatibility floors=Bun `1.3.14`+Deno `2.9.5`;current snapshots separately pinned;Nix locks build inputs;Cargo+compatibility-client inputs use fixed-output Nix fetches;checks run offline after fetching. GitHub CI runs the full flake on native x86_64+aarch64.
 
 ## Proxy operation
 
@@ -79,6 +80,20 @@ $ pkgre-proxy --listen 127.0.0.1:3000 --canary-seconds 60 --readiness-seconds 18
 ```
 
 Local endpoints:`/healthz`=process/config health;`/readyz`=both fixed origin canaries succeeded within the readiness window;`/metrics`=bounded-label Prometheus text. A transient failed canary is reported in metrics but does not revoke readiness until the last success expires. These local signals do not replace the separately gated isolated long-term certificate/contract monitoring design.
+
+## JavaScript catalog operation
+
+```console
+$ pkgre-js check catalog.json archives
+$ pkgre-js render-routes catalog.json archives site-current site-routes
+$ pkgre-js verify catalog.json site-routes
+$ pkgre-js verify-monotonic site-current site-routes
+$ pkgre-js render-final catalog.json site-routes site-final
+$ pkgre-js verify catalog.json site-final
+$ pkgre-js verify-monotonic site-routes site-final
+```
+
+The exact 30d catalog+archive policy,atomic filesystem boundary,route-first publication protocol,client matrix,and activation gate are documented in [`docs/js-registry.md`](docs/js-registry.md). Production JS metadata,markers,and objects remain unpublished until the P3/P6 operator gate succeeds;source-only/offline P7 work does not launch `js.pkg.re`.
 
 ## Rust catalog operation
 
@@ -100,7 +115,27 @@ $ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 
 `registry/` is exclusive managed state:only `<registry>.toml`,generated `<registry>.lock`,canonical `downloads.json`,referenced `categories/<registry>/<category>.toml`,paired admissions,and `objects/` are permitted. Keep transient manifests,inspections,logs,and rendered sites outside it until `update-apply` installs the immutable pair transactionally.
 
-## Consumer configuration
+## JavaScript consumer configuration
+
+Project `.npmrc`:
+
+```ini
+registry=https://js.pkg.re/
+allow-directory=none
+allow-file=none
+allow-git=none
+allow-remote=none
+audit=false
+fund=false
+ignore-scripts=true
+replace-registry-host=always
+strict-ssl=true
+update-notifier=false
+```
+
+Commit the configuration;do not add npmjs scope overrides. Catalog dependencies are exact+recursively closed;consumer lockfiles remain required. Bun+Deno use the same registry endpoint but their security evidence comes from the isolated compatibility fixture rather than an assumption that they implement every npm-specific `.npmrc` key.
+
+## Rust consumer configuration
 
 Every Rust dependency explicitly names the one consumer alias:
 
