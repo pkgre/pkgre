@@ -3,17 +3,17 @@
 ## Commands
 
 ```text
-pkgre-indexer update-plan <catalog> <new-admission-manifest>
-pkgre-indexer update-plan-exact <catalog> <package> <version> <new-admission-manifest>
-pkgre-indexer update-inspect <catalog> <admission-manifest> <package> <version> <new-review-directory>
-pkgre-indexer update-apply <catalog> <admission-manifest>
-pkgre-indexer lock <catalog>
-pkgre-indexer check <catalog>
-pkgre-indexer render <catalog> <new-output>
-pkgre-indexer verify <catalog> <existing-output>
-pkgre-indexer verify-monotonic <previous-site> <next-site>
-pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
-pkgre-indexer migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
+pkgre-rust update-plan <catalog> <new-admission-manifest>
+pkgre-rust update-plan-exact <catalog> <package> <version> <new-admission-manifest>
+pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <new-review-directory>
+pkgre-rust update-apply <catalog> <admission-manifest>
+pkgre-rust lock <catalog>
+pkgre-rust check <catalog>
+pkgre-rust render <catalog> <new-output>
+pkgre-rust verify <catalog> <existing-output>
+pkgre-rust verify-monotonic <previous-site> <next-site>
+pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
+pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
 ```
 
 Planning/inspection never mutates catalog; output must be absent + outside `registry/`. `update-apply` is the established-catalog path for mirror additions. `lock` mutates only bootstrap, empty reservations, removals, Git tags, and downloads convergence. `check` is local-only. Migrations never modify source. Render output must be absent. `<catalog>` is the registry directory, not repository parent.
@@ -49,14 +49,14 @@ new-package = []
 ```
 
 ```console
-$ pkgre-indexer lock registry
+$ pkgre-rust lock registry
 ```
 
 2. Generate one hash-free manifest outside catalog:
 
 ```console
-$ pkgre-indexer update-plan registry 2026-08-24-routine.toml
-$ pkgre-indexer update-plan-exact registry new-package 1.2.3 2026-08-24-new-package.toml
+$ pkgre-rust update-plan registry 2026-08-24-routine.toml
+$ pkgre-rust update-plan-exact registry new-package 1.2.3 2026-08-24-new-package.toml
 ```
 
 ```toml
@@ -73,7 +73,7 @@ Template includes automatic + review-required, omits blocked, refuses existing o
 3. Review scope/logs; remove unwanted complete request blocks; keep canonical order. Inspect selected exact request:
 
 ```console
-$ pkgre-indexer update-inspect registry 2026-08-24-routine.toml example 1.2.3 review-example-1.2.3
+$ pkgre-rust update-inspect registry 2026-08-24-routine.toml example 1.2.3 review-example-1.2.3
 ```
 
 Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted.
@@ -98,7 +98,7 @@ Unedited template remains valid. Delta base must equal apply's recomputation.
 5. Apply exact manifest once:
 
 ```console
-$ pkgre-indexer update-apply registry 2026-08-24-routine.toml
+$ pkgre-rust update-apply registry 2026-08-24-routine.toml
 ```
 
 Apply re-fetches/recomputes every request; rejects young/yanked/blocked/route/evidence failures; appends declarations; writes source rows, registry locks, downloads, `admissions/<batch>.{toml,lock}`; binds full batch-lock hash into packages; strict-loads + test-renders staging; atomically installs. It never substitutes another version.
@@ -106,9 +106,9 @@ Apply re-fetches/recomputes every request; rejects young/yanked/blocked/route/ev
 6. Review + commit all catalog changes together. Required:a new active package/request; one exact `main` crates.io route/request; one row object/request; exactly one admission pair/batch; no mirror `.crate`; every new package `admission-sha256 = sha256(admissions/<batch>.lock)`.
 
 ```console
-$ pkgre-indexer check registry
+$ pkgre-rust check registry
 $ git diff --check
-$ pkgre-indexer lock registry
+$ pkgre-rust lock registry
 $ git diff --check
 ```
 
@@ -143,9 +143,9 @@ Workflow:
 2. Add tag:
 
 ```toml
-[categories.pkgre.publish.pkgre-indexer]
+[categories.pkgre.publish.pkgre-rust]
 git = "https://github.com/pkgre/pkgre"
-tags = ["indexer/v0.4.0"]
+tags = ["rust/v0.5.0"]
 ```
 
 3. Set absolute `PKGRE_CARGO` or provide rustup toolchain `1.95.0`; reported version must match.
@@ -153,7 +153,7 @@ tags = ["indexer/v0.4.0"]
 5. Verify URL/tag/object/commit/package/path/Cargo + archive/row against reviewed tag.
 6. Run `check`, no-op `lock`, verify exact Git route in downloads, render/verify/monotonicity; commit declaration/lock/catalog/objects together.
 
-Self-publication normally uses prior immutable indexer release. A schema/bootstrap release unreadable by predecessor uses reviewed build from exact merged/tagged release commit, then locks same tag.
+Self-publication normally uses prior immutable Rust indexer release. A schema/bootstrap release unreadable by its predecessor uses a reviewed build from the exact merged/tagged release commit,then locks the same tag. Rename transition:`pkgre-indexer`+`indexer/v*` remain immutable historical catalog identities;add `pkgre-rust` only after publishing the exact `rust/v0.5.0` tag,then update the production catalog+workflow pin in one reviewed release transaction.
 
 ## Remove version/tag
 
@@ -170,7 +170,7 @@ Changing a package name's registry/category home, changing any locked identity's
 ### Schema 2→3 historical
 
 ```console
-$ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
+$ pkgre-rust migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
 Require clean strict source + absent destination. Authenticate inventory/objects/rows/hashes; inspect old→new category mapping; run check/render/verify/monotonicity; source remains unchanged.
@@ -178,7 +178,7 @@ Require clean strict source + absent destination. Authenticate inventory/objects
 ### Schema 3→4 single root main
 
 ```console
-$ pkgre-indexer migrate-v3-to-v4 registry-v3 registry-v4
+$ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 ```
 
 Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; files become `main.toml`/`main.lock`; index becomes root; download becomes `v1/main`. Migration preserves immutable artifacts/provenance, recomputes registry-dependent routed hashes, rewrites/rebinds admissions, strict-loads/renders/reproduces staging, installs absent destination only.
@@ -186,11 +186,11 @@ Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkg
 Validation:
 
 ```console
-$ pkgre-indexer check registry-v4
-$ pkgre-indexer lock registry-v4            # changed=false
-$ pkgre-indexer render registry-v4 site-next
-$ pkgre-indexer verify registry-v4 site-next
-$ pkgre-indexer verify-monotonic site-v3 site-next
+$ pkgre-rust check registry-v4
+$ pkgre-rust lock registry-v4            # changed=false
+$ pkgre-rust render registry-v4 site-next
+$ pkgre-rust verify registry-v4 site-next
+$ pkgre-rust verify-monotonic site-v3 site-next
 ```
 
 Replace source catalog only after review + rerun at final path. Never hand-edit migration output.
@@ -208,11 +208,11 @@ Schema 4 allows additions without weakening prior identities:
 ## Release gate
 
 ```console
-$ pkgre-indexer check registry
-$ pkgre-indexer lock registry                  # exact no-op
-$ pkgre-indexer render registry site-next
-$ pkgre-indexer verify registry site-next
-$ pkgre-indexer verify-monotonic site-current site-next
+$ pkgre-rust check registry
+$ pkgre-rust lock registry                  # exact no-op
+$ pkgre-rust render registry site-next
+$ pkgre-rust verify registry site-next
+$ pkgre-rust verify-monotonic site-current site-next
 ```
 
 Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use own router; rendered inventory expected; protected CI passes; normal merge without force/bypass.

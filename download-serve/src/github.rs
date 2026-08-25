@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
-use pkgre_indexer::download::MAX_DOWNLOAD_CATALOG_BYTES;
+use pkgre_rust::download::MAX_DOWNLOAD_CATALOG_BYTES;
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::{Client, Response, StatusCode};
 use serde::Deserialize;
@@ -231,7 +231,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Response as HttpResponse, header};
     use axum::routing::get;
-    use pkgre_indexer::download::{
+    use pkgre_rust::download::{
         DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
     };
     use reqwest::header::HeaderValue;

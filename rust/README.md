@@ -1,21 +1,21 @@
-# pkgre-indexer
+# pkgre-rust
 
 Transactional declarative reconciler + deterministic renderer for schema-4 pkg.re Cargo registries/categories.
 
 ## Interface
 
 ```text
-pkgre-indexer update-plan <catalog> <new-admission-manifest>
-pkgre-indexer update-plan-exact <catalog> <package> <version> <new-admission-manifest>
-pkgre-indexer update-inspect <catalog> <admission-manifest> <package> <version> <new-review-directory>
-pkgre-indexer update-apply <catalog> <admission-manifest>
-pkgre-indexer lock <catalog>
-pkgre-indexer check <catalog>
-pkgre-indexer render <catalog> <output>
-pkgre-indexer verify <catalog> <output>
-pkgre-indexer verify-monotonic <previous-site> <next-site>
-pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
-pkgre-indexer migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
+pkgre-rust update-plan <catalog> <new-admission-manifest>
+pkgre-rust update-plan-exact <catalog> <package> <version> <new-admission-manifest>
+pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <new-review-directory>
+pkgre-rust update-apply <catalog> <admission-manifest>
+pkgre-rust lock <catalog>
+pkgre-rust check <catalog>
+pkgre-rust render <catalog> <output>
+pkgre-rust verify <catalog> <output>
+pkgre-rust verify-monotonic <previous-site> <next-site>
+pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
+pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
 ```
 
 - `update-plan`:evaluate all active mirror compatibility lanes; create an absent compact canonical manifest containing every nonblocked exact request.

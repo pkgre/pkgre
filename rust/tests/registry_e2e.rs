@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use pkgre_indexer::artifact::sha256_file;
-use pkgre_indexer::index::index_path;
+use pkgre_rust::artifact::sha256_file;
+use pkgre_rust::index::index_path;
 use serde_json::{Value, json};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);

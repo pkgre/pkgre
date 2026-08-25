@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result, ensure};
-use pkgre_indexer::download::{DownloadCatalog, DownloadSource};
-use pkgre_indexer::policy::{validate_package_name, validate_registry_alias, validate_sha256};
+use pkgre_rust::download::{DownloadCatalog, DownloadSource};
+use pkgre_rust::policy::{validate_package_name, validate_registry_alias, validate_sha256};
 use semver::Version;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -124,7 +124,7 @@ impl RouteTable {
 
 #[cfg(test)]
 mod tests {
-    use pkgre_indexer::download::{DOWNLOAD_CATALOG_SCHEMA, DownloadRoute};
+    use pkgre_rust::download::{DOWNLOAD_CATALOG_SCHEMA, DownloadRoute};
 
     use super::*;
 

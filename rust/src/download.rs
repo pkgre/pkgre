@@ -195,7 +195,7 @@ impl DownloadCatalog {
     pub fn validate_against_catalog(&self, catalog: &Catalog) -> Result<()> {
         ensure!(
             self == &Self::from_catalog(catalog),
-            "generated download catalog differs from active generated locks; run `pkgre-indexer lock`"
+            "generated download catalog differs from active generated locks; run `pkgre-rust lock`"
         );
         Ok(())
     }

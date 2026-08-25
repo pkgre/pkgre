@@ -246,7 +246,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use pkgre_indexer::download::{
+    use pkgre_rust::download::{
         DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
     };
     use semver::Version;

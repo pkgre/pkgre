@@ -36,7 +36,7 @@ Current categories:
 
 ## Components
 
-- `indexer/`:Rust reconciler, validator, admission planner/applicator, schema migrators, deterministic renderer, download-catalog generator, release verifier.
+- `rust/`:Rust reconciler, validator, admission planner/applicator, schema migrators, deterministic renderer, download-catalog generator, release verifier.
 - `download-serve/`:stateless exact-route service; fetches a commit-pinned generated catalog and returns only hardcoded crates.io/content-addressed redirects.
 - [`docs/catalog.md`](docs/catalog.md):schema-4 declarations, inline/external categories, locks, admissions, routing, removal, exact migration.
 - [`docs/download-routing.md`](docs/download-routing.md):router wire contract, fetch/refresh/LKG semantics, proxy boundary, deployment + rollback.
@@ -49,28 +49,30 @@ Current categories:
 
 ```console
 $ nix flake check --print-build-logs
-$ nix build .#indexer
+$ nix build .#rust
 $ nix build .#download-serve
-$ nix run .#indexer -- --help
+$ nix run .#rust -- --help
 $ nix run .#download-serve -- --help
 ```
+
+Transitional `.#indexer` aliases `.#rust` through the deployment rollback horizon.
 
 Pinned semantics:Cargo `1.95.0`; Nix locks Rust + build inputs; Cargo inputs become fixed-output Nix fetches; checks build/test/lint offline after fetching.
 
 ## Catalog operation
 
 ```console
-$ pkgre-indexer update-plan registry batch-name.toml
-$ pkgre-indexer update-plan-exact registry <package> <version> batch-name.toml
-$ pkgre-indexer update-inspect registry batch-name.toml <package> <version> review
-$ pkgre-indexer update-apply registry batch-name.toml
-$ pkgre-indexer lock registry
-$ pkgre-indexer check registry
-$ pkgre-indexer render registry site-next
-$ pkgre-indexer verify registry site-next
-$ pkgre-indexer verify-monotonic site-current site-next
-$ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
-$ pkgre-indexer migrate-v3-to-v4 registry-v3 registry-v4
+$ pkgre-rust update-plan registry batch-name.toml
+$ pkgre-rust update-plan-exact registry <package> <version> batch-name.toml
+$ pkgre-rust update-inspect registry batch-name.toml <package> <version> review
+$ pkgre-rust update-apply registry batch-name.toml
+$ pkgre-rust lock registry
+$ pkgre-rust check registry
+$ pkgre-rust render registry site-next
+$ pkgre-rust verify registry site-next
+$ pkgre-rust verify-monotonic site-current site-next
+$ pkgre-rust migrate-v2-to-v3 registry-v2 registry-v3
+$ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 ```
 
 `update-plan` evaluates current network evidence but emits only a compact, hash-free human manifest containing category/name/exact version. Every nonblocked generated manifest is directly applyable; optional typed evidence may be added. `update-apply` re-fetches + recomputes all facts, then atomically adds declarations, source rows, registry locks, canonical `downloads.json`, and immutable `admissions/<batch>.{toml,lock}`. Package `admission-sha256` fields bind the complete generated batch lock. `lock` handles bootstrap, empty name reservations, removals, Git tags, and download-catalog convergence; it cannot directly add mirror identities to an established catalog.
@@ -85,7 +87,7 @@ Every dependency explicitly names the one consumer alias:
 [dependencies]
 serde = { version = "=1.0.229", registry = "pkgre" }
 matrix-sdk = { version = "=0.18.0", registry = "pkgre" }
-pkgre-indexer = { version = "=0.4.0", registry = "pkgre" }
+pkgre-rust = { version = "=0.5.0", registry = "pkgre" }
 ```
 
 Project `.cargo/config.toml`:

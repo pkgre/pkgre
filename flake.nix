@@ -43,7 +43,7 @@
           cargoVendorRegistry = "registry+https://github.com/rust-lang/crates.io-index";
           lockText = builtins.readFile ./Cargo.lock;
           lock = builtins.fromTOML lockText;
-          vendorLock = builtins.toFile "pkgre-indexer-vendor-Cargo.lock" (
+          vendorLock = builtins.toFile "pkgre-rust-vendor-Cargo.lock" (
             builtins.replaceStrings [ pkgreRegistry ] [ cargoVendorRegistry ] lockText
           );
           registryPackages = builtins.filter (package: package ? source) lock.package;
@@ -58,7 +58,7 @@
               };
             }
           ) registryPackages;
-          cargoDeps = pkgs.runCommand "pkgre-indexer-cargo-vendor" { nativeBuildInputs = [ pkgs.gnutar ]; } ''
+          cargoDeps = pkgs.runCommand "pkgre-rust-cargo-vendor" { nativeBuildInputs = [ pkgs.gnutar ]; } ''
             mkdir -p "$out/.cargo"
             cp ${vendorLock} "$out/Cargo.lock"
             cat > "$out/.cargo/config.toml" <<'EOF'
@@ -133,10 +133,10 @@
                 license = pkgs.lib.licenses.asl20;
               };
             };
-          indexer = mkRustPackage {
+          rustIndexer = mkRustPackage {
             packageDirectory = "rust";
             description = "Declarative reconciler and renderer for curated Cargo sparse registries";
-            mainProgram = "pkgre-indexer";
+            mainProgram = "pkgre-rust";
             nativeCheckInputs = [
               pkgs.git
               pkgs.gnutar
@@ -149,9 +149,9 @@
           };
         in
         {
-          default = indexer;
-          rust = indexer;
-          inherit indexer;
+          default = rustIndexer;
+          rust = rustIndexer;
+          indexer = rustIndexer;
           download-serve = downloadServe;
         }
       );
@@ -178,7 +178,7 @@
           };
         in
         {
-          build-and-test = self.packages.${system}.indexer;
+          build-and-test = self.packages.${system}.rust;
           download-serve = self.packages.${system}.download-serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source

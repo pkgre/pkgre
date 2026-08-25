@@ -756,7 +756,7 @@ pub fn load_lock(path: &Path) -> Result<RegistryLock> {
     let canonical = serialize_lock(&lock)?;
     ensure!(
         bytes == canonical,
-        "generated lock is not in canonical form: {}; run `pkgre-indexer lock`",
+        "generated lock is not in canonical form: {}; run `pkgre-rust lock`",
         path.display()
     );
     Ok(lock)
@@ -1015,13 +1015,13 @@ fn validate_desired_tags(input: &RegistryInput, lock: &RegistryLock) -> Result<(
 fn validate_input_strict(input: &RegistryInput) -> Result<()> {
     let lock = input.lock.as_ref().with_context(|| {
         format!(
-            "generated lock is missing for {}; run `pkgre-indexer lock`",
+            "generated lock is missing for {}; run `pkgre-rust lock`",
             input.path.display()
         )
     })?;
     ensure!(
         lock.registry.download == input.file.registry.download,
-        "registry download in {} is stale; run `pkgre-indexer lock`",
+        "registry download in {} is stale; run `pkgre-rust lock`",
         input.lock_path.display()
     );
     let desired_names = desired_names(&input.file)?;
@@ -1036,7 +1036,7 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
         .collect::<BTreeMap<_, _>>();
     ensure!(
         desired_names_borrowed == locked_names,
-        "package-name anchors in {} are stale; run `pkgre-indexer lock`",
+        "package-name anchors in {} are stale; run `pkgre-rust lock`",
         input.lock_path.display()
     );
 
@@ -1063,7 +1063,7 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
         .collect::<BTreeSet<_>>();
     ensure!(
         active_mirrors == desired_mirrors,
-        "active mirrored versions in {} are stale; run `pkgre-indexer lock`",
+        "active mirrored versions in {} are stale; run `pkgre-rust lock`",
         input.lock_path.display()
     );
 
@@ -1089,7 +1089,7 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
         .collect::<BTreeSet<_>>();
     ensure!(
         active_tags == desired_tags,
-        "active Git tags in {} are stale; run `pkgre-indexer lock`",
+        "active Git tags in {} are stale; run `pkgre-rust lock`",
         input.lock_path.display()
     );
     Ok(())

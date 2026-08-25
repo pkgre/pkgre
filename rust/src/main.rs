@@ -3,13 +3,13 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail, ensure};
-use pkgre_indexer::artifact::ArtifactMap;
-use pkgre_indexer::policy::validate_catalog;
-use pkgre_indexer::render;
-use pkgre_indexer::schema::Catalog;
+use pkgre_rust::artifact::ArtifactMap;
+use pkgre_rust::policy::validate_catalog;
+use pkgre_rust::render;
+use pkgre_rust::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-indexer lock <catalog>\n  pkgre-indexer check <catalog>\n  pkgre-indexer migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-indexer migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>\n  pkgre-indexer render <catalog> <output>\n  pkgre-indexer verify <catalog> <output>\n  pkgre-indexer verify-monotonic <previous-site> <next-site>\n  pkgre-indexer update-plan <catalog> <admission-manifest>\n  pkgre-indexer update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-indexer update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-indexer update-apply <catalog> <admission-manifest>";
+const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -50,7 +50,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
 fn lock_catalog(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 1)?;
     let root = Path::new(&arguments[0]);
-    let summary = pkgre_indexer::lock::reconcile(root)?;
+    let summary = pkgre_rust::lock::reconcile(root)?;
     info!(
         changed = summary.changed,
         names_added = summary.names_added,
@@ -75,7 +75,7 @@ fn migrate_v2_to_v3(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 2)?;
     let source = Path::new(&arguments[0]);
     let destination = Path::new(&arguments[1]);
-    let summary = pkgre_indexer::migration::migrate_v2_to_v3(source, destination)?;
+    let summary = pkgre_rust::migration::migrate_v2_to_v3(source, destination)?;
     info!(
         names = summary.names,
         packages = summary.packages,
@@ -90,7 +90,7 @@ fn migrate_v3_to_v4(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 2)?;
     let source = Path::new(&arguments[0]);
     let destination = Path::new(&arguments[1]);
-    let summary = pkgre_indexer::migration::migrate_v3_to_v4(source, destination)?;
+    let summary = pkgre_rust::migration::migrate_v3_to_v4(source, destination)?;
     info!(
         names = summary.names,
         packages = summary.packages,
@@ -135,7 +135,7 @@ fn update_plan(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 2)?;
     let catalog = Path::new(&arguments[0]);
     let output = Path::new(&arguments[1]);
-    let plan = pkgre_indexer::update::plan_updates(catalog, output)?;
+    let plan = pkgre_rust::update::plan_updates(catalog, output)?;
     log_update_plan(&plan, output);
     Ok(())
 }
@@ -152,7 +152,7 @@ fn update_plan_exact(arguments: &[OsString]) -> Result<()> {
         .parse()
         .context("package version is not valid SemVer")?;
     let output = Path::new(&arguments[3]);
-    let plan = pkgre_indexer::update::plan_exact_update(catalog, name, &version, output)?;
+    let plan = pkgre_rust::update::plan_exact_update(catalog, name, &version, output)?;
     log_update_plan(&plan, output);
     Ok(())
 }
@@ -170,7 +170,7 @@ fn update_inspect(arguments: &[OsString]) -> Result<()> {
         .parse()
         .context("package version is not valid SemVer")?;
     let output = Path::new(&arguments[4]);
-    pkgre_indexer::update::inspect_update_candidate(catalog, manifest, name, &version, output)?;
+    pkgre_rust::update::inspect_update_candidate(catalog, manifest, name, &version, output)?;
     info!(
         package = name,
         version = %version,
@@ -184,7 +184,7 @@ fn update_apply(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 2)?;
     let catalog = Path::new(&arguments[0]);
     let manifest = Path::new(&arguments[1]);
-    let summary = pkgre_indexer::update::apply_admission_manifest(catalog, manifest)?;
+    let summary = pkgre_rust::update::apply_admission_manifest(catalog, manifest)?;
     info!(
         changed = summary.changed,
         names_added = summary.names_added,
@@ -196,8 +196,8 @@ fn update_apply(arguments: &[OsString]) -> Result<()> {
     Ok(())
 }
 
-fn log_update_plan(plan: &pkgre_indexer::update::UpdatePlan, output: &Path) {
-    use pkgre_indexer::update::UpdateDecision;
+fn log_update_plan(plan: &pkgre_rust::update::UpdatePlan, output: &Path) {
+    use pkgre_rust::update::UpdateDecision;
 
     for candidate in &plan.candidates {
         info!(

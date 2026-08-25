@@ -144,7 +144,7 @@ mod tests {
     use std::time::Duration;
 
     use http_body_util::BodyExt;
-    use pkgre_indexer::download::{
+    use pkgre_rust::download::{
         DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
     };
     use semver::Version;

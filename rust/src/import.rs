@@ -20,7 +20,7 @@ const API_ROOT: &str = "https://crates.io/api/v1/crates";
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 const MAX_FETCH_BYTES: usize = 100 * 1024 * 1024;
 const USER_AGENT: &str = concat!(
-    "pkgre-indexer/",
+    "pkgre-rust/",
     env!("CARGO_PKG_VERSION"),
     " (+https://github.com/pkgre/pkgre; curated-registry update planner)"
 );

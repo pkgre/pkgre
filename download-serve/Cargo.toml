@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 anyhow = { version = "1.0", registry = "pkgre" }
 axum = { version = "0.8", registry = "pkgre" }
-pkgre-indexer = { path = "../rust" }
+pkgre-rust = { path = "../rust" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], registry = "pkgre" }
 semver = { version = "1.0", registry = "pkgre" }
 serde = { version = "1.0", features = ["derive"], registry = "pkgre" }

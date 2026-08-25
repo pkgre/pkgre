@@ -5,15 +5,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pkgre_indexer::artifact::{ArtifactMap, sha256_bytes};
-use pkgre_indexer::category::CategoryId;
-use pkgre_indexer::download::{
+use pkgre_rust::artifact::{ArtifactMap, sha256_bytes};
+use pkgre_rust::category::CategoryId;
+use pkgre_rust::download::{
     DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
     router_download_template,
 };
-use pkgre_indexer::index::{IndexRecord, index_path};
-use pkgre_indexer::render;
-use pkgre_indexer::schema::{
+use pkgre_rust::index::{IndexRecord, index_path};
+use pkgre_rust::render;
+use pkgre_rust::schema::{
     Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome, PackageState,
     RegistryLock, SCHEMA_VERSION, serialize_lock,
 };
