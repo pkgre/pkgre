@@ -4,21 +4,21 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 
-pub const USAGE: &str = "usage: pkgre-proxy [--listen <address>] [--refresh-seconds <seconds>] [--minimum-refresh-seconds <seconds>]";
+pub const USAGE: &str = "usage: pkgre-proxy [--listen <address>] [--canary-seconds <seconds>] [--readiness-seconds <seconds>]";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     pub listen: SocketAddr,
-    pub refresh_interval: Duration,
-    pub minimum_refresh_interval: Duration,
+    pub canary_interval: Duration,
+    pub readiness_freshness: Duration,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             listen: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3000),
-            refresh_interval: Duration::from_secs(300),
-            minimum_refresh_interval: Duration::from_secs(120),
+            canary_interval: Duration::from_secs(60),
+            readiness_freshness: Duration::from_secs(180),
         }
     }
 }
@@ -42,14 +42,14 @@ impl Config {
                         .parse()
                         .with_context(|| format!("invalid --listen address\n{USAGE}"))?;
                 }
-                "--refresh-seconds" => {
-                    config.refresh_interval = Duration::from_secs(parse_seconds(
+                "--canary-seconds" => {
+                    config.canary_interval = Duration::from_secs(parse_seconds(
                         &next_value(&mut arguments, argument)?,
                         argument,
                     )?);
                 }
-                "--minimum-refresh-seconds" => {
-                    config.minimum_refresh_interval = Duration::from_secs(parse_seconds(
+                "--readiness-seconds" => {
+                    config.readiness_freshness = Duration::from_secs(parse_seconds(
                         &next_value(&mut arguments, argument)?,
                         argument,
                     )?);
@@ -59,8 +59,8 @@ impl Config {
             }
         }
         ensure!(
-            config.refresh_interval >= config.minimum_refresh_interval,
-            "--refresh-seconds must be at least --minimum-refresh-seconds"
+            config.readiness_freshness >= config.canary_interval,
+            "--readiness-seconds must be at least --canary-seconds"
         );
         Ok(config)
     }
@@ -96,15 +96,15 @@ mod tests {
         let config = Config::parse(arguments(&[
             "--listen",
             "[::1]:4000",
-            "--refresh-seconds",
+            "--canary-seconds",
             "20",
-            "--minimum-refresh-seconds",
-            "10",
+            "--readiness-seconds",
+            "60",
         ]))
         .unwrap();
         assert_eq!(config.listen, "[::1]:4000".parse().unwrap());
-        assert_eq!(config.refresh_interval, Duration::from_secs(20));
-        assert_eq!(config.minimum_refresh_interval, Duration::from_secs(10));
+        assert_eq!(config.canary_interval, Duration::from_secs(20));
+        assert_eq!(config.readiness_freshness, Duration::from_secs(60));
     }
 
     #[test]
@@ -113,8 +113,10 @@ mod tests {
             vec!["--unknown"],
             vec!["--listen"],
             vec!["--listen", "not-an-address"],
-            vec!["--refresh-seconds", "0"],
-            vec!["--refresh-seconds", "10", "--minimum-refresh-seconds", "20"],
+            vec!["--canary-seconds", "0"],
+            vec!["--canary-seconds", "20", "--readiness-seconds", "10"],
+            vec!["--refresh-seconds", "60"],
+            vec!["--minimum-refresh-seconds", "60"],
         ] {
             assert!(Config::parse(arguments(&values)).is_err(), "{values:?}");
         }

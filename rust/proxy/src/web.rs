@@ -3,61 +3,148 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, LOCATION, RETRY_AFTER};
+use axum::http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri};
 use axum::response::Response;
+use sha2::{Digest, Sha256};
+use tracing::{debug, warn};
 
-use crate::catalog::RouteKey;
-use crate::coordinator::{AbsenceState, RefreshCoordinator, retry_after_seconds};
+use crate::marker::validate_marker;
+use crate::origin::{MarkerFetcher, OriginErrorClass, OriginResponse};
+use crate::route::DownloadRoute;
+use crate::state::{MarkerOutcome, ServiceState};
 
 pub const ORIGINAL_URI_HEADER: HeaderName = HeaderName::from_static("x-pkgre-original-uri");
-const MAX_REQUEST_TARGET_BYTES: usize = 1024;
 const NO_STORE: HeaderValue = HeaderValue::from_static("no-store");
 const GET_HEAD: HeaderValue = HeaderValue::from_static("GET, HEAD");
-const JSON: HeaderValue = HeaderValue::from_static("application/json");
+const PROMETHEUS_TEXT: HeaderValue =
+    HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8");
 
-pub fn application(coordinator: Arc<RefreshCoordinator>) -> Router {
-    Router::new().fallback(handler).with_state(coordinator)
+#[derive(Clone)]
+struct AppState {
+    fetcher: Arc<dyn MarkerFetcher>,
+    service: Arc<ServiceState>,
 }
 
-async fn handler(
-    State(coordinator): State<Arc<RefreshCoordinator>>,
-    request: Request<Body>,
-) -> Response {
-    let method = request.method().clone();
+pub fn application(fetcher: Arc<dyn MarkerFetcher>, service: Arc<ServiceState>) -> Router {
+    Router::new()
+        .fallback(handler)
+        .with_state(AppState { fetcher, service })
+}
+
+async fn handler(State(state): State<AppState>, request: Request<Body>) -> Response {
+    let method = request.method();
     if method != Method::GET && method != Method::HEAD {
         return method_not_allowed();
     }
     let Some(target) = request_target(request.headers(), request.uri()) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
-    if target == "/healthz" {
-        let status = coordinator.status().await;
-        return if status.ready {
-            empty_response(StatusCode::OK)
-        } else {
-            unavailable(status.next_refresh_in_seconds.max(1))
-        };
-    }
-    if target == "/status" {
-        if method == Method::HEAD {
-            return empty_response(StatusCode::OK);
+    match target {
+        "/healthz" => return empty_response(StatusCode::OK),
+        "/readyz" => {
+            let status = if state.service.is_ready().await {
+                StatusCode::OK
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            };
+            return empty_response(status);
         }
-        return json_response(&coordinator.status().await);
+        "/metrics" => return metrics_response(method, &state.service).await,
+        _ => {}
     }
-    let Some(key) = parse_route(target) else {
+    let Some(route) = DownloadRoute::parse_canonical(target) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
-    if let Some(destination) = coordinator.destination(&key).await {
-        return redirect(&destination);
-    }
-    let absence = coordinator.refresh_for_miss().await;
-    if let Some(destination) = coordinator.destination(&key).await {
-        return redirect(&destination);
-    }
-    match absence {
-        AbsenceState::KnownAbsent => empty_response(StatusCode::NOT_FOUND),
-        AbsenceState::Uncertain { retry_after } => unavailable(retry_after_seconds(retry_after)),
+    marker_response(&state, &route).await
+}
+
+async fn marker_response(state: &AppState, route: &DownloadRoute) -> Response {
+    let host = route.public_host();
+    let ecosystem = route.ecosystem();
+    let route_id = route_identity(route);
+    match state.fetcher.fetch(route).await {
+        Ok(OriginResponse::NotFound) => {
+            state
+                .service
+                .record_marker(host, MarkerOutcome::NotFound)
+                .await;
+            debug!(
+                host = host.as_str(),
+                ecosystem = ecosystem.as_str(),
+                route_id,
+                outcome = "not-found",
+                "origin marker lookup completed"
+            );
+            empty_response(StatusCode::NOT_FOUND)
+        }
+        Ok(OriginResponse::Found(body)) => match validate_marker(route, &body) {
+            Ok(marker) => {
+                if let Ok(location) = HeaderValue::from_str(marker.location()) {
+                    state
+                        .service
+                        .record_marker(host, MarkerOutcome::Redirect)
+                        .await;
+                    debug!(
+                        host = host.as_str(),
+                        ecosystem = ecosystem.as_str(),
+                        route_id,
+                        destination_kind = marker.kind().as_str(),
+                        outcome = "redirect",
+                        "origin marker lookup completed"
+                    );
+                    redirect(location)
+                } else {
+                    state
+                        .service
+                        .record_marker(host, MarkerOutcome::InvalidMarker)
+                        .await;
+                    warn!(
+                        host = host.as_str(),
+                        ecosystem = ecosystem.as_str(),
+                        route_id,
+                        marker_error = "invalid-location-header",
+                        "origin marker rejected"
+                    );
+                    empty_response(StatusCode::BAD_GATEWAY)
+                }
+            }
+            Err(error) => {
+                state
+                    .service
+                    .record_marker(host, MarkerOutcome::InvalidMarker)
+                    .await;
+                warn!(
+                    host = host.as_str(),
+                    ecosystem = ecosystem.as_str(),
+                    route_id,
+                    marker_error = error.code(),
+                    "origin marker rejected"
+                );
+                empty_response(StatusCode::BAD_GATEWAY)
+            }
+        },
+        Err(error) => {
+            let (status, outcome) = match error.class() {
+                OriginErrorClass::BadGateway => {
+                    (StatusCode::BAD_GATEWAY, MarkerOutcome::BadGateway)
+                }
+                OriginErrorClass::ServiceUnavailable => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    MarkerOutcome::ServiceUnavailable,
+                ),
+            };
+            state.service.record_marker(host, outcome).await;
+            warn!(
+                host = host.as_str(),
+                ecosystem = ecosystem.as_str(),
+                route_id,
+                origin_error = error.code().as_str(),
+                status = status.as_u16(),
+                "origin marker fetch failed"
+            );
+            empty_response(status)
+        }
     }
 }
 
@@ -72,31 +159,11 @@ fn request_target<'a>(headers: &'a HeaderMap, uri: &'a Uri) -> Option<&'a str> {
     }
 }
 
-fn parse_route(target: &str) -> Option<RouteKey> {
-    if target.len() > MAX_REQUEST_TARGET_BYTES
-        || !target.is_ascii()
-        || target.contains(['?', '%', '#'])
-    {
-        return None;
-    }
-    let mut segments = target.split('/');
-    if segments.next() != Some("") || segments.next() != Some("v1") {
-        return None;
-    }
-    let registry = segments.next()?;
-    let name = segments.next()?;
-    let version = segments.next()?;
-    let sha256 = segments.next()?;
-    if segments.next().is_some() {
-        return None;
-    }
-    RouteKey::parse_canonical(registry, name, version, sha256).ok()
+fn route_identity(route: &DownloadRoute) -> String {
+    format!("{:x}", Sha256::digest(route.canonical_path().as_bytes()))
 }
 
-fn redirect(destination: &str) -> Response {
-    let Ok(location) = HeaderValue::from_str(destination) else {
-        return empty_response(StatusCode::INTERNAL_SERVER_ERROR);
-    };
+fn redirect(location: HeaderValue) -> Response {
     let mut response = empty_response(StatusCode::TEMPORARY_REDIRECT);
     response.headers_mut().insert(LOCATION, location);
     response
@@ -108,29 +175,23 @@ fn method_not_allowed() -> Response {
     response
 }
 
-fn unavailable(retry_after: u64) -> Response {
-    let mut response = empty_response(StatusCode::SERVICE_UNAVAILABLE);
-    let value = HeaderValue::from_str(&retry_after.to_string())
-        .unwrap_or_else(|_| HeaderValue::from_static("1"));
-    response.headers_mut().insert(RETRY_AFTER, value);
+async fn metrics_response(method: &Method, state: &ServiceState) -> Response {
+    let body = if method == Method::HEAD {
+        Body::empty()
+    } else {
+        Body::from(state.metrics().await)
+    };
+    let mut response = response(StatusCode::OK, body);
+    response.headers_mut().insert(CONTENT_TYPE, PROMETHEUS_TEXT);
     response
 }
 
-fn json_response(status: &impl serde::Serialize) -> Response {
-    match serde_json::to_vec(status) {
-        Ok(body) => {
-            let mut response = Response::new(Body::from(body));
-            *response.status_mut() = StatusCode::OK;
-            response.headers_mut().insert(CACHE_CONTROL, NO_STORE);
-            response.headers_mut().insert(CONTENT_TYPE, JSON);
-            response
-        }
-        Err(_) => empty_response(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+fn empty_response(status: StatusCode) -> Response {
+    response(status, Body::empty())
 }
 
-fn empty_response(status: StatusCode) -> Response {
-    let mut response = Response::new(Body::empty());
+fn response(status: StatusCode, body: Body) -> Response {
+    let mut response = Response::new(body);
     *response.status_mut() = status;
     response.headers_mut().insert(CACHE_CONTROL, NO_STORE);
     response
@@ -144,85 +205,60 @@ mod tests {
     use std::time::Duration;
 
     use http_body_util::BodyExt;
-    use pkgre_rust::download::{
-        DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
-    };
-    use semver::Version;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tower::ServiceExt;
 
     use super::*;
-    use crate::catalog::RouteTable;
-    use crate::github::{CatalogFetcher, FetchFailure, FetchFuture, FetchedCatalog};
+    use crate::origin::{MarkerFetchFuture, OriginError, OriginErrorCode};
+    use crate::route::PublicHost;
+
+    const RUST_ROUTE: &str =
+        "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const JS_ROUTE: &str =
+        "/v1/js/main/00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    const RUST_MARKER: &[u8] =
+        include_bytes!("../../../fixtures/redirect-marker-v1/rust-crates-io.html");
+    const JS_MARKER: &[u8] = include_bytes!("../../../fixtures/redirect-marker-v1/js-npmjs.html");
 
     struct FakeFetcher {
         calls: AtomicUsize,
-        responses: Mutex<VecDeque<std::result::Result<FetchedCatalog, FetchFailure>>>,
+        routes: Mutex<Vec<DownloadRoute>>,
+        responses: Mutex<VecDeque<Result<OriginResponse, OriginError>>>,
     }
 
     impl FakeFetcher {
-        fn new(responses: Vec<std::result::Result<FetchedCatalog, FetchFailure>>) -> Arc<Self> {
+        fn new(responses: Vec<Result<OriginResponse, OriginError>>) -> Arc<Self> {
             Arc::new(Self {
                 calls: AtomicUsize::new(0),
-                responses: Mutex::new(VecDeque::from(responses)),
+                routes: Mutex::new(Vec::new()),
+                responses: Mutex::new(responses.into()),
             })
         }
     }
 
-    impl CatalogFetcher for FakeFetcher {
-        fn fetch(&self) -> FetchFuture<'_> {
+    impl MarkerFetcher for FakeFetcher {
+        fn fetch<'a>(&'a self, route: &'a DownloadRoute) -> MarkerFetchFuture<'a> {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            let result = self.responses.lock().unwrap().pop_front().unwrap();
-            Box::pin(async move { result })
+            self.routes.lock().unwrap().push(route.clone());
+            let response = self.responses.lock().unwrap().pop_front().unwrap();
+            Box::pin(async move { response })
         }
     }
 
-    struct BlockingMissFetcher {
-        calls: AtomicUsize,
-        release: tokio::sync::Notify,
+    fn service() -> Arc<ServiceState> {
+        Arc::new(ServiceState::new(Duration::from_secs(180)))
     }
 
-    impl CatalogFetcher for BlockingMissFetcher {
-        fn fetch(&self) -> FetchFuture<'_> {
-            let call = self.calls.fetch_add(1, Ordering::Relaxed);
-            Box::pin(async move {
-                if call == 0 {
-                    Ok(fetched(&[], 'a'))
-                } else {
-                    self.release.notified().await;
-                    Ok(fetched(&[("main", "new", DownloadSource::CratesIo)], 'b'))
-                }
-            })
-        }
-    }
-
-    fn fetched(routes: &[(&str, &str, DownloadSource)], commit: char) -> FetchedCatalog {
-        let catalog = DownloadCatalog {
-            schema: DOWNLOAD_CATALOG_SCHEMA,
-            routes: routes
-                .iter()
-                .map(|(registry, name, source)| DownloadRoute {
-                    registry: (*registry).to_owned(),
-                    name: (*name).to_owned(),
-                    version: Version::parse("1.0.0").unwrap(),
-                    sha256: "01".repeat(32),
-                    source: *source,
-                })
-                .collect(),
-        };
-        FetchedCatalog {
-            commit: commit.to_string().repeat(40),
-            manifest_sha256: commit.to_string().repeat(64),
-            table: Arc::new(RouteTable::from_catalog(catalog).unwrap()),
-        }
-    }
-
-    fn route_in(registry: &str, name: &str) -> String {
-        format!("/v1/{registry}/{name}/1.0.0/{}", "01".repeat(32))
-    }
-
-    fn route(name: &str) -> String {
-        route_in("main", name)
+    fn app(
+        responses: Vec<Result<OriginResponse, OriginError>>,
+    ) -> (Router, Arc<FakeFetcher>, Arc<ServiceState>) {
+        let fetcher = FakeFetcher::new(responses);
+        let service = service();
+        (
+            application(fetcher.clone(), Arc::clone(&service)),
+            fetcher,
+            service,
+        )
     }
 
     fn request(method: Method, target: &str) -> Request<Body> {
@@ -234,11 +270,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn response(
-        app: &Router,
-        method: Method,
-        target: &str,
-    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+    async fn send(app: &Router, method: Method, target: &str) -> (StatusCode, HeaderMap, Vec<u8>) {
         let response = app.clone().oneshot(request(method, target)).await.unwrap();
         let status = response.status();
         let headers = response.headers().clone();
@@ -249,222 +281,204 @@ mod tests {
             .unwrap()
             .to_bytes()
             .to_vec();
+        assert_eq!(headers.get(CACHE_CONTROL).unwrap(), "no-store");
         (status, headers, body)
     }
 
     #[tokio::test]
-    async fn known_get_and_head_routes_redirect_without_fetching() {
-        let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[
-                ("main", "mirror", DownloadSource::CratesIo),
-                ("main", "published", DownloadSource::GitTag),
-            ],
-            'a',
-        ))]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
-        ));
-        coordinator.refresh_if_eligible().await;
-        let app = application(coordinator);
-
-        for method in [Method::GET, Method::HEAD] {
-            let (status, headers, body) = response(&app, method, &route("mirror")).await;
-            assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
-            assert_eq!(
-                headers.get(LOCATION).unwrap(),
-                "https://static.crates.io/crates/mirror/1.0.0/download"
-            );
-            assert_eq!(headers.get(CACHE_CONTROL).unwrap(), "no-store");
-            assert!(body.is_empty());
+    async fn canonical_rust_and_js_markers_redirect_for_get_and_head() {
+        let responses = [RUST_MARKER, RUST_MARKER, JS_MARKER, JS_MARKER]
+            .into_iter()
+            .map(|body| Ok(OriginResponse::Found(body.to_vec())))
+            .collect();
+        let (app, fetcher, service) = app(responses);
+        for (target, location) in [
+            (
+                RUST_ROUTE,
+                "https://static.crates.io/crates/serde/1.0.228/download",
+            ),
+            (
+                JS_ROUTE,
+                "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+            ),
+        ] {
+            for method in [Method::GET, Method::HEAD] {
+                let (status, headers, body) = send(&app, method, target).await;
+                assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
+                assert_eq!(headers.get(LOCATION).unwrap(), location);
+                assert!(body.is_empty());
+            }
         }
-        let (_, headers, _) = response(&app, Method::GET, &route_in("main", "published")).await;
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 4);
         assert_eq!(
-            headers.get(LOCATION).unwrap().to_str().unwrap(),
-            format!("https://rust.pkg.re/crates/{}.crate", "01".repeat(32))
+            fetcher
+                .routes
+                .lock()
+                .unwrap()
+                .iter()
+                .map(DownloadRoute::canonical_path)
+                .collect::<Vec<_>>(),
+            [RUST_ROUTE, RUST_ROUTE, JS_ROUTE, JS_ROUTE]
         );
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 1);
+        let metrics = service.metrics().await;
+        assert!(metrics.contains(
+            "pkgre_marker_requests_total{host=\"rust.pkg.re\",outcome=\"redirect\"} 2\n"
+        ));
+        assert!(
+            metrics.contains(
+                "pkgre_marker_requests_total{host=\"js.pkg.re\",outcome=\"redirect\"} 2\n"
+            )
+        );
     }
 
     #[tokio::test]
-    async fn exact_name_and_checksum_identity_are_required() {
-        let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[("main", "Mirror", DownloadSource::CratesIo)],
-            'a',
-        ))]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
-        ));
-        coordinator.refresh_if_eligible().await;
-        let app = application(coordinator);
-
-        let wrong_case = route("mirror");
-        let wrong_checksum = format!("/v1/main/Mirror/1.0.0/{}", "02".repeat(32));
-        for target in [wrong_case, wrong_checksum] {
-            let (status, _, _) = response(&app, Method::GET, &target).await;
-            assert_eq!(status, StatusCode::NOT_FOUND);
-        }
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 1);
+    async fn health_readiness_and_metrics_never_fetch_markers() {
+        let (app, fetcher, service) = app(Vec::new());
+        let (status, _, _) = send(&app, Method::GET, "/healthz").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = send(&app, Method::HEAD, "/readyz").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        service.record_canary(PublicHost::Rust, Ok(())).await;
+        service.record_canary(PublicHost::JavaScript, Ok(())).await;
+        let (status, _, _) = send(&app, Method::GET, "/readyz").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, headers, body) = send(&app, Method::GET, "/metrics").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers.get(CONTENT_TYPE).unwrap(), PROMETHEUS_TEXT);
+        assert!(body.starts_with(b"# HELP pkgre_ready"));
+        let (_, _, body) = send(&app, Method::HEAD, "/metrics").await;
+        assert!(body.is_empty());
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
-    async fn malformed_targets_never_trigger_refresh() {
-        let fetcher = FakeFetcher::new(vec![Ok(fetched(&[], 'a'))]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
-        ));
-        coordinator.refresh_if_eligible().await;
-        let app = application(coordinator);
-        let digest = "01".repeat(32);
+    async fn malformed_targets_and_duplicate_trusted_headers_never_fetch() {
+        let (app, fetcher, _) = app(Vec::new());
         for target in [
             "/",
-            "/v1/main/name/1.0.0",
-            &format!("/v1/main/name/1.0.0/{digest}/"),
-            &format!("//v1/main/name/1.0.0/{digest}"),
-            &format!("/v1//name/1.0.0/{digest}"),
-            &format!("/v1/Main/name/1.0.0/{digest}"),
-            &format!("/v1/main/Name%2fname/1.0.0/{digest}"),
-            &format!("/v1/main/name/1.0.0/{digest}%3fignored"),
-            &format!("/v1/main/name/01.0.0/{digest}"),
-            &format!("/v1/main/name/1.0.0/{}", "AB".repeat(32)),
-            &format!("/v1/main/name/1.0.0/{digest}?"),
-            &format!("/v1/main/name/1.0.0/{digest}?query"),
-            &format!("/v1/main/name/1.0.0/{digest}#fragment"),
+            "/status",
+            &format!("{RUST_ROUTE}?query"),
+            &RUST_ROUTE.replace("/serde/", "/serde%2fother/"),
+            &RUST_ROUTE.replace("/serde/", "//serde/"),
+            &RUST_ROUTE.replace("1.0.228", "01.0.228"),
+            &RUST_ROUTE.replace("0123", "ABCD"),
+            &format!("{JS_ROUTE}/extra"),
         ] {
-            let (status, headers, _) = response(&app, Method::GET, target).await;
+            let (status, _, _) = send(&app, Method::GET, target).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{target}");
-            assert_eq!(headers.get(CACHE_CONTROL).unwrap(), "no-store");
         }
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 1);
+        let duplicate = Request::builder()
+            .uri(RUST_ROUTE)
+            .header(&ORIGINAL_URI_HEADER, RUST_ROUTE)
+            .header(&ORIGINAL_URI_HEADER, RUST_ROUTE)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(duplicate).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
-    async fn unsupported_methods_return_405_with_allow() {
-        let fetcher = FakeFetcher::new(vec![]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
+    async fn origin_not_found_and_closed_error_classes_map_fail_closed() {
+        let cases = [
+            (Ok(OriginResponse::NotFound), StatusCode::NOT_FOUND),
+            (
+                Err(OriginErrorCode::UnexpectedStatus.into()),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                Err(OriginErrorCode::UnexpectedContentType.into()),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                Err(OriginErrorCode::UnexpectedContentEncoding.into()),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                Err(OriginErrorCode::BodyTooLarge.into()),
+                StatusCode::BAD_GATEWAY,
+            ),
+            (
+                Err(OriginErrorCode::Connection.into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Err(OriginErrorCode::RequestTimeout.into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Err(OriginErrorCode::BodyRead.into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Err(OriginErrorCode::RateLimited.into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+            (
+                Err(OriginErrorCode::ServerStatus.into()),
+                StatusCode::SERVICE_UNAVAILABLE,
+            ),
+        ];
+        let responses = cases.iter().map(|(response, _)| response.clone()).collect();
+        let (app, fetcher, service) = app(responses);
+        for (_, expected) in cases {
+            let (status, _, body) = send(&app, Method::GET, RUST_ROUTE).await;
+            assert_eq!(status, expected);
+            assert!(body.is_empty());
+        }
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 10);
+        let metrics = service.metrics().await;
+        assert!(metrics.contains(
+            "pkgre_marker_requests_total{host=\"rust.pkg.re\",outcome=\"not_found\"} 1\n"
         ));
-        let app = application(coordinator);
+        assert!(metrics.contains(
+            "pkgre_marker_requests_total{host=\"rust.pkg.re\",outcome=\"bad_gateway\"} 4\n"
+        ));
+        assert!(metrics.contains(
+            "pkgre_marker_requests_total{host=\"rust.pkg.re\",outcome=\"service_unavailable\"} 5\n"
+        ));
+    }
+
+    #[tokio::test]
+    async fn marker_route_replay_and_template_drift_are_bad_gateway() {
+        let replayed = String::from_utf8(RUST_MARKER.to_vec())
+            .unwrap()
+            .replace(RUST_ROUTE, &RUST_ROUTE.replace("1.0.228", "1.0.229"));
+        let drifted = String::from_utf8(JS_MARKER.to_vec())
+            .unwrap()
+            .replace("<title>pkg.re redirect</title>", "<title>changed</title>");
+        let (app, fetcher, service) = app(vec![
+            Ok(OriginResponse::Found(replayed.into_bytes())),
+            Ok(OriginResponse::Found(drifted.into_bytes())),
+        ]);
+        for target in [RUST_ROUTE, JS_ROUTE] {
+            let (status, _, _) = send(&app, Method::GET, target).await;
+            assert_eq!(status, StatusCode::BAD_GATEWAY);
+        }
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 2);
+        let metrics = service.metrics().await;
+        assert!(metrics.contains(
+            "pkgre_marker_requests_total{host=\"rust.pkg.re\",outcome=\"invalid_marker\"} 1\n"
+        ));
+        assert!(metrics.contains(
+            "pkgre_marker_requests_total{host=\"js.pkg.re\",outcome=\"invalid_marker\"} 1\n"
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsupported_methods_return_405_without_origin_fetch() {
+        let (app, fetcher, _) = app(Vec::new());
         for method in [Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS] {
-            let (status, headers, _) = response(&app, method, &route("mirror")).await;
+            let (status, headers, body) = send(&app, method, RUST_ROUTE).await;
             assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
-            assert_eq!(headers.get(ALLOW).unwrap(), "GET, HEAD");
-            assert_eq!(headers.get(CACHE_CONTROL).unwrap(), "no-store");
+            assert_eq!(headers.get(ALLOW).unwrap(), GET_HEAD);
+            assert!(body.is_empty());
         }
         assert_eq!(fetcher.calls.load(Ordering::Relaxed), 0);
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn well_formed_miss_refreshes_once_and_retries_lookup() {
-        let fetcher = FakeFetcher::new(vec![
-            Ok(fetched(&[], 'a')),
-            Ok(fetched(
-                &[("staging", "new", DownloadSource::CratesIo)],
-                'b',
-            )),
-        ]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
-        ));
-        coordinator.refresh_if_eligible().await;
-        tokio::time::advance(Duration::from_secs(120)).await;
-        let app = application(coordinator);
-
-        let (status, headers, _) = response(&app, Method::GET, &route_in("staging", "new")).await;
-        assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
-        assert_eq!(
-            headers.get(LOCATION).unwrap(),
-            "https://static.crates.io/crates/new/1.0.0/download"
-        );
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 2);
-    }
-
     #[tokio::test]
-    async fn concurrent_well_formed_misses_share_one_refresh() {
-        let fetcher = Arc::new(BlockingMissFetcher {
-            calls: AtomicUsize::new(0),
-            release: tokio::sync::Notify::new(),
-        });
-        let coordinator = Arc::new(RefreshCoordinator::new(fetcher.clone(), Duration::ZERO));
-        coordinator.refresh_if_eligible().await;
-        let app = application(coordinator);
-
-        let requests = (0..8)
-            .map(|_| {
-                let app = app.clone();
-                tokio::spawn(async move { response(&app, Method::GET, &route("new")).await })
-            })
-            .collect::<Vec<_>>();
-        while fetcher.calls.load(Ordering::Relaxed) < 2 {
-            tokio::task::yield_now().await;
-        }
-        tokio::task::yield_now().await;
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 2);
-        fetcher.release.notify_one();
-
-        for request in requests {
-            let (status, headers, _) = request.await.unwrap();
-            assert_eq!(status, StatusCode::TEMPORARY_REDIRECT);
-            assert_eq!(
-                headers.get(LOCATION).unwrap(),
-                "https://static.crates.io/crates/new/1.0.0/download"
-            );
-        }
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 2);
-    }
-
-    #[tokio::test]
-    async fn uncertain_absence_is_503_while_recent_success_is_404() {
-        let failed = FetchFailure {
-            message: "offline".to_owned(),
-            retry_after: Some(Duration::from_secs(30)),
-        };
-        let fetcher = FakeFetcher::new(vec![Err(failed)]);
-        let coordinator = Arc::new(RefreshCoordinator::new(fetcher, Duration::from_secs(120)));
-        let app = application(coordinator);
-        let (status, headers, _) = response(&app, Method::GET, &route("missing")).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(headers.get(RETRY_AFTER).unwrap(), "120");
-
-        let fetcher = FakeFetcher::new(vec![Ok(fetched(&[], 'a'))]);
-        let coordinator = Arc::new(RefreshCoordinator::new(fetcher, Duration::from_secs(120)));
-        coordinator.refresh_if_eligible().await;
-        let app = application(coordinator);
-        let (status, _, _) = response(&app, Method::GET, &route("missing")).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn health_and_status_reflect_readiness_without_refreshing() {
-        let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[("main", "mirror", DownloadSource::CratesIo)],
-            'a',
-        ))]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
-        ));
-        let app = application(Arc::clone(&coordinator));
-        let (status, _, _) = response(&app, Method::GET, "/healthz").await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        coordinator.refresh_if_eligible().await;
-        let (status, _, _) = response(&app, Method::GET, "/healthz").await;
-        assert_eq!(status, StatusCode::OK);
-        let (status, headers, body) = response(&app, Method::GET, "/status").await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(headers.get(CONTENT_TYPE).unwrap(), "application/json");
-        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(value["ready"], true);
-        assert_eq!(value["routes"], 1);
-        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 1);
-    }
-
-    #[tokio::test]
-    async fn tcp_requests_preserve_raw_targets_and_trusted_original_uri() {
+    async fn tcp_boundary_preserves_raw_target_and_single_trusted_uri() {
         async fn raw_request(
             address: std::net::SocketAddr,
             target: &str,
@@ -483,35 +497,31 @@ mod tests {
             String::from_utf8(response).unwrap()
         }
 
-        let fetcher = FakeFetcher::new(vec![Ok(fetched(
-            &[("main", "mirror", DownloadSource::CratesIo)],
-            'a',
-        ))]);
-        let coordinator = Arc::new(RefreshCoordinator::new(
-            fetcher.clone(),
-            Duration::from_secs(120),
-        ));
-        coordinator.refresh_if_eligible().await;
+        let fetcher = FakeFetcher::new(vec![Ok(OriginResponse::Found(RUST_MARKER.to_vec()))]);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, application(coordinator))
-                .await
-                .unwrap();
+        let server = tokio::spawn({
+            let fetcher = fetcher.clone();
+            async move {
+                axum::serve(listener, application(fetcher, service()))
+                    .await
+                    .unwrap();
+            }
         });
-        let exact = route("mirror");
-
-        let response = raw_request(address, "/frontend-normalized", Some(&exact)).await;
+        let response = raw_request(address, "/frontend-normalized", Some(RUST_ROUTE)).await;
         assert!(response.starts_with("HTTP/1.1 307 "), "{response}");
         assert!(
             response
-                .contains("location: https://static.crates.io/crates/mirror/1.0.0/download\r\n")
+                .contains("location: https://static.crates.io/crates/serde/1.0.228/download\r\n")
         );
         for (target, header) in [
-            (format!("//v1/main/mirror/1.0.0/{}", "01".repeat(32)), None),
-            (format!("{exact}?query"), None),
-            (format!("{exact}%3fquery"), None),
-            ("/frontend-normalized".to_owned(), Some(format!("{exact}?"))),
+            (format!("/{RUST_ROUTE}"), None),
+            (format!("{RUST_ROUTE}?query"), None),
+            (format!("{RUST_ROUTE}%3fquery"), None),
+            (
+                "/frontend-normalized".to_owned(),
+                Some(format!("{RUST_ROUTE}?")),
+            ),
         ] {
             let response = raw_request(address, &target, header.as_deref()).await;
             assert!(
@@ -521,19 +531,5 @@ mod tests {
         }
         assert_eq!(fetcher.calls.load(Ordering::Relaxed), 1);
         server.abort();
-    }
-
-    #[tokio::test]
-    async fn duplicate_trusted_headers_fail_closed() {
-        let fetcher = FakeFetcher::new(vec![]);
-        let coordinator = Arc::new(RefreshCoordinator::new(fetcher, Duration::from_secs(120)));
-        let request = Request::builder()
-            .uri(route("missing"))
-            .header(&ORIGINAL_URI_HEADER, route("missing"))
-            .header(&ORIGINAL_URI_HEADER, route("missing"))
-            .body(Body::empty())
-            .unwrap();
-        let response = application(coordinator).oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
