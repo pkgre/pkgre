@@ -11,9 +11,9 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 - Human admission:compact exact category/name/version + optional typed evidence; no mutable machine hashes.
 - Generated admission lock:complete network-backed facts recomputed at apply + hash-bound into every admitted package lock.
 - `pkgre-rust`:enforces schema, admission policy/binding, lifecycle, artifacts, routing, downloads, rendering, migration, and release invariants; bugs can invalidate guarantees.
-- `pkgre-proxy`:maps exact checksum-bound routes from validated commit-pinned catalog to one of two hardcoded upstream forms; service/proxy bugs can invalidate availability/redirect guarantees.
+- `pkgre-proxy`:maps exact canonical Rust/JS routes to same-path static Pages markers,validates marker-v1+closed destination grammars,and returns only fresh `307` responses;origin/proxy bugs can invalidate availability/redirect guarantees.
 - Nix pins + Rust/Cargo `1.95.0`:tooling inputs + Git-package semantics.
-- GitHub Pages/TLS/DNS:row/Git-archive delivery; GitHub API/raw:router catalog freshness; nginx/router:route authorization/delivery; crates.io CDN:mirror-archive availability/delivery; Cargo checksum rejects bytes differing from curated row.
+- GitHub Pages custom-host TLS+static content,DNS,rain/nginx,and the proxy are route-authorization/delivery dependencies;crates.io CDN+registry.npmjs.org are admitted third-party archive dependencies;Cargo checksum/npm SRI reject bytes differing from curated metadata.
 - crates.io sparse/API/archive + public Git during plan/apply:candidate evidence origins; observations gain authority only after exact recomputation + transaction + protected PR review.
 
 ## Authority boundaries
@@ -47,14 +47,16 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 - Dependency home resolution prefers the source registry; if absent, exactly one external-registry home is required; multiple external homes are ambiguous + blocked.
 - Routing overwrites every dependency registry field, including optional/dev/build/target-specific + renamed edges; category policy checked before URL routing.
 
-### Download router
+### Download proxy
 
-- Single-source registry may use canonical direct endpoint; mixed mirror+publish registry requires exact `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}`. Arbitrary download origins/templates fail.
-- Route identity = exact canonical registry alias + case-sensitive name + canonical SemVer + lowercase 64-hex checksum; route must exist in authenticated catalog. Only `GET|HEAD` can return `307`; destination derives exclusively from `crates-io|git-tag`, never catalog/user URL data.
-- Query/fragment/percent-encoding/malformed/oversized targets fail `404` without refresh.
-- Service fetch=fixed HTTPS GitHub main-ref→validated 40-hex commit→immutable raw `registry/downloads.json`; redirects/environment proxies disabled; bounded bodies/timeouts; only canonical data replaces LKG.
-- Refresh=minimum-interval/single-flight/cancellation-safe; failed freshness makes unknown routes `503`, not authoritative `404`; known LKG routes continue.
-- Backend trusts one original-target header only across private fixed nginx boundary. Backend exposure, duplicate/client-selected header forwarding, URI rewrite/normalization, or variable upstream is forbidden; nginx overwrites with raw `$request_uri`.
+- Current pre-P9 Rust production metadata still advertises `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}`;the gated target changes only the host to `rust.pkg.re`. JS uses same-host `https://js.pkg.re/v1/js/<registry>/<sha256>` from first publication. No `dl.js.pkg.re` exists.
+- Runtime route authority=exact static marker at the canonical route on the route-selected Pages custom host. No request-time `downloads.json`,GitHub API/raw,live registry metadata,refresh/LKG state,or caller-selected origin exists.
+- Route identity=Rust exact canonical registry alias+case-sensitive name+canonical SemVer+lowercase 64-hex checksum;JS exact canonical registry alias+lowercase 64-hex checksum. Query/fragment/percent encoding/non-ASCII/duplicate or dot segments/malformed/oversized targets fail `404` before origin access.
+- Origin mapping is closed:resolve only `pkgre.github.io`;connect only to validated public answers:443;URL/TLS SNI/WebPKI hostname verification/HTTP Host remain route-selected `rust.pkg.re|js.pkg.re`;root-relative path unchanged;environment proxies+redirects disabled;timeouts,MIME,and body are bounded.
+- Both public `GET|HEAD` issue one origin `GET`. Marker route binding+exact template+closed kind/destination grammar are mandatory. Origin marker `404`→404;malformed/protocol/semantic origin error→502;DNS/connect/TLS/body-read/429/5xx→503;valid marker→307;unsupported method→405.
+- Rust destinations are exact `static.crates.io` crate/version grammar or route-hash same-host object;JS destinations are exact bounded `registry.npmjs.org` archive grammar or route-hash same-host object. No marker/catalog/user field supplies an unrestricted URL.
+- Backend trusts at most one original-target header only across private fixed nginx;nginx overwrites raw `$request_uri`,strips credentials,and uses fixed upstreams. Backend exposure,duplicate/client-selected header forwarding,URI rewrite/normalization,or variable upstream is forbidden.
+- `/healthz` checks process/config;`/readyz` requires recent successes for both fixed origin canaries;`/metrics` has only closed labels. These local signals do not replace isolated long-term certificate+contract monitoring before renewal/production Rust cutover.
 
 ### Mirror admission
 
@@ -117,7 +119,7 @@ Cargo has no universal registry allowlist and cannot enforce pkg.re categories:a
 - Planning/apply requires current crates.io sparse/API/archive + promoted public Git availability; outage/deletion/rate limit can stop admission.
 - Existing Git tag is not re-fetched/reproduced during `check`; retained archive/row is operational authority.
 - No prevention of admitted build-script/proc-macro/native/runtime network/process behavior; isolate builds/credentials separately.
-- SHA-256 provides integrity, not availability; Pages/DNS/router/GitHub/crates.io outage can stop delivery; known router LKG routes survive refresh failure only while process remains alive.
+- SHA-256/SRI provide integrity,not availability;Pages custom-host TLS/DNS/rain/nginx/proxy/crates.io/npmjs outage can stop delivery. Runtime authorization has no independent LKG:an unavailable marker origin fails `503`;a missing marker fails `404`.
 - Removed rows remain visible as yanked; shared active Git content can remain downloadable; crates.io controls mirror availability.
 - Git dependencies bypass registry routing + remain unsupported.
 - Locks cannot distinguish legitimate reviewed replacement from privileged actor replacing locks + matching objects without history review; branch protection, protected merge, monotonic releases, and retained history provide boundary.
@@ -128,7 +130,7 @@ Cargo has no universal registry allowlist and cannot enforce pkg.re categories:a
 - Keep catalog public + provenance-free:no consumer names, private paths/manifests/lockfiles/discovery output, credentials, or tokens.
 - Keep transient manifests/inspections/logs outside `registry/`; `update-apply` copies final manifest + generates lock atomically.
 - Treat declarations, locks, downloads, objects, and admissions as security-sensitive; reject hand edits/unexplained churn.
-- Bind download service only loopback/private; nginx fixed proxy overwrites `X-Pkgre-Original-URI`; monitor `/healthz` + `/status`.
+- Bind proxy only loopback/private;nginx fixed proxy overwrites `X-Pkgre-Original-URI`;inspect `/healthz`,`/readyz`,`/metrics`. Treat these local signals as service telemetry only;complete the isolated fixed-target certificate/contract monitoring gate before renewal observation or production Rust cutover.
 - Compare candidate site with deployed release using `verify-monotonic`; preserve prior releases/backups; periodically verify live rows/routes/checksums + clean-cache build across mirror/Git sources.
 - Confirm no reconciliation active before deleting stale guard.
 - Enable GitHub secret scanning/push protection; architecture requires no publication token.

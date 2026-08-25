@@ -223,7 +223,7 @@ Deploy only rendered site, never catalog. Workflow independently checks/renders/
 
 - Fetch root `https://rust.pkg.re/config.json`; require `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`.
 - Fetch rows across categories; compare checksums/routes/yank state with `release.json`.
-- Fetch router `/healthz` + `/status`; require ready, expected commit/hash/counts, no refresh error.
+- Current pre-P9 production check:fetch router `/healthz`+`/status`;require ready,expected commit/hash/counts,no refresh error. Target P9 check replaces `/status` with `pkgre-proxy` `/readyz`+`/metrics` and exact marker-origin evidence.
 - Exact mirror + Git routes→`307` to static.crates.io + content-addressed pkg.re; download + verify SHA-256. Alter case/checksum/query/encoding→`404`; unsupported method→`405`.
 - Compare live release/downloads with committed candidate; require exact active projection.
 - Fresh Cargo home/cache + only `[registries.pkgre] index = "sparse+https://rust.pkg.re/"`; build `--locked` across mirror + Git packages; confirm `Cargo.lock` source is root URL.
