@@ -91,7 +91,7 @@
               ./Cargo.lock
               ./Cargo.toml
               ./download-serve
-              ./indexer
+              ./rust
               ./rust-toolchain.toml
             ];
           };
@@ -134,7 +134,7 @@
               };
             };
           indexer = mkRustPackage {
-            packageDirectory = "indexer";
+            packageDirectory = "rust";
             description = "Declarative reconciler and renderer for curated Cargo sparse registries";
             mainProgram = "pkgre-indexer";
             nativeCheckInputs = [
@@ -171,7 +171,7 @@
               ./Cargo.lock
               ./Cargo.toml
               ./download-serve
-              ./indexer
+              ./rust
               ./rust-toolchain.toml
             ];
           };
