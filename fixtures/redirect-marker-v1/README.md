@@ -1,3 +1,3 @@
 Status:test-only canonical redirect-marker-v1 corpus;never publish these synthetic routes or reference them from production metadata.
 
-`cases.json` binds four closed ecosystem/destination forms to exact HTML bytes+SHA-256. Rust+JS tests independently render every case and require byte equality;P5 may extend this directory with separately classified hostile vectors before protocol implementation.
+`cases.json` binds four golden closed ecosystem/destination forms+ten hostile protocol mutations to exact bytes,SHA-256,and expected parser outcomes. Rust+JS tests independently render every golden case and reject every hostile case;adding/changing protocol bytes requires updating both implementations in one reviewed change.

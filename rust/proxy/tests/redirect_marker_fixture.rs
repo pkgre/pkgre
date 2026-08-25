@@ -17,6 +17,8 @@ const MAX_MARKER_BYTES: usize = 4 * 1024;
 struct FixtureManifest {
     schema: String,
     cases: Vec<FixtureCase>,
+    #[serde(rename = "hostileCases")]
+    hostile_cases: Vec<HostileFixtureCase>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +30,16 @@ struct FixtureCase {
     route: String,
     kind: String,
     destination: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostileFixtureCase {
+    name: String,
+    file: String,
+    route: String,
+    error: String,
     sha256: String,
 }
 
@@ -87,6 +99,45 @@ fn rust_renderer_matches_provider_neutral_marker_v1_fixtures() {
             "{} digest drift",
             case.name
         );
+    }
+}
+
+#[test]
+fn rust_parser_rejects_provider_neutral_hostile_marker_v1_fixtures() {
+    let root = Path::new(FIXTURE_ROOT);
+    let manifest: FixtureManifest =
+        serde_json::from_slice(&fs::read(root.join("cases.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest
+            .hostile_cases
+            .iter()
+            .map(|case| case.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "unknown-version",
+            "duplicate-field",
+            "unknown-field",
+            "route-replay",
+            "destination-host",
+            "destination-encoded",
+            "machine-meta-mismatch",
+            "trailing-bytes",
+            "non-ascii",
+            "oversize"
+        ]
+    );
+
+    for case in manifest.hostile_cases {
+        let actual = fs::read(root.join(&case.file)).unwrap();
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&actual)),
+            case.sha256,
+            "{} digest drift",
+            case.name
+        );
+        let route = DownloadRoute::parse_canonical(&case.route).unwrap();
+        let error = validate_marker(&route, &actual).unwrap_err();
+        assert_eq!(error.code(), case.error, "{} error drift", case.name);
     }
 }
 
