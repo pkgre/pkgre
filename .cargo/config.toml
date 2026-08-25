@@ -1,9 +1,8 @@
 [registries]
-universe = { index = "sparse+https://rust.pkg.re/universe/" }
-pkgre = { index = "sparse+https://rust.pkg.re/pkgre/" }
+pkgre = { index = "sparse+https://rust.pkg.re/" }
 
 [registry]
-default = "universe"
+default = "pkgre"
 
 [source.crates-io]
 replace-with = "disabled-crates-io"
