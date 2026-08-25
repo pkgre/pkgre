@@ -1,0 +1,41 @@
+{
+  "schema": "redirect-marker-v1",
+  "cases": [
+    {
+      "name": "rust-crates-io",
+      "file": "rust-crates-io.html",
+      "ecosystem": "rust",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "kind": "crates-io",
+      "destination": "https://static.crates.io/crates/serde/1.0.228/download",
+      "sha256": "cb68d92e4a8cf0a7aabf4893cd2a5a5fa16ccf856411404985405c5c45c47d13"
+    },
+    {
+      "name": "rust-first-party",
+      "file": "rust-first-party.html",
+      "ecosystem": "rust",
+      "route": "/v1/main/pkgre-rust/0.5.0/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      "kind": "first-party",
+      "destination": "https://rust.pkg.re/crates/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210.crate",
+      "sha256": "17b597086e34fa5ba12477ddfb3dcb8ec192707fe2b241e40f41fb01f3a109b8"
+    },
+    {
+      "name": "js-npmjs",
+      "file": "js-npmjs.html",
+      "ecosystem": "js",
+      "route": "/v1/js/main/00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "kind": "npmjs",
+      "destination": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      "sha256": "5bb48c93973df0561013e7d2ffba80267f1de675c75b9402bb5d45e8e895f922"
+    },
+    {
+      "name": "js-first-party",
+      "file": "js-first-party.html",
+      "ecosystem": "js",
+      "route": "/v1/js/main/ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
+      "kind": "first-party",
+      "destination": "https://js.pkg.re/packages/ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100.tgz",
+      "sha256": "17f96f39c69bb344c160d87db86039c7047d296aaf30e31e15c458a39196e0a3"
+    }
+  ]
+}

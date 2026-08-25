@@ -90,6 +90,7 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./fixtures/redirect-marker-v1
               ./rust
               ./rust-toolchain.toml
             ];
@@ -147,10 +148,17 @@
             mainProgram = "pkgre-proxy";
           };
           jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
+          jsSource = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./fixtures/redirect-marker-v1
+              ./js
+            ];
+          };
           pkgreJs = pkgs.stdenvNoCC.mkDerivation {
             pname = jsManifest.name;
             inherit (jsManifest) version;
-            src = ./js;
+            src = jsSource;
             nativeBuildInputs = [ pkgs.makeWrapper ];
             nativeCheckInputs = [ pkgs.nodejs_24 ];
             dontConfigure = true;
@@ -158,14 +166,14 @@
             doCheck = true;
             checkPhase = ''
               runHook preCheck
-              node --test
+              node --test js/test/*.test.js
               runHook postCheck
             '';
             installPhase = ''
               runHook preInstall
               mkdir -p "$out/bin" "$out/lib/pkgre-js"
-              cp package.json package-lock.json "$out/lib/pkgre-js/"
-              cp -R src "$out/lib/pkgre-js/src"
+              cp js/package.json js/package-lock.json "$out/lib/pkgre-js/"
+              cp -R js/src "$out/lib/pkgre-js/src"
               makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js" \
                 --add-flags "$out/lib/pkgre-js/src/main.js"
               runHook postInstall
@@ -203,6 +211,7 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./fixtures/redirect-marker-v1
               ./rust
               ./rust-toolchain.toml
             ];
