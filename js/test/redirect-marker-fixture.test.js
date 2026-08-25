@@ -3,21 +3,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { jsArchiveRoute, renderJsRedirectMarker, renderRedirectMarker } from "../src/marker.js";
+
 const root = new URL("../../fixtures/redirect-marker-v1/", import.meta.url);
 const maximumMarkerBytes = 4 * 1024;
 
 function render(item) {
-  return Buffer.from(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="pkgre-redirect" content="v1" data-ecosystem="${item.ecosystem}" data-route="${item.route}" data-kind="${item.kind}" data-destination="${item.destination}" />
-<meta http-equiv="refresh" content="0;url=${item.destination}" />
-<title>pkg.re redirect</title>
-</head>
-<body></body>
-</html>
-`, "ascii");
+  return renderRedirectMarker(item);
 }
 
 const machinePrefix = '<meta name="pkgre-redirect" content="v1" data-ecosystem="';
@@ -135,7 +127,25 @@ test("JavaScript renderer matches provider-neutral marker-v1 fixtures", async ()
     assert.equal(createHash("sha256").update(actual).digest("hex"), item.sha256, `${item.name} digest drift`);
   }
 });
-
+test("production JS markers bind the catalog route and closed source destination", async () => {
+  const manifest = JSON.parse(await readFile(new URL("cases.json", root), "utf8"));
+  const npmjs = manifest.cases.find((item) => item.name === "js-npmjs");
+  const firstParty = manifest.cases.find((item) => item.name === "js-first-party");
+  assert.equal(jsArchiveRoute("0".repeat(64)), `/v1/js/main/${"0".repeat(64)}`);
+  assert.deepEqual(renderJsRedirectMarker("is-number", {
+    source: { kind: "npmjs", sha256: npmjs.route.split("/").at(-1), url: npmjs.destination },
+    version: "7.0.0",
+  }), await readFile(new URL(npmjs.file, root)));
+  assert.deepEqual(renderJsRedirectMarker("pkgre-js", {
+    source: { kind: "first-party", sha256: firstParty.route.split("/").at(-1), url: firstParty.destination },
+    version: "0.1.0",
+  }), await readFile(new URL(firstParty.file, root)));
+  assert.throws(() => renderJsRedirectMarker("is-number", {
+    source: { kind: "npmjs", sha256: "0".repeat(64), url: "https://evil.invalid/package.tgz" },
+    version: "7.0.0",
+  }), /destination cannot be rendered/);
+  assert.throws(() => renderRedirectMarker({ destination: "https://example.invalid/\"onload=evil", ecosystem: "js", kind: "npmjs", route: "/v1/js/main/x" }), /unsafe/);
+});
 
 test("JavaScript parser rejects provider-neutral hostile marker-v1 fixtures", async () => {
   const manifest = JSON.parse(await readFile(new URL("cases.json", root), "utf8"));
