@@ -2,10 +2,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use pkgre_download_serve::config::Config;
-use pkgre_download_serve::coordinator::RefreshCoordinator;
-use pkgre_download_serve::github::{CatalogFetcher, GitHubCatalogFetcher};
-use pkgre_download_serve::web;
+use pkgre_proxy::config::Config;
+use pkgre_proxy::coordinator::RefreshCoordinator;
+use pkgre_proxy::github::{CatalogFetcher, GitHubCatalogFetcher};
+use pkgre_proxy::web;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 

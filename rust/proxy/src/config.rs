@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 
-pub const USAGE: &str = "usage: pkgre-download-serve [--listen <address>] [--refresh-seconds <seconds>] [--minimum-refresh-seconds <seconds>]";
+pub const USAGE: &str = "usage: pkgre-proxy [--listen <address>] [--refresh-seconds <seconds>] [--minimum-refresh-seconds <seconds>]";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {

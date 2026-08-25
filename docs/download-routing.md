@@ -23,7 +23,7 @@ A registry may retain its source-specific `dl` while all active package identiti
 
 ## Service state + refresh
 
-`pkgre-download-serve` is process-stateless. It fetches only:
+`pkgre-proxy` is process-stateless. It fetches only:
 
 1. `https://api.github.com/repos/pkgre/rust/git/ref/heads/main`;
 2. `https://raw.githubusercontent.com/pkgre/rust/<validated-40-hex-commit>/registry/downloads.json`.
@@ -35,10 +35,12 @@ Defaults:listen `127.0.0.1:3000`; periodic refresh 300s; minimum interval 120s. 
 Observability:`GET|HEAD /healthz` returns `503` until one valid catalog loads, then `200`; `GET /status` returns no-store JSON with readiness, source commit, manifest hash, route/source counts, timestamps, last error, next refresh delay, and in-flight state; `HEAD /status` omits body.
 
 ```console
-$ nix build .#download-serve
-$ ./result/bin/pkgre-download-serve --help
-$ ./result/bin/pkgre-download-serve --listen 127.0.0.1:3000 --refresh-seconds 300 --minimum-refresh-seconds 120
+$ nix build .#proxy
+$ ./result/bin/pkgre-proxy --help
+$ ./result/bin/pkgre-proxy --listen 127.0.0.1:3000 --refresh-seconds 300 --minimum-refresh-seconds 120
 ```
+
+Transitional `.#download-serve` aliases `.#proxy` through the rain deployment+rollback horizon.
 
 ## Reverse-proxy boundary
 

@@ -1,5 +1,5 @@
 [package]
-name = "pkgre-download-serve"
+name = "pkgre-proxy"
 version = "0.1.0"
 description = "Stateless immutable download redirect service for pkgre registries"
 edition.workspace = true

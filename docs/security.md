@@ -11,7 +11,7 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 - Human admission:compact exact category/name/version + optional typed evidence; no mutable machine hashes.
 - Generated admission lock:complete network-backed facts recomputed at apply + hash-bound into every admitted package lock.
 - `pkgre-rust`:enforces schema, admission policy/binding, lifecycle, artifacts, routing, downloads, rendering, migration, and release invariants; bugs can invalidate guarantees.
-- `pkgre-download-serve`:maps exact checksum-bound routes from validated commit-pinned catalog to one of two hardcoded upstream forms; service/proxy bugs can invalidate availability/redirect guarantees.
+- `pkgre-proxy`:maps exact checksum-bound routes from validated commit-pinned catalog to one of two hardcoded upstream forms; service/proxy bugs can invalidate availability/redirect guarantees.
 - Nix pins + Rust/Cargo `1.95.0`:tooling inputs + Git-package semantics.
 - GitHub Pages/TLS/DNS:row/Git-archive delivery; GitHub API/raw:router catalog freshness; nginx/router:route authorization/delivery; crates.io CDN:mirror-archive availability/delivery; Cargo checksum rejects bytes differing from curated row.
 - crates.io sparse/API/archive + public Git during plan/apply:candidate evidence origins; observations gain authority only after exact recomputation + transaction + protected PR review.

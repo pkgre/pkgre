@@ -141,17 +141,18 @@
               pkgs.gnutar
             ];
           };
-          downloadServe = mkRustPackage {
+          pkgreProxy = mkRustPackage {
             packageDirectory = "rust/proxy";
             description = "Stateless immutable download redirect service for pkgre registries";
-            mainProgram = "pkgre-download-serve";
+            mainProgram = "pkgre-proxy";
           };
         in
         {
           default = rustIndexer;
           rust = rustIndexer;
           indexer = rustIndexer;
-          download-serve = downloadServe;
+          proxy = pkgreProxy;
+          download-serve = pkgreProxy;
         }
       );
 
@@ -177,6 +178,7 @@
         in
         {
           build-and-test = self.packages.${system}.rust;
+          proxy = self.packages.${system}.proxy;
           download-serve = self.packages.${system}.download-serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source

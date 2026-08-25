@@ -72,7 +72,7 @@ impl GitHubCatalogFetcher {
             .timeout(REQUEST_TIMEOUT)
             .https_only(https_only)
             .no_proxy()
-            .user_agent("pkgre-download-serve/0.1")
+            .user_agent("pkgre-proxy/0.1")
             .build()
             .context("build fixed GitHub HTTP client")?;
         Ok(Self {

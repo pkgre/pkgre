@@ -50,12 +50,12 @@ Current categories:
 ```console
 $ nix flake check --print-build-logs
 $ nix build .#rust
-$ nix build .#download-serve
+$ nix build .#proxy
 $ nix run .#rust -- --help
-$ nix run .#download-serve -- --help
+$ nix run .#proxy -- --help
 ```
 
-Transitional `.#indexer` aliases `.#rust` through the deployment rollback horizon.
+Transitional `.#indexer` aliases `.#rust`;`.#download-serve` aliases `.#proxy` through the deployment rollback horizon.
 
 Pinned semantics:Cargo `1.95.0`; Nix locks Rust + build inputs; Cargo inputs become fixed-output Nix fetches; checks build/test/lint offline after fetching.
 
