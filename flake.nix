@@ -1,5 +1,5 @@
 {
-  description = "Declarative curated Cargo registry tooling";
+  description = "Declarative curated package registry tooling";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -43,7 +43,7 @@
           cargoVendorRegistry = "registry+https://github.com/rust-lang/crates.io-index";
           lockText = builtins.readFile ./Cargo.lock;
           lock = builtins.fromTOML lockText;
-          vendorLock = builtins.toFile "pkgre-indexer-vendor-Cargo.lock" (
+          vendorLock = builtins.toFile "pkgre-rust-vendor-Cargo.lock" (
             builtins.replaceStrings [ pkgreRegistry ] [ cargoVendorRegistry ] lockText
           );
           registryPackages = builtins.filter (package: package ? source) lock.package;
@@ -58,7 +58,7 @@
               };
             }
           ) registryPackages;
-          cargoDeps = pkgs.runCommand "pkgre-indexer-cargo-vendor" { nativeBuildInputs = [ pkgs.gnutar ]; } ''
+          cargoDeps = pkgs.runCommand "pkgre-rust-cargo-vendor" { nativeBuildInputs = [ pkgs.gnutar ]; } ''
             mkdir -p "$out/.cargo"
             cp ${vendorLock} "$out/Cargo.lock"
             cat > "$out/.cargo/config.toml" <<'EOF'
@@ -90,8 +90,8 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
-              ./download-serve
-              ./indexer
+              ./fixtures/redirect-marker-v1
+              ./rust
               ./rust-toolchain.toml
             ];
           };
@@ -133,25 +133,66 @@
                 license = pkgs.lib.licenses.asl20;
               };
             };
-          indexer = mkRustPackage {
-            packageDirectory = "indexer";
+          rustIndexer = mkRustPackage {
+            packageDirectory = "rust";
             description = "Declarative reconciler and renderer for curated Cargo sparse registries";
-            mainProgram = "pkgre-indexer";
+            mainProgram = "pkgre-rust";
             nativeCheckInputs = [
               pkgs.git
               pkgs.gnutar
             ];
           };
-          downloadServe = mkRustPackage {
-            packageDirectory = "download-serve";
+          pkgreProxy = mkRustPackage {
+            packageDirectory = "rust/proxy";
             description = "Stateless immutable download redirect service for pkgre registries";
-            mainProgram = "pkgre-download-serve";
+            mainProgram = "pkgre-proxy";
+          };
+          jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
+          jsSource = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./fixtures/redirect-marker-v1
+              ./js
+            ];
+          };
+          pkgreJs = pkgs.stdenvNoCC.mkDerivation {
+            pname = jsManifest.name;
+            inherit (jsManifest) version;
+            src = jsSource;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            nativeCheckInputs = [ pkgs.nodejs_24 ];
+            dontConfigure = true;
+            dontBuild = true;
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              node --test js/test/*.test.js
+              runHook postCheck
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/bin" "$out/lib/pkgre-js"
+              cp js/package.json js/package-lock.json "$out/lib/pkgre-js/"
+              cp -R js/src "$out/lib/pkgre-js/src"
+              makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js" \
+                --add-flags "$out/lib/pkgre-js/src/main.js"
+              runHook postInstall
+            '';
+            meta = {
+              description = "Deterministic indexer for the curated js.pkg.re registry";
+              mainProgram = "pkgre-js";
+              homepage = "https://github.com/pkgre/pkgre";
+              license = pkgs.lib.licenses.asl20;
+            };
           };
         in
         {
-          default = indexer;
-          inherit indexer;
-          download-serve = downloadServe;
+          default = rustIndexer;
+          rust = rustIndexer;
+          indexer = rustIndexer;
+          js = pkgreJs;
+          proxy = pkgreProxy;
+          download-serve = pkgreProxy;
         }
       );
 
@@ -170,14 +211,16 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
-              ./download-serve
-              ./indexer
+              ./fixtures/redirect-marker-v1
+              ./rust
               ./rust-toolchain.toml
             ];
           };
         in
         {
-          build-and-test = self.packages.${system}.indexer;
+          build-and-test = self.packages.${system}.rust;
+          js = self.packages.${system}.js;
+          proxy = self.packages.${system}.proxy;
           download-serve = self.packages.${system}.download-serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source
@@ -213,6 +256,7 @@
               pkgs.git
               pkgs.gnutar
               pkgs.nixfmt
+              pkgs.nodejs_24
             ];
             PKGRE_CARGO = "${rustToolchain}/bin/cargo";
           };

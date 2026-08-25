@@ -59,9 +59,9 @@ file = "categories/main/general.toml"
 [categories.pkgre]
 may-depend-on = ["main/general", "main/pkgre"]
 
-[categories.pkgre.publish.pkgre-indexer]
+[categories.pkgre.publish.pkgre-rust]
 git = "https://github.com/pkgre/pkgre"
-tags = ["indexer/v0.4.0"]
+tags = ["rust/v0.5.0"]
 ```
 
 Referenced `categories/main/general.toml`:
@@ -156,11 +156,11 @@ The containing lock supplies registry identity; package/name entries are therefo
 [packages.source]
 kind = "git-tag"
 git = "https://github.com/pkgre/pkgre"
-tag = "indexer/v0.4.0"
+tag = "rust/v0.5.0"
 tag-oid = "<full-git-object-id>"
 commit = "<full-peeled-commit-id>"
-package = "pkgre-indexer"
-path = "indexer"
+package = "pkgre-rust"
+path = "rust"
 cargo-version = "1.95.0"
 ```
 
@@ -253,7 +253,7 @@ For each candidate, the indexer fetches complete sparse history + exact `.crate`
 
 ## Reconciliation
 
-`pkgre-indexer lock registry` handles bootstrap/removal/Git tags; established catalogs require `update-apply` for new mirror identities.
+`pkgre-rust lock registry` handles bootstrap/removal/Git tags; established catalogs require `update-apply` for new mirror identities.
 
 1. Acquire sibling guard `.registry.pkgre-lock`; concurrent/stale guard fails closed.
 2. Load declarations, registry locks, admissions, categories, downloads, and objects; validate complete local invariants.
@@ -270,7 +270,7 @@ Unchanged second reconciliation = exact no-op. A crash can leave guard/staging/b
 
 For each new publish tag, package version/path/tag object/peeled commit are discovered + locked. Current production source contract:
 
-- Tag final component = package version or `v<version>`; e.g. `indexer/v0.4.0`.
+- Tag final component = package version or `v<version>`; e.g. `rust/v0.5.0`.
 - Tagged workspace contains exactly one selected package name; manifest declares exactly `publish = ["pkgre"]`.
 - Every dependency, including optional/dev/build/target-specific, explicitly names `registry = "pkgre"`; path/Git/crates.io/unknown sources fail.
 - Checkout has no submodules, symlinks, special files, unsafe paths, manifest mismatch, or dirty generated changes.
@@ -318,7 +318,7 @@ site/
 Historical schema 2→3:
 
 ```console
-$ pkgre-indexer migrate-v2-to-v3 registry-v2 registry-v3
+$ pkgre-rust migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
 Source must be strict canonical schema-2 `core`/`matrix`/`pkgre`; destination absent. It maps into schema-3 `universe`/`pkgre`, authenticates all rows/objects/hashes, reproduces staging, and never modifies source.
@@ -326,7 +326,7 @@ Source must be strict canonical schema-2 `core`/`matrix`/`pkgre`; destination ab
 Production schema 3→4:
 
 ```console
-$ pkgre-indexer migrate-v3-to-v4 registry-v3 registry-v4
+$ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 ```
 
 Source must be strict canonical schema 3; destination absent. Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; both old registries collapse into root `main`; current direct download endpoints become `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`. It preserves names/package identities/source rows/Git archives/checksums/provenance; recomputes only registry-dependent routed-row hashes; rewrites admission categories/routes + generated admission-lock hashes and rebinds package `admission-sha256`; validates bidirectional coverage; strict-loads/renders/reproduces staging; installs by one rename. Source is never modified. `verify-monotonic` explicitly authenticates the 3→4 mapping.

@@ -1,0 +1,113 @@
+{
+  "schema": "redirect-marker-v1",
+  "cases": [
+    {
+      "name": "rust-crates-io",
+      "file": "rust-crates-io.html",
+      "ecosystem": "rust",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "kind": "crates-io",
+      "destination": "https://static.crates.io/crates/serde/1.0.228/download",
+      "sha256": "cb68d92e4a8cf0a7aabf4893cd2a5a5fa16ccf856411404985405c5c45c47d13"
+    },
+    {
+      "name": "rust-first-party",
+      "file": "rust-first-party.html",
+      "ecosystem": "rust",
+      "route": "/v1/main/pkgre-rust/0.5.0/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      "kind": "first-party",
+      "destination": "https://rust.pkg.re/crates/fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210.crate",
+      "sha256": "17b597086e34fa5ba12477ddfb3dcb8ec192707fe2b241e40f41fb01f3a109b8"
+    },
+    {
+      "name": "js-npmjs",
+      "file": "js-npmjs.html",
+      "ecosystem": "js",
+      "route": "/v1/js/main/00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "kind": "npmjs",
+      "destination": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      "sha256": "5bb48c93973df0561013e7d2ffba80267f1de675c75b9402bb5d45e8e895f922"
+    },
+    {
+      "name": "js-first-party",
+      "file": "js-first-party.html",
+      "ecosystem": "js",
+      "route": "/v1/js/main/ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
+      "kind": "first-party",
+      "destination": "https://js.pkg.re/packages/ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100.tgz",
+      "sha256": "17f96f39c69bb344c160d87db86039c7047d296aaf30e31e15c458a39196e0a3"
+    }
+  ],
+  "hostileCases": [
+    {
+      "name": "unknown-version",
+      "file": "unknown-version.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "malformed-template",
+      "sha256": "04b29321992a932347300b407ce1585bb825d5bf98247acd8748a4a749ce0c05"
+    },
+    {
+      "name": "duplicate-field",
+      "file": "duplicate-field.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "route-mismatch",
+      "sha256": "b75d7514d6e0cf0592798d86e687d24a735772d449979b56583fccf254fdb9fb"
+    },
+    {
+      "name": "unknown-field",
+      "file": "unknown-field.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "invalid-destination",
+      "sha256": "11db72a7afd45ea831006bcea169803650d3aa3f79b09cffb5b55af4d755468a"
+    },
+    {
+      "name": "route-replay",
+      "file": "route-replay.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "route-mismatch",
+      "sha256": "80516706c4d742092fab05560e83b3a9f0385f38b4add3e5699cc3e9c447a81f"
+    },
+    {
+      "name": "destination-host",
+      "file": "destination-host.html",
+      "route": "/v1/js/main/00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "error": "invalid-destination",
+      "sha256": "b641ba29208318946173d3a0469e8addfd8dff84314cbf28dbef7a041a607777"
+    },
+    {
+      "name": "destination-encoded",
+      "file": "destination-encoded.html",
+      "route": "/v1/js/main/00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "error": "invalid-destination",
+      "sha256": "c30687abcdaa10b7147168883092592a4d099e46872feae51e577c879f393316"
+    },
+    {
+      "name": "machine-meta-mismatch",
+      "file": "machine-meta-mismatch.html",
+      "route": "/v1/js/main/00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "error": "malformed-template",
+      "sha256": "85cde2e16c676ae7cd8ead1981cc38914f60fa75eec631c696729f4741cf22da"
+    },
+    {
+      "name": "trailing-bytes",
+      "file": "trailing-bytes.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "malformed-template",
+      "sha256": "c4f8fe1129b2410d25a93fc907c549c769be8b564d44898019ba3e81a7dd144d"
+    },
+    {
+      "name": "non-ascii",
+      "file": "non-ascii.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "non-ascii",
+      "sha256": "d548b759f15e1fbf4661b09bc39c12dc76806dc34ec10df4759de3addf08fffa"
+    },
+    {
+      "name": "oversize",
+      "file": "oversize.html",
+      "route": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "error": "too-large",
+      "sha256": "4e369b5618643c3abddd027b650bfa54810be3b418028a7c9d82299a59d008e8"
+    }
+  ]
+}

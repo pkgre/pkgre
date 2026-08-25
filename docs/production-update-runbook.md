@@ -1,6 +1,6 @@
 # Production mirror-admission runbook
 
-Purpose:execute one live crates.io mirror batch against the schema-4 root `main` registry in `pkgre/rust` with the exact `pkgre-indexer` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
+Purpose:execute one live crates.io mirror batch against the schema-4 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
 
 Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 
@@ -57,10 +57,10 @@ Build the exact workflow pin in the external workspace; obtain Cargo from that r
 ```bash
 TOOL_WORKTREE="$ARTIFACTS/tooling"
 git -C "$TOOL_REPO" worktree add --detach "$TOOL_WORKTREE" "$INDEXER_REV"
-nix build --print-build-logs --out-link "$ARTIFACTS/indexer-result" "$TOOL_WORKTREE#indexer" 2>&1 | tee "$ARTIFACTS/indexer-build.log"
-INDEXER="$ARTIFACTS/indexer-result/bin/pkgre-indexer"
+nix build --print-build-logs --out-link "$ARTIFACTS/indexer-result" "$TOOL_WORKTREE#rust" 2>&1 | tee "$ARTIFACTS/indexer-build.log"
+INDEXER="$ARTIFACTS/indexer-result/bin/pkgre-rust"
 test -x "$INDEXER"
-INDEXER_VERSION="$(nix eval --raw "$TOOL_WORKTREE#indexer.version")"
+INDEXER_VERSION="$(nix eval --raw "$TOOL_WORKTREE#rust.version")"
 INDEXER_SHA256="$(sha256sum "$INDEXER" | cut -d' ' -f1)"
 INDEXER_STORE_PATH="$(realpath "$ARTIFACTS/indexer-result")"
 EXPECTED_CARGO_VERSION="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[[:space:]]*$/\1/p' "$TOOL_WORKTREE/rust-toolchain.toml")"
