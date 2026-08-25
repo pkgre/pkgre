@@ -1,4 +1,4 @@
-//! Curated-registry catalog policy validation.
+//! Strict historical schema-3 policy validation used only by the one-way migration.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
@@ -6,19 +6,19 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 
+use super::v3::{
+    Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, PackageHome, Registry, Source,
+};
 use crate::category::CategoryId;
 use crate::download::router_download_template;
-use crate::schema::{
-    Approval, Catalog, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, PackageHome, Registry, Source,
-};
 
 const CNAME: &str = "rust.pkg.re";
 pub(crate) const CARGO_VERSION: &str = "1.95.0";
-pub(crate) const SCHEMA3_REGISTRIES: [(&str, &str); 2] = [
+pub(crate) const REGISTRIES: [(&str, &str); 2] = [
     ("pkgre", "sparse+https://rust.pkg.re/pkgre/"),
     ("universe", "sparse+https://rust.pkg.re/universe/"),
 ];
-pub(crate) const SCHEMA3_CATEGORY_DEPENDENCIES: [(&str, &[&str]); 9] = [
+pub(crate) const CATEGORY_DEPENDENCIES: [(&str, &[&str]); 9] = [
     ("pkgre/tooling", &["pkgre/tooling", "universe/general"]),
     ("universe/acp", &["universe/acp", "universe/general"]),
     (
@@ -58,9 +58,9 @@ impl Policy {
     }
 }
 
-/// Returns the historical canonical schema-3 category dependency topology.
+/// Returns the compiled canonical category dependency topology.
 pub(crate) fn canonical_category_dependencies() -> BTreeMap<CategoryId, BTreeSet<CategoryId>> {
-    SCHEMA3_CATEGORY_DEPENDENCIES
+    CATEGORY_DEPENDENCIES
         .iter()
         .map(|(category, dependencies)| {
             (
@@ -88,39 +88,44 @@ pub(crate) fn canonical_category_dependencies() -> BTreeMap<CategoryId, BTreeSet
 pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     ensure!(catalog.registries.cname == CNAME, "CNAME must be {CNAME:?}");
     ensure!(
-        catalog.registries.schema == crate::schema::SCHEMA_VERSION,
+        catalog.registries.schema == super::v3::SCHEMA_VERSION,
         "registry topology schema must be {}",
-        crate::schema::SCHEMA_VERSION
+        super::v3::SCHEMA_VERSION
     );
     ensure!(
-        catalog.homes.schema == crate::schema::SCHEMA_VERSION,
+        catalog.homes.schema == super::v3::SCHEMA_VERSION,
         "package-home schema must be {}",
-        crate::schema::SCHEMA_VERSION
+        super::v3::SCHEMA_VERSION
     );
     ensure!(
         catalog.registries.cargo_version.to_string() == CARGO_VERSION,
-        "main cargo-version must be {CARGO_VERSION}"
+        "pkgre cargo-version must be {CARGO_VERSION}"
     );
     ensure!(
-        !catalog.registries.registries.is_empty(),
-        "catalog must declare the main registry"
+        catalog.registries.registries.len() == REGISTRIES.len(),
+        "catalog must declare exactly universe and pkgre registries"
     );
 
+    let expected_registries = REGISTRIES
+        .iter()
+        .map(|(name, index)| ((*name).to_owned(), (*index).to_owned()))
+        .collect::<BTreeMap<_, _>>();
     let mut registry_urls = BTreeMap::new();
     for registry in &catalog.registries.registries {
         validate_registry_alias(&registry.name)?;
-        let expected_index = canonical_registry_index(&registry.name);
+        let expected_index = expected_registries
+            .get(&registry.name)
+            .with_context(|| format!("unexpected registry {:?}", registry.name))?;
         ensure!(
-            registry.index == expected_index,
+            &registry.index == expected_index,
             "registry {:?} index must be {expected_index:?}",
             registry.name
         );
         validate_registry_download(catalog, registry)?;
         ensure!(
-            registry.cargo_version == catalog.registries.cargo_version,
-            "registry {:?} cargo-version must match main cargo-version {}",
-            registry.name,
-            catalog.registries.cargo_version
+            registry.cargo_version.to_string() == CARGO_VERSION,
+            "registry {:?} cargo-version must be {CARGO_VERSION}",
+            registry.name
         );
         ensure!(
             registry_urls
@@ -131,11 +136,11 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
         );
     }
     ensure!(
-        registry_urls.contains_key("main"),
-        "catalog must declare exactly one main registry"
+        registry_urls == expected_registries,
+        "catalog must declare universe and pkgre exactly once"
     );
 
-    ensure!(!catalog.categories.is_empty(), "catalog has no categories");
+    let expected_categories = canonical_category_dependencies();
     let mut category_dependencies = BTreeMap::new();
     for (category, dependencies) in &catalog.categories {
         ensure!(
@@ -153,8 +158,19 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
                 "category {category} may depend on unknown category {dependency}"
             );
         }
+        let expected = expected_categories
+            .get(category)
+            .with_context(|| format!("unexpected category {category}"))?;
+        ensure!(
+            &actual == expected,
+            "category {category} may-depend-on must be {expected:?}"
+        );
         category_dependencies.insert(category.clone(), actual);
     }
+    ensure!(
+        category_dependencies == expected_categories,
+        "catalog must declare the exact canonical category topology"
+    );
 
     validate_homes(catalog, &registry_urls, &category_dependencies)?;
     validate_approvals(catalog, &registry_urls)?;
@@ -165,31 +181,22 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     })
 }
 
-/// Returns the one canonical sparse index URL for a catalog registry identity.
-#[must_use]
-pub fn canonical_registry_index(name: &str) -> String {
-    if name == "main" {
-        "sparse+https://rust.pkg.re/".to_owned()
-    } else {
-        format!("sparse+https://rust.pkg.re/{name}/")
-    }
-}
-
 fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<()> {
-    let has_mirror = catalog.mirror_names.iter().any(|name| {
-        catalog
-            .homes
-            .homes
+    let mut has_mirror = false;
+    let mut has_publish = false;
+    for (name, home) in &catalog.homes.homes {
+        if home.registry != registry.name {
+            continue;
+        }
+        match catalog
+            .name_sources
             .get(name)
-            .is_some_and(|home| home.registry == registry.name)
-    });
-    let has_publish = catalog.publish_names.iter().any(|name| {
-        catalog
-            .homes
-            .homes
-            .get(name)
-            .is_some_and(|home| home.registry == registry.name)
-    });
+            .with_context(|| format!("package {name:?} has no permanent source class"))?
+        {
+            NameSource::Mirror => has_mirror = true,
+            NameSource::Publish => has_publish = true,
+        }
+    }
     let router = router_download_template(&registry.name);
     if registry.download == router {
         return Ok(());
@@ -199,7 +206,9 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
         "registry {:?} mixes mirror and publish sources and therefore requires download {router:?}",
         registry.name
     );
-    let expected = if has_publish {
+    let expected = if has_mirror {
+        MIRROR_DOWNLOAD
+    } else if has_publish || registry.name == "pkgre" {
         PUBLISH_DOWNLOAD
     } else {
         MIRROR_DOWNLOAD
@@ -224,6 +233,10 @@ fn validate_homes(
             .with_context(|| format!("invalid package home name {package:?}"))?;
         validate_package_home(package, home, registry_urls, categories)?;
         inhabited_categories.insert(home.category.clone());
+        catalog
+            .name_sources
+            .get(package)
+            .with_context(|| format!("package {package:?} has no permanent source class"))?;
         let key = package_collision_key(package);
         if let Some(previous) = collision_keys.insert(key, package) {
             ensure!(
@@ -239,18 +252,14 @@ fn validate_homes(
                 .all(|category| inhabited_categories.contains(category)),
         "every category must reserve at least one package name"
     );
-    for name in catalog.mirror_names.union(&catalog.publish_names) {
-        ensure!(
-            catalog.homes.homes.contains_key(name),
-            "source declaration for package {name:?} has no package home"
-        );
-    }
-    for package in catalog.homes.homes.keys() {
-        ensure!(
-            catalog.mirror_names.contains(package) || catalog.publish_names.contains(package),
-            "package {package:?} has no retained mirror or publish source declaration"
-        );
-    }
+    ensure!(
+        catalog.name_sources.len() == catalog.homes.homes.len()
+            && catalog
+                .name_sources
+                .keys()
+                .all(|name| catalog.homes.homes.contains_key(name)),
+        "permanent source classes differ from package homes"
+    );
     Ok(())
 }
 
@@ -345,13 +354,13 @@ fn validate_approval(
         )
     })?;
 
-    let source_declared = match &approval.source {
-        Source::CratesIo => catalog.mirror_names.contains(&approval.name),
-        Source::GitTag { .. } => catalog.publish_names.contains(&approval.name),
+    let expected_name_source = match &approval.source {
+        Source::CratesIo => NameSource::Mirror,
+        Source::GitTag { .. } => NameSource::Publish,
     };
     ensure!(
-        source_declared,
-        "approval source for {} {} has no retained matching source declaration",
+        catalog.name_sources.get(&approval.name) == Some(&expected_name_source),
+        "approval source for {} {} differs from its permanent name source class",
         approval.name,
         approval.version
     );
@@ -378,7 +387,7 @@ fn validate_approval(
             validate_relative_path(subdir, true)
                 .with_context(|| format!("invalid package subdirectory {}", subdir.display()))?;
             ensure!(
-                cargo_version == &catalog.registries.cargo_version,
+                cargo_version.to_string() == CARGO_VERSION,
                 "Git publication {} {} used unsupported Cargo {}",
                 approval.name,
                 approval.version,
@@ -562,227 +571,4 @@ fn version_identity(version: &Version) -> (u64, u64, u64, String) {
         version.patch,
         version.pre.to_string(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::schema::{HomesFile, PackageState, RegistriesFile};
-
-    #[test]
-    fn package_names_are_strict_and_collision_key_matches_cargo() {
-        validate_package_name("serde-json_2").unwrap();
-        assert!(validate_package_name("-serde").is_err());
-        assert!(validate_package_name("sérde").is_err());
-        assert_eq!(
-            package_collision_key("Serde-JSON"),
-            package_collision_key("serde_json")
-        );
-    }
-
-    #[test]
-    fn digest_requires_canonical_lowercase_sha256() {
-        validate_sha256(&"01".repeat(32)).unwrap();
-        assert!(validate_sha256(&"AB".repeat(32)).is_err());
-        assert!(validate_sha256("00").is_err());
-    }
-
-    #[test]
-    fn relative_paths_reject_traversal_and_git_metadata() {
-        validate_relative_path(Path::new("objects/rows/serde.json"), false).unwrap();
-        validate_relative_path(Path::new("."), true).unwrap();
-        assert!(validate_relative_path(Path::new("../secret"), false).is_err());
-        assert!(validate_relative_path(Path::new("repo/.git/config"), false).is_err());
-    }
-
-    fn valid_catalog() -> Catalog {
-        let categories = BTreeMap::from([
-            (
-                "main/general".parse().unwrap(),
-                vec!["main/general".parse().unwrap()],
-            ),
-            (
-                "main/pkgre".parse().unwrap(),
-                vec![
-                    "main/general".parse().unwrap(),
-                    "main/pkgre".parse().unwrap(),
-                ],
-            ),
-        ]);
-        let homes = BTreeMap::from([
-            (
-                "mirror-crate".to_owned(),
-                PackageHome {
-                    registry: "main".to_owned(),
-                    category: "main/general".parse().unwrap(),
-                },
-            ),
-            (
-                "pkgre-indexer".to_owned(),
-                PackageHome {
-                    registry: "main".to_owned(),
-                    category: "main/pkgre".parse().unwrap(),
-                },
-            ),
-        ]);
-        Catalog {
-            root: Path::new("catalog").to_path_buf(),
-            registries: RegistriesFile {
-                schema: crate::schema::SCHEMA_VERSION,
-                cname: CNAME.to_owned(),
-                cargo_version: Version::parse(CARGO_VERSION).unwrap(),
-                registries: vec![Registry {
-                    name: "main".to_owned(),
-                    index: canonical_registry_index("main"),
-                    download: router_download_template("main"),
-                    cargo_version: Version::parse(CARGO_VERSION).unwrap(),
-                }],
-            },
-            categories,
-            homes: HomesFile {
-                schema: crate::schema::SCHEMA_VERSION,
-                homes,
-            },
-            mirror_names: BTreeSet::from(["mirror-crate".to_owned()]),
-            publish_names: BTreeSet::from(["pkgre-indexer".to_owned()]),
-            approvals: vec![Approval {
-                registry: "main".to_owned(),
-                category: "main/pkgre".parse().unwrap(),
-                name: "pkgre-indexer".to_owned(),
-                version: Version::parse("0.1.0").unwrap(),
-                archive_sha256: "01".repeat(32),
-                index_record_sha256: "02".repeat(32),
-                index_row_sha256: "03".repeat(32),
-                admission_sha256: None,
-                state: PackageState::Active,
-                source: Source::GitTag {
-                    repository: "https://github.com/pkgre/pkgre".to_owned(),
-                    tag: "indexer/v0.1.0".to_owned(),
-                    tag_oid: "04".repeat(20),
-                    commit: "05".repeat(20),
-                    package: "pkgre-indexer".to_owned(),
-                    subdir: Path::new("indexer").to_path_buf(),
-                    cargo_version: Version::parse(CARGO_VERSION).unwrap(),
-                },
-                declared_in: Path::new("main.lock").to_path_buf(),
-            }],
-        }
-    }
-
-    #[test]
-    fn declared_topology_and_category_policy_are_enforced() {
-        let policy = validate_catalog(&valid_catalog()).unwrap();
-        assert!(policy.permits_dependency(
-            &"main/pkgre".parse().unwrap(),
-            &"main/general".parse().unwrap()
-        ));
-        assert!(!policy.permits_dependency(
-            &"main/general".parse().unwrap(),
-            &"main/pkgre".parse().unwrap()
-        ));
-
-        let mut unknown = valid_catalog();
-        unknown
-            .categories
-            .get_mut(&"main/general".parse().unwrap())
-            .unwrap()
-            .push("main/missing".parse().unwrap());
-        assert!(validate_catalog(&unknown).is_err());
-    }
-
-    #[test]
-    fn source_specific_registries_require_matching_downloads() {
-        let mut mirror_only = valid_catalog();
-        mirror_only.publish_names.clear();
-        mirror_only.homes.homes.remove("pkgre-indexer");
-        mirror_only.approvals.clear();
-        mirror_only
-            .categories
-            .remove(&"main/pkgre".parse().unwrap());
-        mirror_only.registries.registries[0].download = PUBLISH_DOWNLOAD.to_owned();
-        let error = validate_catalog(&mirror_only).unwrap_err();
-        assert!(format!("{error:#}").contains("for its source class"));
-
-        let mut publish_only = valid_catalog();
-        publish_only.mirror_names.clear();
-        publish_only.homes.homes.remove("mirror-crate");
-        publish_only
-            .categories
-            .remove(&"main/general".parse().unwrap());
-        publish_only
-            .categories
-            .get_mut(&"main/pkgre".parse().unwrap())
-            .unwrap()
-            .retain(|category| category == &"main/pkgre".parse().unwrap());
-        publish_only.registries.registries[0].download = MIRROR_DOWNLOAD.to_owned();
-        let error = validate_catalog(&publish_only).unwrap_err();
-        assert!(format!("{error:#}").contains("for its source class"));
-    }
-
-    #[test]
-    fn mixed_source_registry_requires_its_exact_router_template() {
-        let mut catalog = valid_catalog();
-        catalog.registries.registries[0].download = MIRROR_DOWNLOAD.to_owned();
-        let error = validate_catalog(&catalog).unwrap_err();
-        assert!(format!("{error:#}").contains("requires download"));
-
-        catalog.registries.registries[0].download = router_download_template("other");
-        let error = validate_catalog(&catalog).unwrap_err();
-        assert!(format!("{error:#}").contains("requires download"));
-
-        catalog.registries.registries[0].download = router_download_template("main");
-        validate_catalog(&catalog).unwrap();
-    }
-
-    #[test]
-    fn future_subregistry_uses_its_canonical_path() {
-        let mut catalog = valid_catalog();
-        catalog.registries.registries.push(Registry {
-            name: "staging".to_owned(),
-            index: canonical_registry_index("staging"),
-            download: MIRROR_DOWNLOAD.to_owned(),
-            cargo_version: Version::parse(CARGO_VERSION).unwrap(),
-        });
-        catalog.categories.insert(
-            "staging/general".parse().unwrap(),
-            vec!["staging/general".parse().unwrap()],
-        );
-        catalog.homes.homes.insert(
-            "staging-anchor".to_owned(),
-            PackageHome {
-                registry: "staging".to_owned(),
-                category: "staging/general".parse().unwrap(),
-            },
-        );
-        catalog.mirror_names.insert("staging-anchor".to_owned());
-        validate_catalog(&catalog).unwrap();
-
-        catalog.registries.registries[1].index = "sparse+https://rust.pkg.re/other/".to_owned();
-        assert!(validate_catalog(&catalog).is_err());
-    }
-
-    #[test]
-    fn source_declarations_and_package_homes_have_exact_inventory() {
-        let mut missing = valid_catalog();
-        missing.publish_names.remove("pkgre-indexer");
-        let error = validate_catalog(&missing).unwrap_err();
-        assert!(format!("{error:#}").contains("has no retained mirror or publish"));
-
-        let mut orphan = valid_catalog();
-        orphan.mirror_names.insert("orphan".to_owned());
-        let error = validate_catalog(&orphan).unwrap_err();
-        assert!(format!("{error:#}").contains("has no package home"));
-
-        let mut mixed_name = valid_catalog();
-        mixed_name.mirror_names.insert("pkgre-indexer".to_owned());
-        validate_catalog(&mixed_name).unwrap();
-    }
-
-    #[test]
-    fn tags_and_object_ids_are_unambiguous() {
-        validate_git_tag("indexer/v0.1.0").unwrap();
-        assert!(validate_git_tag("--upload-pack=x").is_err());
-        validate_git_object_id(&"01".repeat(20)).unwrap();
-        assert!(validate_git_object_id(&"AB".repeat(20)).is_err());
-    }
 }

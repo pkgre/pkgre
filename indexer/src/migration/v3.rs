@@ -1,4 +1,4 @@
-//! Declarative registry schema, generated lock schema, and catalog loading.
+//! Strict historical schema-3 catalog loader used only by the one-way migration.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -10,12 +10,10 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::category::CategoryId;
-use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
+use crate::download::{DOWNLOAD_CATALOG_FILE, router_download_template};
 
 /// Supported human registry and generated lock schema version.
-pub const SCHEMA_VERSION: u32 = 4;
-/// Stable deployed release-manifest wire schema.
-pub const RELEASE_SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 3;
 /// Cargo download base for registries backed by crates.io archives.
 pub const MIRROR_DOWNLOAD: &str = "https://static.crates.io/crates";
 /// Cargo download template for registries backed by retained Git-tag archives.
@@ -33,10 +31,8 @@ pub struct Catalog {
     pub categories: BTreeMap<CategoryId, Vec<CategoryId>>,
     /// Package-name routing and category table derived from human declarations.
     pub homes: HomesFile,
-    /// Package names with a crates.io mirror declaration.
-    pub mirror_names: BTreeSet<String>,
-    /// Package names with a Git publication declaration.
-    pub publish_names: BTreeSet<String>,
+    /// Permanent source class for every reserved package name.
+    pub name_sources: BTreeMap<String, NameSource>,
     /// Every active or removed package identity retained by generated locks.
     pub approvals: Vec<Approval>,
 }
@@ -151,8 +147,6 @@ struct CategoryFile {
 pub struct RegistryInput {
     /// Human file path.
     pub path: PathBuf,
-    /// External category files referenced by the human file.
-    pub category_paths: Vec<PathBuf>,
     /// Generated lock path.
     pub lock_path: PathBuf,
     /// Parsed and expanded human declaration.
@@ -169,7 +163,7 @@ pub struct RegistryLock {
     pub schema: u32,
     /// Immutable registry identity copied from the human file.
     pub registry: LockedRegistry,
-    /// Permanent package-name category homes.
+    /// Permanent package-name homes and source classes.
     #[serde(default)]
     pub names: Vec<LockedName>,
     /// Permanent active or removed package identities.
@@ -199,7 +193,7 @@ pub enum NameSource {
     Publish,
 }
 
-/// Permanent package-name category anchor.
+/// Permanent package-name category and source-class anchor.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockedName {
@@ -207,6 +201,8 @@ pub struct LockedName {
     pub name: String,
     /// Registry-local category identity.
     pub category: String,
+    /// Mirrored or first-party-published source class.
+    pub source: NameSource,
 }
 
 /// Lifecycle state of one locked package identity.
@@ -314,14 +310,6 @@ pub struct Approval {
     pub declared_in: PathBuf,
 }
 
-impl Approval {
-    /// Returns whether this package identity has been removed from desired state.
-    #[must_use]
-    pub fn is_removed(&self) -> bool {
-        self.state == PackageState::Removed
-    }
-}
-
 /// Immutable origin of a locked package archive and source index row.
 #[derive(Clone, Debug)]
 pub enum Source {
@@ -349,20 +337,13 @@ pub enum Source {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DesiredName {
     category: String,
+    source: NameSource,
 }
 
 impl RegistryFile {
     /// Iterates every category in canonical local-name order.
     pub fn category_values(&self) -> impl Iterator<Item = &CategoryDeclaration> {
         self.categories.values()
-    }
-
-    /// Finds the declaration for a mirrored package name.
-    #[must_use]
-    pub fn mirror_declaration(&self, name: &str) -> Option<&Vec<Version>> {
-        self.categories
-            .values()
-            .find_map(|category| category.mirror.get(name))
     }
 
     /// Finds the declaration for a published package name.
@@ -389,9 +370,6 @@ impl Catalog {
             validate_input_strict(input)?;
         }
         let catalog = catalog_from_inputs(root, &inputs)?;
-        crate::update::validate_admission_inventory(&catalog)?;
-        let downloads = DownloadCatalog::load_from_root(root)?;
-        downloads.validate_against_catalog(&catalog)?;
         Ok(catalog)
     }
 }
@@ -460,7 +438,6 @@ pub fn load_registry_inputs(root: &Path) -> Result<Vec<RegistryInput>> {
         };
         inputs.push(RegistryInput {
             path: path.clone(),
-            category_paths,
             lock_path,
             file,
             lock,
@@ -726,28 +703,13 @@ pub fn serialize_lock(lock: &RegistryLock) -> Result<Vec<u8>> {
     Ok(text.into_bytes())
 }
 
-/// Constructs an empty generated lock for one human registry file.
-#[must_use]
-pub fn empty_lock(file: &RegistryFile) -> RegistryLock {
-    RegistryLock {
-        schema: SCHEMA_VERSION,
-        registry: LockedRegistry {
-            name: file.registry.name.clone(),
-            index: file.registry.index.clone(),
-            download: file.registry.download.clone(),
-        },
-        names: Vec::new(),
-        packages: Vec::new(),
-    }
-}
-
 /// Validates every immutable old-lock anchor while allowing desired additions and removals.
 ///
 /// This check is intended to run before any network operation.
 ///
 /// # Errors
 ///
-/// Returns an error for a missing lock invariant, changed registry/category/name anchor, duplicate identity, or attempted tombstone reactivation.
+/// Returns an error for a missing lock invariant, changed registry/category/name/source anchor, duplicate identity, or attempted tombstone reactivation.
 pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
     let Some(lock) = &input.lock else {
         return Ok(());
@@ -791,6 +753,7 @@ fn validate_locked_names(
     for name in &lock.names {
         let locked = DesiredName {
             category: name.category.clone(),
+            source: name.source,
         };
         ensure!(
             locked_names
@@ -802,7 +765,7 @@ fn validate_locked_names(
         );
         ensure!(
             desired_names.get(&name.name) == Some(&locked),
-            "locked package name {:?} was removed or changed category in {}; retain the key in its original category with an empty version/tag list",
+            "locked package name {:?} was removed or changed category/source class in {}; retain the key in its original category with an empty version/tag list",
             name.name,
             input.path.display()
         );
@@ -851,13 +814,12 @@ fn validate_locked_source<'a>(
     match &package.source {
         LockedSource::CratesIo {} => {
             ensure!(
-                input.file.mirror_declaration(&package.name).is_some(),
-                "locked crates.io package {} has no retained mirror declaration in category {}",
-                package.name,
-                anchor.category
+                anchor.source == NameSource::Mirror,
+                "locked crates.io package {} has non-mirror name anchor",
+                package.name
             );
             if let Some(binding) = &package.admission_sha256 {
-                crate::policy::validate_sha256(binding).with_context(|| {
+                super::v3_policy::validate_sha256(binding).with_context(|| {
                     format!(
                         "invalid update-admission binding for {} {}",
                         package.name, package.version
@@ -874,6 +836,11 @@ fn validate_locked_source<'a>(
             ensure!(
                 package.admission_sha256.is_none(),
                 "locked Git package {} unexpectedly has update-admission evidence",
+                package.name
+            );
+            ensure!(
+                anchor.source == NameSource::Publish,
+                "locked Git package {} has non-publish name anchor",
                 package.name
             );
             ensure!(
@@ -965,11 +932,11 @@ fn validate_input_strict(input: &RegistryInput) -> Result<()> {
     let locked_names = lock
         .names
         .iter()
-        .map(|name| (name.name.as_str(), name.category.as_str()))
+        .map(|name| (name.name.as_str(), (name.category.as_str(), name.source)))
         .collect::<BTreeMap<_, _>>();
     let desired_names_borrowed = desired_names
         .iter()
-        .map(|(name, anchor)| (name.as_str(), anchor.category.as_str()))
+        .map(|(name, anchor)| (name.as_str(), (anchor.category.as_str(), anchor.source)))
         .collect::<BTreeMap<_, _>>();
     ensure!(
         desired_names_borrowed == locked_names,
@@ -1036,8 +1003,7 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
     ensure!(!inputs.is_empty(), "catalog has no registry declarations");
     let mut categories = BTreeMap::new();
     let mut homes = BTreeMap::new();
-    let mut mirror_names = BTreeSet::new();
-    let mut publish_names = BTreeSet::new();
+    let mut name_sources = BTreeMap::new();
     let mut approvals = Vec::new();
     let mut registries = Vec::new();
     for input in inputs {
@@ -1054,8 +1020,6 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
                 "duplicate category {}",
                 category.id
             );
-            mirror_names.extend(category.mirror.keys().cloned());
-            publish_names.extend(category.publish.keys().cloned());
         }
         for (name, anchor) in desired_names(&input.file)? {
             let category = CategoryId::new(&input.file.registry.name, &anchor.category)
@@ -1071,6 +1035,10 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
                     )
                     .is_none(),
                 "package {name:?} is declared in more than one category or registry"
+            );
+            ensure!(
+                name_sources.insert(name.clone(), anchor.source).is_none(),
+                "package {name:?} has more than one source class"
             );
         }
         let locked_categories = lock
@@ -1107,8 +1075,8 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
     sort_approvals(&mut approvals);
     let cargo_version = registries
         .iter()
-        .find(|registry| registry.name == "main")
-        .context("catalog has no main registry")?
+        .find(|registry| registry.name == "pkgre")
+        .context("catalog has no pkgre registry")?
         .cargo_version
         .clone();
     Ok(Catalog {
@@ -1124,8 +1092,7 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
             schema: SCHEMA_VERSION,
             homes,
         },
-        mirror_names,
-        publish_names,
+        name_sources,
         approvals,
     })
 }
@@ -1150,8 +1117,8 @@ fn sort_approvals(approvals: &mut [Approval]) {
 }
 
 fn validate_human_package_sets(file: &RegistryFile, path: &Path) -> Result<()> {
-    let mut all_names = BTreeMap::<&str, &str>::new();
-    for (local, category) in &file.categories {
+    let mut all_names = BTreeSet::new();
+    for category in file.category_values() {
         ensure!(
             !(category.mirror.is_empty() && category.publish.is_empty()),
             "category {} in {} must reserve at least one package name",
@@ -1165,14 +1132,19 @@ fn validate_human_package_sets(file: &RegistryFile, path: &Path) -> Result<()> {
             category.id,
             category.declared_in.display()
         );
+        for name in category.mirror.keys() {
+            ensure!(
+                !category.publish.contains_key(name),
+                "package {name:?} appears in both mirror and publish tables in {}",
+                category.declared_in.display()
+            );
+        }
         for (name, versions) in &category.mirror {
-            if let Some(previous) = all_names.insert(name, local) {
-                ensure!(
-                    previous == local && category.publish.contains_key(name),
-                    "package {name:?} appears in more than one category in {}",
-                    path.display()
-                );
-            }
+            ensure!(
+                all_names.insert(name),
+                "package {name:?} appears in more than one category in {}",
+                path.display()
+            );
             let mut identities = BTreeSet::new();
             for version in versions {
                 ensure!(
@@ -1183,13 +1155,11 @@ fn validate_human_package_sets(file: &RegistryFile, path: &Path) -> Result<()> {
             }
         }
         for (name, declaration) in &category.publish {
-            if let Some(previous) = all_names.insert(name, local) {
-                ensure!(
-                    previous == local && category.mirror.contains_key(name),
-                    "package {name:?} appears in more than one category in {}",
-                    path.display()
-                );
-            }
+            ensure!(
+                all_names.insert(name),
+                "package {name:?} appears in more than one category in {}",
+                path.display()
+            );
             let mut tags = BTreeSet::new();
             for tag in &declaration.tags {
                 ensure!(
@@ -1204,23 +1174,35 @@ fn validate_human_package_sets(file: &RegistryFile, path: &Path) -> Result<()> {
 }
 
 fn desired_names(file: &RegistryFile) -> Result<BTreeMap<String, DesiredName>> {
-    let mut names = BTreeMap::<String, DesiredName>::new();
+    let mut names = BTreeMap::new();
     for (local, category) in &file.categories {
-        for name in category.mirror.keys().chain(category.publish.keys()) {
-            match names.get(name) {
-                Some(anchor) => ensure!(
-                    anchor.category == *local,
-                    "package {name:?} appears in more than one category"
-                ),
-                None => {
-                    names.insert(
+        for name in category.mirror.keys() {
+            ensure!(
+                names
+                    .insert(
                         name.clone(),
                         DesiredName {
                             category: local.clone(),
+                            source: NameSource::Mirror,
                         },
-                    );
-                }
-            }
+                    )
+                    .is_none(),
+                "duplicate package {name:?}"
+            );
+        }
+        for name in category.publish.keys() {
+            ensure!(
+                names
+                    .insert(
+                        name.clone(),
+                        DesiredName {
+                            category: local.clone(),
+                            source: NameSource::Publish,
+                        },
+                    )
+                    .is_none(),
+                "duplicate package {name:?}"
+            );
         }
     }
     Ok(names)
@@ -1279,206 +1261,4 @@ pub(crate) fn version_identity(version: &Version) -> (u64, u64, u64, String) {
         version.patch,
         version.pre.to_string(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    #[test]
-    fn lock_source_rejects_unknown_fields() {
-        let result = toml::from_str::<LockedSource>(
-            r#"
-kind = "crates-io"
-surprise = true
-"#,
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn inline_category_uses_compact_package_maps() {
-        let raw: RawRegistryFile = toml::from_str(
-            r#"
-schema = 4
-
-[registry]
-name = "main"
-index = "sparse+https://rust.pkg.re/"
-download = "https://static.crates.io/crates"
-cargo-version = "1.95.0"
-
-[categories.general]
-may-depend-on = ["main/general"]
-
-[categories.general.mirror]
-serde = ["1.0.229"]
-reserved = []
-"#,
-        )
-        .unwrap();
-        let root = temporary_root("inline-category");
-        let path = root.join("main.toml");
-        fs::write(&path, "").unwrap();
-        let (file, paths) = expand_registry_file(&root, &path, raw).unwrap();
-        assert!(paths.is_empty());
-        let general = &file.categories["general"];
-        assert_eq!(
-            general.mirror["serde"],
-            [Version::parse("1.0.229").unwrap()]
-        );
-        assert!(general.mirror["reserved"].is_empty());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn inline_and_external_categories_expand_identically() {
-        let inline_root = temporary_root("inline-equivalence");
-        fs::write(
-            inline_root.join("main.toml"),
-            registry_text(
-                "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n",
-            ),
-        )
-        .unwrap();
-        let external_root = temporary_root("external-equivalence");
-        fs::create_dir_all(external_root.join("categories/main")).unwrap();
-        fs::write(
-            external_root.join("main.toml"),
-            registry_text("[categories.general]\nfile = \"categories/main/general.toml\"\n"),
-        )
-        .unwrap();
-        fs::write(
-            external_root.join("categories/main/general.toml"),
-            "schema = 4\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n",
-        )
-        .unwrap();
-        let inline = load_registry_inputs(&inline_root).unwrap();
-        let external = load_registry_inputs(&external_root).unwrap();
-        let mut inline_file = inline[0].file.clone();
-        let mut external_file = external[0].file.clone();
-        inline_file
-            .categories
-            .get_mut("general")
-            .unwrap()
-            .declared_in = PathBuf::new();
-        external_file
-            .categories
-            .get_mut("general")
-            .unwrap()
-            .declared_in = PathBuf::new();
-        assert_eq!(inline_file, external_file);
-        fs::remove_dir_all(inline_root).unwrap();
-        fs::remove_dir_all(external_root).unwrap();
-    }
-
-    #[test]
-    fn external_categories_require_canonical_paths_and_exact_inventory() {
-        let root = temporary_root("external-inventory");
-        fs::create_dir_all(root.join("categories/main")).unwrap();
-        fs::write(
-            root.join("main.toml"),
-            registry_text(
-                "[categories.general]\nfile = \"categories/main/../main/general.toml\"\n",
-            ),
-        )
-        .unwrap();
-        fs::write(
-            root.join("categories/main/general.toml"),
-            "schema = 4\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [] }\n",
-        )
-        .unwrap();
-        assert!(
-            load_registry_inputs(&root)
-                .unwrap_err()
-                .to_string()
-                .contains("exact canonical path")
-        );
-
-        fs::write(
-            root.join("main.toml"),
-            registry_text("[categories.general]\nfile = \"categories/main/general.toml\"\n"),
-        )
-        .unwrap();
-        fs::write(
-            root.join("categories/main/orphan.toml"),
-            "schema = 4\nmay-depend-on = [\"main/general\"]\nmirror = { orphan = [] }\n",
-        )
-        .unwrap();
-        assert!(
-            load_registry_inputs(&root)
-                .unwrap_err()
-                .to_string()
-                .contains("inventory differs")
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn external_category_symlinks_are_rejected() {
-        let root = temporary_root("external-symlink");
-        fs::create_dir_all(root.join("categories/main")).unwrap();
-        fs::write(
-            root.join("main.toml"),
-            registry_text("[categories.general]\nfile = \"categories/main/general.toml\"\n"),
-        )
-        .unwrap();
-        let target = root.with_extension("category-body");
-        fs::write(&target, "schema = 4\n").unwrap();
-        std::os::unix::fs::symlink(&target, root.join("categories/main/general.toml")).unwrap();
-        let error = load_registry_inputs(&root).unwrap_err();
-        assert!(format!("{error:#}").contains("not a regular file"));
-        fs::remove_dir_all(root).unwrap();
-        fs::remove_file(target).unwrap();
-    }
-
-    #[test]
-    fn lock_serialization_is_sorted_and_stable() {
-        let mut lock = RegistryLock {
-            schema: SCHEMA_VERSION,
-            registry: LockedRegistry {
-                name: "main".to_owned(),
-                index: "sparse+https://rust.pkg.re/".to_owned(),
-                download: MIRROR_DOWNLOAD.to_owned(),
-            },
-            names: vec![
-                LockedName {
-                    name: "z".to_owned(),
-                    category: "general".to_owned(),
-                },
-                LockedName {
-                    name: "a".to_owned(),
-                    category: "general".to_owned(),
-                },
-            ],
-            packages: Vec::new(),
-        };
-        let first = serialize_lock(&lock).unwrap();
-        lock.names.reverse();
-        assert_eq!(first, serialize_lock(&lock).unwrap());
-        let text = String::from_utf8(first).unwrap();
-        assert!(text.find("name = \"a\"").unwrap() < text.find("name = \"z\"").unwrap());
-    }
-
-    fn registry_text(categories: &str) -> String {
-        format!(
-            "schema = 4\n\n[registry]\nname = \"main\"\nindex = \"sparse+https://rust.pkg.re/\"\ndownload = \"{MIRROR_DOWNLOAD}\"\ncargo-version = \"1.95.0\"\n\n{categories}"
-        )
-    }
-
-    fn temporary_root(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "pkgre-schema-{name}-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir(&path).unwrap();
-        path
-    }
 }

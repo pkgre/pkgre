@@ -256,23 +256,23 @@ mod tests {
         let root = temporary_directory("inline");
         let input = concat!(
             "# keep-root\n",
-            "schema = 3\n\n",
+            "schema = 4\n\n",
             "[registry]\n",
-            "name = \"universe\"\n",
-            "index = \"sparse+https://rust.pkg.re/universe/\"\n",
+            "name = \"main\"\n",
+            "index = \"sparse+https://rust.pkg.re/\"\n",
             "download = \"https://static.crates.io/crates\"\n",
             "cargo-version = \"1.95.0\"\n\n",
             "[categories.general]\n",
-            "may-depend-on = [\"universe/general\"]\n\n",
+            "may-depend-on = [\"main/general\"]\n\n",
             "[categories.general.mirror]\n",
             "# keep-package\n",
             "demo = [\"1.0.0\", \"1.2.0\"] # keep-tail\n",
         );
-        fs::write(root.join("universe.toml"), input).unwrap();
+        fs::write(root.join("main.toml"), input).unwrap();
 
         append_mirror_version(&root, &candidate("1.1.0")).unwrap();
 
-        let output = fs::read_to_string(root.join("universe.toml")).unwrap();
+        let output = fs::read_to_string(root.join("main.toml")).unwrap();
         assert_eq!(
             output,
             input.replace(
@@ -286,35 +286,35 @@ mod tests {
     #[test]
     fn external_edit_changes_only_referenced_category_file() {
         let root = temporary_directory("external");
-        fs::create_dir_all(root.join("categories/universe")).unwrap();
+        fs::create_dir_all(root.join("categories/main")).unwrap();
         let registry = concat!(
-            "schema = 3\n\n",
+            "schema = 4\n\n",
             "[registry]\n",
-            "name = \"universe\"\n",
-            "index = \"sparse+https://rust.pkg.re/universe/\"\n",
+            "name = \"main\"\n",
+            "index = \"sparse+https://rust.pkg.re/\"\n",
             "download = \"https://static.crates.io/crates\"\n",
             "cargo-version = \"1.95.0\"\n\n",
             "[categories.general]\n",
-            "file = \"categories/universe/general.toml\"\n",
+            "file = \"categories/main/general.toml\"\n",
         );
         let category = concat!(
-            "schema = 3\n",
-            "may-depend-on = [\"universe/general\"]\n\n",
+            "schema = 4\n",
+            "may-depend-on = [\"main/general\"]\n\n",
             "[mirror]\n",
             "# retained\n",
             "demo = [\"1.0.0\"]\n",
         );
-        fs::write(root.join("universe.toml"), registry).unwrap();
-        fs::write(root.join("categories/universe/general.toml"), category).unwrap();
+        fs::write(root.join("main.toml"), registry).unwrap();
+        fs::write(root.join("categories/main/general.toml"), category).unwrap();
 
         append_mirror_version(&root, &candidate("1.1.0")).unwrap();
 
         assert_eq!(
-            fs::read_to_string(root.join("universe.toml")).unwrap(),
+            fs::read_to_string(root.join("main.toml")).unwrap(),
             registry
         );
         assert_eq!(
-            fs::read_to_string(root.join("categories/universe/general.toml")).unwrap(),
+            fs::read_to_string(root.join("categories/main/general.toml")).unwrap(),
             category.replace("demo = [\"1.0.0\"]", "demo = [\"1.0.0\", \"1.1.0\"]")
         );
         fs::remove_dir_all(root).unwrap();
@@ -323,32 +323,14 @@ mod tests {
     #[test]
     fn invalid_route_identity_and_order_leave_declaration_unchanged() {
         let cases = [
-            (
-                "wrong-registry",
-                "pkgre",
-                "universe/general",
-                "demo",
-                "1.1.0",
-            ),
-            (
-                "wrong-category",
-                "universe",
-                "universe/other",
-                "demo",
-                "1.1.0",
-            ),
-            (
-                "wrong-package",
-                "universe",
-                "universe/general",
-                "other",
-                "1.1.0",
-            ),
-            ("duplicate", "universe", "universe/general", "demo", "1.0.0"),
+            ("wrong-registry", "pkgre", "main/general", "demo", "1.1.0"),
+            ("wrong-category", "main", "universe/other", "demo", "1.1.0"),
+            ("wrong-package", "main", "main/general", "other", "1.1.0"),
+            ("duplicate", "main", "main/general", "demo", "1.0.0"),
             (
                 "build-duplicate",
-                "universe",
-                "universe/general",
+                "main",
+                "main/general",
                 "demo",
                 "1.0.0+other",
             ),
@@ -356,27 +338,21 @@ mod tests {
         for (label, registry, category, name, version) in cases {
             let root = temporary_directory(label);
             let input = inline_registry("[\"1.0.0+source\", \"1.2.0\"]");
-            fs::write(root.join("universe.toml"), &input).unwrap();
+            fs::write(root.join("main.toml"), &input).unwrap();
             let mut candidate = candidate(version);
             candidate.registry = registry.to_owned();
             candidate.category = category.to_owned();
             candidate.name = name.to_owned();
             assert!(append_mirror_version(&root, &candidate).is_err(), "{label}");
-            assert_eq!(
-                fs::read_to_string(root.join("universe.toml")).unwrap(),
-                input
-            );
+            assert_eq!(fs::read_to_string(root.join("main.toml")).unwrap(), input);
             fs::remove_dir_all(root).unwrap();
         }
 
         let root = temporary_directory("order");
         let input = inline_registry("[\"1.2.0\", \"1.0.0\"]");
-        fs::write(root.join("universe.toml"), &input).unwrap();
+        fs::write(root.join("main.toml"), &input).unwrap();
         assert!(append_mirror_version(&root, &candidate("1.1.0")).is_err());
-        assert_eq!(
-            fs::read_to_string(root.join("universe.toml")).unwrap(),
-            input
-        );
+        assert_eq!(fs::read_to_string(root.join("main.toml")).unwrap(), input);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -386,31 +362,31 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let root = temporary_directory("symlink");
-        fs::create_dir_all(root.join("categories/universe")).unwrap();
+        fs::create_dir_all(root.join("categories/main")).unwrap();
         fs::write(
-            root.join("universe.toml"),
+            root.join("main.toml"),
             concat!(
-                "schema = 3\n\n",
+                "schema = 4\n\n",
                 "[registry]\n",
-                "name = \"universe\"\n",
-                "index = \"sparse+https://rust.pkg.re/universe/\"\n",
+                "name = \"main\"\n",
+                "index = \"sparse+https://rust.pkg.re/\"\n",
                 "download = \"https://static.crates.io/crates\"\n",
                 "cargo-version = \"1.95.0\"\n\n",
                 "[categories.general]\n",
-                "file = \"categories/universe/general.toml\"\n",
+                "file = \"categories/main/general.toml\"\n",
             ),
         )
         .unwrap();
         let category = concat!(
-            "schema = 3\n",
-            "may-depend-on = [\"universe/general\"]\n\n",
+            "schema = 4\n",
+            "may-depend-on = [\"main/general\"]\n\n",
             "[mirror]\n",
             "demo = [\"1.0.0\"]\n",
         );
         fs::write(root.join("target.toml"), category).unwrap();
         symlink(
             root.join("target.toml"),
-            root.join("categories/universe/general.toml"),
+            root.join("categories/main/general.toml"),
         )
         .unwrap();
         assert!(append_mirror_version(&root, &candidate("1.1.0")).is_err());
@@ -424,14 +400,14 @@ mod tests {
     fn inline_registry(versions: &str) -> String {
         format!(
             concat!(
-                "schema = 3\n\n",
+                "schema = 4\n\n",
                 "[registry]\n",
-                "name = \"universe\"\n",
-                "index = \"sparse+https://rust.pkg.re/universe/\"\n",
+                "name = \"main\"\n",
+                "index = \"sparse+https://rust.pkg.re/\"\n",
                 "download = \"https://static.crates.io/crates\"\n",
                 "cargo-version = \"1.95.0\"\n\n",
                 "[categories.general]\n",
-                "may-depend-on = [\"universe/general\"]\n\n",
+                "may-depend-on = [\"main/general\"]\n\n",
                 "[categories.general.mirror]\n",
                 "demo = {}\n",
             ),
@@ -441,8 +417,8 @@ mod tests {
 
     fn candidate(version: &str) -> UpdateCandidate {
         UpdateCandidate {
-            registry: "universe".to_owned(),
-            category: "universe/general".to_owned(),
+            registry: "main".to_owned(),
+            category: "main/general".to_owned(),
             name: "demo".to_owned(),
             activity: PackageActivity::Active,
             lane: None,

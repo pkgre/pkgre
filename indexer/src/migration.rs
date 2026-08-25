@@ -2,6 +2,11 @@
 
 mod v2;
 mod v2_policy;
+mod v3;
+mod v3_policy;
+mod v3_to_v4;
+
+pub use v3_to_v4::{Schema4MigrationSummary, migrate_v3_to_v4};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -16,13 +21,8 @@ use crate::artifact::{ArtifactMap, require_absent, sha256_bytes, sha256_file};
 use crate::category::{CategoryId, category_for_v2_home};
 use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog};
 use crate::index::IndexRecord;
-use crate::policy::{canonical_category_dependencies, validate_catalog, validate_sha256};
-use crate::render;
-use crate::schema::{
-    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, MIRROR_DOWNLOAD, NameSource,
-    PUBLISH_DOWNLOAD, PackageHome, PackageState, RegistryLock, SCHEMA_VERSION, catalog_from_inputs,
-    load_registry_inputs, serialize_lock,
-};
+use crate::policy::validate_sha256;
+use crate::schema::PackageHome;
 
 const UNIVERSE_INDEX: &str = "sparse+https://rust.pkg.re/universe/";
 const PKGRE_INDEX: &str = "sparse+https://rust.pkg.re/pkgre/";
@@ -54,7 +54,7 @@ struct TargetPublish {
 
 struct MigrationOutput {
     categories: BTreeMap<CategoryId, TargetCategory>,
-    locks: BTreeMap<String, RegistryLock>,
+    locks: BTreeMap<String, v3::RegistryLock>,
     summary: MigrationSummary,
 }
 
@@ -293,7 +293,7 @@ fn build_output(catalog: &v2::Catalog, inputs: &[v2::RegistryInput]) -> Result<M
 }
 
 fn empty_target_categories() -> BTreeMap<CategoryId, TargetCategory> {
-    canonical_category_dependencies()
+    v3_policy::canonical_category_dependencies()
         .into_iter()
         .map(|(id, dependencies)| {
             (
@@ -408,12 +408,12 @@ fn migrate_locks(
     catalog: &v2::Catalog,
     inputs: &[v2::RegistryInput],
     homes: &BTreeMap<String, PackageHome>,
-) -> Result<(BTreeMap<String, RegistryLock>, MigrationSummary)> {
+) -> Result<(BTreeMap<String, v3::RegistryLock>, MigrationSummary)> {
     let registry_urls = BTreeMap::from([
         ("pkgre".to_owned(), PKGRE_INDEX.to_owned()),
         ("universe".to_owned(), UNIVERSE_INDEX.to_owned()),
     ]);
-    let allowed = canonical_category_dependencies();
+    let allowed = v3_policy::canonical_category_dependencies();
     let mut locks = empty_target_locks();
     let mut names = 0;
     let mut packages = 0;
@@ -446,16 +446,16 @@ fn migrate_locks(
     ))
 }
 
-fn empty_target_locks() -> BTreeMap<String, RegistryLock> {
+fn empty_target_locks() -> BTreeMap<String, v3::RegistryLock> {
     BTreeMap::from([
         (
             "pkgre".to_owned(),
-            RegistryLock {
-                schema: SCHEMA_VERSION,
-                registry: LockedRegistry {
+            v3::RegistryLock {
+                schema: v3::SCHEMA_VERSION,
+                registry: v3::LockedRegistry {
                     name: "pkgre".to_owned(),
                     index: PKGRE_INDEX.to_owned(),
-                    download: PUBLISH_DOWNLOAD.to_owned(),
+                    download: v3::PUBLISH_DOWNLOAD.to_owned(),
                 },
                 names: Vec::new(),
                 packages: Vec::new(),
@@ -463,12 +463,12 @@ fn empty_target_locks() -> BTreeMap<String, RegistryLock> {
         ),
         (
             "universe".to_owned(),
-            RegistryLock {
-                schema: SCHEMA_VERSION,
-                registry: LockedRegistry {
+            v3::RegistryLock {
+                schema: v3::SCHEMA_VERSION,
+                registry: v3::LockedRegistry {
                     name: "universe".to_owned(),
                     index: UNIVERSE_INDEX.to_owned(),
-                    download: MIRROR_DOWNLOAD.to_owned(),
+                    download: v3::MIRROR_DOWNLOAD.to_owned(),
                 },
                 names: Vec::new(),
                 packages: Vec::new(),
@@ -480,7 +480,7 @@ fn empty_target_locks() -> BTreeMap<String, RegistryLock> {
 fn migrate_lock_names(
     old_lock: &v2::RegistryLock,
     homes: &BTreeMap<String, PackageHome>,
-    locks: &mut BTreeMap<String, RegistryLock>,
+    locks: &mut BTreeMap<String, v3::RegistryLock>,
 ) -> Result<usize> {
     for name in &old_lock.names {
         let home = homes
@@ -489,7 +489,7 @@ fn migrate_lock_names(
         let target = locks
             .get_mut(&home.registry)
             .with_context(|| format!("mapped registry {:?} has no target lock", home.registry))?;
-        target.names.push(LockedName {
+        target.names.push(v3::LockedName {
             name: name.name.clone(),
             category: home.category.local().to_owned(),
             source: migrate_name_source(name.source),
@@ -504,7 +504,7 @@ fn migrate_lock_packages(
     homes: &BTreeMap<String, PackageHome>,
     registry_urls: &BTreeMap<String, String>,
     allowed: &BTreeMap<CategoryId, BTreeSet<CategoryId>>,
-    locks: &mut BTreeMap<String, RegistryLock>,
+    locks: &mut BTreeMap<String, v3::RegistryLock>,
 ) -> Result<(usize, usize)> {
     let mut changed = 0;
     for package in &old_lock.packages {
@@ -535,7 +535,7 @@ fn migrate_lock_packages(
         let target = locks
             .get_mut(&home.registry)
             .with_context(|| format!("mapped registry {:?} has no target lock", home.registry))?;
-        target.packages.push(LockedPackage {
+        target.packages.push(v3::LockedPackage {
             name: package.name.clone(),
             version: package.version.clone(),
             state: migrate_package_state(package.state),
@@ -552,7 +552,7 @@ fn migrate_lock_packages(
 fn validate_migrated_lock_counts(
     catalog: &v2::Catalog,
     homes: &BTreeMap<String, PackageHome>,
-    locks: &BTreeMap<String, RegistryLock>,
+    locks: &BTreeMap<String, v3::RegistryLock>,
     names: usize,
     packages: usize,
 ) -> Result<()> {
@@ -579,23 +579,23 @@ fn validate_migrated_lock_counts(
     Ok(())
 }
 
-fn migrate_name_source(source: v2::NameSource) -> NameSource {
+fn migrate_name_source(source: v2::NameSource) -> v3::NameSource {
     match source {
-        v2::NameSource::Mirror => NameSource::Mirror,
-        v2::NameSource::Publish => NameSource::Publish,
+        v2::NameSource::Mirror => v3::NameSource::Mirror,
+        v2::NameSource::Publish => v3::NameSource::Publish,
     }
 }
 
-fn migrate_package_state(state: v2::PackageState) -> PackageState {
+fn migrate_package_state(state: v2::PackageState) -> v3::PackageState {
     match state {
-        v2::PackageState::Active => PackageState::Active,
-        v2::PackageState::Removed => PackageState::Removed,
+        v2::PackageState::Active => v3::PackageState::Active,
+        v2::PackageState::Removed => v3::PackageState::Removed,
     }
 }
 
-fn migrate_locked_source(source: &v2::LockedSource) -> LockedSource {
+fn migrate_locked_source(source: &v2::LockedSource) -> v3::LockedSource {
     match source {
-        v2::LockedSource::CratesIo {} => LockedSource::CratesIo {},
+        v2::LockedSource::CratesIo {} => v3::LockedSource::CratesIo {},
         v2::LockedSource::GitTag {
             git,
             tag,
@@ -604,7 +604,7 @@ fn migrate_locked_source(source: &v2::LockedSource) -> LockedSource {
             package,
             path,
             cargo_version,
-        } => LockedSource::GitTag {
+        } => v3::LockedSource::GitTag {
             git: git.clone(),
             tag: tag.clone(),
             tag_oid: tag_oid.clone(),
@@ -650,7 +650,7 @@ fn write_output(root: &Path, source: &Path, output: &MigrationOutput) -> Result<
     for (registry, lock) in &output.locks {
         write_new(
             &root.join(format!("{registry}.lock")),
-            &serialize_lock(lock)?,
+            &v3::serialize_lock(lock)?,
         )?;
     }
 
@@ -678,8 +678,8 @@ fn write_output(root: &Path, source: &Path, output: &MigrationOutput) -> Result<
         .values()
         .flat_map(|lock| &lock.packages)
         .filter(|package| {
-            package.state == PackageState::Active
-                && matches!(package.source, LockedSource::GitTag { .. })
+            package.state == v3::PackageState::Active
+                && matches!(package.source, v3::LockedSource::GitTag { .. })
         })
         .map(|package| package.crate_sha256.clone())
         .collect::<BTreeSet<_>>();
@@ -689,9 +689,10 @@ fn write_output(root: &Path, source: &Path, output: &MigrationOutput) -> Result<
             &root.join("objects/crates").join(format!("{hash}.crate")),
         )?;
     }
-    let inputs = load_registry_inputs(root)?;
-    let catalog = catalog_from_inputs(root, &inputs)?;
-    let downloads = DownloadCatalog::from_catalog(&catalog).canonical_bytes()?;
+    let inputs = v3::load_registry_inputs(root)?;
+    let catalog = v3::catalog_from_inputs(root, &inputs)?;
+    let compatibility = v3_to_v4::compatibility_catalog(&catalog);
+    let downloads = DownloadCatalog::from_catalog(&compatibility).canonical_bytes()?;
     write_new(&root.join(DOWNLOAD_CATALOG_FILE), &downloads)?;
     Ok(())
 }
@@ -808,13 +809,21 @@ fn quote(value: &str) -> Result<String> {
 }
 
 fn validate_staged_output(root: &Path, destination: &Path) -> Result<()> {
-    let catalog = Catalog::load(root).context("strictly load staged schema-3 catalog")?;
-    validate_catalog(&catalog).context("validate staged schema-3 policy")?;
-    let artifacts = ArtifactMap::load(&catalog).context("verify staged schema-3 objects")?;
+    let catalog = v3::Catalog::load(root).context("strictly load staged schema-3 catalog")?;
+    let historical_policy =
+        v3_policy::validate_catalog(&catalog).context("validate staged schema-3 policy")?;
+    let compatibility = v3_to_v4::compatibility_catalog(&catalog);
+    let policy = v3_to_v4::compatibility_policy(&historical_policy);
+    let artifacts = ArtifactMap::load(&compatibility).context("verify staged schema-3 objects")?;
+    DownloadCatalog::load_from_root(root)?
+        .validate_against_catalog(&compatibility)
+        .context("verify staged schema-3 download catalog")?;
     let mut temporary = TemporaryDirectory::new_sibling(destination, "site")?;
     let site = temporary.path().join("site");
-    render::render(&catalog, &artifacts, &site).context("test-render staged catalog")?;
-    render::verify(&catalog, &artifacts, &site).context("reproduce staged test render")?;
+    crate::render::render_with_policy(&compatibility, &artifacts, &policy, &site)
+        .context("test-render staged catalog")?;
+    crate::render::verify_with_policy(&compatibility, &artifacts, &policy, &site)
+        .context("reproduce staged test render")?;
     temporary.remove()?;
     Ok(())
 }
@@ -959,12 +968,14 @@ mod tests {
                 .is_file()
         );
 
-        let catalog = Catalog::load(&destination).unwrap();
-        validate_catalog(&catalog).unwrap();
-        let artifacts = ArtifactMap::load(&catalog).unwrap();
+        let catalog = v3::Catalog::load(&destination).unwrap();
+        let historical_policy = v3_policy::validate_catalog(&catalog).unwrap();
+        let compatibility = v3_to_v4::compatibility_catalog(&catalog);
+        let policy = v3_to_v4::compatibility_policy(&historical_policy);
+        let artifacts = ArtifactMap::load(&compatibility).unwrap();
         let site = temporary.path().join("site");
-        render::render(&catalog, &artifacts, &site).unwrap();
-        render::verify(&catalog, &artifacts, &site).unwrap();
+        crate::render::render_with_policy(&compatibility, &artifacts, &policy, &site).unwrap();
+        crate::render::verify_with_policy(&compatibility, &artifacts, &policy, &site).unwrap();
         let pkgre_row = fs::read(
             site.join("pkgre")
                 .join(crate::index::index_path("pkgre-indexer")),
@@ -975,6 +986,194 @@ mod tests {
             row["deps"][0]["registry"],
             Value::String(UNIVERSE_INDEX.to_owned())
         );
+    }
+
+    #[test]
+    fn schema_three_to_four_migration_is_exact_and_rewrites_admissions() {
+        let temporary = TestDirectory::new("pkgre-v3-v4-migration");
+        let schema_two = temporary.path().join("schema-two");
+        let schema_three = temporary.path().join("schema-three");
+        let schema_four = temporary.path().join("schema-four");
+        let fixture = write_fixture(&schema_two, "pkgre-indexer", None);
+        migrate_v2_to_v3(&schema_two, &schema_three).unwrap();
+        let old_binding = bind_schema_three_admission(&schema_three);
+        let source_before = snapshot(&schema_three);
+
+        let old_catalog = v3::Catalog::load(&schema_three).unwrap();
+        let historical_policy = v3_policy::validate_catalog(&old_catalog).unwrap();
+        let compatibility = v3_to_v4::compatibility_catalog(&old_catalog);
+        let policy = v3_to_v4::compatibility_policy(&historical_policy);
+        let artifacts = ArtifactMap::load(&compatibility).unwrap();
+        let old_site = temporary.path().join("schema-three-site");
+        crate::render::render_with_policy(&compatibility, &artifacts, &policy, &old_site).unwrap();
+
+        let summary = migrate_v3_to_v4(&schema_three, &schema_four).unwrap();
+
+        assert_eq!(
+            summary,
+            Schema4MigrationSummary {
+                names: 9,
+                packages: 9,
+                routed_rows_changed: 1,
+                admission_batches: 1,
+            }
+        );
+        assert_eq!(snapshot(&schema_three), source_before);
+        assert!(!schema_four.join("universe.toml").exists());
+        assert!(!schema_four.join("pkgre.toml").exists());
+        assert!(schema_four.join("main.toml").is_file());
+        assert!(schema_four.join("main.lock").is_file());
+        assert!(schema_four.join("categories/main/general.toml").is_file());
+        assert!(schema_four.join("categories/main/matrix.toml").is_file());
+        assert_eq!(
+            snapshot(&schema_three.join("objects/rows")),
+            snapshot(&schema_four.join("objects/rows"))
+        );
+        assert_eq!(
+            fs::read(
+                schema_four
+                    .join("objects/crates")
+                    .join(format!("{}.crate", fixture.git_archive_hash))
+            )
+            .unwrap(),
+            fixture.git_archive
+        );
+
+        let catalog = crate::schema::Catalog::load(&schema_four).unwrap();
+        crate::policy::validate_catalog(&catalog).unwrap();
+        let artifacts = ArtifactMap::load(&catalog).unwrap();
+        let migrated = catalog
+            .approvals
+            .iter()
+            .find(|approval| approval.name == "serde")
+            .unwrap();
+        let new_binding = migrated.admission_sha256.as_ref().unwrap();
+        assert_ne!(new_binding, &old_binding);
+        let manifest = crate::update::load_admission_manifest(
+            &schema_four.join("admissions/2025-02-01-serde.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.entries[0].category,
+            CategoryId::new("main", "general").unwrap()
+        );
+        let admission_lock: Value = toml::from_slice(
+            &fs::read(schema_four.join("admissions/2025-02-01-serde.lock")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(admission_lock["plan"]["candidates"][0]["registry"], "main");
+        assert_eq!(
+            admission_lock["plan"]["candidates"][0]["category"],
+            "main/general"
+        );
+
+        let new_site = temporary.path().join("schema-four-site");
+        crate::render::render(&catalog, &artifacts, &new_site).unwrap();
+        crate::render::verify_monotonic(&old_site, &new_site).unwrap();
+        assert!(new_site.join("config.json").is_file());
+        assert!(!new_site.join("main").exists());
+        let row: Value = serde_json::from_slice(
+            &fs::read(new_site.join(crate::index::index_path("pkgre-indexer"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(row["deps"][0]["registry"], Value::Null);
+    }
+
+    fn bind_schema_three_admission(root: &Path) -> String {
+        use crate::update::{
+            ADMISSION_MANIFEST_SCHEMA, ArchiveSummary, DecisionReason, DependencyDelta,
+            PlannedIdentity, SourceEvidence, UPDATE_PLAN_SCHEMA, UpdateCandidate, UpdateDecision,
+            UpdatePlan, UtcTimestamp,
+        };
+
+        let lock_path = root.join("universe.lock");
+        let mut lock = v3::load_lock(&lock_path).unwrap();
+        let package = lock
+            .packages
+            .iter_mut()
+            .find(|package| {
+                package.name == "serde" && package.version == Version::parse("1.0.0").unwrap()
+            })
+            .unwrap();
+        let manifest = crate::update::AdmissionManifest {
+            schema: ADMISSION_MANIFEST_SCHEMA,
+            entries: vec![crate::update::AdmissionRequest {
+                category: CategoryId::new("universe", "general").unwrap(),
+                name: package.name.clone(),
+                version: Some(package.version.clone()),
+                tag: None,
+                evidence: Vec::new(),
+            }],
+        };
+        let plan = UpdatePlan {
+            schema: UPDATE_PLAN_SCHEMA,
+            indexer_version: env!("CARGO_PKG_VERSION").to_owned(),
+            catalog_sha256: "07".repeat(32),
+            evaluated_at: UtcTimestamp::parse("2025-02-01T00:00:00Z").unwrap(),
+            min_release_age_days: crate::update::MIN_RELEASE_AGE_DAYS,
+            dormant_release_gap_days: crate::update::DORMANT_RELEASE_GAP_DAYS,
+            candidates: vec![UpdateCandidate {
+                registry: "universe".to_owned(),
+                category: "universe/general".to_owned(),
+                name: package.name.clone(),
+                activity: crate::update::PackageActivity::New,
+                lane: None,
+                base: None,
+                candidate: PlannedIdentity {
+                    version: package.version.clone(),
+                    published_at: UtcTimestamp::parse("2025-01-02T00:00:00Z").unwrap(),
+                    source_row_sha256: package.source_row_sha256.clone(),
+                    crate_sha256: package.crate_sha256.clone(),
+                },
+                sparse_index_sha256: "03".repeat(32),
+                decision_history_sha256: "04".repeat(32),
+                age_seconds: 30 * 24 * 60 * 60,
+                dormant_gap: None,
+                base_archive: None,
+                candidate_archive: ArchiveSummary {
+                    analysis_sha256: "05".repeat(32),
+                    compressed_bytes: 1,
+                    unpacked_bytes: 1,
+                    files: 1,
+                    build_surface: BTreeMap::new(),
+                    vcs_commit: None,
+                    vcs_path: None,
+                },
+                archive_delta: None,
+                dependencies: DependencyDelta {
+                    added: Vec::new(),
+                    removed: Vec::new(),
+                    new_packages: Vec::new(),
+                },
+                api: None,
+                source: SourceEvidence::Unavailable {
+                    reason: "source-verification-error".to_owned(),
+                },
+                decision: UpdateDecision::ReviewRequired,
+                reasons: vec![
+                    DecisionReason::NewPackage,
+                    DecisionReason::SourceUnavailable,
+                    DecisionReason::ExplicitCandidate,
+                ],
+            }],
+        };
+        let manifest_bytes = crate::update::serialize_admission_manifest(&manifest).unwrap();
+        let (lock_bytes, binding) = crate::update::prepare_admission_lock(
+            &manifest,
+            &plan,
+            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
+        )
+        .unwrap();
+        crate::update::write_admission_pair(
+            root,
+            Path::new("2025-02-01-serde.toml"),
+            &manifest_bytes,
+            &lock_bytes,
+        )
+        .unwrap();
+        package.admission_sha256 = Some(binding.clone());
+        fs::write(lock_path, v3::serialize_lock(&lock).unwrap()).unwrap();
+        binding
     }
 
     #[test]

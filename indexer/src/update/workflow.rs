@@ -13,7 +13,7 @@ use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::import::{self, CratesIoHistory, SparseIndexRow};
 use crate::index::IndexDependency;
 use crate::policy::{Policy, validate_catalog};
-use crate::schema::{Catalog, NameSource, PackageState, Source, version_identity};
+use crate::schema::{Catalog, PackageState, Source, version_identity};
 
 use super::{
     ApiEvidence, ArchiveAnalysis, ArchiveSummary, CompatibilityLane, DecisionReason,
@@ -344,7 +344,7 @@ fn planning_targets(
                 .as_ref()
                 .is_none_or(|names| names.contains(name.as_str()))
         })
-        .filter(|(name, _)| catalog.name_sources.get(*name) == Some(&NameSource::Mirror))
+        .filter(|(name, _)| catalog.mirror_names.contains(*name))
         .filter(|(name, _)| match request {
             PlanRequest::Implicit => catalog.approvals.iter().any(|approval| {
                 approval.name == **name
@@ -1073,10 +1073,8 @@ mod tests {
                 schema: crate::schema::SCHEMA_VERSION,
                 homes,
             },
-            name_sources: names
-                .iter()
-                .map(|name| ((*name).to_owned(), NameSource::Mirror))
-                .collect(),
+            mirror_names: names.iter().map(|name| (*name).to_owned()).collect(),
+            publish_names: BTreeSet::new(),
             approvals: vec![
                 approval("active", "1.0.0", PackageState::Active),
                 approval("exact-only", "0.0.1", PackageState::Active),

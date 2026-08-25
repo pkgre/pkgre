@@ -210,6 +210,129 @@ pub(crate) fn validate_admission_inventory(catalog: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// Canonical admission files and complete-content lock-binding rewrites for one catalog migration.
+pub(crate) struct MigratedAdmissionInventory {
+    /// Catalog-relative canonical files to install in the migrated catalog.
+    pub files: Vec<(PathBuf, Vec<u8>)>,
+    /// Historical admission-lock hash to migrated admission-lock hash.
+    pub bindings: HashMap<String, String>,
+}
+
+/// Rewrites every canonical admission category and generated candidate route while retaining all review evidence and machine facts.
+///
+/// The source inventory must already have been validated against the historical catalog. Manifests and generated locks are parsed and revalidated here before and after mapping; complete-content package bindings are returned for the caller to rewrite atomically with the catalog locks.
+pub(crate) fn migrate_admission_inventory<F>(
+    root: &Path,
+    map_category: F,
+) -> Result<MigratedAdmissionInventory>
+where
+    F: Fn(&crate::category::CategoryId) -> Result<crate::category::CategoryId>,
+{
+    validate_admission_tree_structure(root)?;
+    let directory = root.join(ADMISSIONS_DIRECTORY);
+    let Some(()) = optional_real_directory(&directory, "admission directory")? else {
+        return Ok(MigratedAdmissionInventory {
+            files: Vec::new(),
+            bindings: HashMap::new(),
+        });
+    };
+
+    let mut stems = sorted_entries(&directory)?
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|value| value == "toml"))
+        .map(|path| path.with_extension(""))
+        .collect::<Vec<_>>();
+    stems.sort();
+    let mut files = Vec::with_capacity(stems.len() * 2);
+    let mut bindings = HashMap::with_capacity(stems.len());
+    let mut migrated_bindings = HashSet::with_capacity(stems.len());
+    for stem in stems {
+        let manifest_path = stem.with_extension("toml");
+        let lock_path = stem.with_extension("lock");
+        let mut manifest = super::load_admission_manifest(&manifest_path)?;
+        let (mut lock, old_lock_bytes) = load_admission_lock(&lock_path, &manifest)?;
+        let old_binding = sha256_bytes(&old_lock_bytes);
+
+        for request in &mut manifest.entries {
+            request.category = map_category(&request.category)?;
+        }
+        manifest.entries.sort_by(|left, right| {
+            admission_request_order(left).cmp(&admission_request_order(right))
+        });
+        let manifest_bytes = super::serialize_admission_manifest(&manifest)?;
+
+        // Keep `plan.catalog_sha256` unchanged: it identifies the exact historical catalog whose
+        // contents were evaluated by the admission evidence. Replacing it with a migrated-tree
+        // fingerprint would claim that no historical review actually established.
+        for candidate in &mut lock.plan.candidates {
+            let old_category = candidate
+                .category
+                .parse::<crate::category::CategoryId>()
+                .context("parse historical admission candidate category")?;
+            let category = map_category(&old_category)?;
+            category.registry().clone_into(&mut candidate.registry);
+            candidate.category = category.to_string();
+        }
+        lock.plan.candidates.sort_by(|left, right| {
+            admission_candidate_order(left).cmp(&admission_candidate_order(right))
+        });
+        lock.manifest_sha256 = sha256_bytes(&manifest_bytes);
+        lock.requests.clone_from(&manifest.entries);
+        let lock_bytes = serialize_admission_lock(&lock, Some(&manifest))?;
+        let new_binding = sha256_bytes(&lock_bytes);
+        ensure!(
+            bindings
+                .insert(old_binding.clone(), new_binding.clone())
+                .is_none(),
+            "historical admission lock binding {old_binding} appears more than once"
+        );
+        ensure!(
+            migrated_bindings.insert(new_binding),
+            "migrated admission locks have identical complete-content hashes"
+        );
+
+        let manifest_relative = manifest_path
+            .strip_prefix(root)
+            .expect("admission manifest is below catalog root")
+            .to_path_buf();
+        let lock_relative = lock_path
+            .strip_prefix(root)
+            .expect("admission lock is below catalog root")
+            .to_path_buf();
+        files.push((manifest_relative, manifest_bytes));
+        files.push((lock_relative, lock_bytes));
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(MigratedAdmissionInventory { files, bindings })
+}
+
+fn admission_request_order(request: &AdmissionRequest) -> (String, String, String, String) {
+    let target = request.version.as_ref().map_or_else(
+        || request.tag.clone().unwrap_or_default(),
+        ToString::to_string,
+    );
+    (
+        request.category.to_string(),
+        request.name.to_ascii_lowercase(),
+        request.name.clone(),
+        target,
+    )
+}
+
+fn admission_candidate_order(
+    candidate: &UpdateCandidate,
+) -> (String, String, String, u64, u64, u64, String) {
+    (
+        candidate.registry.clone(),
+        candidate.name.to_ascii_lowercase(),
+        candidate.name.clone(),
+        candidate.candidate.version.major,
+        candidate.candidate.version.minor,
+        candidate.candidate.version.patch,
+        candidate.candidate.version.pre.to_string(),
+    )
+}
+
 fn admission_bound_approvals(catalog: &Catalog) -> Result<HashMap<AdmissionIdentity, &Approval>> {
     let mut expected = HashMap::with_capacity(catalog.approvals.len());
     for approval in &catalog.approvals {
@@ -496,7 +619,7 @@ fn sorted_entries(root: &Path) -> Result<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use semver::Version;
@@ -541,6 +664,71 @@ mod tests {
             .write_all(b"\n")
             .unwrap();
         assert!(validate_admission_inventory(&catalog_for(&root, None)).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migration_rewrites_routes_but_preserves_historical_catalog_binding() {
+        let root = temporary_directory("migration");
+        let manifest = manifest();
+        let plan = plan();
+        let original_catalog_sha256 = plan.catalog_sha256.clone();
+        let manifest_bytes = super::super::serialize_admission_manifest(&manifest).unwrap();
+        let (lock_bytes, old_binding) = prepare_admission_lock(
+            &manifest,
+            &plan,
+            &UtcTimestamp::parse("2025-02-01T02:00:00Z").unwrap(),
+        )
+        .unwrap();
+        write_admission_pair(
+            &root,
+            Path::new("2025-02-01-demo.toml"),
+            &manifest_bytes,
+            &lock_bytes,
+        )
+        .unwrap();
+
+        let migrated = migrate_admission_inventory(&root, |category| {
+            ensure!(
+                category == &CategoryId::new("universe", "general")?,
+                "unexpected test category {category}"
+            );
+            CategoryId::new("main", "general")
+        })
+        .unwrap();
+
+        assert_eq!(migrated.files.len(), 2);
+        let migrated_manifest_bytes = migrated
+            .files
+            .iter()
+            .find(|(path, _)| path.extension().is_some_and(|value| value == "toml"))
+            .map(|(_, bytes)| bytes)
+            .unwrap();
+        let migrated_manifest: AdmissionManifest =
+            toml::from_slice(migrated_manifest_bytes).unwrap();
+        assert_eq!(
+            migrated_manifest.entries[0].category,
+            CategoryId::new("main", "general").unwrap()
+        );
+
+        let migrated_lock_bytes = migrated
+            .files
+            .iter()
+            .find(|(path, _)| path.extension().is_some_and(|value| value == "lock"))
+            .map(|(_, bytes)| bytes)
+            .unwrap();
+        let migrated_lock: AdmissionLock = toml::from_slice(migrated_lock_bytes).unwrap();
+        assert_eq!(migrated_lock.plan.catalog_sha256, original_catalog_sha256);
+        assert_eq!(migrated_lock.plan.candidates[0].registry, "main");
+        assert_eq!(migrated_lock.plan.candidates[0].category, "main/general");
+        assert_eq!(
+            migrated_lock.requests[0].category,
+            CategoryId::new("main", "general").unwrap()
+        );
+        let new_binding = sha256_bytes(migrated_lock_bytes);
+        assert_ne!(old_binding, new_binding);
+        assert_eq!(migrated.bindings.get(&old_binding), Some(&new_binding));
+
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -689,7 +877,8 @@ mod tests {
                 schema: SCHEMA_VERSION,
                 homes: BTreeMap::new(),
             },
-            name_sources: BTreeMap::new(),
+            mirror_names: BTreeSet::default(),
+            publish_names: BTreeSet::default(),
             approvals: binding
                 .map(|binding| Approval {
                     registry: "universe".to_owned(),

@@ -63,7 +63,7 @@ fn compact_manifest_lifecycle_is_inert_transactional_bound_and_convergent() {
     assert_eq!(manifest.entries.len(), 1);
     let template = fs::read_to_string(&manifest_path).unwrap();
     assert!(template.contains("[[admit]]"));
-    assert!(template.contains("category = \"universe/general\""));
+    assert!(template.contains("category = \"main/general\""));
     assert!(template.contains("version = \"1.0.0\""));
     assert!(!template.contains("sha256"));
 
@@ -281,7 +281,7 @@ fn apply_rejects_upstream_yank_and_route_drift_without_mutating_catalog() {
     assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
 
     let mut manifest = load_admission_manifest(&manifest_path).unwrap();
-    manifest.entries[0].category = "universe/matrix".parse().unwrap();
+    manifest.entries[0].category = "main/matrix".parse().unwrap();
     fs::write(
         &manifest_path,
         serialize_admission_manifest(&manifest).unwrap(),
@@ -378,8 +378,8 @@ fn assert_admitted_catalog(
             .find(|approval| approval.name == *name && approval.version == version)
             .unwrap();
         let package = fixture.package(name, &version).unwrap();
-        assert_eq!(locked.registry, "universe");
-        assert_eq!(locked.category.to_string(), "universe/general");
+        assert_eq!(locked.registry, "main");
+        assert_eq!(locked.category.to_string(), "main/general");
         assert_eq!(locked.archive_sha256, sha256_bytes(&package.archive));
         assert_eq!(
             locked.admission_sha256.as_deref(),
@@ -399,7 +399,7 @@ fn assert_admitted_catalog(
             package.source_row
         );
         assert!(
-            fs::read_to_string(root.join("universe.toml"))
+            fs::read_to_string(root.join("main.toml"))
                 .unwrap()
                 .contains(&format!("{name} = [\"1.0.0\"]"))
         );
@@ -646,56 +646,40 @@ fn write_catalog(root: &Path, general_names: &[&str]) {
     for name in general_names {
         writeln!(general_declarations, "{name} = []").unwrap();
     }
-    let mut universe_categories = mirror_category(
+    let mut categories = mirror_category(
         "general",
-        &["universe/general"],
+        &["main/general"],
         &general_declarations,
         "reserved-general",
     );
     for (local, dependencies) in [
-        ("acp", &["universe/acp", "universe/general"] as &[_]),
-        (
-            "filesystem",
-            &["universe/filesystem", "universe/general"] as &[_],
-        ),
-        ("matrix", &["universe/matrix", "universe/general"] as &[_]),
-        (
-            "mcp",
-            &["universe/mcp", "universe/sse", "universe/general"] as &[_],
-        ),
-        ("sse", &["universe/sse", "universe/general"] as &[_]),
-        (
-            "terminal",
-            &["universe/terminal", "universe/general"] as &[_],
-        ),
-        ("yaml", &["universe/yaml", "universe/general"] as &[_]),
+        ("acp", &["main/acp", "main/general"] as &[_]),
+        ("filesystem", &["main/filesystem", "main/general"] as &[_]),
+        ("matrix", &["main/matrix", "main/general"] as &[_]),
+        ("mcp", &["main/mcp", "main/sse", "main/general"] as &[_]),
+        ("sse", &["main/sse", "main/general"] as &[_]),
+        ("terminal", &["main/terminal", "main/general"] as &[_]),
+        ("yaml", &["main/yaml", "main/general"] as &[_]),
     ] {
-        universe_categories.push_str(&mirror_category(
+        categories.push_str(&mirror_category(
             local,
             dependencies,
             "",
             &format!("reserved-{local}"),
         ));
     }
-    write_registry(
-        root,
-        "universe",
-        crate::schema::MIRROR_DOWNLOAD,
-        &universe_categories,
-    );
-
-    let pkgre_categories = concat!(
-        "[categories.tooling]\n",
-        "may-depend-on = [\"pkgre/tooling\", \"universe/general\"]\n\n",
-        "[categories.tooling.publish.pkgre-category-anchor]\n",
+    categories.push_str(concat!(
+        "[categories.pkgre]\n",
+        "may-depend-on = [\"main/pkgre\", \"main/general\"]\n\n",
+        "[categories.pkgre.publish.pkgre-category-anchor]\n",
         "git = \"https://github.com/pkgre/pkgre\"\n",
         "tags = []\n",
-    );
+    ));
     write_registry(
         root,
-        "pkgre",
-        crate::schema::PUBLISH_DOWNLOAD,
-        pkgre_categories,
+        "main",
+        &crate::download::router_download_template("main"),
+        &categories,
     );
 }
 
@@ -721,10 +705,15 @@ fn mirror_category(
 }
 
 fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
+    let index = if name == "main" {
+        "sparse+https://rust.pkg.re/".to_owned()
+    } else {
+        format!("sparse+https://rust.pkg.re/{name}/")
+    };
     fs::write(
         root.join(format!("{name}.toml")),
         format!(
-            "schema = 3\n\n[registry]\nname = {name:?}\nindex = \"sparse+https://rust.pkg.re/{name}/\"\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
+            "schema = 4\n\n[registry]\nname = {name:?}\nindex = {index:?}\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
         ),
     )
     .unwrap();

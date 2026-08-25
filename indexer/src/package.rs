@@ -14,12 +14,13 @@ use tracing::debug;
 
 use crate::artifact::sha256_bytes;
 use crate::policy::{
-    REGISTRIES, validate_git_object_id, validate_git_tag, validate_https_repository,
-    validate_package_name, validate_relative_path, validate_tag_version,
+    validate_git_object_id, validate_git_tag, validate_https_repository, validate_package_name,
+    validate_relative_path, validate_tag_version,
 };
 use crate::schema::{Approval, Source};
 
-const REGISTRY: &str = "pkgre";
+const CARGO_REGISTRY: &str = "pkgre";
+const REGISTRY_INDEX: &str = "sparse+https://rust.pkg.re/";
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -526,10 +527,12 @@ fn prepare_cargo_home(cargo_home: &Path) -> Result<()> {
     let disabled = cargo_home.join("disabled-crates-io");
     fs::create_dir(&disabled)
         .with_context(|| format!("create disabled Cargo source {}", disabled.display()))?;
-    let registries = REGISTRIES
-        .iter()
-        .map(|(name, index)| (*name, CargoRegistry { index }))
-        .collect();
+    let registries = BTreeMap::from([(
+        CARGO_REGISTRY,
+        CargoRegistry {
+            index: REGISTRY_INDEX,
+        },
+    )]);
     let source = BTreeMap::from([
         (
             "crates-io",
@@ -548,7 +551,9 @@ fn prepare_cargo_home(cargo_home: &Path) -> Result<()> {
     ]);
     let config = IsolatedCargoConfig {
         registries,
-        registry: CargoDefaultRegistry { default: REGISTRY },
+        registry: CargoDefaultRegistry {
+            default: CARGO_REGISTRY,
+        },
         source,
     };
     let contents = toml::to_string_pretty(&config).context("serialize isolated Cargo config")?;
@@ -596,18 +601,15 @@ fn cargo_metadata(
     let package = matching.pop().expect("length checked");
     package_path(repository, &package.manifest_path)?;
     ensure!(
-        package.publish.as_deref() == Some(&[REGISTRY.to_owned()]),
-        "first-party package must set publish = [{REGISTRY:?}] exactly"
+        package.publish.as_deref() == Some(&[CARGO_REGISTRY.to_owned()]),
+        "first-party package must set publish = [{CARGO_REGISTRY:?}] exactly"
     );
-    let registry_indexes = REGISTRIES
-        .iter()
-        .map(|(_, index)| *index)
-        .collect::<Vec<_>>();
+    let registry_indexes = [REGISTRY_INDEX];
     for dependency in &package.dependencies {
         let source = dependency.source.as_deref().unwrap_or("path");
         ensure!(
             is_curated_registry_source(source, &registry_indexes),
-            "first-party package dependency {} uses unsupported source {source:?}; use universe or pkgre explicitly",
+            "first-party package dependency {} uses unsupported source {source:?}; use registry = {CARGO_REGISTRY:?} explicitly",
             dependency.name
         );
         ensure!(
@@ -902,7 +904,7 @@ mod tests {
             features: BTreeMap::new(),
             links: None,
             rust_version: Some("1.85".to_owned()),
-            publish: Some(vec![REGISTRY.to_owned()]),
+            publish: Some(vec![CARGO_REGISTRY.to_owned()]),
         };
         let record = generated_index_record(&package, &"01".repeat(32)).unwrap();
         let value: Value = serde_json::from_slice(&record).unwrap();
@@ -987,8 +989,8 @@ mod tests {
 
     fn test_approval(materialization: &GitTagMaterialization, cargo_version: &Version) -> Approval {
         Approval {
-            registry: REGISTRY.to_owned(),
-            category: "pkgre/tooling".parse().unwrap(),
+            registry: "main".to_owned(),
+            category: "main/pkgre".parse().unwrap(),
             name: materialization.name.clone(),
             version: materialization.version.clone(),
             archive_sha256: materialization.archive_sha256.clone(),
@@ -1005,7 +1007,7 @@ mod tests {
                 subdir: materialization.path.clone(),
                 cargo_version: cargo_version.clone(),
             },
-            declared_in: PathBuf::from("pkgre.lock"),
+            declared_in: PathBuf::from("main.lock"),
         }
     }
 

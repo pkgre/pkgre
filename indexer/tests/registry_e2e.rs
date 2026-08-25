@@ -1,4 +1,4 @@
-//! Cargo end-to-end test for transparent same-registry categories and cross-registry dependencies.
+//! Cargo end-to-end test for a clean-cache build through one root registry.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -18,21 +18,18 @@ use serde_json::{Value, json};
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn cargo_builds_locked_with_clean_cache_across_two_registries() {
+fn cargo_builds_locked_with_clean_cache_from_root_registry() {
     let temporary = TemporaryDirectory::new("pkgre-cargo-e2e");
     let site = temporary.path().join("site");
     fs::create_dir_all(&site).unwrap();
     let server = StaticServer::start(site.clone());
     let base = server.base_url();
-    let universe = format!("sparse+{base}/universe/");
-    let pkgre = format!("sparse+{base}/pkgre/");
+    let main = format!("sparse+{base}/");
 
-    write_registry_config(&site, "universe", &base);
-    write_registry_config(&site, "pkgre", &base);
+    write_registry_config(&site, &base);
     add_package(
         &temporary,
         &site,
-        "universe",
         "leaf-core",
         "pub fn value() -> u32 { 40 }\n",
         &[],
@@ -40,7 +37,6 @@ fn cargo_builds_locked_with_clean_cache_across_two_registries() {
     add_package(
         &temporary,
         &site,
-        "universe",
         "matrix-middle",
         "pub fn value() -> u32 { leaf_core::value() + 1 }\n",
         &[("leaf-core", None)],
@@ -48,10 +44,9 @@ fn cargo_builds_locked_with_clean_cache_across_two_registries() {
     add_package(
         &temporary,
         &site,
-        "pkgre",
         "pkgre-top",
         "pub fn value() -> u32 { matrix_middle::value() + 1 }\n",
-        &[("matrix-middle", Some(&universe))],
+        &[("matrix-middle", None)],
     );
 
     let project = temporary.path().join("consumer");
@@ -72,7 +67,7 @@ fn cargo_builds_locked_with_clean_cache_across_two_registries() {
     fs::write(
         project.join(".cargo/config.toml"),
         format!(
-            "[registries.universe]\nindex = {universe:?}\n\n[registries.pkgre]\nindex = {pkgre:?}\n\n[registry]\ndefault = \"pkgre\"\n\n[source.crates-io]\nreplace-with = \"disabled\"\n\n[source.disabled]\ndirectory = {:?}\n",
+            "[registries.pkgre]\nindex = {main:?}\n\n[registry]\ndefault = \"pkgre\"\n\n[source.crates-io]\nreplace-with = \"disabled\"\n\n[source.disabled]\ndirectory = {:?}\n",
             disabled.display().to_string()
         ),
     )
@@ -84,9 +79,10 @@ fn cargo_builds_locked_with_clean_cache_across_two_registries() {
         &["generate-lockfile"],
     );
     let lock = fs::read_to_string(project.join("Cargo.lock")).unwrap();
-    assert!(lock.contains(&universe));
-    assert!(lock.contains(&pkgre));
+    assert!(lock.contains(&main));
     assert!(!lock.contains("crates.io"));
+    assert!(!lock.contains("rust.pkg.re/universe"));
+    assert!(!lock.contains("rust.pkg.re/pkgre"));
 
     let clean_home = temporary.path().join("cargo-home-build");
     run_cargo(
@@ -101,9 +97,10 @@ fn cargo_builds_locked_with_clean_cache_across_two_registries() {
     assert!(status.success());
 
     let requests = server.requests();
-    assert!(requests.iter().any(|path| path.starts_with("/universe/")));
-    assert!(requests.iter().any(|path| path.starts_with("/pkgre/")));
+    assert!(requests.iter().any(|path| path == "/config.json"));
     assert!(requests.iter().any(|path| path.starts_with("/crates/")));
+    assert!(requests.iter().all(|path| !path.starts_with("/universe/")));
+    assert!(requests.iter().all(|path| !path.starts_with("/pkgre/")));
     assert!(requests.iter().all(|path| !path.contains("crates.io")));
     server.stop();
 }
@@ -111,7 +108,6 @@ fn cargo_builds_locked_with_clean_cache_across_two_registries() {
 fn add_package(
     temporary: &TemporaryDirectory,
     site: &Path,
-    registry: &str,
     name: &str,
     source: &str,
     dependencies: &[(&str, Option<&str>)],
@@ -176,15 +172,15 @@ fn add_package(
     }))
     .unwrap();
     row.push(b'\n');
-    write_file(&site.join(registry).join(index_path(name)), &row);
+    write_file(&site.join(index_path(name)), &row);
 }
 
-fn write_registry_config(site: &Path, registry: &str, base: &str) {
+fn write_registry_config(site: &Path, base: &str) {
     let config = serde_json::to_vec(&json!({
         "dl": format!("{base}/crates/{{sha256-checksum}}.crate"),
     }))
     .unwrap();
-    write_file(&site.join(registry).join("config.json"), &config);
+    write_file(&site.join("config.json"), &config);
 }
 
 fn write_file(path: &Path, contents: &[u8]) {

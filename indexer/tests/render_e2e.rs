@@ -1,4 +1,4 @@
-//! Deterministic schema-v3 renderer integration test across two registries and nine categories.
+//! Deterministic schema-v4 renderer integration test for a mixed-source root registry.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -9,22 +9,22 @@ use pkgre_indexer::artifact::{ArtifactMap, sha256_bytes};
 use pkgre_indexer::category::CategoryId;
 use pkgre_indexer::download::{
     DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
+    router_download_template,
 };
 use pkgre_indexer::index::{IndexRecord, index_path};
 use pkgre_indexer::render;
 use pkgre_indexer::schema::{
-    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, MIRROR_DOWNLOAD, NameSource,
-    PUBLISH_DOWNLOAD, PackageHome, PackageState, RegistryLock, SCHEMA_VERSION, serialize_lock,
+    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome, PackageState,
+    RegistryLock, SCHEMA_VERSION, serialize_lock,
 };
 use semver::Version;
 use serde_json::{Value, json};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-const UNIVERSE_URL: &str = "sparse+https://rust.pkg.re/universe/";
-const PKGRE_URL: &str = "sparse+https://rust.pkg.re/pkgre/";
+const MAIN_URL: &str = "sparse+https://rust.pkg.re/";
 
 #[test]
-fn renderer_routes_categories_and_inline_external_layouts_identically() {
+fn renderer_routes_mixed_sources_at_root_and_layouts_identically() {
     let temporary = TemporaryDirectory::new("pkgre-render-e2e");
     let external_root = temporary.path().join("catalog-external");
     let external_artifacts = prepare_catalog(&external_root, true);
@@ -43,24 +43,22 @@ fn renderer_routes_categories_and_inline_external_layouts_identically() {
     render::render(&inline_catalog, &inline_objects, &inline_site).unwrap();
     assert_eq!(snapshot(&external_site), snapshot(&inline_site));
 
-    assert_dependency_registry(&external_site, "universe", "leaf-core", None);
-    assert_dependency_registry(&external_site, "universe", "matrix-middle", None);
-    assert_dependency_registry(&external_site, "pkgre", "pkgre-top", Some(UNIVERSE_URL));
+    assert_dependency_registry(&external_site, "leaf-core", None);
+    assert_dependency_registry(&external_site, "matrix-middle", None);
+    assert_dependency_registry(&external_site, "pkgre-top", None);
     assert_eq!(
         fs::read_to_string(external_site.join("CNAME")).unwrap(),
         "rust.pkg.re\n"
     );
     assert!(external_site.join(".nojekyll").is_file());
-    for (registry, expected) in [("universe", MIRROR_DOWNLOAD), ("pkgre", PUBLISH_DOWNLOAD)] {
-        let config: Value = serde_json::from_slice(
-            &fs::read(external_site.join(registry).join("config.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(config["dl"], expected);
-    }
+    let config: Value =
+        serde_json::from_slice(&fs::read(external_site.join("config.json")).unwrap()).unwrap();
+    assert_eq!(config["dl"], router_download_template("main"));
+    assert!(!external_site.join("main/config.json").exists());
+
     for artifact in external_artifacts
         .iter()
-        .filter(|artifact| artifact.registry == "universe")
+        .filter(|artifact| artifact.source == TestSource::Mirror)
     {
         assert!(
             !external_site
@@ -71,7 +69,7 @@ fn renderer_routes_categories_and_inline_external_layouts_identically() {
     }
     let published = external_artifacts
         .iter()
-        .find(|artifact| artifact.registry == "pkgre")
+        .find(|artifact| artifact.source == TestSource::Publish)
         .unwrap();
     assert_eq!(
         fs::read(
@@ -87,41 +85,153 @@ fn renderer_routes_categories_and_inline_external_layouts_identically() {
     assert!(render::verify(&external_catalog, &external_objects, &external_site).is_err());
 }
 
+#[test]
+fn renderer_keeps_main_at_root_and_future_registry_below_its_alias() {
+    let temporary = TemporaryDirectory::new("pkgre-render-multi-registry");
+    let root = temporary.path().join("catalog");
+    prepare_catalog(&root, false);
+    add_future_registry(&root);
+
+    let catalog = Catalog::load(&root).unwrap();
+    let artifacts = ArtifactMap::load(&catalog).unwrap();
+    let site = temporary.path().join("site");
+    render::render(&catalog, &artifacts, &site).unwrap();
+    render::verify(&catalog, &artifacts, &site).unwrap();
+
+    assert!(site.join("config.json").is_file());
+    assert!(!site.join("main/config.json").exists());
+    assert!(site.join(index_path("leaf-core")).is_file());
+    assert!(site.join("staging/config.json").is_file());
+    assert!(
+        site.join("staging")
+            .join(index_path("future-crate"))
+            .is_file()
+    );
+    assert!(!site.join(index_path("future-crate")).exists());
+    assert!(!site.join("staging").join(index_path("leaf-core")).exists());
+}
 fn prepare_catalog(root: &Path, external_large_categories: bool) -> Vec<TestArtifact> {
     fs::create_dir(root).unwrap();
     write_human_files(root, external_large_categories);
     let artifacts = vec![
-        add_artifact(root, "universe", "general", "leaf-core", None),
+        add_artifact(root, "general", "leaf-core", None, TestSource::Mirror),
         add_artifact(
             root,
-            "universe",
             "matrix",
             "matrix-middle",
             Some("leaf-core"),
+            TestSource::Mirror,
         ),
-        add_artifact(root, "pkgre", "tooling", "pkgre-top", Some("leaf-core")),
+        add_artifact(
+            root,
+            "pkgre",
+            "pkgre-top",
+            Some("leaf-core"),
+            TestSource::Publish,
+        ),
     ];
-    write_locks(root, &artifacts);
+    write_lock(root, &artifacts);
     write_downloads(root, &artifacts);
     artifacts
 }
 
+fn add_future_registry(root: &Path) {
+    const NAME: &str = "future-crate";
+    let archive_hash = sha256_bytes(b"future crate archive\n");
+    let mut source_row = serde_json::to_vec(&json!({
+        "name": NAME,
+        "vers": "1.0.0",
+        "deps": [],
+        "cksum": archive_hash,
+        "features": {},
+        "yanked": true,
+    }))
+    .unwrap();
+    source_row.push(b'\n');
+    let source_row_hash = sha256_bytes(&source_row);
+    write_file(
+        &root
+            .join("objects/rows")
+            .join(format!("{source_row_hash}.json")),
+        &source_row,
+    );
+    let mut routed = IndexRecord::parse(&source_row).unwrap();
+    routed.set_yanked(false);
+    routed
+        .route_dependencies(
+            "staging",
+            &BTreeMap::new(),
+            &BTreeMap::from([
+                ("main".to_owned(), MAIN_URL.to_owned()),
+                (
+                    "staging".to_owned(),
+                    "sparse+https://rust.pkg.re/staging/".to_owned(),
+                ),
+            ]),
+        )
+        .unwrap();
+    let index_row_hash = sha256_bytes(&routed.to_json_line().unwrap());
+
+    fs::write(
+        root.join("staging.toml"),
+        format!(
+            "schema = 4\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/staging/\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
+            router_download_template("staging")
+        ),
+    )
+    .unwrap();
+    let lock = RegistryLock {
+        schema: SCHEMA_VERSION,
+        registry: LockedRegistry {
+            name: "staging".to_owned(),
+            index: "sparse+https://rust.pkg.re/staging/".to_owned(),
+            download: router_download_template("staging"),
+        },
+        names: vec![LockedName {
+            name: NAME.to_owned(),
+            category: "experimental".to_owned(),
+        }],
+        packages: vec![LockedPackage {
+            name: NAME.to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+            state: PackageState::Active,
+            crate_sha256: archive_hash.clone(),
+            source_row_sha256: source_row_hash,
+            index_row_sha256: index_row_hash,
+            admission_sha256: None,
+            source: LockedSource::CratesIo {},
+        }],
+    };
+    fs::write(root.join("staging.lock"), serialize_lock(&lock).unwrap()).unwrap();
+
+    let mut downloads = DownloadCatalog::load_from_root(root).unwrap();
+    downloads.routes.push(DownloadRoute {
+        registry: "staging".to_owned(),
+        name: NAME.to_owned(),
+        version: Version::parse("1.0.0").unwrap(),
+        sha256: archive_hash,
+        source: DownloadSource::CratesIo,
+    });
+    fs::write(
+        root.join(DOWNLOAD_CATALOG_FILE),
+        downloads.canonical_bytes().unwrap(),
+    )
+    .unwrap();
+}
 fn write_downloads(root: &Path, artifacts: &[TestArtifact]) {
-    let mut routes = artifacts
+    let routes = artifacts
         .iter()
         .map(|artifact| DownloadRoute {
-            registry: artifact.registry.to_owned(),
+            registry: "main".to_owned(),
             name: artifact.name.to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             sha256: artifact.archive_hash.clone(),
-            source: if artifact.registry == "pkgre" {
-                DownloadSource::GitTag
-            } else {
-                DownloadSource::CratesIo
+            source: match artifact.source {
+                TestSource::Mirror => DownloadSource::CratesIo,
+                TestSource::Publish => DownloadSource::GitTag,
             },
         })
-        .collect::<Vec<_>>();
-    routes.sort();
+        .collect();
     let downloads = DownloadCatalog {
         schema: DOWNLOAD_CATALOG_SCHEMA,
         routes,
@@ -133,10 +243,16 @@ fn write_downloads(root: &Path, artifacts: &[TestArtifact]) {
     .unwrap();
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TestSource {
+    Mirror,
+    Publish,
+}
+
 struct TestArtifact {
-    registry: &'static str,
     category: &'static str,
     name: &'static str,
+    source: TestSource,
     archive_hash: String,
     record_hash: String,
     record_bytes: Vec<u8>,
@@ -145,14 +261,14 @@ struct TestArtifact {
 
 fn add_artifact(
     root: &Path,
-    registry: &'static str,
     category: &'static str,
     name: &'static str,
     dependency: Option<&str>,
+    source: TestSource,
 ) -> TestArtifact {
     let archive_bytes = format!("synthetic archive for {name} 1.0.0\n").into_bytes();
     let archive_hash = sha256_bytes(&archive_bytes);
-    if registry == "pkgre" {
+    if source == TestSource::Publish {
         write_file(
             &root
                 .join("objects/crates")
@@ -193,9 +309,9 @@ fn add_artifact(
         &record_bytes,
     );
     TestArtifact {
-        registry,
         category,
         name,
+        source,
         archive_hash,
         record_hash,
         record_bytes,
@@ -204,86 +320,77 @@ fn add_artifact(
 }
 
 fn write_human_files(root: &Path, external_large_categories: bool) {
-    let mut universe = String::from(
-        "schema = 3\n\n[registry]\nname = \"universe\"\nindex = \"sparse+https://rust.pkg.re/universe/\"\ndownload = \"https://static.crates.io/crates\"\ncargo-version = \"1.95.0\"\n\n",
+    let mut main = format!(
+        "schema = 4\n\n[registry]\nname = \"main\"\nindex = \"{MAIN_URL}\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n",
+        router_download_template("main")
     );
     for (local, dependencies, package) in [
-        (
-            "acp",
-            &["universe/acp", "universe/general"] as &[_],
-            "reserved-acp",
-        ),
+        ("acp", &["main/acp", "main/general"] as &[_], "reserved-acp"),
         (
             "filesystem",
-            &["universe/filesystem", "universe/general"] as &[_],
+            &["main/filesystem", "main/general"] as &[_],
             "reserved-filesystem",
         ),
         (
             "mcp",
-            &["universe/mcp", "universe/sse", "universe/general"] as &[_],
+            &["main/mcp", "main/sse", "main/general"] as &[_],
             "reserved-mcp",
         ),
-        (
-            "sse",
-            &["universe/sse", "universe/general"] as &[_],
-            "reserved-sse",
-        ),
+        ("sse", &["main/sse", "main/general"] as &[_], "reserved-sse"),
         (
             "terminal",
-            &["universe/terminal", "universe/general"] as &[_],
+            &["main/terminal", "main/general"] as &[_],
             "reserved-terminal",
         ),
         (
             "yaml",
-            &["universe/yaml", "universe/general"] as &[_],
+            &["main/yaml", "main/general"] as &[_],
             "reserved-yaml",
         ),
     ] {
-        universe.push_str(&inline_mirror_category(
+        main.push_str(&inline_mirror_category(
             local,
             dependencies,
             &[(package, &[])],
         ));
     }
     if external_large_categories {
-        universe.push_str(
-            "[categories.general]\nfile = \"categories/universe/general.toml\"\n\n[categories.matrix]\nfile = \"categories/universe/matrix.toml\"\n",
+        main.push_str(
+            "[categories.general]\nfile = \"categories/main/general.toml\"\n\n[categories.matrix]\nfile = \"categories/main/matrix.toml\"\n\n",
         );
-        fs::create_dir_all(root.join("categories/universe")).unwrap();
+        fs::create_dir_all(root.join("categories/main")).unwrap();
         fs::write(
-            root.join("categories/universe/general.toml"),
+            root.join("categories/main/general.toml"),
             external_mirror_category(
-                &["universe/general"],
+                &["main/general"],
                 &[("leaf-core", &["1.0.0"]), ("reserved-general", &[])],
             ),
         )
         .unwrap();
         fs::write(
-            root.join("categories/universe/matrix.toml"),
+            root.join("categories/main/matrix.toml"),
             external_mirror_category(
-                &["universe/matrix", "universe/general"],
+                &["main/matrix", "main/general"],
                 &[("matrix-middle", &["1.0.0"]), ("reserved-matrix", &[])],
             ),
         )
         .unwrap();
     } else {
-        universe.push_str(&inline_mirror_category(
+        main.push_str(&inline_mirror_category(
             "general",
-            &["universe/general"],
+            &["main/general"],
             &[("leaf-core", &["1.0.0"]), ("reserved-general", &[])],
         ));
-        universe.push_str(&inline_mirror_category(
+        main.push_str(&inline_mirror_category(
             "matrix",
-            &["universe/matrix", "universe/general"],
+            &["main/matrix", "main/general"],
             &[("matrix-middle", &["1.0.0"]), ("reserved-matrix", &[])],
         ));
     }
-    fs::write(root.join("universe.toml"), universe).unwrap();
-    fs::write(
-        root.join("pkgre.toml"),
-        "schema = 3\n\n[registry]\nname = \"pkgre\"\nindex = \"sparse+https://rust.pkg.re/pkgre/\"\ndownload = \"https://rust.pkg.re/crates/{sha256-checksum}.crate\"\ncargo-version = \"1.95.0\"\n\n[categories.tooling]\nmay-depend-on = [\"pkgre/tooling\", \"universe/general\"]\n\n[categories.tooling.publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
-    )
-    .unwrap();
+    main.push_str(
+        "[categories.pkgre]\nmay-depend-on = [\"main/pkgre\", \"main/general\"]\n\n[categories.pkgre.publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
+    );
+    fs::write(root.join("main.toml"), main).unwrap();
 }
 
 fn inline_mirror_category(
@@ -300,7 +407,7 @@ fn inline_mirror_category(
 
 fn external_mirror_category(dependencies: &[&str], packages: &[(&str, &[&str])]) -> String {
     format!(
-        "schema = 3\nmay-depend-on = [{}]\n\n[mirror]\n{}",
+        "schema = 4\nmay-depend-on = [{}]\n\n[mirror]\n{}",
         quoted(dependencies),
         package_lines(packages)
     )
@@ -322,87 +429,66 @@ fn package_lines(packages: &[(&str, &[&str])]) -> String {
         .join("\n")
 }
 
-fn write_locks(root: &Path, artifacts: &[TestArtifact]) {
+fn write_lock(root: &Path, artifacts: &[TestArtifact]) {
     let homes = package_homes();
-    let registry_urls = BTreeMap::from([
-        ("universe".to_owned(), UNIVERSE_URL.to_owned()),
-        ("pkgre".to_owned(), PKGRE_URL.to_owned()),
-    ]);
-    for registry in ["pkgre", "universe"] {
-        let names = homes
-            .iter()
-            .filter(|(_, home)| home.registry == registry)
-            .map(|(name, home)| LockedName {
-                name: name.clone(),
-                category: home.category.local().to_owned(),
-                source: if registry == "pkgre" {
-                    NameSource::Publish
-                } else {
-                    NameSource::Mirror
+    let registry_urls = BTreeMap::from([("main".to_owned(), MAIN_URL.to_owned())]);
+    let names = homes
+        .iter()
+        .map(|(name, home)| LockedName {
+            name: name.clone(),
+            category: home.category.local().to_owned(),
+        })
+        .collect();
+    let packages = artifacts
+        .iter()
+        .map(|artifact| LockedPackage {
+            name: artifact.name.to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+            state: PackageState::Active,
+            crate_sha256: artifact.archive_hash.clone(),
+            source_row_sha256: artifact.record_hash.clone(),
+            index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
+            admission_sha256: None,
+            source: match artifact.source {
+                TestSource::Publish => LockedSource::GitTag {
+                    git: "https://github.com/pkgre/pkgre".to_owned(),
+                    tag: "test/v1.0.0".to_owned(),
+                    tag_oid: "01".repeat(20),
+                    commit: "02".repeat(20),
+                    package: artifact.name.to_owned(),
+                    path: PathBuf::from("."),
+                    cargo_version: Version::parse("1.95.0").unwrap(),
                 },
-            })
-            .collect();
-        let packages = artifacts
-            .iter()
-            .filter(|artifact| artifact.registry == registry)
-            .map(|artifact| LockedPackage {
-                name: artifact.name.to_owned(),
-                version: Version::parse("1.0.0").unwrap(),
-                state: PackageState::Active,
-                crate_sha256: artifact.archive_hash.clone(),
-                source_row_sha256: artifact.record_hash.clone(),
-                index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
-                admission_sha256: None,
-                source: if registry == "pkgre" {
-                    LockedSource::GitTag {
-                        git: "https://github.com/pkgre/pkgre".to_owned(),
-                        tag: "test/v1.0.0".to_owned(),
-                        tag_oid: "01".repeat(20),
-                        commit: "02".repeat(20),
-                        package: artifact.name.to_owned(),
-                        path: PathBuf::from("."),
-                        cargo_version: Version::parse("1.95.0").unwrap(),
-                    }
-                } else {
-                    LockedSource::CratesIo {}
-                },
-            })
-            .collect();
-        let lock = RegistryLock {
-            schema: SCHEMA_VERSION,
-            registry: LockedRegistry {
-                name: registry.to_owned(),
-                index: registry_urls[registry].clone(),
-                download: if registry == "pkgre" {
-                    PUBLISH_DOWNLOAD.to_owned()
-                } else {
-                    MIRROR_DOWNLOAD.to_owned()
-                },
+                TestSource::Mirror => LockedSource::CratesIo {},
             },
-            names,
-            packages,
-        };
-        fs::write(
-            root.join(format!("{registry}.lock")),
-            serialize_lock(&lock).unwrap(),
-        )
-        .unwrap();
-    }
+        })
+        .collect();
+    let lock = RegistryLock {
+        schema: SCHEMA_VERSION,
+        registry: LockedRegistry {
+            name: "main".to_owned(),
+            index: MAIN_URL.to_owned(),
+            download: router_download_template("main"),
+        },
+        names,
+        packages,
+    };
+    fs::write(root.join("main.lock"), serialize_lock(&lock).unwrap()).unwrap();
 }
 
 fn package_homes() -> BTreeMap<String, PackageHome> {
     [
-        ("leaf-core", "universe/general"),
-        ("matrix-middle", "universe/matrix"),
-        ("pkgre-top", "pkgre/tooling"),
-        ("reserved-acp", "universe/acp"),
-        ("reserved-filesystem", "universe/filesystem"),
-        ("reserved-general", "universe/general"),
-        ("reserved-matrix", "universe/matrix"),
-        ("reserved-mcp", "universe/mcp"),
-        ("reserved-sse", "universe/sse"),
-        ("reserved-terminal", "universe/terminal"),
-        ("reserved-yaml", "universe/yaml"),
+        ("leaf-core", "main/general"),
+        ("matrix-middle", "main/matrix"),
+        ("pkgre-top", "main/pkgre"),
+        ("reserved-acp", "main/acp"),
+        ("reserved-filesystem", "main/filesystem"),
+        ("reserved-general", "main/general"),
+        ("reserved-matrix", "main/matrix"),
+        ("reserved-mcp", "main/mcp"),
+        ("reserved-sse", "main/sse"),
+        ("reserved-terminal", "main/terminal"),
+        ("reserved-yaml", "main/yaml"),
     ]
     .into_iter()
     .map(|(name, category)| {
@@ -427,13 +513,13 @@ fn routed_hash(
     let mut record = IndexRecord::parse(&artifact.record_bytes).unwrap();
     record.set_yanked(false);
     record
-        .route_dependencies(artifact.registry, homes, registry_urls)
+        .route_dependencies("main", homes, registry_urls)
         .unwrap();
     sha256_bytes(&record.to_json_line().unwrap())
 }
 
-fn assert_dependency_registry(site: &Path, registry: &str, name: &str, expected: Option<&str>) {
-    let bytes = fs::read(site.join(registry).join(index_path(name))).unwrap();
+fn assert_dependency_registry(site: &Path, name: &str, expected: Option<&str>) {
+    let bytes = fs::read(site.join(index_path(name))).unwrap();
     let row: Value = serde_json::from_slice(&bytes).unwrap();
     let actual = row["deps"]
         .as_array()
