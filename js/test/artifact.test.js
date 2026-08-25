@@ -55,6 +55,12 @@ test("rejects absent,tampered,or unlisted managed files", () => {
   }
   const unlisted = new Map([[route, Buffer.from("marker")]]);
   assert.throws(() => readSiteInventory(unlisted), /without an inventory/);
+
+  const nonUtf8 = cloneSite(rendered);
+  const inventoryBytes = Buffer.from(nonUtf8.get(SITE_INVENTORY_PATH));
+  inventoryBytes[inventoryBytes.indexOf(Buffer.from("pkgre-js-site-v1"))] = 0xff;
+  nonUtf8.set(SITE_INVENTORY_PATH, inventoryBytes);
+  assert.throws(() => readSiteInventory(nonUtf8), /not UTF-8/);
 });
 
 test("rejects unsafe paths and file-prefix conflicts", () => {

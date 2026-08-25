@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { TextDecoder } from "node:util";
 
 import { canonicalJson, parseCanonicalJson, validatePackageName } from "./canonical.js";
+
+const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 export const SITE_INVENTORY_PATH = ".pkgre-js-site.json";
 export const SITE_SCHEMA = "pkgre-js-site-v1";
@@ -94,7 +97,13 @@ export function readSiteInventory(site) {
     if (managed.length) throw new Error("site has managed immutable files without an inventory");
     return undefined;
   }
-  const inventory = parseCanonicalJson(bytes.toString("utf8"), "site inventory");
+  let text;
+  try {
+    text = utf8.decode(bytes);
+  } catch {
+    throw new Error("site inventory is not UTF-8");
+  }
+  const inventory = parseCanonicalJson(text, "site inventory");
   exactKeys(inventory, ["catalogSha256", "metadata", "objects", "routes", "schema", "stage"], "site inventory");
   if (inventory.schema !== SITE_SCHEMA) throw new Error(`site inventory schema must be ${SITE_SCHEMA}`);
   if (!SHA256.test(inventory.catalogSha256)) throw new Error("site inventory catalogSha256 must be lowercase SHA-256");
