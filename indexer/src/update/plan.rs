@@ -421,6 +421,7 @@ fn validate_update_plan_with(plan: &UpdatePlan, require_current_indexer: bool) -
         previous = Some(key);
         ensure!(
             identities.insert((
+                candidate.registry.clone(),
                 candidate.name.to_ascii_lowercase().replace('-', "_"),
                 candidate.candidate.version.major,
                 candidate.candidate.version.minor,
@@ -1146,6 +1147,53 @@ mod tests {
         };
         *path = "nested".to_owned();
         assert!(serialize_update_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn candidate_cargo_identity_is_scoped_by_registry() {
+        let mut plan = sample_plan();
+        plan.candidates[0].registry = "main".to_owned();
+        plan.candidates[0].category = "main/general".to_owned();
+        plan.candidates[0].name = "shared-name".to_owned();
+        let mut staging = plan.candidates[0].clone();
+        staging.registry = "staging".to_owned();
+        staging.category = "staging/general".to_owned();
+        staging.name = "shared_name".to_owned();
+        plan.candidates.push(staging);
+        plan.candidates.sort_by(|left, right| {
+            (
+                left.registry.as_str(),
+                left.name.to_ascii_lowercase(),
+                left.name.as_str(),
+                &left.candidate.version,
+            )
+                .cmp(&(
+                    right.registry.as_str(),
+                    right.name.to_ascii_lowercase(),
+                    right.name.as_str(),
+                    &right.candidate.version,
+                ))
+        });
+        serialize_update_plan(&plan).unwrap();
+
+        plan.candidates[1].registry = "main".to_owned();
+        plan.candidates[1].category = "main/general".to_owned();
+        plan.candidates.sort_by(|left, right| {
+            (
+                left.registry.as_str(),
+                left.name.to_ascii_lowercase(),
+                left.name.as_str(),
+                &left.candidate.version,
+            )
+                .cmp(&(
+                    right.registry.as_str(),
+                    right.name.to_ascii_lowercase(),
+                    right.name.as_str(),
+                    &right.candidate.version,
+                ))
+        });
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(format!("{error:#}").contains("repeats Cargo package identity"));
     }
 
     fn sample_plan() -> UpdatePlan {

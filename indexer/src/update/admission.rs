@@ -21,7 +21,7 @@ use super::{
 const ADMISSION_LOCK_SCHEMA: u32 = 2;
 const ADMISSIONS_DIRECTORY: &str = "admissions";
 
-type AdmissionIdentity = (String, (u64, u64, u64, String));
+type AdmissionIdentity = (String, String, (u64, u64, u64, String));
 
 /// Complete generated facts for one human admission batch.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -524,7 +524,11 @@ fn validate_request_evidence(
 
 fn request_identity(request: &AdmissionRequest) -> Result<AdmissionIdentity> {
     match (&request.version, &request.tag) {
-        (Some(version), None) => Ok((package_identity(&request.name), version_identity(version))),
+        (Some(version), None) => Ok((
+            request.category.registry().to_owned(),
+            package_identity(&request.name),
+            version_identity(version),
+        )),
         (None, Some(tag)) => bail!(
             "Git-tag admission for {} tag {tag:?} is not yet supported",
             request.name
@@ -538,6 +542,7 @@ fn request_identity(request: &AdmissionRequest) -> Result<AdmissionIdentity> {
 
 fn candidate_identity(candidate: &UpdateCandidate) -> AdmissionIdentity {
     (
+        candidate.registry.clone(),
         package_identity(&candidate.name),
         version_identity(&candidate.candidate.version),
     )
@@ -545,6 +550,7 @@ fn candidate_identity(candidate: &UpdateCandidate) -> AdmissionIdentity {
 
 fn approval_identity(approval: &Approval) -> AdmissionIdentity {
     (
+        approval.registry.clone(),
         package_identity(&approval.name),
         version_identity(&approval.version),
     )

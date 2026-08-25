@@ -17,7 +17,7 @@ use crate::policy::{canonical_registry_index, validate_catalog};
 use crate::render;
 use crate::schema::{
     self, Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome,
-    PackageState, RegistryLock, Source,
+    PackageKey, PackageState, RegistryLock, Source,
 };
 use crate::update::{MigratedAdmissionInventory, migrate_admission_inventory};
 
@@ -84,7 +84,8 @@ pub fn migrate_v3_to_v4(source: &Path, destination: &Path) -> Result<Schema4Migr
     DownloadCatalog::load_from_root(&source)?
         .validate_against_catalog(&compatibility)
         .context("verify schema-3 download catalog")?;
-    verify_source_rows(&old_catalog, &compatibility.homes.homes, &old_policy)?;
+    let historical_homes = compatibility_homes(&old_catalog);
+    verify_source_rows(&old_catalog, &historical_homes, &old_policy)?;
 
     let inputs = v3::load_registry_inputs(&source).context("reload schema-3 human inputs")?;
     let output = build_output(&old_catalog, &inputs)?;
@@ -109,13 +110,27 @@ pub(super) fn compatibility_catalog(catalog: &v3::Catalog) -> Catalog {
         .name_sources
         .iter()
         .filter(|(_, source)| **source == v3::NameSource::Mirror)
-        .map(|(name, _)| name.clone())
+        .map(|(name, _)| {
+            let home = catalog
+                .homes
+                .homes
+                .get(name)
+                .expect("validated schema-3 source declaration has a home");
+            PackageKey::new(&home.registry, name)
+        })
         .collect();
     let publish_names = catalog
         .name_sources
         .iter()
         .filter(|(_, source)| **source == v3::NameSource::Publish)
-        .map(|(name, _)| name.clone())
+        .map(|(name, _)| {
+            let home = catalog
+                .homes
+                .homes
+                .get(name)
+                .expect("validated schema-3 source declaration has a home");
+            PackageKey::new(&home.registry, name)
+        })
         .collect();
     Catalog {
         root: catalog.root.clone(),
@@ -144,7 +159,7 @@ pub(super) fn compatibility_catalog(catalog: &v3::Catalog) -> Catalog {
                 .iter()
                 .map(|(name, home)| {
                     (
-                        name.clone(),
+                        PackageKey::new(&home.registry, name),
                         PackageHome {
                             registry: home.registry.clone(),
                             category: home.category.clone(),
@@ -173,6 +188,23 @@ pub(super) fn compatibility_catalog(catalog: &v3::Catalog) -> Catalog {
             })
             .collect(),
     }
+}
+
+fn compatibility_homes(catalog: &v3::Catalog) -> BTreeMap<String, PackageHome> {
+    catalog
+        .homes
+        .homes
+        .iter()
+        .map(|(name, home)| {
+            (
+                name.clone(),
+                PackageHome {
+                    registry: home.registry.clone(),
+                    category: home.category.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 pub(super) fn compatibility_policy(policy: &super::v3_policy::Policy) -> crate::policy::Policy {

@@ -84,7 +84,7 @@ pub(crate) fn reconcile_admitted_with<R: Resolver>(
 ) -> Result<ReconcileSummary> {
     let mut indexed = BTreeMap::new();
     for admission in admissions {
-        let identity = package_identity(&admission.name, &admission.version);
+        let identity = package_identity(&admission.registry, &admission.name, &admission.version);
         ensure!(
             indexed.insert(identity, admission.clone()).is_none(),
             "update admission repeats Cargo identity {} {}",
@@ -252,7 +252,7 @@ struct DesiredState {
 }
 
 type VersionIdentity = (u64, u64, u64, String);
-type Identity = (String, VersionIdentity);
+type Identity = (String, String, VersionIdentity);
 type GitIdentity = (String, String, String, String);
 
 type OldPackages = BTreeMap<Identity, (String, CategoryId, LockedPackage)>;
@@ -503,7 +503,7 @@ fn collect_desired_packages(inputs: &[RegistryInput]) -> Result<DesiredState> {
         for category in input.file.category_values() {
             for (name, versions) in &category.mirror {
                 for version in versions {
-                    let identity = package_identity(name, version);
+                    let identity = package_identity(registry, name, version);
                     ensure!(
                         desired
                             .mirrors
@@ -585,7 +585,8 @@ fn collect_old_packages(inputs: &[RegistryInput]) -> Result<OldPackages> {
             })?;
             let category = CategoryId::new(&input.file.registry.name, *local)
                 .context("locked package has invalid category anchor")?;
-            let identity = package_identity(&package.name, &package.version);
+            let identity =
+                package_identity(&input.file.registry.name, &package.name, &package.version);
             ensure!(
                 old.insert(
                     identity,
@@ -745,7 +746,7 @@ fn prepare_next_locks(
             let remains_desired = match &package.source {
                 LockedSource::CratesIo {} => desired
                     .mirrors
-                    .get(&package_identity(&package.name, &package.version))
+                    .get(&package_identity(registry, &package.name, &package.version))
                     .is_some_and(|declaration| {
                         declaration.registry == *registry
                             && declaration.category.registry() == registry
@@ -825,7 +826,7 @@ fn lock_resolved_package(
         crate::policy::validate_sha256(binding).context("validate update-admission binding")?;
     }
 
-    let identity = package_identity(&resolved.name, &resolved.version);
+    let identity = package_identity(registry, &resolved.name, &resolved.version);
     ensure!(
         identities.insert(identity),
         "new package {} {} conflicts with an existing Cargo package identity",
@@ -890,8 +891,9 @@ fn insert_pending_object(
     Ok(())
 }
 
-fn package_identity(name: &str, version: &Version) -> Identity {
+fn package_identity(registry: &str, name: &str, version: &Version) -> Identity {
     (
+        registry.to_owned(),
         name.to_ascii_lowercase().replace('-', "_"),
         version_identity(version),
     )
@@ -1006,9 +1008,9 @@ fn routed_row_hash(
         "source row checksum for {name} {version} differs from archive hash {archive_sha256}"
     );
     record.set_yanked(false);
-    let routes = record.route_dependencies(
+    let routes = record.route_dependencies_scoped(
         source_category.registry(),
-        &catalog.homes.homes,
+        &catalog.homes,
         &policy.registry_urls,
     )?;
     for (package, home) in routes {
@@ -1475,6 +1477,61 @@ mod tests {
             route.version == Version::parse("1.0.1").unwrap()
                 && route.source == DownloadSource::GitTag
         }));
+    }
+
+    #[test]
+    fn identical_cargo_identities_in_distinct_registries_reconcile_and_render() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-registry-scoped-identity");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nshared-name = [\"1.0.0\"]\n", "", "");
+        write_registry(
+            &root,
+            "staging",
+            MIRROR_DOWNLOAD,
+            concat!(
+                "[categories.general]\n",
+                "may-depend-on = [\"staging/general\"]\n\n",
+                "[categories.general.mirror]\n",
+                "shared_name = [\"1.0.0\"]\n",
+            ),
+        );
+
+        let summary = reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_added, 2);
+        assert_eq!(
+            locked_package(&root, "main", "shared-name").version,
+            Version::new(1, 0, 0)
+        );
+        assert_eq!(
+            locked_package(&root, "staging", "shared_name").version,
+            Version::new(1, 0, 0)
+        );
+        let catalog = Catalog::load(&root).unwrap();
+        assert_eq!(
+            catalog
+                .approvals
+                .iter()
+                .filter(|package| {
+                    package.name.to_ascii_lowercase().replace('-', "_") == "shared_name"
+                        && package.version == Version::new(1, 0, 0)
+                })
+                .count(),
+            2
+        );
+        let artifacts = ArtifactMap::load(&catalog).unwrap();
+        let site = temporary.path().join("site-registry-scoped-identity");
+        crate::render::render(&catalog, &artifacts, &site).unwrap();
+        assert!(site.join(index_path("shared-name")).is_file());
+        assert!(
+            site.join("staging")
+                .join(index_path("shared_name"))
+                .is_file()
+        );
+        assert_eq!(
+            reconcile_with(&root, &FakeResolver::default(), &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
     }
 
     #[test]
@@ -2464,7 +2521,7 @@ mod tests {
                     source_row_sha256: sha256_bytes(&resolved.source_row_bytes),
                     binding_sha256: "ab".repeat(32),
                 };
-                (package_identity(name, &version), admission)
+                (package_identity(registry, name, &version), admission)
             })
             .collect()
     }

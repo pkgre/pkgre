@@ -222,6 +222,7 @@ fn validate_admission_manifest(manifest: &AdmissionManifest) -> Result<()> {
                 );
                 ensure!(
                     identities.insert((
+                        request.category.registry().to_owned(),
                         request.name.to_ascii_lowercase().replace('-', "_"),
                         Some(version_identity(version)),
                         None,
@@ -235,6 +236,7 @@ fn validate_admission_manifest(manifest: &AdmissionManifest) -> Result<()> {
                 crate::policy::validate_git_tag(tag).context("invalid admission Git tag")?;
                 ensure!(
                     identities.insert((
+                        request.category.registry().to_owned(),
                         request.name.to_ascii_lowercase().replace('-', "_"),
                         None,
                         Some(tag.clone()),
@@ -333,6 +335,31 @@ mod tests {
         serialize_admission_manifest(&manifest).unwrap();
         manifest.entries[0].tag = Some("v1.0.0".to_owned());
         assert!(serialize_admission_manifest(&manifest).is_err());
+    }
+
+    #[test]
+    fn cargo_identity_is_scoped_by_category_registry() {
+        let request = |category: &str, name: &str| AdmissionRequest {
+            category: category.parse().unwrap(),
+            name: name.to_owned(),
+            version: Some("1.0.0".parse().unwrap()),
+            tag: None,
+            evidence: Vec::new(),
+        };
+        let mut manifest = AdmissionManifest {
+            schema: ADMISSION_MANIFEST_SCHEMA,
+            entries: vec![
+                request("main/general", "shared-name"),
+                request("staging/general", "shared_name"),
+            ],
+        };
+        manifest.entries.sort_by_key(AdmissionRequest::key);
+        serialize_admission_manifest(&manifest).unwrap();
+
+        manifest.entries[1].category = "main/general".parse().unwrap();
+        manifest.entries.sort_by_key(AdmissionRequest::key);
+        let error = serialize_admission_manifest(&manifest).unwrap_err();
+        assert!(format!("{error:#}").contains("repeats Cargo identity"));
     }
 
     #[test]

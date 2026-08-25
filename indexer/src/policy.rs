@@ -9,7 +9,7 @@ use semver::Version;
 use crate::category::CategoryId;
 use crate::download::router_download_template;
 use crate::schema::{
-    Approval, Catalog, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, PackageHome, Registry, Source,
+    Approval, Catalog, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, PackageHome, PackageKey, Registry, Source,
 };
 
 const CNAME: &str = "rust.pkg.re";
@@ -176,20 +176,14 @@ pub fn canonical_registry_index(name: &str) -> String {
 }
 
 fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<()> {
-    let has_mirror = catalog.mirror_names.iter().any(|name| {
-        catalog
-            .homes
-            .homes
-            .get(name)
-            .is_some_and(|home| home.registry == registry.name)
-    });
-    let has_publish = catalog.publish_names.iter().any(|name| {
-        catalog
-            .homes
-            .homes
-            .get(name)
-            .is_some_and(|home| home.registry == registry.name)
-    });
+    let has_mirror = catalog
+        .mirror_names
+        .iter()
+        .any(|key| key.registry == registry.name);
+    let has_publish = catalog
+        .publish_names
+        .iter()
+        .any(|key| key.registry == registry.name);
     let router = router_download_template(&registry.name);
     if registry.download == router {
         return Ok(());
@@ -217,18 +211,23 @@ fn validate_homes(
     registry_urls: &BTreeMap<String, String>,
     categories: &BTreeMap<CategoryId, BTreeSet<CategoryId>>,
 ) -> Result<()> {
-    let mut collision_keys = BTreeMap::<String, &str>::new();
+    let mut collision_keys = BTreeMap::<(String, String), &str>::new();
     let mut inhabited_categories = BTreeSet::new();
     for (package, home) in &catalog.homes.homes {
-        validate_package_name(package)
-            .with_context(|| format!("invalid package home name {package:?}"))?;
+        validate_package_name(&package.name)
+            .with_context(|| format!("invalid package home name {:?}", package.name))?;
         validate_package_home(package, home, registry_urls, categories)?;
         inhabited_categories.insert(home.category.clone());
-        let key = package_collision_key(package);
-        if let Some(previous) = collision_keys.insert(key, package) {
+        let key = (
+            package.registry.clone(),
+            package_collision_key(&package.name),
+        );
+        if let Some(previous) = collision_keys.insert(key, &package.name) {
             ensure!(
-                previous == package,
-                "package names {previous:?} and {package:?} collide under Cargo normalization"
+                previous == package.name.as_str(),
+                "package names {previous:?} and {:?} collide under Cargo normalization in registry {:?}",
+                package.name,
+                package.registry
             );
         }
     }
@@ -255,25 +254,35 @@ fn validate_homes(
 }
 
 fn validate_package_home(
-    package: &str,
+    package: &PackageKey,
     home: &PackageHome,
     registry_urls: &BTreeMap<String, String>,
     categories: &BTreeMap<CategoryId, BTreeSet<CategoryId>>,
 ) -> Result<()> {
     ensure!(
+        package.registry == home.registry,
+        "package {:?} is keyed below registry {:?}, but its home names registry {:?}",
+        package.name,
+        package.registry,
+        home.registry
+    );
+    ensure!(
         registry_urls.contains_key(&home.registry),
-        "package {package:?} has unknown registry home {:?}",
+        "package {:?} has unknown registry home {:?}",
+        package.name,
         home.registry
     );
     ensure!(
         home.category.registry() == home.registry,
-        "package {package:?} category {} does not belong to registry {:?}",
+        "package {:?} category {} does not belong to registry {:?}",
+        package.name,
         home.category,
         home.registry
     );
     ensure!(
         categories.contains_key(&home.category),
-        "package {package:?} has unknown category home {}",
+        "package {:?} has unknown category home {}",
+        package.name,
         home.category
     );
     Ok(())
@@ -284,6 +293,7 @@ fn validate_approvals(catalog: &Catalog, registry_urls: &BTreeMap<String, String
     for approval in &catalog.approvals {
         validate_approval(approval, catalog, registry_urls)?;
         let identity = (
+            approval.registry.clone(),
             package_collision_key(&approval.name),
             version_identity(&approval.version),
         );
@@ -312,10 +322,13 @@ fn validate_approval(
         approval.registry,
         approval.declared_in.display()
     );
-    let home =
-        catalog.homes.homes.get(&approval.name).with_context(|| {
-            format!("approved package {:?} has no declared home", approval.name)
-        })?;
+    let key = PackageKey::new(&approval.registry, &approval.name);
+    let home = catalog.homes.homes.get(&key).with_context(|| {
+        format!(
+            "approved package {}/{} has no declared home",
+            approval.registry, approval.name
+        )
+    })?;
     ensure!(
         home.registry == approval.registry && home.category == approval.category,
         "approval for {} {} is in {}/{}, but its declared home is {}/{}",
@@ -346,8 +359,8 @@ fn validate_approval(
     })?;
 
     let source_declared = match &approval.source {
-        Source::CratesIo => catalog.mirror_names.contains(&approval.name),
-        Source::GitTag { .. } => catalog.publish_names.contains(&approval.name),
+        Source::CratesIo => catalog.mirror_names.contains(&key),
+        Source::GitTag { .. } => catalog.publish_names.contains(&key),
     };
     ensure!(
         source_declared,
@@ -611,14 +624,14 @@ mod tests {
         ]);
         let homes = BTreeMap::from([
             (
-                "mirror-crate".to_owned(),
+                PackageKey::new("main", "mirror-crate"),
                 PackageHome {
                     registry: "main".to_owned(),
                     category: "main/general".parse().unwrap(),
                 },
             ),
             (
-                "pkgre-indexer".to_owned(),
+                PackageKey::new("main", "pkgre-indexer"),
                 PackageHome {
                     registry: "main".to_owned(),
                     category: "main/pkgre".parse().unwrap(),
@@ -643,8 +656,8 @@ mod tests {
                 schema: crate::schema::SCHEMA_VERSION,
                 homes,
             },
-            mirror_names: BTreeSet::from(["mirror-crate".to_owned()]),
-            publish_names: BTreeSet::from(["pkgre-indexer".to_owned()]),
+            mirror_names: BTreeSet::from([PackageKey::new("main", "mirror-crate")]),
+            publish_names: BTreeSet::from([PackageKey::new("main", "pkgre-indexer")]),
             approvals: vec![Approval {
                 registry: "main".to_owned(),
                 category: "main/pkgre".parse().unwrap(),
@@ -694,7 +707,10 @@ mod tests {
     fn source_specific_registries_require_matching_downloads() {
         let mut mirror_only = valid_catalog();
         mirror_only.publish_names.clear();
-        mirror_only.homes.homes.remove("pkgre-indexer");
+        mirror_only
+            .homes
+            .homes
+            .remove(&PackageKey::new("main", "pkgre-indexer"));
         mirror_only.approvals.clear();
         mirror_only
             .categories
@@ -705,7 +721,10 @@ mod tests {
 
         let mut publish_only = valid_catalog();
         publish_only.mirror_names.clear();
-        publish_only.homes.homes.remove("mirror-crate");
+        publish_only
+            .homes
+            .homes
+            .remove(&PackageKey::new("main", "mirror-crate"));
         publish_only
             .categories
             .remove(&"main/general".parse().unwrap());
@@ -735,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn future_subregistry_uses_its_canonical_path() {
+    fn future_subregistry_has_its_canonical_path_and_independent_name_namespace() {
         let mut catalog = valid_catalog();
         catalog.registries.registries.push(Registry {
             name: "staging".to_owned(),
@@ -748,33 +767,55 @@ mod tests {
             vec!["staging/general".parse().unwrap()],
         );
         catalog.homes.homes.insert(
-            "staging-anchor".to_owned(),
+            PackageKey::new("staging", "mirror_crate"),
             PackageHome {
                 registry: "staging".to_owned(),
                 category: "staging/general".parse().unwrap(),
             },
         );
-        catalog.mirror_names.insert("staging-anchor".to_owned());
+        catalog
+            .mirror_names
+            .insert(PackageKey::new("staging", "mirror_crate"));
         validate_catalog(&catalog).unwrap();
 
         catalog.registries.registries[1].index = "sparse+https://rust.pkg.re/other/".to_owned();
         assert!(validate_catalog(&catalog).is_err());
+        catalog.registries.registries[1].index = canonical_registry_index("staging");
+
+        catalog.homes.homes.insert(
+            PackageKey::new("staging", "mirror-crate"),
+            PackageHome {
+                registry: "staging".to_owned(),
+                category: "staging/general".parse().unwrap(),
+            },
+        );
+        catalog
+            .mirror_names
+            .insert(PackageKey::new("staging", "mirror-crate"));
+        let error = validate_catalog(&catalog).unwrap_err();
+        assert!(format!("{error:#}").contains("collide under Cargo normalization"));
     }
 
     #[test]
     fn source_declarations_and_package_homes_have_exact_inventory() {
         let mut missing = valid_catalog();
-        missing.publish_names.remove("pkgre-indexer");
+        missing
+            .publish_names
+            .remove(&PackageKey::new("main", "pkgre-indexer"));
         let error = validate_catalog(&missing).unwrap_err();
         assert!(format!("{error:#}").contains("has no retained mirror or publish"));
 
         let mut orphan = valid_catalog();
-        orphan.mirror_names.insert("orphan".to_owned());
+        orphan
+            .mirror_names
+            .insert(PackageKey::new("main", "orphan"));
         let error = validate_catalog(&orphan).unwrap_err();
         assert!(format!("{error:#}").contains("has no package home"));
 
         let mut mixed_name = valid_catalog();
-        mixed_name.mirror_names.insert("pkgre-indexer".to_owned());
+        mixed_name
+            .mirror_names
+            .insert(PackageKey::new("main", "pkgre-indexer"));
         validate_catalog(&mixed_name).unwrap();
     }
 

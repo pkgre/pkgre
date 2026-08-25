@@ -7,7 +7,7 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::schema::PackageHome;
+use crate::schema::{HomesFile, PackageHome};
 
 /// One dependency edge from a Cargo index record, normalized for stable comparison.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -343,6 +343,61 @@ impl IndexRecord {
         Ok(routed)
     }
 
+    /// Rewrites every dependency source using registry-qualified package homes.
+    ///
+    /// The current registry wins when a normalized package name is declared there. Otherwise the
+    /// dependency must have exactly one matching home across all other registries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed dependency metadata, a missing or ambiguous home, or an unknown registry URL.
+    pub fn route_dependencies_scoped(
+        &mut self,
+        current_registry: &str,
+        homes: &HomesFile,
+        registry_urls: &BTreeMap<String, String>,
+    ) -> Result<BTreeSet<(String, PackageHome)>> {
+        let dependencies = self
+            .value
+            .get_mut("deps")
+            .context("index record missing deps")?
+            .as_array_mut()
+            .context("index record deps must be an array")?;
+        let mut routed = BTreeSet::new();
+
+        for dependency in dependencies {
+            let object = dependency
+                .as_object_mut()
+                .context("index dependency must be an object")?;
+            let alias = string_field(object, "name")?.to_owned();
+            let package = match object.get("package") {
+                None | Some(Value::Null) => alias,
+                Some(Value::String(value)) => value.clone(),
+                Some(_) => bail!("dependency package must be null or a string"),
+            };
+            let home = homes.resolve_dependency(current_registry, &package)?;
+            let registry = if home.registry == current_registry {
+                Value::Null
+            } else {
+                Value::String(
+                    registry_urls
+                        .get(&home.registry)
+                        .with_context(|| {
+                            format!(
+                                "dependency {package:?} has unknown registry home {:?}",
+                                home.registry
+                            )
+                        })?
+                        .clone(),
+                )
+            };
+            object.insert("registry".to_owned(), registry);
+            routed.insert((package, home.clone()));
+        }
+
+        Ok(routed)
+    }
+
     /// Serializes one compact JSON line with a trailing newline.
     ///
     /// # Errors
@@ -514,6 +569,60 @@ mod tests {
             record.value["deps"][0]["registry"],
             "sparse+https://example.test/two/"
         );
+    }
+
+    #[test]
+    fn scoped_dependency_routing_prefers_the_source_registry_and_rejects_ambiguity() {
+        let record = || {
+            IndexRecord::parse(
+                br#"{"name":"demo","vers":"1.0.0","deps":[{"name":"alias","package":"shared-name","registry":"untrusted"}],"cksum":"00","features":{},"yanked":false}"#,
+            )
+            .unwrap()
+        };
+        let homes = HomesFile {
+            schema: crate::schema::SCHEMA_VERSION,
+            homes: BTreeMap::from([
+                (
+                    crate::schema::PackageKey::new("main", "shared_name"),
+                    PackageHome {
+                        registry: "main".to_owned(),
+                        category: "main/general".parse().unwrap(),
+                    },
+                ),
+                (
+                    crate::schema::PackageKey::new("staging", "shared-name"),
+                    PackageHome {
+                        registry: "staging".to_owned(),
+                        category: "staging/general".parse().unwrap(),
+                    },
+                ),
+            ]),
+        };
+        let urls = BTreeMap::from([
+            ("main".to_owned(), "sparse+https://example.test/".to_owned()),
+            (
+                "staging".to_owned(),
+                "sparse+https://example.test/staging/".to_owned(),
+            ),
+        ]);
+
+        let mut local = record();
+        let routed = local
+            .route_dependencies_scoped("main", &homes, &urls)
+            .unwrap();
+        assert_eq!(local.value["deps"][0]["registry"], Value::Null);
+        assert!(routed.contains(&(
+            "shared-name".to_owned(),
+            PackageHome {
+                registry: "main".to_owned(),
+                category: "main/general".parse().unwrap(),
+            }
+        )));
+
+        let error = record()
+            .route_dependencies_scoped("preview", &homes, &urls)
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("ambiguous homes"));
     }
 
     #[test]

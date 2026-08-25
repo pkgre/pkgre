@@ -289,9 +289,9 @@ fn render_into(
         })?;
         let mut record = IndexRecord::parse(&source)?;
         record.set_yanked(false);
-        let routed = record.route_dependencies(
+        let routed = record.route_dependencies_scoped(
             &approval.registry,
-            &catalog.homes.homes,
+            &catalog.homes,
             &policy.registry_urls,
         )?;
         for (package, home) in routed {
@@ -421,10 +421,10 @@ fn release_v3_from_catalog(catalog: &Catalog) -> Release {
         .homes
         .homes
         .iter()
-        .map(|(name, home)| {
+        .map(|(key, home)| {
             let source = match (
-                catalog.mirror_names.contains(name),
-                catalog.publish_names.contains(name),
+                catalog.mirror_names.contains(key),
+                catalog.publish_names.contains(key),
             ) {
                 (true, false) => NameSource::Mirror,
                 (false, true) => NameSource::Publish,
@@ -433,7 +433,7 @@ fn release_v3_from_catalog(catalog: &Catalog) -> Release {
                 }
             };
             ReleaseName {
-                name: name.clone(),
+                name: key.name.clone(),
                 registry: home.registry.clone(),
                 category: home.category.clone(),
                 source,
@@ -468,8 +468,8 @@ fn release_from_catalog(catalog: &Catalog) -> ReleaseV4 {
         .homes
         .homes
         .iter()
-        .map(|(name, home)| ReleaseNameV4 {
-            name: name.clone(),
+        .map(|(key, home)| ReleaseNameV4 {
+            name: key.name.clone(),
             registry: home.registry.clone(),
             category: home.category.clone(),
         })
@@ -852,7 +852,7 @@ fn verify_v3_to_v4(previous: &Release, next: &ReleaseV4, next_site: &Path) -> Re
     );
     for (name, prior) in previous_names {
         let current = next_names
-            .get(name)
+            .get(&("main", name))
             .with_context(|| format!("schema-3 package name {name:?} was not migrated"))?;
         ensure!(
             current.registry == "main" && current.category == migrate_v3_category(&prior.category)?,
@@ -954,13 +954,13 @@ fn verify_v4_to_v4(previous: &ReleaseV4, next: &ReleaseV4, next_site: &Path) -> 
 
     let previous_names = name_map_v4(&previous.names)?;
     let next_names = name_map_v4(&next.names)?;
-    for (name, prior) in previous_names {
+    for ((registry, name), prior) in previous_names {
         let current = next_names
-            .get(name)
-            .with_context(|| format!("permanent package name {name:?} was removed"))?;
+            .get(&(registry, name))
+            .with_context(|| format!("permanent package name {registry}/{name} was removed"))?;
         ensure!(
             prior == *current,
-            "permanent package name {name:?} changed registry or category"
+            "permanent package name {registry}/{name} changed registry or category"
         );
     }
     let previous_packages = package_map(&previous.packages)?;
@@ -1092,7 +1092,7 @@ fn validate_v4_registry<'a>(
 fn validate_v4_names<'a>(
     release: &'a ReleaseV4,
     categories: &BTreeMap<CategoryId, &ReleaseCategory>,
-) -> Result<BTreeMap<&'a str, &'a ReleaseNameV4>> {
+) -> Result<BTreeMap<(&'a str, &'a str), &'a ReleaseNameV4>> {
     let names = name_map_v4(&release.names)?;
     let inhabited = names
         .values()
@@ -1115,7 +1115,10 @@ fn validate_v4_names<'a>(
     Ok(names)
 }
 
-fn validate_v4_packages(release: &ReleaseV4, names: &BTreeMap<&str, &ReleaseNameV4>) -> Result<()> {
+fn validate_v4_packages(
+    release: &ReleaseV4,
+    names: &BTreeMap<(&str, &str), &ReleaseNameV4>,
+) -> Result<()> {
     let packages = package_map(&release.packages)?;
     let mut cargo_identities = BTreeSet::new();
     for package in packages.values() {
@@ -1129,18 +1132,20 @@ fn validate_v4_packages(release: &ReleaseV4, names: &BTreeMap<&str, &ReleaseName
 
 fn validate_v4_package(
     package: &ReleasePackage,
-    names: &BTreeMap<&str, &ReleaseNameV4>,
-    cargo_identities: &mut BTreeSet<(String, u64, u64, u64, String)>,
+    names: &BTreeMap<(&str, &str), &ReleaseNameV4>,
+    cargo_identities: &mut BTreeSet<(String, String, u64, u64, u64, String)>,
 ) -> Result<()> {
     validate_sha256(&package.archive_sha256)?;
     validate_sha256(&package.index_record_sha256)?;
     validate_sha256(&package.index_row_sha256)?;
-    let anchor = names.get(package.name.as_str()).with_context(|| {
-        format!(
-            "release package {} {} has no permanent name anchor",
-            package.name, package.version
-        )
-    })?;
+    let anchor = names
+        .get(&(package.registry.as_str(), package.name.as_str()))
+        .with_context(|| {
+            format!(
+                "release package {}/{} {} has no permanent name anchor",
+                package.registry, package.name, package.version
+            )
+        })?;
     ensure!(
         anchor.registry == package.registry && anchor.category == package.category,
         "release package {} {} differs from its permanent name anchor",
@@ -1149,6 +1154,7 @@ fn validate_v4_package(
     );
     ensure!(
         cargo_identities.insert((
+            package.registry.clone(),
             package.name.to_ascii_lowercase().replace('-', "_"),
             package.version.major,
             package.version.minor,
@@ -1202,7 +1208,7 @@ fn validate_release_registry_download_v4<'a>(
     Ok(())
 }
 
-fn name_map_v4(names: &[ReleaseNameV4]) -> Result<BTreeMap<&str, &ReleaseNameV4>> {
+fn name_map_v4(names: &[ReleaseNameV4]) -> Result<BTreeMap<(&str, &str), &ReleaseNameV4>> {
     let mut result = BTreeMap::new();
     let mut normalized = BTreeMap::new();
     for name in names {
@@ -1214,15 +1220,22 @@ fn name_map_v4(names: &[ReleaseNameV4]) -> Result<BTreeMap<&str, &ReleaseNameV4>
             name.registry
         );
         ensure!(
-            result.insert(name.name.as_str(), name).is_none(),
-            "duplicate permanent package name in release manifest: {:?}",
-            name.name
+            result
+                .insert((name.registry.as_str(), name.name.as_str()), name)
+                .is_none(),
+            "duplicate permanent package name in release manifest: {}/{}",
+            name.registry,
+            name.name,
         );
-        let key = name.name.to_ascii_lowercase().replace('-', "_");
+        let key = (
+            name.registry.as_str(),
+            name.name.to_ascii_lowercase().replace('-', "_"),
+        );
         if let Some(previous) = normalized.insert(key, name.name.as_str()) {
             bail!(
-                "release package names {previous:?} and {:?} collide under Cargo normalization",
-                name.name
+                "release package names {previous:?} and {:?} collide under Cargo normalization in registry {:?}",
+                name.name,
+                name.registry,
             );
         }
     }
@@ -2081,7 +2094,7 @@ mod tests {
         .unwrap();
         let mut rows = BTreeMap::<PathBuf, Vec<Vec<u8>>>::new();
         for package in &release.packages {
-            rows.entry(path.join(index_path(&package.name)))
+            rows.entry(registry_site_root(path, &package.registry).join(index_path(&package.name)))
                 .or_default()
                 .push(test_release_row(package));
         }
@@ -2122,6 +2135,92 @@ mod tests {
         write_schema_four_site(&next_site, &next);
 
         verify_monotonic(&previous_site, &next_site).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_four_can_add_but_not_remove_a_future_registry() {
+        let root = temporary_test_root("v4-future-registry");
+        let previous_site = root.join("previous");
+        let expanded_site = root.join("expanded");
+        let removed_site = root.join("removed");
+        let package = |registry: &str, category: &str, name: &str| {
+            let mut package = ReleasePackage {
+                registry: registry.to_owned(),
+                category: category.parse().unwrap(),
+                name: name.to_owned(),
+                version: Version::new(1, 0, 0),
+                archive_sha256: "a".repeat(64),
+                index_record_sha256: "b".repeat(64),
+                index_row_sha256: String::new(),
+                yanked: false,
+                source: ReleaseSource::CratesIo,
+            };
+            package.index_row_sha256 = active_row_hash(&test_release_row(&package));
+            package
+        };
+        let main = package("main", "main/general", "shared-name");
+        let staging = package("staging", "staging/general", "shared_name");
+        let expanded = ReleaseV4 {
+            schema: 4,
+            cname: "rust.pkg.re".to_owned(),
+            registries: vec![
+                ReleaseRegistry {
+                    name: "main".to_owned(),
+                    index: canonical_registry_index("main"),
+                    download: MIRROR_DOWNLOAD.to_owned(),
+                    categories: vec![ReleaseCategory {
+                        id: "main/general".parse().unwrap(),
+                        may_depend_on: vec!["main/general".parse().unwrap()],
+                    }],
+                },
+                ReleaseRegistry {
+                    name: "staging".to_owned(),
+                    index: canonical_registry_index("staging"),
+                    download: MIRROR_DOWNLOAD.to_owned(),
+                    categories: vec![ReleaseCategory {
+                        id: "staging/general".parse().unwrap(),
+                        may_depend_on: vec!["staging/general".parse().unwrap()],
+                    }],
+                },
+            ],
+            names: vec![
+                ReleaseNameV4 {
+                    name: main.name.clone(),
+                    registry: main.registry.clone(),
+                    category: main.category.clone(),
+                },
+                ReleaseNameV4 {
+                    name: staging.name.clone(),
+                    registry: staging.registry.clone(),
+                    category: staging.category.clone(),
+                },
+            ],
+            packages: vec![main, staging],
+        };
+        let mut main_only = expanded.clone();
+        main_only
+            .registries
+            .retain(|registry| registry.name == "main");
+        main_only.names.retain(|name| name.registry == "main");
+        main_only
+            .packages
+            .retain(|package| package.registry == "main");
+
+        write_schema_four_site(&previous_site, &main_only);
+        write_schema_four_site(&expanded_site, &expanded);
+        verify_monotonic(&previous_site, &expanded_site).unwrap();
+        assert!(expanded_site.join(index_path("shared-name")).is_file());
+        assert!(
+            expanded_site
+                .join("staging")
+                .join(index_path("shared_name"))
+                .is_file()
+        );
+
+        write_schema_four_site(&removed_site, &main_only);
+        let error = verify_monotonic(&expanded_site, &removed_site).unwrap_err();
+        assert!(format!("{error:#}").contains("registry \"staging\" was removed"));
         fs::remove_dir_all(root).unwrap();
     }
 

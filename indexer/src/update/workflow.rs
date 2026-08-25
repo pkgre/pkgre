@@ -13,7 +13,7 @@ use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::import::{self, CratesIoHistory, SparseIndexRow};
 use crate::index::IndexDependency;
 use crate::policy::{Policy, validate_catalog};
-use crate::schema::{Catalog, PackageState, Source, version_identity};
+use crate::schema::{Catalog, PackageKey, PackageState, Source, version_identity};
 
 use super::{
     ApiEvidence, ArchiveAnalysis, ArchiveSummary, CompatibilityLane, DecisionReason,
@@ -145,6 +145,7 @@ enum PlanRequest {
 
 #[derive(Clone, Debug)]
 struct RevalidationTarget {
+    registry: String,
     name: String,
     version: Version,
     lane: Option<CompatibilityLane>,
@@ -199,6 +200,7 @@ pub(crate) fn recompute_admission_plan_with<R: PlannerResolver>(
             _ => unreachable!("validated admission request has exactly one target"),
         };
         let key = (
+            request.category.registry().to_owned(),
             request.name.to_ascii_lowercase().replace('-', "_"),
             version_identity(&version),
         );
@@ -208,6 +210,7 @@ pub(crate) fn recompute_admission_plan_with<R: PlannerResolver>(
             request.name
         );
         targets.push(RevalidationTarget {
+            registry: request.category.registry().to_owned(),
             name: request.name.clone(),
             lane: super::implicit_lane(&version),
             version,
@@ -225,6 +228,7 @@ pub(crate) fn recompute_admission_plan_with<R: PlannerResolver>(
     );
     for candidate in &plan.candidates {
         let key = (
+            candidate.registry.clone(),
             candidate.name.to_ascii_lowercase().replace('-', "_"),
             version_identity(&candidate.candidate.version),
         );
@@ -278,16 +282,20 @@ fn build_plan_with<R: PlannerResolver>(
 
     let targets = planning_targets(&catalog, request)?;
     let mut candidates = Vec::new();
-    for (name, home) in targets {
-        let history = resolver
-            .history(&name)
-            .with_context(|| format!("fetch complete crates.io history for {name}"))?;
+    for (key, home) in targets {
+        let history = resolver.history(&key.name).with_context(|| {
+            format!(
+                "fetch complete crates.io history for {}/{}",
+                key.registry, key.name
+            )
+        })?;
         let policy_history = policy_history(&history)?;
-        let locked = locked_releases(&catalog, &artifacts, &history, &name)?;
+        let locked = locked_releases(&catalog, &artifacts, &history, &key.registry, &key.name)?;
         let activity = classify_package(&locked);
         let selections = select_candidates(
             request,
-            &name,
+            &key.registry,
+            &key.name,
             &evaluated_at,
             &policy_history,
             &locked,
@@ -299,8 +307,8 @@ fn build_plan_with<R: PlannerResolver>(
                 &catalog,
                 &policy,
                 &history,
-                &name,
-                &home.registry,
+                &key.name,
+                &key.registry,
                 &home.category.to_string(),
                 selection,
             )?);
@@ -327,45 +335,58 @@ fn build_plan_with<R: PlannerResolver>(
 fn planning_targets(
     catalog: &Catalog,
     request: &PlanRequest,
-) -> Result<Vec<(String, crate::schema::PackageHome)>> {
-    let requested = match request {
-        PlanRequest::Implicit => None,
-        PlanRequest::Exact { name, .. } => Some(BTreeSet::from([name.as_str()])),
-        PlanRequest::Revalidate(targets) => {
-            Some(targets.iter().map(|target| target.name.as_str()).collect())
-        }
-    };
-    let targets = catalog
+) -> Result<Vec<(PackageKey, crate::schema::PackageHome)>> {
+    let mut targets = catalog
         .homes
         .homes
         .iter()
-        .filter(|(name, _)| {
-            requested
-                .as_ref()
-                .is_none_or(|names| names.contains(name.as_str()))
-        })
-        .filter(|(name, _)| catalog.mirror_names.contains(*name))
-        .filter(|(name, _)| match request {
+        .filter(|(key, _)| catalog.mirror_names.contains(*key))
+        .filter(|(key, _)| match request {
             PlanRequest::Implicit => catalog.approvals.iter().any(|approval| {
-                approval.name == **name
+                approval.registry == key.registry
+                    && approval.name == key.name
                     && approval.state == PackageState::Active
                     && matches!(&approval.source, Source::CratesIo)
                     && super::implicit_lane(&approval.version).is_some()
             }),
-            PlanRequest::Exact { .. } | PlanRequest::Revalidate(_) => true,
+            PlanRequest::Exact { name, .. } => key.name == *name,
+            PlanRequest::Revalidate(requested) => requested
+                .iter()
+                .any(|target| target.registry == key.registry && target.name == key.name),
         })
-        .map(|(name, home)| (name.clone(), home.clone()))
+        .map(|(key, home)| (key.clone(), home.clone()))
         .collect::<Vec<_>>();
-    if let Some(requested) = requested {
-        let observed = targets
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<BTreeSet<_>>();
-        ensure!(
-            observed == requested,
-            "requested update packages are not all permanently reserved crates.io mirror names"
-        );
+
+    match request {
+        PlanRequest::Implicit => {}
+        PlanRequest::Exact { name, .. } => ensure!(
+            targets.len() == 1,
+            if targets.is_empty() {
+                format!(
+                    "requested update package {name:?} is not a permanently reserved crates.io mirror name"
+                )
+            } else {
+                format!(
+                    "requested update package {name:?} exists in multiple registries; use an admission manifest with a category-qualified target"
+                )
+            }
+        ),
+        PlanRequest::Revalidate(requested) => {
+            let expected = requested
+                .iter()
+                .map(|target| (target.registry.as_str(), target.name.as_str()))
+                .collect::<BTreeSet<_>>();
+            let observed = targets
+                .iter()
+                .map(|(key, _)| (key.registry.as_str(), key.name.as_str()))
+                .collect::<BTreeSet<_>>();
+            ensure!(
+                observed == expected,
+                "requested update packages are not all permanently reserved registry-qualified crates.io mirror names"
+            );
+        }
     }
+    targets.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(targets)
 }
 
@@ -388,13 +409,14 @@ fn locked_releases(
     catalog: &Catalog,
     artifacts: &ArtifactMap,
     history: &CratesIoHistory,
+    registry: &str,
     name: &str,
 ) -> Result<Vec<LockedRelease>> {
     let mut locked = Vec::new();
     for approval in catalog
         .approvals
         .iter()
-        .filter(|approval| approval.name == name)
+        .filter(|approval| approval.registry == registry && approval.name == name)
     {
         ensure!(
             matches!(approval.source, Source::CratesIo),
@@ -451,6 +473,7 @@ fn locked_releases(
 
 fn select_candidates(
     request: &PlanRequest,
+    registry: &str,
     name: &str,
     evaluated_at: &UtcTimestamp,
     history: &[PolicyRelease],
@@ -488,7 +511,7 @@ fn select_candidates(
         PlanRequest::Exact { .. } => Ok(Vec::new()),
         PlanRequest::Revalidate(targets) => targets
             .iter()
-            .filter(|target| target.name == name)
+            .filter(|target| target.registry == registry && target.name == name)
             .map(|target| {
                 let active_lane = target.lane.as_ref().filter(|lane| {
                     locked.iter().any(|release| {
@@ -851,14 +874,17 @@ fn classify_dependency_policy(
 ) -> Result<()> {
     let source_category = category.parse::<crate::category::CategoryId>()?;
     for dependency in dependencies {
-        match catalog.homes.homes.get(&dependency.package) {
-            None => {
+        match catalog
+            .homes
+            .resolve_dependency(source_category.registry(), &dependency.package)
+        {
+            Err(_) => {
                 reasons.insert(DecisionReason::UnknownDependencyHome);
             }
-            Some(home) if !policy.permits_dependency(&source_category, &home.category) => {
+            Ok(home) if !policy.permits_dependency(&source_category, &home.category) => {
                 reasons.insert(DecisionReason::ForbiddenCategoryDependency);
             }
-            Some(_) => {}
+            Ok(_) => {}
         }
     }
     Ok(())
@@ -1030,7 +1056,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use crate::schema::{Approval, HomesFile, PackageHome, RegistriesFile};
+    use crate::schema::{Approval, HomesFile, PackageHome, PackageKey, RegistriesFile};
 
     fn planning_catalog() -> Catalog {
         let category: crate::category::CategoryId = "universe/general".parse().unwrap();
@@ -1039,7 +1065,7 @@ mod tests {
             .iter()
             .map(|name| {
                 (
-                    (*name).to_owned(),
+                    PackageKey::new("universe", *name),
                     PackageHome {
                         registry: "universe".to_owned(),
                         category: category.clone(),
@@ -1073,7 +1099,10 @@ mod tests {
                 schema: crate::schema::SCHEMA_VERSION,
                 homes,
             },
-            mirror_names: names.iter().map(|name| (*name).to_owned()).collect(),
+            mirror_names: names
+                .iter()
+                .map(|name| PackageKey::new("universe", *name))
+                .collect(),
             publish_names: BTreeSet::new(),
             approvals: vec![
                 approval("active", "1.0.0", PackageState::Active),
@@ -1089,7 +1118,7 @@ mod tests {
         let implicit = planning_targets(&catalog, &PlanRequest::Implicit)
             .unwrap()
             .into_iter()
-            .map(|(name, _)| name)
+            .map(|(key, _)| key.name)
             .collect::<Vec<_>>();
         assert_eq!(implicit, ["active"]);
 
@@ -1101,7 +1130,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(exact[0].0, "inactive");
+        assert_eq!(exact[0].0, PackageKey::new("universe", "inactive"));
     }
 
     fn timestamp(value: &str) -> UtcTimestamp {
@@ -1136,6 +1165,7 @@ mod tests {
             locked("2.0.0", "2024-02-01T00:00:00Z", true),
         ];
         let request = PlanRequest::Revalidate(vec![RevalidationTarget {
+            registry: "universe".to_owned(),
             name: "demo".to_owned(),
             version: Version::parse("1.1.0").unwrap(),
             lane: Some(CompatibilityLane::Major { major: 1 }),
@@ -1143,6 +1173,7 @@ mod tests {
 
         let selected = select_candidates(
             &request,
+            "universe",
             "demo",
             &timestamp("2024-05-01T00:00:00Z"),
             &history,
@@ -1171,6 +1202,7 @@ mod tests {
         ];
         let locked = vec![locked("1.0.0", "2024-01-01T00:00:00Z", true)];
         let request = PlanRequest::Revalidate(vec![RevalidationTarget {
+            registry: "universe".to_owned(),
             name: "demo".to_owned(),
             version: Version::parse("2.0.0").unwrap(),
             lane: Some(CompatibilityLane::Major { major: 2 }),
@@ -1178,6 +1210,7 @@ mod tests {
 
         let selected = select_candidates(
             &request,
+            "universe",
             "demo",
             &timestamp("2024-05-01T00:00:00Z"),
             &history,
@@ -1199,6 +1232,7 @@ mod tests {
     fn admission_revalidation_supports_a_new_stable_package() {
         let history = vec![release("1.0.0", "2024-01-01T00:00:00Z")];
         let request = PlanRequest::Revalidate(vec![RevalidationTarget {
+            registry: "universe".to_owned(),
             name: "demo".to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             lane: Some(CompatibilityLane::Major { major: 1 }),
@@ -1206,6 +1240,7 @@ mod tests {
 
         let selected = select_candidates(
             &request,
+            "universe",
             "demo",
             &timestamp("2024-05-01T00:00:00Z"),
             &history,

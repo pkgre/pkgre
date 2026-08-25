@@ -33,10 +33,10 @@ pub struct Catalog {
     pub categories: BTreeMap<CategoryId, Vec<CategoryId>>,
     /// Package-name routing and category table derived from human declarations.
     pub homes: HomesFile,
-    /// Package names with a crates.io mirror declaration.
-    pub mirror_names: BTreeSet<String>,
-    /// Package names with a Git publication declaration.
-    pub publish_names: BTreeSet<String>,
+    /// Registry-qualified package names with a crates.io mirror declaration.
+    pub mirror_names: BTreeSet<PackageKey>,
+    /// Registry-qualified package names with a Git publication declaration.
+    pub publish_names: BTreeSet<PackageKey>,
     /// Every active or removed package identity retained by generated locks.
     pub approvals: Vec<Approval>,
 }
@@ -269,6 +269,26 @@ pub enum LockedSource {
     },
 }
 
+/// Registry-qualified Cargo package-name identity.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PackageKey {
+    /// Cargo registry alias.
+    pub registry: String,
+    /// Cargo package name.
+    pub name: String,
+}
+
+impl PackageKey {
+    /// Creates one registry-qualified package-name identity.
+    #[must_use]
+    pub fn new(registry: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            registry: registry.into(),
+            name: name.into(),
+        }
+    }
+}
+
 /// Permanent package home used for policy and Cargo registry routing.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PackageHome {
@@ -283,8 +303,51 @@ pub struct PackageHome {
 pub struct HomesFile {
     /// Schema version.
     pub schema: u32,
-    /// Explicit home for every reserved package name.
-    pub homes: BTreeMap<String, PackageHome>,
+    /// Explicit registry-qualified home for every reserved package name.
+    pub homes: BTreeMap<PackageKey, PackageHome>,
+}
+
+impl HomesFile {
+    /// Returns one package's home in an exact registry.
+    #[must_use]
+    pub fn get(&self, registry: &str, name: &str) -> Option<&PackageHome> {
+        self.homes.get(&PackageKey::new(registry, name))
+    }
+
+    /// Resolves a dependency package name, preferring its source registry before a unique external home.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the normalized package name is absent or has homes in multiple external registries.
+    pub fn resolve_dependency(
+        &self,
+        current_registry: &str,
+        package: &str,
+    ) -> Result<&PackageHome> {
+        let normalized = package.to_ascii_lowercase().replace('-', "_");
+        let mut external = Vec::new();
+        for (key, home) in &self.homes {
+            if key.name.to_ascii_lowercase().replace('-', "_") != normalized {
+                continue;
+            }
+            if key.registry == current_registry {
+                return Ok(home);
+            }
+            external.push((key, home));
+        }
+        match external.as_slice() {
+            [] => bail!("dependency {package:?} has no declared home"),
+            [(_, home)] => Ok(home),
+            candidates => bail!(
+                "dependency {package:?} has ambiguous homes outside registry {current_registry:?}: {}",
+                candidates
+                    .iter()
+                    .map(|(key, _)| format!("{}/{}", key.registry, key.name))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
 }
 
 /// One active or removed package identity used by policy, verification, and rendering.
@@ -1054,54 +1117,38 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
                 "duplicate category {}",
                 category.id
             );
-            mirror_names.extend(category.mirror.keys().cloned());
-            publish_names.extend(category.publish.keys().cloned());
+            mirror_names.extend(
+                category
+                    .mirror
+                    .keys()
+                    .map(|name| PackageKey::new(&input.file.registry.name, name)),
+            );
+            publish_names.extend(
+                category
+                    .publish
+                    .keys()
+                    .map(|name| PackageKey::new(&input.file.registry.name, name)),
+            );
         }
         for (name, anchor) in desired_names(&input.file)? {
             let category = CategoryId::new(&input.file.registry.name, &anchor.category)
                 .expect("desired category identity was validated while loading");
+            let key = PackageKey::new(&input.file.registry.name, &name);
             ensure!(
                 homes
                     .insert(
-                        name.clone(),
+                        key,
                         PackageHome {
                             registry: input.file.registry.name.clone(),
                             category,
                         },
                     )
                     .is_none(),
-                "package {name:?} is declared in more than one category or registry"
+                "package {name:?} is declared more than once in registry {:?}",
+                input.file.registry.name
             );
         }
-        let locked_categories = lock
-            .names
-            .iter()
-            .map(|name| (name.name.as_str(), name.category.as_str()))
-            .collect::<BTreeMap<_, _>>();
-        for package in &lock.packages {
-            let local = locked_categories
-                .get(package.name.as_str())
-                .with_context(|| {
-                    format!(
-                        "locked package {} {} has no permanent name anchor",
-                        package.name, package.version
-                    )
-                })?;
-            approvals.push(Approval {
-                registry: input.file.registry.name.clone(),
-                category: CategoryId::new(&input.file.registry.name, *local)
-                    .expect("locked category was validated against desired declarations"),
-                name: package.name.clone(),
-                version: package.version.clone(),
-                archive_sha256: package.crate_sha256.clone(),
-                index_record_sha256: package.source_row_sha256.clone(),
-                index_row_sha256: package.index_row_sha256.clone(),
-                admission_sha256: package.admission_sha256.clone(),
-                state: package.state,
-                source: source_from_lock(&package.source),
-                declared_in: input.lock_path.clone(),
-            });
-        }
+        append_lock_approvals(input, lock, &mut approvals)?;
     }
     registries.sort_by(|left, right| left.name.cmp(&right.name));
     sort_approvals(&mut approvals);
@@ -1128,6 +1175,43 @@ pub(crate) fn catalog_from_inputs(root: &Path, inputs: &[RegistryInput]) -> Resu
         publish_names,
         approvals,
     })
+}
+
+fn append_lock_approvals(
+    input: &RegistryInput,
+    lock: &RegistryLock,
+    approvals: &mut Vec<Approval>,
+) -> Result<()> {
+    let locked_categories = lock
+        .names
+        .iter()
+        .map(|name| (name.name.as_str(), name.category.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    for package in &lock.packages {
+        let local = locked_categories
+            .get(package.name.as_str())
+            .with_context(|| {
+                format!(
+                    "locked package {} {} has no permanent name anchor",
+                    package.name, package.version
+                )
+            })?;
+        approvals.push(Approval {
+            registry: input.file.registry.name.clone(),
+            category: CategoryId::new(&input.file.registry.name, *local)
+                .expect("locked category was validated against desired declarations"),
+            name: package.name.clone(),
+            version: package.version.clone(),
+            archive_sha256: package.crate_sha256.clone(),
+            index_record_sha256: package.source_row_sha256.clone(),
+            index_row_sha256: package.index_row_sha256.clone(),
+            admission_sha256: package.admission_sha256.clone(),
+            state: package.state,
+            source: source_from_lock(&package.source),
+            declared_in: input.lock_path.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn sort_approvals(approvals: &mut [Approval]) {
