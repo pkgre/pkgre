@@ -150,6 +150,7 @@
         in
         {
           default = indexer;
+          rust = indexer;
           inherit indexer;
           download-serve = downloadServe;
         }
