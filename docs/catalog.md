@@ -6,7 +6,7 @@
 - Root-main convention:catalog registry `main` renders at `sparse+https://rust.pkg.re/`; another alias `<name>` renders at `sparse+https://rust.pkg.re/<name>/`.
 - Small/large category ergonomics:a category body may be inline or stored at its exact referenced `categories/<registry>/<category>.toml` path.
 - Compact mirror authority:`admissions/<batch>.toml` contains category/name/exact version + optional typed evidence; generated `.lock` contains recomputed machine facts.
-- Generated history:adjacent `<registry>.lock` files bind category/source class, Cargo identity, lifecycle, hashes, provenance, and optional admission-batch hash.
+- Generated history:adjacent `<registry>.lock` files bind name→category homes plus package identity→source class/lifecycle/hashes/provenance/optional admission-batch hash.
 - Irreversible history:old immutable lock fields remain exact; only additions + `active→removed` are valid; removed identities cannot reactivate.
 - Registry-scoped identity:a package name/home/version belongs to one catalog registry; the same normalized name may exist in another registry without collision.
 - Explicit routing:dependencies prefer a same-registry home; absent that, exactly one external-registry home is required; the source category's `may-depend-on` must permit the target category.
@@ -96,14 +96,14 @@ example = ["1.0.0"]
 Declaration rules:
 
 - Filename stem = `[registry].name`; `main` index is root; every other alias index is `sparse+https://rust.pkg.re/<alias>/`; Cargo version is `1.95.0` across registries.
-- Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and source class cannot be removed/mutated; additions are allowed.
+- Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; additions are allowed.
 - Category identity = `<registry>/<local>`; components are canonical lowercase ASCII aliases/kebab-case, ≤64 bytes each, start/end alphanumeric, and the category registry must exist.
 - Inline category = `may-depend-on` + optional `mirror`/`publish`; external reference = only `file`; external file = `schema`, `may-depend-on`, optional `mirror`/`publish`.
 - Every `may-depend-on` target must be an existing category; same registry grants no implicit permission; every category must reserve ≥1 package name.
 - `[mirror]`:package name → exact SemVer list; source row/archive come from crates.io.
 - `[publish]`:package name → credential-free HTTPS Git URL + literal immutable tags.
 - Mirror + publish names may coexist in one registry only with `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}`. Mirror-only may use `https://static.crates.io/crates`; publish-only may use `https://rust.pkg.re/crates/{sha256-checksum}.crate`.
-- Package names are permanent per-registry reservations under Cargo ASCII case + `-`/`_` normalization. Same normalized name in another registry is allowed; one registry-qualified name cannot move category or switch source class.
+- Package names are permanent per-registry reservations under Cargo ASCII case + `-`/`_` normalization. Same normalized name in another registry is allowed; one registry-qualified name cannot move category. A name may occur under both `mirror` + `publish` for distinct versions; an existing `registry + name + version` cannot change source/checksum.
 - Retain removed mirror key with `[]`; retain removed publisher key + unchanged `git` with `tags = []`.
 - SemVer build metadata does not distinguish Cargo registry identities; different bytes require a distinct Cargo version.
 

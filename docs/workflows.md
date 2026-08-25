@@ -131,7 +131,9 @@ Preconditions:
 - selected package version = tag final component, optional `v` prefix;
 - source manifest exactly `publish = ["pkgre"]`;
 - every dependency explicitly `registry = "pkgre"`; path/Git/crates.io/unknown sources fail, including optional/dev/build/target-specific;
-- catalog home usually `main/pkgre`; its rule permits only `main/pkgre|main/general` currently;
+- catalog home:use `main/pkgre` for a new first-party/standalone-fork name; an existing mirrored-name fork stays in that name's original category, retains its `[mirror]` declaration, and adds a same-name `[publish]` declaration there;
+- fork Cargo version must be unique across every locked mirror/publish identity for that name; never reuse `name + version` for different bytes/source;
+- after the first published identity, retain the `[publish]` key + exact Git URL forever; removal empties `tags` rather than deleting/changing the declaration;
 - lockfile present; no submodules, symlinks, unsafe/special paths, ambiguity, or generated dirty state;
 - reproducible archive under Cargo `1.95.0`.
 
@@ -161,7 +163,7 @@ Self-publication normally uses prior immutable indexer release. A schema/bootstr
 4. Rendered history retains `yanked = true`; reactivation forbidden.
 5. Run `check`, no-op `lock`, render, `verify`, `verify-monotonic`; commit.
 
-Changing home/source class/publisher URL, deleting key, or re-adding removed identity fails before fetch.
+Changing a package name's registry/category home, changing any locked identity's source/checksum, changing a retained Git publisher URL, deleting a required declaration key, or re-adding a removed identity fails before fetch.
 
 ## Migrations
 
