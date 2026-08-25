@@ -103,6 +103,23 @@ test("rejects missing,extra,invalid,and symlinked archive entries", async (t) =>
   await assert.rejects(readArchiveDirectory(fixture.catalog, archivePath), /forbidden symbolic link/);
 });
 
+test("rejects symlinked ancestor components for every filesystem operation", async (t) => {
+  const root = await temporary(t);
+  const real = join(root, "real");
+  await mkdir(real, { mode: 0o700 });
+  await chmod(real, 0o700);
+  const { fixture } = await writeFixtureInputs(real);
+  const site = renderFinal(fixture.catalog, renderRoutes(fixture.catalog, fixture.archives));
+  await writeRawSite(join(real, "site"), site);
+  await symlink("real", join(root, "linked"));
+
+  await assert.rejects(readCatalogFile(join(root, "linked/catalog.json")), /without following symlinks/);
+  await assert.rejects(readArchiveDirectory(fixture.catalog, join(root, "linked/archives")), /without following symlinks/);
+  await assert.rejects(readSiteDirectory(join(root, "linked/site")), /without following symlinks/);
+  await assert.rejects(writeSiteDirectory(join(root, "linked/output"), site), /without following symlinks/);
+  await assert.rejects(lstat(join(real, "output")), { code: "ENOENT" });
+});
+
 test("walks sites without following links and enforces safe paths and modes", async (t) => {
   const root = await temporary(t);
   const fixture = fixtureCatalog();

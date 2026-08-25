@@ -66,17 +66,51 @@ function sameSnapshot(left, right) {
     && left.ctimeNs === right.ctimeNs;
 }
 
-async function openDirectory(path, label, options) {
+async function openDirectory(path, label, options = {}) {
   requireLinuxFileFlags();
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    assertSafeDirectory(await handle.stat({ bigint: true }), label, options);
+    const stat = await handle.stat({ bigint: true });
+    if (options.checkMode === false) {
+      if (!stat.isDirectory()) throw new Error(`${label} is not a directory`);
+    } else {
+      assertSafeDirectory(stat, label, options);
+    }
     return handle;
   } catch (error) {
     await handle?.close().catch(() => {});
     if (error.message?.startsWith(label)) throw error;
     throw new Error(`cannot open ${label} without following symlinks: ${error.code ?? error.message}`);
+  }
+}
+
+async function openAbsoluteDirectory(path, label, options = {}) {
+  const absolute = resolve(path);
+  let current = await openDirectory("/", `${label} filesystem root`, { checkMode: false });
+  const components = absolute.split("/").filter(Boolean);
+  try {
+    for (let index = 0; index < components.length; index += 1) {
+      const final = index === components.length - 1;
+      const previous = current;
+      const next = await openDirectory(
+        procDescriptorPath(previous, components[index]),
+        final ? label : `${label} ancestor`,
+        final ? options : { checkMode: false },
+      );
+      try {
+        await previous.close();
+      } catch (error) {
+        await next.close().catch(() => {});
+        throw error;
+      }
+      current = next;
+    }
+    if (!components.length && options.checkMode !== false) assertSafeDirectory(await current.stat({ bigint: true }), label, options);
+    return current;
+  } catch (error) {
+    await current.close().catch(() => {});
+    throw error;
   }
 }
 
@@ -111,6 +145,16 @@ async function readRegularPath(path, maximum, label) {
     throw new Error(`cannot read ${label} without following symlinks: ${error.code ?? error.message}`);
   } finally {
     await handle?.close().catch(() => {});
+  }
+}
+
+async function readAbsoluteRegularFile(path, maximum, label) {
+  const absolute = resolve(path);
+  const parent = await openAbsoluteDirectory(dirname(absolute), `${label} parent`, { checkMode: false });
+  try {
+    return await readRegularPath(procDescriptorPath(parent, basename(absolute)), maximum, label);
+  } finally {
+    await parent.close();
   }
 }
 
@@ -176,7 +220,7 @@ async function readDirectoryHandle(rootHandle, label) {
 }
 
 async function readDirectory(path, label) {
-  const root = await openDirectory(path, label);
+  const root = await openAbsoluteDirectory(path, label);
   try {
     return await readDirectoryHandle(root, label);
   } finally {
@@ -185,7 +229,7 @@ async function readDirectory(path, label) {
 }
 
 export async function readCatalogFile(path) {
-  const bytes = await readRegularPath(path, MAXIMUM_CATALOG_BYTES, "catalog");
+  const bytes = await readAbsoluteRegularFile(path, MAXIMUM_CATALOG_BYTES, "catalog");
   const catalog = parseCanonicalJson(decodeUtf8(bytes, "catalog"), "catalog");
   validateCatalog(catalog);
   return catalog;
@@ -277,7 +321,7 @@ export async function writeSiteDirectory(outputPath, site) {
   if (!SAFE_OUTPUT_NAME.test(outputName) || outputName === "." || outputName === ".." || dirname(absoluteOutput) === absoluteOutput) throw new Error("output path has an unsafe basename");
 
   const parentPath = dirname(absoluteOutput);
-  const parent = await openDirectory(parentPath, "output parent", { writable: true });
+  const parent = await openAbsoluteDirectory(parentPath, "output parent", { writable: true });
   let temporaryName;
   let temporaryHandle;
   let renamed = false;
