@@ -15,7 +15,7 @@ Target runtime authority is one exact static marker at the requested route in th
 
 Bounds/grammar:request target≤1024 bytes;ASCII only;no query,fragment,percent encoding,backslash,duplicate/extra segment,or dot segment;registry=1–64 lowercase ASCII alphanumeric/`-`/`_`;Rust crate=1–64 ASCII alphanumeric/`-`/`_`,starting alphanumeric;Rust version parses+reserializes as the identical canonical SemVer;digest=64 lowercase hex. Noncanonical/unknown targets return `404` without origin access.
 
-The JS hash route avoids scoped-name escaping;the exact npm package/version/archive path remains bound inside the marker. Route-selected host/ecosystem is closed code,not a request header or marker field decision.
+The JS hash route avoids scoped-name escaping;the exact npm package/version/archive path remains bound inside the marker. Route-selected host/ecosystem is closed code,not a marker field decision. Every download request must also contain exactly one byte-exact matching `Host` (`rust.pkg.re` or `js.pkg.re`);missing,duplicate,case/port variants,and cross-ecosystem hosts fail before origin access.
 
 ## Redirect marker v1
 
@@ -55,7 +55,7 @@ All responses carry `Cache-Control:no-store`;response bodies are empty except `G
 |---|---|
 | Canonical `GET|HEAD`+valid marker | `307 Temporary Redirect`+validated `Location` |
 | Origin marker `404` | `404 Not Found` |
-| Noncanonical/unknown local path | `404 Not Found`;no origin fetch |
+| Noncanonical/unknown local path;missing/duplicate/mismatched public Host | `404 Not Found`;no origin fetch |
 | Malformed marker;unexpected origin redirect/non-200/non-404;wrong/duplicate MIME;content encoding;oversize body | `502 Bad Gateway` |
 | DNS/connect/TLS/timeout/body-read/429/5xx/client-construction failure | `503 Service Unavailable` |
 | Method other than `GET|HEAD` | `405 Method Not Allowed`+`Allow: GET, HEAD`;no origin fetch |
@@ -83,12 +83,13 @@ Transitional `.#download-serve` aliases `.#proxy` through the rain deployment+ro
 
 ## Reverse-proxy boundary
 
-Backend trusts at most one `X-Pkgre-Original-URI` so it can reject query/encoding ambiguities after frontend parsing. Never expose it directly or forward a client-selected value. Bind/publish only on loopback/private namespace behind fixed nginx. nginx must overwrite from raw `$request_uri`,preserve method,strip client credentials/forwarding headers,avoid normalization,and use a fixed upstream:
+Backend trusts at most one `X-Pkgre-Original-URI` so it can reject query/encoding ambiguities after frontend parsing. Never expose it directly or forward a client-selected value. Bind/publish only on loopback/private namespace behind fixed nginx. nginx must overwrite the raw URI and public Host with literals from the enclosing vhost,preserve method,strip client credentials/forwarding headers,avoid normalization,and use a fixed upstream. Example Rust block:
 
 ```nginx
+# inside server_name rust.pkg.re
 location /v1/ {
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host rust.pkg.re;
     proxy_set_header Connection "";
     proxy_set_header Authorization "";
     proxy_set_header Cookie "";
@@ -97,7 +98,7 @@ location /v1/ {
 }
 ```
 
-A duplicate trusted header fails `404`;without the header the service validates the server-observed path+query. Forbidden:variable/user-controlled `proxy_pass`;rewrite/`try_files`;URI suffix on backend `proxy_pass`;public backend port;forwarded client `X-Pkgre-Original-URI`.
+The separate JS vhost uses the same fixed upstream pattern but only `location /v1/js/` and literal `proxy_set_header Host js.pkg.re;`. Do not use `$host`/`$http_host`:the backend requires exactly one byte-exact route-matching Host and returns `404` before origin access for a missing,duplicate,case/port variant,or cross-ecosystem value. A duplicate trusted URI header likewise fails `404`;without that header the service validates the server-observed path+query. Forbidden:variable/user-controlled `proxy_pass`;rewrite/`try_files`;URI suffix on backend `proxy_pass`;public backend port;forwarded client `Host` or `X-Pkgre-Original-URI`.
 
 Ordinary static traffic uses separate literal nginx configuration per public vhost with the same origin invariant:resolve `pkgre.github.io`;connect to that Pages address;TLS SNI+verification+Host equal the fixed matching public host;root-relative path unchanged;origin redirects fail rather than recurse. Client host/path/header input may not select an upstream authority.
 

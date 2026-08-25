@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, LOCATION};
+use axum::http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE, HOST, LOCATION};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri};
 use axum::response::Response;
 use sha2::{Digest, Sha256};
@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use crate::marker::validate_marker;
 use crate::origin::{MarkerFetcher, OriginErrorClass, OriginResponse};
-use crate::route::DownloadRoute;
+use crate::route::{DownloadRoute, PublicHost};
 use crate::state::{MarkerOutcome, ServiceState};
 
 pub const ORIGINAL_URI_HEADER: HeaderName = HeaderName::from_static("x-pkgre-original-uri");
@@ -56,6 +56,9 @@ async fn handler(State(state): State<AppState>, request: Request<Body>) -> Respo
     let Some(route) = DownloadRoute::parse_canonical(target) else {
         return empty_response(StatusCode::NOT_FOUND);
     };
+    if !public_host_matches(request.headers(), route.public_host()) {
+        return empty_response(StatusCode::NOT_FOUND);
+    }
     marker_response(&state, &route).await
 }
 
@@ -159,6 +162,14 @@ fn request_target<'a>(headers: &'a HeaderMap, uri: &'a Uri) -> Option<&'a str> {
     }
 }
 
+fn public_host_matches(headers: &HeaderMap, expected: PublicHost) -> bool {
+    let mut values = headers.get_all(HOST).iter();
+    matches!(
+        (values.next(), values.next()),
+        (Some(value), None) if value.as_bytes() == expected.as_str().as_bytes()
+    )
+}
+
 fn route_identity(route: &DownloadRoute) -> String {
     format!("{:x}", Sha256::digest(route.canonical_path().as_bytes()))
 }
@@ -210,7 +221,6 @@ mod tests {
 
     use super::*;
     use crate::origin::{MarkerFetchFuture, OriginError, OriginErrorCode};
-    use crate::route::PublicHost;
 
     const RUST_ROUTE: &str =
         "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -262,9 +272,12 @@ mod tests {
     }
 
     fn request(method: Method, target: &str) -> Request<Body> {
+        let host = DownloadRoute::parse_canonical(target)
+            .map_or("localhost", |route| route.public_host().as_str());
         Request::builder()
             .method(method)
             .uri("/normalized-by-frontend")
+            .header(HOST, host)
             .header(&ORIGINAL_URI_HEADER, target)
             .body(Body::empty())
             .unwrap()
@@ -379,6 +392,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn route_host_confusion_never_fetches_origin() {
+        let (app, fetcher, _) = app(Vec::new());
+        for (target, hosts) in [
+            (RUST_ROUTE, &[][..]),
+            (RUST_ROUTE, &["other.pkg.re"][..]),
+            (RUST_ROUTE, &["js.pkg.re"][..]),
+            (JS_ROUTE, &["rust.pkg.re"][..]),
+            (RUST_ROUTE, &["rust.pkg.re:443"][..]),
+            (RUST_ROUTE, &["Rust.pkg.re"][..]),
+            (RUST_ROUTE, &["rust.pkg.re", "rust.pkg.re"][..]),
+        ] {
+            let mut request = Request::builder()
+                .method(Method::GET)
+                .uri("/normalized-by-frontend")
+                .header(&ORIGINAL_URI_HEADER, target)
+                .body(Body::empty())
+                .unwrap();
+            for host in hosts {
+                request
+                    .headers_mut()
+                    .append(HOST, HeaderValue::from_str(host).unwrap());
+            }
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_FOUND,
+                "{target} {hosts:?}"
+            );
+        }
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
     async fn origin_not_found_and_closed_error_classes_map_fail_closed() {
         let cases = [
             (Ok(OriginResponse::NotFound), StatusCode::NOT_FOUND),
@@ -489,7 +535,7 @@ mod tests {
                 format!("X-Pkgre-Original-URI: {value}\r\n")
             });
             let request = format!(
-                "GET {target} HTTP/1.1\r\nHost: localhost\r\n{original_uri}Connection: close\r\n\r\n"
+                "GET {target} HTTP/1.1\r\nHost: rust.pkg.re\r\n{original_uri}Connection: close\r\n\r\n"
             );
             stream.write_all(request.as_bytes()).await.unwrap();
             let mut response = Vec::new();
