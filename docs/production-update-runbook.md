@@ -1,6 +1,6 @@
 # Production mirror-admission runbook
 
-Purpose:execute one live crates.io mirror batch against `pkgre/rust` with the exact `pkgre-indexer` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
+Purpose:execute one live crates.io mirror batch against the schema-4 root `main` registry in `pkgre/rust` with the exact `pkgre-indexer` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
 
 Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 
@@ -255,7 +255,7 @@ LC_ALL=C comm -23 "$ARTIFACTS/download-routes-before.ndjson" "$ARTIFACTS/downloa
 LC_ALL=C comm -13 "$ARTIFACTS/download-routes-before.ndjson" "$ARTIFACTS/download-routes-after.ndjson" > "$ARTIFACTS/download-routes-added.ndjson"
 test ! -s "$ARTIFACTS/download-routes-missing.ndjson"
 test "$(wc -l < "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
-test "$(jq -s '[.[] | select(.registry == "universe" and .source == "crates-io")] | length' "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
+test "$(jq -s '[.[] | select(.registry == "main" and .source == "crates-io")] | length' "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
 cat "$ARTIFACTS/download-routes-added.ndjson"
 ```
 
