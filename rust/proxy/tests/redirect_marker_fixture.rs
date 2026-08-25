@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use pkgre_proxy::marker::validate_marker;
+use pkgre_proxy::route::DownloadRoute;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -59,6 +61,26 @@ fn rust_renderer_matches_provider_neutral_marker_v1_fixtures() {
             case.name
         );
         assert_eq!(actual, expected, "{} renderer drift", case.name);
+        let route = DownloadRoute::parse_canonical(&case.route).unwrap();
+        let marker = validate_marker(&route, &actual).unwrap();
+        assert_eq!(
+            route.ecosystem().as_str(),
+            case.ecosystem,
+            "{} ecosystem drift",
+            case.name
+        );
+        assert_eq!(
+            marker.kind().as_str(),
+            case.kind,
+            "{} kind drift",
+            case.name
+        );
+        assert_eq!(
+            marker.location(),
+            case.destination,
+            "{} destination drift",
+            case.name
+        );
         assert_eq!(
             format!("{:x}", Sha256::digest(&actual)),
             case.sha256,
