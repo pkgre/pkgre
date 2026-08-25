@@ -32,7 +32,7 @@ Current categories:
 | `main/terminal` | `main/general`, `main/terminal` |
 | `main/yaml` | `main/general`, `main/yaml` |
 
-`main/pkgre` contains first-party packages/forks; other current categories contain crates.io-derived identities. Category policy is finer-grained than Cargo registry identity. A same-registry patched fork uses a new Cargo version; the locked checksum remains immutable for each `name + version`.
+`main/pkgre` currently contains first-party packages + is the default home for new standalone forks. A fork of a name already reserved by a mirrored package stays in that name's existing category; category is dependency policy, not source class. A same-registry patched fork uses a new Cargo version; the locked checksum/source remains immutable for each `name + version`.
 
 ## Components
 

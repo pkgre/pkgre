@@ -189,7 +189,7 @@ pub struct LockedRegistry {
     pub download: String,
 }
 
-/// Permanent package source class.
+/// Package source class.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NameSource {

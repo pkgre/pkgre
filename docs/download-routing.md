@@ -19,7 +19,7 @@ No catalog field supplies a URL/hostname. The service never redirects an unknown
 
 `pkgre-indexer lock`, `update-apply`, and migration maintain canonical `registry/downloads.json`; load/check require it to equal the exact projection of all active generated package locks. Removed identities are absent. Each entry contains only `registry`, exact `name`, canonical `version`, locked archive `sha256`, and `source = crates-io|git-tag`. Ordering, uniqueness, schema, aliases, canonical JSON bytes, file type, and 16 MiB limit are strict. `render` copies the same bytes to top-level `downloads.json`; `verify`/`verify-monotonic` authenticate it against release identities.
 
-A registry may retain its source-specific `dl` while all names use one source class. Mixed sources require that registry's exact router template; an arbitrary router/redirect URL fails validation. Switching source-specific `dl`→exact router is monotonic because route identity includes the already locked checksum/source class. Changing an existing registry-qualified name's source class remains forbidden.
+A registry may retain its source-specific `dl` while all active package identities use one source class. Mixed sources require that registry's exact router template; an arbitrary router/redirect URL fails validation. Switching source-specific `dl`→exact router is monotonic because route identity includes the already locked checksum/source class. Changing an existing registry-qualified `name + version` source class remains forbidden.
 
 ## Service state + refresh
 
