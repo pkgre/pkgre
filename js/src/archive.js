@@ -101,6 +101,9 @@ function validateHeader(header) {
   if (typeByte === 0 || typeByte === 0x30) type = "file";
   else if (typeByte === 0x35) type = "directory";
   else throw new Error(`tar entry has unsupported type 0x${typeByte.toString(16).padStart(2, "0")}`);
+  const permissions = mode & 0o777;
+  if (type === "file" && permissions !== 0o644 && permissions !== 0o755) throw new Error("tar regular-file mode must be 0644 or 0755");
+  if (type === "directory" && permissions !== 0o755) throw new Error("tar directory mode must be 0755");
   if (type === "directory" && size !== 0) throw new Error("tar directory has nonzero size");
   return { mode, path: canonicalPath(prefix, name, type), size, type };
 }
@@ -183,16 +186,26 @@ export function verifyPackageArchive(archiveBytes, name, record) {
 
   const scripts = packageJson?.scripts;
   if (scripts !== undefined && (scripts === null || typeof scripts !== "object" || Array.isArray(scripts))) throw new Error(`${identity} package scripts must be an object`);
-  for (const hook of ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"]) {
+  for (const hook of ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare", "dependencies"]) {
     if (scripts && Object.hasOwn(scripts, hook)) throw new Error(`${identity} archive contains forbidden lifecycle hook ${hook}`);
   }
   if (Object.hasOwn(packageJson, "gypfile")) throw new Error(`${identity} archive contains forbidden gypfile declaration`);
+  for (const field of ["bundleDependencies", "bundledDependencies"]) {
+    if (Object.hasOwn(packageJson, field)) throw new Error(`${identity} archive contains forbidden ${field} declaration`);
+  }
 
   const files = new Set(inspected.entries.filter((entry) => entry.type === "file").map((entry) => entry.path));
   for (const path of files) {
     const base = path.slice(path.lastIndexOf("/") + 1);
     if (base === "binding.gyp" || base.endsWith(".node")) throw new Error(`${identity} archive contains native-addon indicator ${path}`);
-    if (path === "package/.npmrc") throw new Error(`${identity} archive contains package-local npm configuration`);
+    if (path === "package/.npmrc" || path === "package/npm-shrinkwrap.json" || path === "package/node_modules" || path.startsWith("package/node_modules/")) {
+      throw new Error(`${identity} archive contains forbidden package-manager input ${path}`);
+    }
+  }
+  for (const entry of inspected.entries) {
+    if (entry.path === "package/node_modules" || entry.path.startsWith("package/node_modules/")) {
+      throw new Error(`${identity} archive contains forbidden package-manager input ${entry.path}`);
+    }
   }
   for (const path of Object.values(manifest.bin ?? {})) {
     const normalized = path.startsWith("./") ? path.slice(2) : path;

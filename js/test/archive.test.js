@@ -138,15 +138,20 @@ test("rejects traversal,absolute,backslash,outside-root,and duplicate paths", ()
   assert.throws(() => inspectPackageArchive(duplicate, sourceFor(duplicate)), /repeats path/);
 });
 
-test("rejects links,special entries,privileged modes,and file-directory conflicts", () => {
+test("rejects links,special entries,and unsafe modes", () => {
   for (const entry of [
     { linkName: "package/src/main.js", name: "package/link", type: "2" },
     { name: "package/fifo", type: "6" },
     { data: "x", mode: 0o4755, name: "package/setuid" },
+    { data: "x", mode: 0o666, name: "package/world-writable" },
+    { mode: 0o775, name: "package/group-writable/", type: "5" },
   ]) {
     const bytes = archive([...validEntries(), entry]);
-    assert.throws(() => inspectPackageArchive(bytes, sourceFor(bytes)), /link name|unsupported type|setuid/);
+    assert.throws(() => inspectPackageArchive(bytes, sourceFor(bytes)), /link name|unsupported type|setuid|mode must be/);
   }
+});
+
+test("rejects file-directory conflicts", () => {
   const conflict = archive([...validEntries(), { data: "x", name: "package/conflict/file" }, { data: "x", name: "package/conflict" }]);
   assert.throws(() => inspectPackageArchive(conflict, sourceFor(conflict)), /contains prior path/);
 });
@@ -172,7 +177,7 @@ test("rejects malformed headers,padding,bounds,and termination", () => {
 test("requires one regular bounded package/package.json", () => {
   for (const entries of [
     [{ data: "x", name: "package/other" }],
-    [{ name: "package/package.json", type: "5" }],
+    [{ mode: 0o755, name: "package/package.json", type: "5" }],
     [{ name: "package/package.json", data: "" }],
   ]) {
     const bytes = archive(entries);
@@ -186,11 +191,20 @@ test("rejects ambiguous JSON and catalog-to-archive manifest drift", () => {
   assert.throws(() => verifyEntries(validEntries(), { description: "different" }), /does not match catalog/);
 });
 
-test("rejects lifecycle hooks and package-local npm configuration", () => {
-  for (const hook of ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"]) {
+test("rejects lifecycle hooks and hidden package-manager inputs", () => {
+  for (const hook of ["preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare", "dependencies"]) {
     assert.throws(() => verifyEntries(validEntries(packageJson({ scripts: { [hook]: "do evil" } }))), new RegExp(`lifecycle hook ${hook}`));
   }
-  assert.throws(() => verifyEntries([...validEntries(), { data: "registry=https://evil.invalid", name: "package/.npmrc" }]), /npm configuration/);
+  for (const field of ["bundleDependencies", "bundledDependencies"]) {
+    assert.throws(() => verifyEntries(validEntries(packageJson({ [field]: ["hidden-dependency"] }))), new RegExp(`forbidden ${field}`));
+  }
+  for (const entry of [
+    { data: "registry=https://evil.invalid", name: "package/.npmrc" },
+    { data: "{}", name: "package/npm-shrinkwrap.json" },
+    { mode: 0o755, name: "package/node_modules/", type: "5" },
+  ]) {
+    assert.throws(() => verifyEntries([...validEntries(), entry]), /forbidden package-manager input/);
+  }
 });
 
 test("rejects native-addon indicators and missing bin targets", () => {
