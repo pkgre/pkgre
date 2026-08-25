@@ -1,5 +1,5 @@
 {
-  description = "Declarative curated Cargo registry tooling";
+  description = "Declarative curated package registry tooling";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -146,11 +146,43 @@
             description = "Stateless immutable download redirect service for pkgre registries";
             mainProgram = "pkgre-proxy";
           };
+          jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
+          pkgreJs = pkgs.stdenvNoCC.mkDerivation {
+            pname = jsManifest.name;
+            inherit (jsManifest) version;
+            src = ./js;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            nativeCheckInputs = [ pkgs.nodejs_24 ];
+            dontConfigure = true;
+            dontBuild = true;
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              node --test
+              runHook postCheck
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p "$out/bin" "$out/lib/pkgre-js"
+              cp package.json package-lock.json "$out/lib/pkgre-js/"
+              cp -R src "$out/lib/pkgre-js/src"
+              makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js" \
+                --add-flags "$out/lib/pkgre-js/src/main.js"
+              runHook postInstall
+            '';
+            meta = {
+              description = "Deterministic indexer for the curated js.pkg.re registry";
+              mainProgram = "pkgre-js";
+              homepage = "https://github.com/pkgre/pkgre";
+              license = pkgs.lib.licenses.asl20;
+            };
+          };
         in
         {
           default = rustIndexer;
           rust = rustIndexer;
           indexer = rustIndexer;
+          js = pkgreJs;
           proxy = pkgreProxy;
           download-serve = pkgreProxy;
         }
@@ -178,6 +210,7 @@
         in
         {
           build-and-test = self.packages.${system}.rust;
+          js = self.packages.${system}.js;
           proxy = self.packages.${system}.proxy;
           download-serve = self.packages.${system}.download-serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
@@ -214,6 +247,7 @@
               pkgs.git
               pkgs.gnutar
               pkgs.nixfmt
+              pkgs.nodejs_24
             ];
             PKGRE_CARGO = "${rustToolchain}/bin/cargo";
           };

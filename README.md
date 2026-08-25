@@ -38,6 +38,7 @@ Current categories:
 
 - `rust/`:Rust reconciler, validator, admission planner/applicator, schema migrators, deterministic renderer, download-catalog generator, release verifier.
 - `rust/proxy/`:stateless exact-route service; fetches a commit-pinned generated catalog and returns only hardcoded crates.io/content-addressed redirects.
+- `js/`:dependency-free plain-ESM `pkgre-js` indexer skeleton with built-in Node tests.
 - [`docs/catalog.md`](docs/catalog.md):schema-4 declarations, inline/external categories, locks, admissions, routing, removal, exact migration.
 - [`docs/download-routing.md`](docs/download-routing.md):router wire contract, fetch/refresh/LKG semantics, proxy boundary, deployment + rollback.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production mirror-update procedure ending in an unmerged curator-review PR.
@@ -50,14 +51,16 @@ Current categories:
 ```console
 $ nix flake check --print-build-logs
 $ nix build .#rust
+$ nix build .#js
 $ nix build .#proxy
 $ nix run .#rust -- --help
+$ nix run .#js -- --help
 $ nix run .#proxy -- --help
 ```
 
 Transitional `.#indexer` aliases `.#rust`;`.#download-serve` aliases `.#proxy` through the deployment rollback horizon.
 
-Pinned semantics:Cargo `1.95.0`; Nix locks Rust + build inputs; Cargo inputs become fixed-output Nix fetches; checks build/test/lint offline after fetching.
+Pinned semantics:Cargo `1.95.0`;Node 24;JS minimum metadata Node `24.15.0`+npm `12.0.2`;Nix locks build inputs;Cargo inputs become fixed-output Nix fetches;Rust+JS checks run offline after fetching.
 
 ## Catalog operation
 
