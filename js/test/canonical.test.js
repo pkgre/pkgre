@@ -6,6 +6,7 @@ import {
   packageIdentity,
   packageMetadataPath,
   parseCanonicalJson,
+  parseJsonNoDuplicateKeys,
   validatePackageName,
   validateVersion,
 } from "../src/canonical.js";
@@ -16,6 +17,24 @@ test("canonical JSON recursively sorts keys and rejects unstable values", () => 
   assert.throws(() => parseCanonicalJson('{"b":2,"a":1}\n'), /not canonical JSON/);
   assert.throws(() => canonicalJson({ value: 1.5 }), /non-safe-integer/);
   assert.throws(() => canonicalJson({ value: undefined }), /unsupported JSON value/);
+});
+
+test("strict JSON parsing rejects duplicate keys and parser ambiguities", () => {
+  assert.deepEqual(parseJsonNoDuplicateKeys('{"escaped\\u006bey":1,"array":[true,false,null,-2.5e1]}'), {
+    escapedkey: 1,
+    array: [true, false, null, -25],
+  });
+  for (const text of [
+    '{"key":1,"key":2}',
+    '{"key":1,"\\u006bey":2}',
+    '{"nested":{"key":1,"key":2}}',
+    '{"value":01}',
+    '{"value":1} trailing',
+    '{"value":"\\ud800"}',
+    `[${"[".repeat(129)}null${"]".repeat(129)}]`,
+  ]) {
+    assert.throws(() => parseJsonNoDuplicateKeys(text), /JSON/);
+  }
 });
 
 test("package names use one strict proxy-compatible canonical form", () => {
