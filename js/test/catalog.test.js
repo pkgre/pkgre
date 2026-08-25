@@ -6,6 +6,7 @@ import {
   MINIMUM_AGE_SECONDS,
   REGISTRY_ALIAS,
   canonicalNpmArchiveUrl,
+  selectInstallManifest,
   validateCatalog,
 } from "../src/catalog.js";
 
@@ -97,6 +98,21 @@ function mutation(path, value) {
   target[path.at(-1)] = value;
   return catalog;
 }
+
+test("selects only audited install-time package manifest fields", () => {
+  assert.deepEqual(
+    selectInstallManifest({
+      description: "fixture",
+      files: ["src"],
+      name: "pkgre-js",
+      repository: { type: "git", url: "https://example.invalid/repository" },
+      scripts: { test: "node --test" },
+      version: "0.1.0",
+    }, "pkgre-js", "0.1.0"),
+    { description: "fixture", name: "pkgre-js", version: "0.1.0" },
+  );
+  assert.throws(() => selectInstallManifest({ dependencies: { helper: "^1.0.0" }, name: "pkgre-js", version: "0.1.0" }, "pkgre-js", "0.1.0"), /one exact canonical version/);
+});
 
 test("accepts one closed exact-version catalog and canonical npm archive paths", () => {
   const catalog = validCatalog();

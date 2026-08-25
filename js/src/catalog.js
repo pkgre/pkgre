@@ -154,6 +154,23 @@ export function validateInstallManifest(manifest, expectedName, expectedVersion)
   }
 }
 
+export function selectInstallManifest(packageJson, expectedName, expectedVersion) {
+  object(packageJson, "package.json");
+  const manifest = {};
+  for (const key of Object.keys(packageJson)) {
+    if (MANIFEST_KEYS.has(key)) {
+      Object.defineProperty(manifest, key, {
+        configurable: true,
+        enumerable: true,
+        value: packageJson[key],
+        writable: true,
+      });
+    }
+  }
+  validateInstallManifest(manifest, expectedName, expectedVersion);
+  return manifest;
+}
+
 function npmArchiveUrl(name, version) {
   const segments = name.startsWith("@") ? name.split("/") : [name];
   const packageName = segments.at(-1);
