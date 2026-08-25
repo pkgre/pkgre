@@ -136,6 +136,12 @@ impl OriginError {
     }
 }
 
+impl From<OriginErrorCode> for OriginError {
+    fn from(code: OriginErrorCode) -> Self {
+        Self::new(code)
+    }
+}
+
 impl Display for OriginError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.code.as_str())
