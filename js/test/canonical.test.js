@@ -24,6 +24,11 @@ test("strict JSON parsing rejects duplicate keys and parser ambiguities", () => 
     escapedkey: 1,
     array: [true, false, null, -25],
   });
+  const prototypeKeys = parseJsonNoDuplicateKeys('{"__proto__":{"polluted":true},"constructor":1,"prototype":2}');
+  assert.equal(Object.hasOwn(prototypeKeys, "__proto__"), true);
+  assert.equal(prototypeKeys.__proto__.polluted, true);
+  assert.equal({}.polluted, undefined);
+  assert.equal(canonicalJson(prototypeKeys), '{\n  "__proto__": {\n    "polluted": true\n  },\n  "constructor": 1,\n  "prototype": 2\n}\n');
   for (const text of [
     '{"key":1,"key":2}',
     '{"key":1,"\\u006bey":2}',

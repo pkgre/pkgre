@@ -18,7 +18,12 @@ function canonicalize(value, path) {
   if (typeof value !== "object") throw new Error(`${path} contains unsupported JSON value`);
   const result = {};
   for (const key of Object.keys(value).sort()) {
-    result[key] = canonicalize(value[key], `${path}.${key}`);
+    Object.defineProperty(result, key, {
+      configurable: true,
+      enumerable: true,
+      value: canonicalize(value[key], `${path}.${key}`),
+      writable: true,
+    });
   }
   return result;
 }
@@ -82,7 +87,12 @@ export function parseJsonNoDuplicateKeys(text, label = "JSON") {
         whitespace();
         if (text[offset] !== ":") fail("expected colon");
         offset += 1;
-        result[key] = value(depth + 1);
+        Object.defineProperty(result, key, {
+          configurable: true,
+          enumerable: true,
+          value: value(depth + 1),
+          writable: true,
+        });
         whitespace();
         if (text[offset] === "}") {
           offset += 1;
