@@ -298,6 +298,54 @@ class GateCoreTests(unittest.TestCase):
         self.assertRejected(lambda: GATE.decode_bounded_base64("YQ==\n", "base64", max_decoded=2), "trimmed string")
         self.assertRejected(lambda: GATE.decode_bounded_base64("YWI=", "base64", max_decoded=1), "decoded content exceeds")
 
+    def semanticResult(self, finding_id: str, handoff_id: str, payloads: dict[str, dict[str, object]], *, disposition: str = "SATISFIED", target_gates: list[str] | None = None) -> dict[str, object]:
+        evidence_by_kind: dict[str, list[str]] = {}
+        references: dict[str, dict[str, object]] = {}
+        for index, (kind, payload) in enumerate(payloads.items(), 1):
+            ref_id = f"semantic-{index}"
+            schema = GATE.PHASE_AMENDMENT_SCHEMA if kind == "phase-amendment" else GATE.SEMANTIC_EVIDENCE_SCHEMA
+            raw = GATE.canonical_json({"schema": schema, "findingId": finding_id, "kind": kind, "payload": payload})
+            evidence_by_kind[kind] = [ref_id]
+            references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
+        return {"_handoffId": handoff_id, "_evidenceByKind": evidence_by_kind, "_references": references, "claims": {"evidenceByKind": evidence_by_kind, "targetGates": [] if target_gates is None else target_gates}}
+
+    def test_generic_semantic_envelopes_bind_exact_handoff_kinds_and_claims(self) -> None:
+        limits = self.semanticResult("D0-B10", "OP-D0-06", {"approved-limits": {"test": True}})
+        resources = self.semanticResult("D0-B10", "OP-D0-07", {"native-resource-proof": {"test": True}})
+        self.assertEqual(GATE.validate_semantic_documents("D0-B10", "SATISFIED", limits), {"approved-limits": {"test": True}})
+        self.assertEqual(GATE.validate_semantic_documents("D0-B10", "SATISFIED", resources), {"native-resource-proof": {"test": True}})
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B10", "SATISFIED", "EVIDENCE_SATISFIED", [limits, resources]), "strict semantic payload validation is not installed")
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B10", "SATISFIED", "EVIDENCE_SATISFIED", [resources, limits]), "semantic contributions are not in canonical handoff order")
+
+        wrong_owner = self.semanticResult("D0-B10", "OP-D0-06", {"native-resource-proof": {"test": True}})
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B10", "SATISFIED", wrong_owner), "evidence-kind set must be exact")
+
+        missing_claim = self.semanticResult("D0-B10", "OP-D0-06", {"approved-limits": {"test": True}})
+        missing_claim["claims"] = {"summary": "labels are not proof", "targetGates": []}
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B10", "SATISFIED", missing_claim), "object-key mismatch")
+
+    def test_generic_semantic_envelopes_reject_arbitrary_bytes_stuffing_and_reuse(self) -> None:
+        result = self.semanticResult("D0-B01", "OP-D0-01", {"credential-containment": {}, "credential-lifecycle": {}})
+        containment_id = result["_evidenceByKind"]["credential-containment"][0]
+        result["_references"][containment_id]["raw"] = b"arbitrary text\n"
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B01", "SATISFIED", result), "invalid strict JSON")
+
+        result = self.semanticResult("D0-B01", "OP-D0-01", {"credential-containment": {}, "credential-lifecycle": {}})
+        containment_id = result["_evidenceByKind"]["credential-containment"][0]
+        result["_references"][containment_id]["raw"] = GATE.canonical_json({})
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B01", "SATISFIED", result), "object-key mismatch")
+
+        result = self.semanticResult("D0-B01", "OP-D0-01", {"credential-containment": {}, "credential-lifecycle": {}})
+        shared = result["_evidenceByKind"]["credential-containment"][0]
+        result["_evidenceByKind"]["credential-lifecycle"] = [shared]
+        result["claims"]["evidenceByKind"] = result["_evidenceByKind"]
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B01", "SATISFIED", result), "cannot be reused")
+
+        amendment = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": {}}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
+        self.assertEqual(GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), {"phase-amendment": {}})
+        amendment["claims"]["targetGates"] = ["PRE_D6_EDGE"]
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), "target-gate claim mismatch")
+
     def test_gitops_rejects_caller_transport_and_builds_trusted_ssh(self) -> None:
         environment = dict(os.environ)
         environment["GIT_SSH_COMMAND"] = "/tmp/attacker"

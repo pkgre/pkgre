@@ -144,9 +144,27 @@ LATER_GATES = [
 MUTATION_POLICY = {"id": "D0-MUTATION-POLICY-v1", "operatorEmergencyExceptions": [{"id": "GANDI_CREDENTIAL_CONTAINMENT", "scope": "credential-containment-only", "returnedEvidence": "metadata-only", "forbidden": ["token-bytes", "token-hash", "private-key-bytes", "private-key-hash"]}]}
 AGENT_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "credentialValueRead", "credentialMutation", "privateKeyValueRead", "lanSourceEdit", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
 OPERATOR_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "lanSourceEdit", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
-SAT_EVIDENCE = {
-    "D0-B01": {"credential-containment", "credential-lifecycle"}, "D0-B02": {"ssh-attestation", "ssh-lifecycle"}, "D0-B03": {"github-governance-proof"}, "D0-B04": {"signing-authority-design", "signing-lifecycle"}, "D0-B05": {"deployment-provenance"}, "D0-B06": {"literal-service-identities", "network-tls-identities"}, "D0-B07": {"distinct-body-identities"}, "D0-B08": {"immutable-rollback-proof", "js-initial-anchor"}, "D0-B09": {"production-edge-proof"}, "D0-B10": {"native-resource-proof", "approved-limits"}, "D0-B11": {"storage-policy", "storage-feasibility-proof"}, "D0-B12": {"clock-policy", "clock-proof"}, "D0-B13": {"protocol-enums", "hard-maxima", "instance-digests"}, "D0-B16": {"js-continuity-proof", "js-initial-anchor"}, "D0-B17": {"deno-current-pin", "scoped-npm-fixture"}, "D0-B20": {"complete-access-log-reconciliation"},
+SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-semantic-evidence-v1"
+PHASE_AMENDMENT_SCHEMA = "pkgre-d0-phase-amendment-v1"
+SAT_EVIDENCE_BY_HANDOFF = {
+    "D0-B01": {"OP-D0-01": {"credential-containment", "credential-lifecycle"}},
+    "D0-B02": {"OP-D0-02": {"ssh-attestation", "ssh-lifecycle"}},
+    "D0-B03": {"OP-D0-05": {"github-governance-proof"}},
+    "D0-B04": {"OP-D0-04": {"signing-authority-design", "signing-lifecycle"}, "OP-D0-05": {"signing-workflow-binding"}},
+    "D0-B05": {"OP-D0-03": {"deployment-provenance"}},
+    "D0-B06": {"OP-D0-06": {"literal-service-identities"}, "OP-D0-07": {"network-tls-identities"}},
+    "D0-B07": {"OP-D0-06": {"distinct-body-identities"}},
+    "D0-B08": {"OP-D0-07": {"immutable-rollback-proof", "js-initial-anchor"}},
+    "D0-B09": {"OP-D0-07": {"production-edge-proof"}},
+    "D0-B10": {"OP-D0-06": {"approved-limits"}, "OP-D0-07": {"native-resource-proof"}},
+    "D0-B11": {"OP-D0-08": {"storage-policy", "storage-feasibility-proof"}},
+    "D0-B12": {"OP-D0-07": {"clock-policy", "clock-proof"}},
+    "D0-B13": {"OP-D0-06": {"protocol-enums", "hard-maxima", "instance-digests"}},
+    "D0-B16": {"OP-D0-07": {"js-continuity-proof", "js-initial-anchor"}},
+    "D0-B17": {"OP-D0-09": {"deno-current-pin", "scoped-npm-fixture"}},
+    "D0-B20": {"OP-D0-07": {"complete-access-log-reconciliation"}},
 }
+SAT_EVIDENCE = {finding_id: set().union(*by_handoff.values()) for finding_id, by_handoff in SAT_EVIDENCE_BY_HANDOFF.items()}
 REPHASE_TARGETS = {
     "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
 }
@@ -707,6 +725,7 @@ def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closu
     results: dict[str, dict[str, Any]] = {}
     for index, expected_finding in enumerate(expected_findings):
         result = validate_finding_result(raw_results[index], expected_finding, references, f"{handoff_id} findingResults[{index}]")
+        result["_handoffId"] = handoff_id
         results[expected_finding] = result
     used_reference_ids = {
         ref_id
@@ -740,24 +759,62 @@ def require_claim_ref_ids(result: dict[str, Any], claim_value: Any, kind: str, l
     return expected
 
 
+def validate_semantic_documents(finding_id: str, disposition: str, result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    handoff_id = nonempty(result.get("_handoffId"), f"{finding_id} semantic handoff")
+    require(handoff_id in FINDING_HANDOFFS[finding_id], f"{finding_id}: semantic result belongs to an unexpected handoff")
+    if disposition == "SATISFIED":
+        expected_kinds = SAT_EVIDENCE_BY_HANDOFF[finding_id].get(handoff_id)
+        require(expected_kinds is not None, f"{finding_id}: no satisfaction evidence is assigned to {handoff_id}")
+        expected_targets: list[str] = []
+    elif disposition == "REPHASED":
+        expected_kinds = {"phase-amendment"}
+        expected_targets = REPHASE_TARGETS[finding_id]
+    else:
+        raise GateVerificationError(f"{finding_id}: disposition {disposition!r} has no semantic-document policy")
+    evidence_by_kind = result["_evidenceByKind"]
+    require(set(evidence_by_kind) == expected_kinds, f"{finding_id}/{handoff_id}: evidence-kind set must be exact;expected={sorted(expected_kinds)!r}")
+    require(all(len(ref_ids) == 1 for ref_ids in evidence_by_kind.values()), f"{finding_id}/{handoff_id}: exactly one semantic document is required per evidence kind")
+    all_ref_ids = [ref_id for ref_ids in evidence_by_kind.values() for ref_id in ref_ids]
+    require(len(all_ref_ids) == len(set(all_ref_ids)), f"{finding_id}/{handoff_id}: an evidence reference cannot be reused across semantic kinds")
+    claims = obj(result["claims"], f"{finding_id}/{handoff_id} claims")
+    exact_keys(claims, {"evidenceByKind", "targetGates"}, f"{finding_id}/{handoff_id} claims")
+    claimed_evidence = obj(claims["evidenceByKind"], f"{finding_id}/{handoff_id} claims.evidenceByKind")
+    require(claimed_evidence == evidence_by_kind, f"{finding_id}/{handoff_id}: claims must exactly bind every evidence kind and reference")
+    require(claims["targetGates"] == expected_targets, f"{finding_id}/{handoff_id}: target-gate claim mismatch")
+    documents: dict[str, dict[str, Any]] = {}
+    for kind in sorted(expected_kinds):
+        ref_id = evidence_by_kind[kind][0]
+        reference = result["_references"][ref_id]
+        document = obj(parse_json(reference["raw"], f"{finding_id}/{handoff_id} {kind} semantic document"), f"{finding_id}/{handoff_id} {kind} semantic document")
+        exact_keys(document, {"schema", "findingId", "kind", "payload"}, f"{finding_id}/{handoff_id} {kind} semantic document")
+        expected_schema = PHASE_AMENDMENT_SCHEMA if kind == "phase-amendment" else SEMANTIC_EVIDENCE_SCHEMA
+        require(document["schema"] == expected_schema and document["findingId"] == finding_id and document["kind"] == kind, f"{finding_id}/{handoff_id} {kind}: semantic envelope binding mismatch")
+        payload = obj(document["payload"], f"{finding_id}/{handoff_id} {kind} payload")
+        documents[kind] = payload
+    result["_semanticPayloads"] = documents
+    return documents
+
+
+def validate_generic_payloads(finding_id: str, disposition: str, results: list[dict[str, Any]]) -> None:
+    raise GateVerificationError(f"{finding_id}: strict semantic payload validation is not installed")
+
+
 def validate_generic_policy(finding_id: str, disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
     require(finding_id in SAT_EVIDENCE, f"{finding_id}: no generic terminal policy")
-    all_kinds = set().union(*(set(result["_evidenceByKind"]) for result in results))
-    for result in results:
-        claims = obj(result["claims"], f"{finding_id} claims")
-        exact_keys(claims, {"summary", "targetGates"}, f"{finding_id} claims")
-        nonempty(claims["summary"], f"{finding_id} claims summary")
-        arr(claims["targetGates"], f"{finding_id}.targetGates")
     if disposition == "SATISFIED":
         require(mode == "EVIDENCE_SATISFIED", f"{finding_id}: wrong satisfaction mode")
-        require(all(result["claims"]["targetGates"] == [] for result in results), f"{finding_id}: satisfied evidence cannot rephase")
-        require(SAT_EVIDENCE[finding_id] <= all_kinds, f"{finding_id}: missing mandatory satisfaction evidence kinds {sorted(SAT_EVIDENCE[finding_id] - all_kinds)!r}")
     elif disposition == "REPHASED":
         require(finding_id in REPHASE_TARGETS and mode == "EXACT_PHASE_AMENDMENT", f"{finding_id}: rephasing is not allowed by policy")
-        require(all(result["claims"]["targetGates"] == REPHASE_TARGETS[finding_id] for result in results), f"{finding_id}: wrong rephase targets")
-        require("phase-amendment" in all_kinds, f"{finding_id}: rephase lacks phase-amendment evidence")
     else:
         raise GateVerificationError(f"{finding_id}: disposition {disposition!r} is forbidden")
+    for result in results:
+        validate_semantic_documents(finding_id, disposition, result)
+    observed_handoffs = [result["_handoffId"] for result in results]
+    require(observed_handoffs == FINDING_HANDOFFS[finding_id], f"{finding_id}: semantic contributions are not in canonical handoff order")
+    if disposition == "SATISFIED":
+        all_kinds = set().union(*(set(result["_semanticPayloads"]) for result in results))
+        require(all_kinds == SAT_EVIDENCE[finding_id], f"{finding_id}: satisfaction evidence coverage mismatch")
+    validate_generic_payloads(finding_id, disposition, results)
 
 
 def validate_b18(disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
