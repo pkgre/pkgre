@@ -1,0 +1,24 @@
+nginxOut=/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4
+nginxDrv=/nix/store/7d0a3gqn59b9j58gly11b7qaisch0ikk-nginx-1.30.4.drv
+nginxBinSha256=8d61b66b1b71e5021d1d3e6378f9e400f83f897d292a7fb535c37556d85787c1
+effectiveNginxConfigSha256=a0ec792c13a07f25746ef79301d42a73f7f09d5222bc07ed07812ce869440d2b
+nginxTemplateSha256=aeb49d58c131c178499e53febdabe79f1260ef04cf2ef8f5efa0f4f01889a263
+backendSocket=AF_UNIX loopback-private
+backendSocketMode=600
+backendSocketUid=1000
+certificateSha256=f0d7c240bbca33431de3b3146c0a7703ddcfdea621e5cb2fd839b86b4777af1c
+pythonH2Out=/nix/store/x0pgrsmsbp4z4lm2az6dl3gqn6pjy61r-python3-3.14.7-env
+pythonH2Drv=/nix/store/gfxrs8sd4c16rjw8ahvnyxknkpdjlx7w-python3-3.14.7-env.drv
+opensslOut=/nix/store/d4vvjf2zix40pq13w778cz4hkyna90ii-openssl-3.6.3-bin
+opensslDrv=/nix/store/3dcs3zyn8w7w4rag19kbwkv9rh3i109w-openssl-3.6.3.drv
+nginxV=nginx version: nginx/1.30.4
+nginxV=built by gcc 15.3.0 (GCC)
+nginxV=built with OpenSSL 4.0.1 9 Jun 2026
+nginxV=TLS SNI support enabled
+nginxV=configure arguments: --prefix=/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4 --sbin-path=bin/nginx --with-http_ssl_module --with-http_v2_module --with-http_v3_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_stub_status_module --with-threads --with-pcre-jit --http-log-path=/var/log/nginx/access.log --error-log-path=/var/log/nginx/error.log --pid-path=/var/log/nginx/nginx.pid --http-client-body-temp-path=/tmp/nginx_client_body --http-proxy-temp-path=/tmp/nginx_proxy --http-fastcgi-temp-path=/tmp/nginx_fastcgi --http-uwsgi-temp-path=/tmp/nginx_uwsgi --http-scgi-temp-path=/tmp/nginx_scgi --with-openssl-opt=enable-ktls --with-stream --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module --with-file-aio --add-module=/build/4ljq7ia66asmdi06nzl0rinvbab90h16-nginx-mod-rtmp-1.2.2 --add-module=/build/68wc4ddfx2gik51kqczxyw9ii3fk1mzg-nginx-mod-moreheaders-0.40
+pythonVersion=3.14.7 (main, Aug  5 2026, 10:29:49) [GCC 15.3.0]
+pythonSSL=OpenSSL 3.6.3 9 Jun 2026
+h2Version=4.3.0
+hpackVersion=4.2.0
+hyperframeVersion=6.1.0
+certificateGenerator=OpenSSL 3.6.3 9 Jun 2026 (Library: OpenSSL 3.6.3 9 Jun 2026)

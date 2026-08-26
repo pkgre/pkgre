@@ -1,0 +1,88 @@
+{
+  "blockers": [
+    "proof policy admits normalization-sensitive/unsafe spellings; implement fail-closed byte policy over protected raw field",
+    "define/enforce H2 conformance stance, including pseudoheader-after-regular behavior",
+    "prove production backend is equivalently private and trusts singleton fields only from edge"
+  ],
+  "identity": {
+    "configTemplateSha256": "aeb49d58c131c178499e53febdabe79f1260ef04cf2ef8f5efa0f4f01889a263",
+    "effectiveConfigSha256": "a0ec792c13a07f25746ef79301d42a73f7f09d5222bc07ed07812ce869440d2b",
+    "nginxBinarySha256": "8d61b66b1b71e5021d1d3e6378f9e400f83f897d292a7fb535c37556d85787c1",
+    "nginxDerivation": "/nix/store/7d0a3gqn59b9j58gly11b7qaisch0ikk-nginx-1.30.4.drv",
+    "nginxOut": "/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4",
+    "nginxVersion": "1.30.4"
+  },
+  "metrics": {
+    "backendCaptureCount": 174,
+    "exactRawTargetCount": {
+      "h1-observe": 55,
+      "h1-policy": 36,
+      "h2-observe": 47,
+      "h2-policy": 36
+    },
+    "fixtureCounts": {
+      "h1": 82,
+      "h2": 68
+    },
+    "forwardedCounts": {
+      "h1-observe": 55,
+      "h1-policy": 36,
+      "h2-observe": 47,
+      "h2-policy": 36
+    },
+    "payloadFileCount": 501,
+    "rawDifferentFromNormalizedDiagnosticCount": {
+      "h1-observe": 27,
+      "h1-policy": 22,
+      "h2-observe": 24,
+      "h2-policy": 22
+    },
+    "statusCounts": {
+      "h1-observe": {
+        "200": 55,
+        "400": 24,
+        "405": 1,
+        "413": 1,
+        "414": 1
+      },
+      "h1-policy": {
+        "200": 36,
+        "400": 38,
+        "404": 2,
+        "405": 2,
+        "413": 1,
+        "414": 1,
+        "None": 2
+      },
+      "h2-observe": {
+        "200": 47,
+        "400": 17,
+        "413": 1,
+        "None": 3
+      },
+      "h2-policy": {
+        "200": 36,
+        "400": 28,
+        "405": 1,
+        "413": 1,
+        "None": 2
+      }
+    }
+  },
+  "productionBlocking": true,
+  "report": "REPORT.md",
+  "schema": "d0-nginx-raw-target-summary-v1",
+  "status": "primitive-pass-production-blocked",
+  "validation": {
+    "checkCount": 1725,
+    "errorCount": 0,
+    "ok": true
+  },
+  "verdict": {
+    "h1": "pass-for-nginx-accepted-targets",
+    "h2": "pass-for-nginx-decoded-path-semantics",
+    "normalizedFallback": "prohibited-and-not-used",
+    "privateBoundary": "pass-isolated-unix-0600",
+    "production": "blocked-pending-fail-closed-byte-policy-and-real-boundary-integration"
+  }
+}

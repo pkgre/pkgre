@@ -1,0 +1,68 @@
+pid @RUNTIME@/nginx.pid;
+daemon off;
+master_process off;
+error_log @RUNTIME@/nginx-error.log info;
+events { worker_connections 256; }
+http {
+  access_log off;
+  server_tokens off;
+  gzip off;
+  merge_slashes on;
+  client_header_buffer_size 1k;
+  large_client_header_buffers 4 8k;
+  client_max_body_size 1k;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  map $request $pkgre_raw_target {
+    "~^[^ ]+ (?<pkgre_raw_target_capture>[^ ]+) HTTP/(?:1[.][01]|2[.]0)$" $pkgre_raw_target_capture;
+    default "";
+  }
+  map "$server_protocol|$request" $pkgre_request_form {
+    "~^HTTP/2[.]0[|][^ ]+ [*] HTTP/2[.]0$" h2-asterisk;
+    "~^HTTP/2[.]0[|][^ ]+ /" h2-origin;
+    "~^HTTP/2[.]0[|]" h2-invalid;
+    "~^HTTP/1[.][01][|]CONNECT [^/?# ]+ HTTP/1[.][01]$" h1-authority;
+    "~^HTTP/1[.][01][|][^ ]+ [*] HTTP/1[.][01]$" h1-asterisk;
+    "~^HTTP/1[.][01][|][^ ]+ [A-Za-z][A-Za-z0-9+.-]*://" h1-absolute;
+    "~^HTTP/1[.][01][|][^ ]+ /" h1-origin;
+    default invalid;
+  }
+  map $pkgre_request_form $pkgre_bad_form {
+    h1-origin 0;
+    h2-origin 0;
+    default 1;
+  }
+  map $request_method $pkgre_bad_method {
+    GET 0;
+    HEAD 0;
+    default 1;
+  }
+  map $request_uri $pkgre_has_query {
+    "~[?]" 1;
+    default 0;
+  }
+  upstream proof_echo { server unix:@SOCKET@; }
+  server {
+    listen 127.0.0.1:@OBSERVE_PORT@ ssl default_server;
+    http2 on;
+    server_name registry.test _;
+    ssl_certificate @CERT@;
+    ssl_certificate_key @KEY@;
+    location /route-a/ { set $pkgre_location_tag route-a; include @RUNTIME@/proxy-observe.conf; }
+    location / { set $pkgre_location_tag root; include @RUNTIME@/proxy-observe.conf; }
+  }
+  server {
+    listen 127.0.0.1:@POLICY_PORT@ ssl default_server;
+    http2 on;
+    server_name _;
+    ssl_reject_handshake on;
+  }
+  server {
+    listen 127.0.0.1:@POLICY_PORT@ ssl;
+    http2 on;
+    server_name registry.test;
+    ssl_certificate @CERT@;
+    ssl_certificate_key @KEY@;
+    location /route-a/ { set $pkgre_location_tag route-a; include @RUNTIME@/proxy-policy.conf; }
+    location / { set $pkgre_location_tag root; include @RUNTIME@/proxy-policy.conf; }
+  }
+}
