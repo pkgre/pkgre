@@ -1,0 +1,134 @@
+{
+  "fixedCommits": {
+    "pkgre": "066293df21743cbf41fb571a38f2bb94059e7274",
+    "pkgreJs": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+    "pkgreRust": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b"
+  },
+  "js": {
+    "catalog": {
+      "evaluationTime": "2026-08-25T23:27:24.000Z",
+      "minimumAgeSeconds": 2592000,
+      "packages": [
+        {
+          "distTags": {
+            "latest": "0.1.0"
+          },
+          "name": "pkgre-js",
+          "versions": [
+            {
+              "admittedAt": "2026-08-25T23:27:24.000Z",
+              "manifest": {
+                "bin": {
+                  "pkgre-js": "src/main.js"
+                },
+                "description": "Deterministic indexer for the curated js.pkg.re registry",
+                "engines": {
+                  "node": ">=24.15.0",
+                  "npm": ">=12.0.2"
+                },
+                "license": "Apache-2.0",
+                "name": "pkgre-js",
+                "os": [
+                  "linux"
+                ],
+                "type": "module",
+                "version": "0.1.0"
+              },
+              "publishedAt": "2026-08-25T23:27:24.000Z",
+              "source": {
+                "bytes": 16717,
+                "commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+                "integrity": "sha512-bRuXdwAzbk7TSAcL11WeveyAnUf+VKQdmtkq60GnF83Ofc3piXia7ALSTWQX5+DSMBmKILghh3B2pd1hWNjkjg==",
+                "kind": "first-party",
+                "repository": "https://github.com/pkgre/pkgre",
+                "sha1": "003edfeff6cd091e308cba2daaf737ad843cf073",
+                "sha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+                "tag": "js/v0.1.0",
+                "tagObject": "ba2ace0c3efd55160b79a620f3ec548305fa7b34",
+                "url": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+              },
+              "version": "0.1.0"
+            }
+          ]
+        }
+      ],
+      "registry": "main",
+      "schema": "pkgre-js-catalog-v1"
+    },
+    "packageCount": 1,
+    "scopedPackageCount": 0,
+    "versionCount": 1
+  },
+  "rust": {
+    "activeDownloadCount": 747,
+    "firstPartyPackages": [
+      {
+        "crate-sha256": "3257df14bc1ae9d6f2eb99d5db90e5d2a9fbc13c870044c9db5ba89bcc0b96a2",
+        "index-row-sha256": "966959088c9fbcfed795ece2ac1e669ffb213fd41511aa556c27d2446a4b783b",
+        "name": "pkgre-indexer",
+        "source": {
+          "cargo-version": "1.95.0",
+          "commit": "27d4cf7c657ef72283f9c61ec0c8ea572ed548d3",
+          "git": "https://github.com/pkgre/pkgre",
+          "kind": "git-tag",
+          "package": "pkgre-indexer",
+          "path": "indexer",
+          "tag": "indexer/v0.1.1",
+          "tag-oid": "71cc5c5ad8f2b03c1b8bd984944f13593efb1ed3"
+        },
+        "source-row-sha256": "b12f0350b65d153f4073d2090dadbbfd497e5746315872d1230d530fc8e46f92",
+        "state": "active",
+        "version": "0.1.1"
+      },
+      {
+        "crate-sha256": "9292cd7e7248ea3ee2a65184a492f107ae6af4a1186c41f57383973bc7686568",
+        "index-row-sha256": "9976dc3dc96a6dc4a53dde70d882f4b2b994a9989d011b35c7b59c0bb1dc3a60",
+        "name": "pkgre-indexer",
+        "source": {
+          "cargo-version": "1.95.0",
+          "commit": "0c09d95f5debf9f3475c4828e5fb836f9f1cc22b",
+          "git": "https://github.com/pkgre/pkgre",
+          "kind": "git-tag",
+          "package": "pkgre-indexer",
+          "path": "indexer",
+          "tag": "indexer/v0.2.0",
+          "tag-oid": "a13d63c2ace403f8d9e079411407323522028036"
+        },
+        "source-row-sha256": "22a932799227a0e62387095572fa0b3a40508b4d0f238c5d62796891bf84250f",
+        "state": "active",
+        "version": "0.2.0"
+      },
+      {
+        "crate-sha256": "467be746eb89eb14da496a5d95a2cf13d20652644cf4ef18355be0723d95a755",
+        "index-row-sha256": "22c7bbdee56dd1b09559dc4a96748c4af4a7f91de917a74dbec68ecaef82ba8d",
+        "name": "pkgre-indexer",
+        "source": {
+          "cargo-version": "1.95.0",
+          "commit": "b08d2b9f7f486b0e0ec9c138730b241478f775f3",
+          "git": "https://github.com/pkgre/pkgre",
+          "kind": "git-tag",
+          "package": "pkgre-indexer",
+          "path": "indexer",
+          "tag": "indexer/v0.3.0",
+          "tag-oid": "b47ccfda09ecf5a11d229037d58b5f320d783e58"
+        },
+        "source-row-sha256": "f0a80df4bf810cb3a8f1b300e7637499f4dae72e2fb5f3bdbec636a59b30b28f",
+        "state": "active",
+        "version": "0.3.0"
+      }
+    ],
+    "nameCount": 911,
+    "packageCount": 747,
+    "registry": {
+      "download": "https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}",
+      "index": "sparse+https://rust.pkg.re/",
+      "name": "main"
+    },
+    "schema": 4,
+    "sourceKinds": {
+      "crates-io": 744,
+      "git-tag": 3
+    }
+  },
+  "schema": "pkgre-d0-source-catalog-v1"
+}

@@ -1,0 +1,11 @@
+{
+  "canonicalFileInventoryLength": 66803,
+  "canonicalFileInventorySha256": "74fca0feee12753226ba8c5cebeb272cf8863b157879dcccfdc0a52650018f8e",
+  "catalogCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+  "comparison": "sorted per-file path,length,SHA-256 JSONL inventories equal",
+  "deployedWorkflowPinnedImplementationCommit": "ae1dfbfd4e965dffb538e356f005e4fbb32fdb77",
+  "fileCount": 563,
+  "result": "byte-identical",
+  "reviewedImplementationCommit": "066293df21743cbf41fb571a38f2bb94059e7274",
+  "schema": "pkgre-d0-renderer-equivalence-v1"
+}
