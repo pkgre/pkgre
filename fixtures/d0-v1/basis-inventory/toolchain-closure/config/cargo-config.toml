@@ -1,0 +1,11 @@
+[registries]
+pkgre = { index = "sparse+https://rust.pkg.re/" }
+
+[registry]
+default = "pkgre"
+
+[source.crates-io]
+replace-with = "disabled-crates-io"
+
+[source.disabled-crates-io]
+directory = "vendor/empty"

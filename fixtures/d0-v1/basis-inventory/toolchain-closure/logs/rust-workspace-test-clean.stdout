@@ -1,0 +1,217 @@
+
+running 23 tests
+test config::tests::defaults_and_explicit_values_are_strict ... ok
+test config::tests::malformed_or_unsafe_timing_arguments_fail ... ok
+test origin::tests::public_address_filter_accepts_global_unicast_and_pages_addresses ... ok
+test marker::tests::rejects_template_and_route_replay_mutations ... ok
+test origin::tests::public_address_filter_rejects_special_purpose_ranges ... ok
+test marker::tests::validates_every_closed_destination_form ... ok
+test marker::tests::rejects_destinations_outside_the_closed_grammars ... ok
+test origin::tests::canary_contract_binds_host_path_mime_and_exact_body ... ok
+test origin::tests::invalid_or_excessive_dns_answers_fail_before_a_request ... ok
+test route::tests::parses_only_the_two_canonical_route_forms ... ok
+test origin::tests::retries_only_a_pre_response_failure_on_another_public_address ... ok
+test origin::tests::semantic_response_failure_is_never_retried ... ok
+test state::tests::metrics_use_only_closed_labels_and_saturating_counters ... ok
+test route::tests::rejects_ambiguous_or_noncanonical_targets ... ok
+test state::tests::readiness_requires_both_recent_fixed_canaries ... ok
+test web::tests::health_readiness_and_metrics_never_fetch_markers ... ok
+test web::tests::route_host_confusion_never_fetches_origin ... ok
+test web::tests::marker_route_replay_and_template_drift_are_bad_gateway ... ok
+test web::tests::unsupported_methods_return_405_without_origin_fetch ... ok
+test web::tests::malformed_targets_and_duplicate_trusted_headers_never_fetch ... ok
+test web::tests::canonical_rust_and_js_markers_redirect_for_get_and_head ... ok
+test web::tests::origin_not_found_and_closed_error_classes_map_fail_closed ... ok
+test web::tests::tcp_boundary_preserves_raw_target_and_single_trusted_uri ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test rust_renderer_matches_provider_neutral_marker_v1_fixtures ... ok
+test rust_parser_rejects_provider_neutral_hostile_marker_v1_fixtures ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 145 tests
+test artifact::tests::byte_hash_matches_known_vector ... ok
+test category::tests::malformed_categories_are_rejected ... ok
+test category::tests::schema_two_homes_have_exact_schema_three_categories ... ok
+test download::tests::router_template_is_registry_bound ... ok
+test category::tests::qualified_category_round_trips_through_serde ... ok
+test download::tests::ordering_identity_and_fields_are_guarded ... ok
+test index::tests::cargo_index_paths_match_specification ... ok
+test import::tests::sparse_rows_for_another_name_are_rejected ... ok
+test import::tests::duplicate_sparse_rows_are_rejected ... ok
+test download::tests::canonical_round_trip_is_strict ... ok
+test index::tests::dependency_alias_routes_by_package_name ... ok
+test import::tests::exact_sparse_row_bytes_are_preserved ... ok
+test index::tests::known_index_fields_are_validated_strictly ... ok
+test index::tests::publication_and_dependency_metadata_fail_closed ... ok
+test index::tests::dependency_metadata_is_normalized_by_actual_package_identity ... ok
+test index::tests::scoped_dependency_routing_prefers_the_source_registry_and_rejects_ambiguity ... ok
+test lock::tests::mirror_and_git_cannot_resolve_to_the_same_cargo_identity ... ok
+test lock::tests::unexpected_catalog_entries_fail_before_resolution ... ok
+test lock::tests::one_existing_lock_disables_direct_bootstrap ... ok
+test lock::tests::resolver_and_dependency_policy_failures_leave_the_tree_unchanged ... ok
+test lock::tests::failed_staging_install_restores_the_exact_original_catalog ... ok
+test lock::tests::established_catalog_rejects_direct_new_mirror_before_resolution ... ok
+test lock::tests::nonregular_download_catalog_is_rejected_without_mutation ... ok
+test migration::v3_to_v4::tests::category_mapping_is_exact ... ok
+test migration::v3_to_v4::tests::serializer_allows_mirror_and_publish_in_one_category ... ok
+test package::tests::checkout_tree_rejects_symlinks ... ok
+test package::tests::curated_registry_source_accepts_sparse_metadata_forms ... ok
+test lock::tests::failed_catalog_transaction_install_restores_the_exact_original ... ok
+test package::tests::generated_record_routes_renamed_dependency_identity ... ok
+test policy::tests::digest_requires_canonical_lowercase_sha256 ... ok
+test policy::tests::declared_topology_and_category_policy_are_enforced ... ok
+test policy::tests::future_subregistry_has_its_canonical_path_and_independent_name_namespace ... ok
+test lock::tests::changed_git_repository_fails_before_resolving_a_new_tag ... ok
+test policy::tests::package_names_are_strict_and_collision_key_matches_cargo ... ok
+test lock::tests::catalog_transaction_rejects_a_concurrent_guard ... ok
+test policy::tests::mixed_source_registry_requires_its_exact_router_template ... ok
+test policy::tests::tags_and_object_ids_are_unambiguous ... ok
+test policy::tests::source_declarations_and_package_homes_have_exact_inventory ... ok
+test policy::tests::relative_paths_reject_traversal_and_git_metadata ... ok
+test migration::tests::existing_destination_is_refused_without_changing_either_tree ... ok
+test lock::tests::existing_object_corruption_and_extras_fail_before_resolution ... ok
+test render::tests::content_comparison_detects_equal_and_different_files ... ok
+test render::tests::schema_four_download_template_matches_locked_package_sources ... ok
+test render::tests::mixed_source_release_requires_the_registry_router ... ok
+test lock::tests::mixed_mirror_and_publish_registry_requires_router_before_resolution ... ok
+test policy::tests::source_specific_registries_require_matching_downloads ... ok
+test lock::tests::one_name_can_transition_from_mirror_to_git_in_later_version ... ok
+test render::tests::schema_one_release_migrates_only_to_source_specific_downloads ... ok
+test lock::tests::immutable_registry_and_routed_row_anchors_fail_before_resolution ... ok
+test render::tests::schema_four_can_add_but_not_remove_a_future_registry ... ok
+test render::tests::unsupported_release_transition_is_rejected ... ok
+test migration::tests::unmappable_schema_two_name_is_rejected_without_writing_output ... ok
+test lock::tests::admitted_reconciliation_requires_catalog_owned_batch ... ok
+test lock::tests::catalog_transaction_installs_only_a_valid_complete_private_copy ... ok
+test schema::tests::external_categories_require_canonical_paths_and_exact_inventory ... ok
+test render::tests::canonical_schema_two_release_migrates_to_schema_three ... ok
+test schema::tests::external_category_symlinks_are_rejected ... ok
+test render::tests::schema_three_categories_migrate_to_canonical_schema_four_order ... ok
+test schema::tests::inline_category_uses_compact_package_maps ... ok
+test schema::tests::lock_serialization_is_sorted_and_stable ... ok
+test render::tests::schema_three_removed_package_cannot_be_reactivated ... ok
+test schema::tests::lock_source_rejects_unknown_fields ... ok
+test render::tests::schema_two_release_cannot_remap_a_package_to_an_arbitrary_category ... ok
+test update::admission::tests::source_delta_evidence_binds_the_recomputed_base ... ok
+test render::tests::schema_three_routed_row_hash_must_match_the_site ... ok
+test update::admission::tests::tree_rejects_unpaired_nested_and_symlink_entries ... ok
+test schema::tests::inline_and_external_categories_expand_identically ... ok
+test lock::tests::source_specific_download_migrates_once_to_registry_router ... ok
+test render::tests::schema_three_download_migration_is_registry_bound_and_one_way ... ok
+test render::tests::schema_three_download_catalog_must_match_active_release_packages ... ok
+test lock::tests::missing_or_extra_mirror_admissions_fail_before_resolution ... ok
+test migration::tests::corrupted_source_row_is_rejected_without_writing_output ... ok
+test lock::tests::legacy_download_lock_migrates_with_archive_cleanup ... ok
+test render::tests::schema_three_preserves_name_category_and_package_anchors ... ok
+test update::admission::tests::migration_rewrites_routes_but_preserves_historical_catalog_binding ... ok
+test migration::tests::newly_forbidden_category_dependency_is_rejected_without_writing_output ... ok
+test lock::tests::wrong_mirror_admission_route_fails_before_resolution ... ok
+test update::admission::tests::canonical_pair_is_complete_content_bound_and_inventory_checked ... ok
+test update::admission::tests::inventory_requires_exact_reverse_coverage_and_rejects_duplicate_batches ... ok
+test download::tests::schema_size_and_wire_source_are_strict ... ok
+test lock::tests::reconciliation_retains_external_categories ... ok
+test lock::tests::catalog_transaction_failure_and_fingerprint_drift_leave_live_tree_unchanged ... ok
+test lock::tests::identical_cargo_identities_in_distinct_registries_reconcile_and_render ... ok
+test update::api::tests::checksum_and_malformed_trusted_publishing_fail_closed ... ok
+test update::api::tests::missing_publisher_is_retained_as_unknown ... ok
+test update::api::tests::parses_exact_version_scoped_and_github_attestation_evidence ... ok
+test lock::tests::exact_legacy_archive_set_migrates_once_without_resolution ... ok
+test update::declaration::tests::external_declaration_symlink_is_rejected_without_mutation ... ok
+test lock::tests::removal_retains_evidence_yanks_row_and_cannot_be_reversed ... ok
+test update::declaration::tests::inline_edit_preserves_comments_and_inserts_in_semver_order ... ok
+test update::manifest::tests::cargo_identity_is_scoped_by_category_registry ... ok
+test update::archive::tests::safe_archive_reports_stable_files_build_surface_and_vcs_claim ... ok
+test update::declaration::tests::external_edit_changes_only_referenced_category_file ... ok
+test update::manifest::tests::evidence_and_portable_filenames_fail_closed ... ok
+test update::manifest::tests::request_target_and_canonical_order_are_strict ... ok
+test update::manifest::tests::compact_manifest_round_trips_and_contains_no_machine_hashes ... ok
+test update::plan::archive_delta_tests::duplicate_analysis_paths_fail_closed ... ok
+test update::archive::tests::file_count_size_stream_and_ratio_limits_fail_closed ... ok
+test update::plan::archive_delta_tests::complete_archive_delta_is_canonical_and_binds_modes_and_surface ... ok
+test update::archive::tests::traversal_links_duplicates_and_wrong_roots_are_rejected ... ok
+test update::plan::tests::attested_source_can_anchor_root_archive_without_embedded_vcs_claim ... ok
+test update::inspect::tests::symlink_parent_is_rejected_before_resolution ... ok
+test update::plan::tests::candidate_cargo_identity_is_scoped_by_registry ... ok
+test update::plan::tests::candidate_facts_hash_binds_the_complete_approval_free_record ... ok
+test update::plan::tests::catalog_fingerprint_rejects_symlinks ... ok
+test update::plan::tests::historical_plan_validation_uses_recorded_positive_policy_thresholds ... ok
+test update::policy::tests::age_boundary_selects_exactly_thirty_days_but_not_one_second_before ... ok
+test update::policy::tests::compatibility_lanes_exclude_zero_zero_and_prereleases ... ok
+test lock::tests::wrong_mirror_admission_hashes_leave_tree_unchanged ... ok
+test update::inspect::tests::archive_evidence_mismatch_leaves_no_output ... ok
+test update::policy::tests::exact_365_day_gap_including_yanked_and_prerelease_activity_is_gated ... ok
+test update::policy::tests::exact_implicit_revalidation_does_not_switch_to_a_newer_release ... ok
+test update::policy::tests::exact_selection_rejects_yanked_and_previously_locked_identities ... ok
+test update::plan::tests::catalog_fingerprint_is_location_independent_and_binds_paths_and_bytes ... ok
+test update::policy::tests::exact_selection_requires_age_and_uses_inactive_history_as_base ... ok
+test update::declaration::tests::invalid_route_identity_and_order_leave_declaration_unchanged ... ok
+test update::policy::tests::exact_selection_supports_new_zero_zero_and_prerelease_identities ... ok
+test update::policy::tests::future_publication_blocks_selection ... ok
+test update::inspect::tests::inspection_is_inert_exact_and_create_new ... ok
+test update::policy::tests::latest_eligible_non_yanked_candidate_is_selected_per_active_lane ... ok
+test update::policy::tests::package_activity_distinguishes_empty_reservation_and_inactive_history ... ok
+test update::policy::tests::post_gap_burst_remains_gated_until_one_post_gap_identity_is_locked ... ok
+test update::source::tests::public_repository_normalization_is_narrow_and_canonical ... ok
+test update::time::tests::canonical_timestamp_round_trips_epoch_and_leap_dates ... ok
+test update::time::tests::exact_day_boundaries_use_utc_seconds ... ok
+test update::time::tests::malformed_non_utc_and_noncanonical_timestamps_are_rejected ... ok
+test update::source::tests::source_comparison_accounts_for_cargo_generated_files_and_manifest_original ... ok
+test update::workflow::tests::admission_revalidation_falls_back_to_exact_for_new_lane ... ok
+test update::workflow::tests::admission_revalidation_supports_a_new_stable_package ... ok
+test update::workflow::tests::admission_revalidation_preserves_implicit_lane_base ... ok
+test update::workflow::tests::blocking_reasons_dominate_review_reasons ... ok
+test update::workflow::tests::dependency_delta_distinguishes_new_identity_from_edge_changes ... ok
+test update::workflow::tests::implicit_planning_targets_only_active_compatibility_lanes ... ok
+test lock::tests::established_catalog_allows_direct_new_git_tag ... ok
+test lock::tests::bootstrap_routes_all_layers_and_second_run_is_an_exact_noop ... ok
+test update::e2e_tests::apply_rejects_upstream_yank_and_route_drift_without_mutating_catalog ... ok
+test migration::tests::exact_migration_preserves_source_objects_and_validates_output ... ok
+test update::source::tests::bounded_command_rejects_excess_stdout ... ok
+test update::e2e_tests::later_resolution_failure_rolls_back_complete_multi_candidate_apply ... ok
+test update::e2e_tests::compact_manifest_lifecycle_is_inert_transactional_bound_and_convergent ... ok
+test lock::tests::generated_download_catalog_is_required_exact_regenerated_and_rendered ... ok
+test update::e2e_tests::one_generated_batch_binds_multiple_locks_to_its_complete_hash ... ok
+test migration::tests::schema_three_to_four_migration_is_exact_and_rewrites_admissions ... ok
+test update::source::tests::bounded_command_terminates_on_timeout ... ok
+test package::tests::git_tag_materialization_records_tag_and_is_reproducible ... ok
+
+test result: ok. 145 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test cargo_builds_locked_with_clean_cache_from_root_registry ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test renderer_keeps_main_at_root_and_future_registry_below_its_alias ... ok
+test renderer_routes_mixed_sources_at_root_and_layouts_identically ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

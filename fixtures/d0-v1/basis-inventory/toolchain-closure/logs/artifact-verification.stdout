@@ -1,0 +1,3 @@
+ok command=verify stage=routes files=7
+ok command=verify stage=final files=8
+all generated artifact verifications and JS canonical-tree diffs passed

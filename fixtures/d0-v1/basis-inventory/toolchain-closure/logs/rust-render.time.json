@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/nix/store/bqiaxi9lhg0a8mva3qwmnys70mhnx1wk-pkgre-rust-0.5.0/bin/pkgre-rust",
+    "render",
+    "/home/dev0/repos/pkgre-rust/registry",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/performance/rust-site"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 1.4841489950194955,
+  "ru_maxrss_kib": 11560
+}

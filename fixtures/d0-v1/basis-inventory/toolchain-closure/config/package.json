@@ -1,0 +1,29 @@
+{
+  "name": "pkgre-js",
+  "version": "0.1.0",
+  "description": "Deterministic indexer for the curated js.pkg.re registry",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pkgre/pkgre.git",
+    "directory": "js"
+  },
+  "bin": {
+    "pkgre-js": "src/main.js"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=24.15.0",
+    "npm": ">=12.0.2"
+  },
+  "os": [
+    "linux"
+  ],
+  "packageManager": "npm@12.0.2",
+  "scripts": {
+    "test": "node --test"
+  }
+}

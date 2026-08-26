@@ -1,0 +1,20 @@
+{
+  "command": [
+    "nix",
+    "build",
+    "--no-link",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#rust",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#proxy",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js-client-node-minimum",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js-client-node-current",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js-client-bun-minimum",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js-client-bun-current",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js-client-deno-minimum",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source#js-client-deno-current"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 0.8666725060902536,
+  "nix_client_ru_maxrss_kib": 205304,
+  "note": "ru_maxrss covers the nix client process,not separately daemonized builders"
+}

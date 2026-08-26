@@ -1,0 +1,13 @@
+{
+  "command": [
+    "nix",
+    "flake",
+    "check",
+    "--print-build-logs",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 3.5485330750234425,
+  "nix_client_ru_maxrss_kib": 557388,
+  "note": "ru_maxrss covers the nix client process,not separately daemonized builders;all evaluated x86_64 checks were already available in the Nix store"
+}

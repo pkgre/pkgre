@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/nix/store/glcp73hgagq2b24i80jlgbvj28vdb6kk-nodejs-24.19.0/bin/node",
+    "--test",
+    "js/test/archive.test.js",
+    "js/test/artifact.test.js",
+    "js/test/canonical.test.js",
+    "js/test/catalog.test.js",
+    "js/test/cli.test.js",
+    "js/test/filesystem.test.js",
+    "js/test/package.test.js",
+    "js/test/packument.test.js",
+    "js/test/redirect-marker-fixture.test.js",
+    "js/test/render.test.js"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 0.18562188325449824,
+  "ru_maxrss_kib": 53564
+}

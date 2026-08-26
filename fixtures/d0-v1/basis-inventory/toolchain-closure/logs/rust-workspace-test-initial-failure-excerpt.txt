@@ -1,0 +1,26 @@
+source=logs/rust-workspace-test.stdout lines=197-212
+running 1 test
+test cargo_builds_locked_with_clean_cache_from_root_registry ... FAILED
+
+failures:
+
+---- cargo_builds_locked_with_clean_cache_from_root_registry stdout ----
+
+thread 'cargo_builds_locked_with_clean_cache_from_root_registry' (1107824) panicked at rust/tests/registry_e2e.rs:96:10:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cargo_builds_locked_with_clean_cache_from_root_registry
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+source=logs/rust-workspace-test.stderr lines=136-143
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.76s
+     Running unittests src/lib.rs (/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/rust-test-target/debug/deps/pkgre_proxy-711ae85cdfe5f83f)
+     Running unittests src/main.rs (/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/rust-test-target/debug/deps/pkgre_proxy-0048d20edd5b4628)
+     Running tests/redirect_marker_fixture.rs (/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/rust-test-target/debug/deps/redirect_marker_fixture-5a0a11e4517ea72e)
+     Running unittests src/lib.rs (/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/rust-test-target/debug/deps/pkgre_rust-313cf09525a342f9)
+     Running unittests src/main.rs (/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/rust-test-target/debug/deps/pkgre_rust-8dcc2cdc5c46e8f9)
+     Running tests/registry_e2e.rs (/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/rust-test-target/debug/deps/registry_e2e-4cd2b4b4165c6049)
+error: test failed, to rerun pass `-p pkgre-rust --test registry_e2e`

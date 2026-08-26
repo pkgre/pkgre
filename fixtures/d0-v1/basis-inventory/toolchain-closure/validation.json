@@ -1,0 +1,96 @@
+{
+  "check_count": 10,
+  "checks": [
+    {
+      "name": "preexisting_sha256sums_if_present",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "file_count": 16
+      },
+      "name": "all_json_parse",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+        "source_tar_sha256": "33526e0f3276a5dd79f2f7d8d54580547957bcb21a3a8941c7ba7b6153d30b26"
+      },
+      "name": "implementation_basis",
+      "status": "pass"
+    },
+    {
+      "name": "lock_pins_versions_and_registry_config",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "fixed_source_rows": 8,
+        "tool_count": 15,
+        "unique_fixed_sources": 6
+      },
+      "name": "tool_paths_sources_wrappers_and_deno_alias",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "required_source": "sparse+https://rust.pkg.re/",
+        "roots": {
+          "pkgre-proxy": {
+            "packages_including_root": 155,
+            "selected_package_feature_pairs": 305,
+            "third_party": 154
+          },
+          "pkgre-rust": {
+            "packages_including_root": 55,
+            "selected_package_feature_pairs": 113,
+            "third_party": 54
+          }
+        },
+        "union": {
+          "packages_including_roots": 174,
+          "selected_package_feature_pairs": 347,
+          "third_party": 172
+        }
+      },
+      "name": "cargo_complete_closure_and_source_proof",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "js_pass_total": 47,
+        "rust_pass_total": 173
+      },
+      "name": "build_and_test_result_consistency",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "operation_count": 4
+      },
+      "name": "performance_records_and_output_inventories",
+      "status": "pass"
+    },
+    {
+      "details": {
+        "files_scanned": 43,
+        "findings": 0,
+        "pattern_classes": 5
+      },
+      "name": "secret_scan",
+      "status": "pass"
+    },
+    {
+      "name": "report_basis_consistency",
+      "status": "pass"
+    }
+  ],
+  "notes": [
+    "stdlib-only;no network or subprocess",
+    "SHA256SUMS covers every regular file except SHA256SUMS itself",
+    "rendered trees and source archive are referenced rather than copied;their original verification is provenance-log evidence"
+  ],
+  "schema": "pkgre-d0-validation-v1",
+  "status": "pass"
+}

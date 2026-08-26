@@ -1,0 +1,15 @@
+{
+  "command": [
+    "nix",
+    "develop",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source",
+    "-c",
+    "cargo",
+    "test",
+    "--workspace",
+    "--locked"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 15.914631830062717,
+  "ru_maxrss_kib": 1188220
+}

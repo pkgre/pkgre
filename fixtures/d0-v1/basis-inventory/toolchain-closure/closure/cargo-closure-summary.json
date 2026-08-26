@@ -1,0 +1,1828 @@
+{
+  "workspace_members": [
+    "pkgre-rust",
+    "pkgre-proxy"
+  ],
+  "lock_package_count": 174,
+  "roots": {
+    "pkgre-rust": {
+      "root_id": "path+file:///home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source/rust#pkgre-rust@0.5.0",
+      "package_count_including_root": 55,
+      "third_party_package_count": 54,
+      "selected_feature_pair_count": 113,
+      "packages": [
+        {
+          "name": "adler2",
+          "version": "2.0.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "anyhow",
+          "version": "1.0.104",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "bitflags",
+          "version": "2.13.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "block-buffer",
+          "version": "0.10.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "cfg-if",
+          "version": "1.0.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "cfg_aliases",
+          "version": "0.2.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.2.17",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "crc32fast",
+          "version": "1.5.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "crypto-common",
+          "version": "0.1.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "std"
+          ]
+        },
+        {
+          "name": "digest",
+          "version": "0.10.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "block-buffer",
+            "core-api",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "equivalent",
+          "version": "1.0.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "flate2",
+          "version": "1.1.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "any_impl",
+            "default",
+            "miniz_oxide",
+            "rust_backend"
+          ]
+        },
+        {
+          "name": "generic-array",
+          "version": "0.14.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "more_lengths"
+          ]
+        },
+        {
+          "name": "hashbrown",
+          "version": "0.17.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "indexmap",
+          "version": "2.14.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "itoa",
+          "version": "1.0.18",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "lazy_static",
+          "version": "1.5.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "libc",
+          "version": "0.2.189",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "extra_traits",
+            "std"
+          ]
+        },
+        {
+          "name": "log",
+          "version": "0.4.33",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "memchr",
+          "version": "2.8.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "miniz_oxide",
+          "version": "0.8.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "simd",
+            "simd-adler32",
+            "with-alloc"
+          ]
+        },
+        {
+          "name": "nix",
+          "version": "0.31.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "process",
+            "signal"
+          ]
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "race",
+            "std"
+          ]
+        },
+        {
+          "name": "pin-project-lite",
+          "version": "0.2.17",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "pkgre-rust",
+          "version": "0.5.0",
+          "source": null,
+          "features": []
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.107",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "quote",
+          "version": "1.0.47",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "semver",
+          "version": "1.0.28",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "serde",
+            "std"
+          ]
+        },
+        {
+          "name": "serde",
+          "version": "1.0.229",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "derive",
+            "serde_derive",
+            "std"
+          ]
+        },
+        {
+          "name": "serde_core",
+          "version": "1.0.229",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "result",
+            "std"
+          ]
+        },
+        {
+          "name": "serde_derive",
+          "version": "1.0.229",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default"
+          ]
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.151",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "raw_value",
+            "std"
+          ]
+        },
+        {
+          "name": "serde_spanned",
+          "version": "1.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "serde",
+            "std"
+          ]
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "sharded-slab",
+          "version": "0.1.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "simd-adler32",
+          "version": "0.3.10",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "syn",
+          "version": "2.0.119",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "clone-impls",
+            "default",
+            "derive",
+            "extra-traits",
+            "fold",
+            "full",
+            "parsing",
+            "printing",
+            "proc-macro",
+            "visit",
+            "visit-mut"
+          ]
+        },
+        {
+          "name": "syn",
+          "version": "3.0.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "clone-impls",
+            "default",
+            "derive",
+            "full",
+            "parsing",
+            "printing",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "thread_local",
+          "version": "1.1.10",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "toml",
+          "version": "0.9.12+spec-1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "display",
+            "parse",
+            "serde",
+            "std"
+          ]
+        },
+        {
+          "name": "toml_datetime",
+          "version": "0.7.5+spec-1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "serde",
+            "std"
+          ]
+        },
+        {
+          "name": "toml_datetime",
+          "version": "1.1.1+spec-1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "toml_edit",
+          "version": "0.25.13+spec-1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "display",
+            "parse"
+          ]
+        },
+        {
+          "name": "toml_parser",
+          "version": "1.1.3+spec-1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "toml_writer",
+          "version": "1.1.2+spec-1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "tracing",
+          "version": "0.1.44",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "attributes",
+            "default",
+            "log",
+            "std",
+            "tracing-attributes"
+          ]
+        },
+        {
+          "name": "tracing-attributes",
+          "version": "0.1.31",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tracing-core",
+          "version": "0.1.36",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "once_cell",
+            "std"
+          ]
+        },
+        {
+          "name": "tracing-subscriber",
+          "version": "0.3.23",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "fmt",
+            "registry",
+            "sharded-slab",
+            "std",
+            "thread_local"
+          ]
+        },
+        {
+          "name": "typenum",
+          "version": "1.20.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "unicode-ident",
+          "version": "1.0.24",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "version_check",
+          "version": "0.9.5",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "winnow",
+          "version": "0.7.15",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "winnow",
+          "version": "1.0.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "ascii",
+            "binary",
+            "default",
+            "parser",
+            "std"
+          ]
+        },
+        {
+          "name": "zmij",
+          "version": "1.0.23",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        }
+      ]
+    },
+    "pkgre-proxy": {
+      "root_id": "path+file:///home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/source/rust/proxy#pkgre-proxy@0.2.0",
+      "package_count_including_root": 155,
+      "third_party_package_count": 154,
+      "selected_feature_pair_count": 305,
+      "packages": [
+        {
+          "name": "anyhow",
+          "version": "1.0.104",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "atomic-waker",
+          "version": "1.1.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "axum",
+          "version": "0.8.8",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "form",
+            "http1",
+            "json",
+            "matched-path",
+            "original-uri",
+            "query",
+            "tokio",
+            "tower-log",
+            "tracing"
+          ]
+        },
+        {
+          "name": "axum-core",
+          "version": "0.5.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "tracing"
+          ]
+        },
+        {
+          "name": "base64",
+          "version": "0.22.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "bitflags",
+          "version": "2.13.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "block-buffer",
+          "version": "0.10.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "bumpalo",
+          "version": "3.20.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default"
+          ]
+        },
+        {
+          "name": "bytes",
+          "version": "1.12.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "cc",
+          "version": "1.4.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "cfg-if",
+          "version": "1.0.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "cfg_aliases",
+          "version": "0.2.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "chacha20",
+          "version": "0.10.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "rng"
+          ]
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.2.17",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.3.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "crypto-common",
+          "version": "0.1.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "std"
+          ]
+        },
+        {
+          "name": "digest",
+          "version": "0.10.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "block-buffer",
+            "core-api",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "displaydoc",
+          "version": "0.2.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "errno",
+          "version": "0.3.14",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "find-msvc-tools",
+          "version": "0.1.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "form_urlencoded",
+          "version": "1.2.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "futures-channel",
+          "version": "0.3.33",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "futures-core",
+          "version": "0.3.33",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "futures-task",
+          "version": "0.3.33",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "std"
+          ]
+        },
+        {
+          "name": "futures-util",
+          "version": "0.3.33",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "slab",
+            "std"
+          ]
+        },
+        {
+          "name": "generic-array",
+          "version": "0.14.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "more_lengths"
+          ]
+        },
+        {
+          "name": "getrandom",
+          "version": "0.2.17",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "js",
+            "js-sys",
+            "wasm-bindgen"
+          ]
+        },
+        {
+          "name": "getrandom",
+          "version": "0.4.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "std",
+            "sys_rng",
+            "wasm_js"
+          ]
+        },
+        {
+          "name": "http",
+          "version": "1.5.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "http-body",
+          "version": "1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "http-body-util",
+          "version": "0.1.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default"
+          ]
+        },
+        {
+          "name": "httparse",
+          "version": "1.10.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "httpdate",
+          "version": "1.0.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "hyper",
+          "version": "1.11.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "client",
+            "default",
+            "http1",
+            "server"
+          ]
+        },
+        {
+          "name": "hyper-rustls",
+          "version": "0.27.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "http1",
+            "ring",
+            "tls12",
+            "webpki-roots",
+            "webpki-tokio"
+          ]
+        },
+        {
+          "name": "hyper-util",
+          "version": "0.1.20",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "client",
+            "client-legacy",
+            "client-proxy",
+            "default",
+            "http1",
+            "server",
+            "service",
+            "tokio"
+          ]
+        },
+        {
+          "name": "icu_collections",
+          "version": "2.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "icu_locale_core",
+          "version": "2.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "zerovec"
+          ]
+        },
+        {
+          "name": "icu_normalizer",
+          "version": "2.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "compiled_data"
+          ]
+        },
+        {
+          "name": "icu_normalizer_data",
+          "version": "2.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "icu_properties",
+          "version": "2.1.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "compiled_data"
+          ]
+        },
+        {
+          "name": "icu_properties_data",
+          "version": "2.1.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "icu_provider",
+          "version": "2.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "baked"
+          ]
+        },
+        {
+          "name": "idna",
+          "version": "1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "compiled_data",
+            "std"
+          ]
+        },
+        {
+          "name": "idna_adapter",
+          "version": "1.2.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "compiled_data"
+          ]
+        },
+        {
+          "name": "ipnet",
+          "version": "2.12.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "itoa",
+          "version": "1.0.18",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "js-sys",
+          "version": "0.3.103",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std",
+            "unsafe-eval"
+          ]
+        },
+        {
+          "name": "lazy_static",
+          "version": "1.5.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "libc",
+          "version": "0.2.189",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "extra_traits",
+            "std"
+          ]
+        },
+        {
+          "name": "litemap",
+          "version": "0.8.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "log",
+          "version": "0.4.33",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "lru-slab",
+          "version": "0.1.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "matchit",
+          "version": "0.8.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default"
+          ]
+        },
+        {
+          "name": "memchr",
+          "version": "2.8.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "mime",
+          "version": "0.3.17",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "mio",
+          "version": "1.2.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "net",
+            "os-ext",
+            "os-poll"
+          ]
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "race",
+            "std"
+          ]
+        },
+        {
+          "name": "percent-encoding",
+          "version": "2.3.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "pin-project-lite",
+          "version": "0.2.17",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "pkgre-proxy",
+          "version": "0.2.0",
+          "source": null,
+          "features": []
+        },
+        {
+          "name": "potential_utf",
+          "version": "0.1.5",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "zerovec"
+          ]
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.107",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "quinn",
+          "version": "0.11.11",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "ring",
+            "runtime-tokio",
+            "rustls",
+            "rustls-ring"
+          ]
+        },
+        {
+          "name": "quinn-proto",
+          "version": "0.11.16",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "ring",
+            "rustls-ring"
+          ]
+        },
+        {
+          "name": "quinn-udp",
+          "version": "0.5.15",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "tracing"
+          ]
+        },
+        {
+          "name": "quote",
+          "version": "1.0.47",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "r-efi",
+          "version": "6.0.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "rand",
+          "version": "0.10.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std",
+            "std_rng",
+            "sys_rng",
+            "thread_rng"
+          ]
+        },
+        {
+          "name": "rand_core",
+          "version": "0.10.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "rand_pcg",
+          "version": "0.10.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "reqwest",
+          "version": "0.12.28",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "__rustls",
+            "__rustls-ring",
+            "__tls",
+            "rustls-tls",
+            "rustls-tls-webpki-roots",
+            "rustls-tls-webpki-roots-no-provider"
+          ]
+        },
+        {
+          "name": "ring",
+          "version": "0.17.14",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "dev_urandom_fallback",
+            "wasm32_unknown_unknown_js"
+          ]
+        },
+        {
+          "name": "rustc-hash",
+          "version": "2.1.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "rustls",
+          "version": "0.23.43",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "ring",
+            "std",
+            "tls12"
+          ]
+        },
+        {
+          "name": "rustls-pki-types",
+          "version": "1.15.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "std",
+            "web",
+            "web-time"
+          ]
+        },
+        {
+          "name": "rustls-webpki",
+          "version": "0.103.13",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "ring",
+            "std"
+          ]
+        },
+        {
+          "name": "rustversion",
+          "version": "1.0.23",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "ryu",
+          "version": "1.0.23",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "semver",
+          "version": "1.0.28",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "serde",
+            "std"
+          ]
+        },
+        {
+          "name": "serde",
+          "version": "1.0.229",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "derive",
+            "serde_derive",
+            "std"
+          ]
+        },
+        {
+          "name": "serde_core",
+          "version": "1.0.229",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "result",
+            "std"
+          ]
+        },
+        {
+          "name": "serde_derive",
+          "version": "1.0.229",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default"
+          ]
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.151",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "raw_value",
+            "std"
+          ]
+        },
+        {
+          "name": "serde_path_to_error",
+          "version": "0.1.20",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "serde_urlencoded",
+          "version": "0.7.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "sharded-slab",
+          "version": "0.1.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "shlex",
+          "version": "2.0.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "signal-hook-registry",
+          "version": "1.4.8",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "slab",
+          "version": "0.4.12",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "smallvec",
+          "version": "1.15.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "const_generics",
+            "const_new"
+          ]
+        },
+        {
+          "name": "socket2",
+          "version": "0.6.5",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "all"
+          ]
+        },
+        {
+          "name": "stable_deref_trait",
+          "version": "1.2.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "subtle",
+          "version": "2.6.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "syn",
+          "version": "2.0.119",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "clone-impls",
+            "default",
+            "derive",
+            "extra-traits",
+            "fold",
+            "full",
+            "parsing",
+            "printing",
+            "proc-macro",
+            "visit",
+            "visit-mut"
+          ]
+        },
+        {
+          "name": "syn",
+          "version": "3.0.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "clone-impls",
+            "default",
+            "derive",
+            "full",
+            "parsing",
+            "printing",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "sync_wrapper",
+          "version": "1.0.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "futures",
+            "futures-core"
+          ]
+        },
+        {
+          "name": "synstructure",
+          "version": "0.13.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "proc-macro"
+          ]
+        },
+        {
+          "name": "thiserror",
+          "version": "2.0.19",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "thiserror-impl",
+          "version": "2.0.19",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "thread_local",
+          "version": "1.1.10",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tinystr",
+          "version": "0.8.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "zerovec"
+          ]
+        },
+        {
+          "name": "tinyvec",
+          "version": "1.12.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default",
+            "tinyvec_macros"
+          ]
+        },
+        {
+          "name": "tinyvec_macros",
+          "version": "0.1.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tokio",
+          "version": "1.53.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "bytes",
+            "default",
+            "io-util",
+            "libc",
+            "macros",
+            "mio",
+            "net",
+            "rt",
+            "rt-multi-thread",
+            "signal",
+            "signal-hook-registry",
+            "socket2",
+            "sync",
+            "test-util",
+            "time",
+            "tokio-macros",
+            "windows-sys"
+          ]
+        },
+        {
+          "name": "tokio-macros",
+          "version": "2.7.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tokio-rustls",
+          "version": "0.26.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "ring",
+            "tls12"
+          ]
+        },
+        {
+          "name": "tower",
+          "version": "0.5.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "futures-core",
+            "futures-util",
+            "log",
+            "make",
+            "pin-project-lite",
+            "retry",
+            "sync_wrapper",
+            "timeout",
+            "tokio",
+            "tracing",
+            "util"
+          ]
+        },
+        {
+          "name": "tower-http",
+          "version": "0.6.11",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "follow-redirect",
+            "futures-util",
+            "tower"
+          ]
+        },
+        {
+          "name": "tower-layer",
+          "version": "0.3.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tower-service",
+          "version": "0.3.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tracing",
+          "version": "0.1.44",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "attributes",
+            "default",
+            "log",
+            "std",
+            "tracing-attributes"
+          ]
+        },
+        {
+          "name": "tracing-attributes",
+          "version": "0.1.31",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "tracing-core",
+          "version": "0.1.36",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "once_cell",
+            "std"
+          ]
+        },
+        {
+          "name": "tracing-subscriber",
+          "version": "0.3.23",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "fmt",
+            "registry",
+            "sharded-slab",
+            "std",
+            "thread_local"
+          ]
+        },
+        {
+          "name": "try-lock",
+          "version": "0.2.5",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "typenum",
+          "version": "1.20.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "unicode-ident",
+          "version": "1.0.24",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "untrusted",
+          "version": "0.9.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "url",
+          "version": "2.5.8",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "utf8_iter",
+          "version": "1.0.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "version_check",
+          "version": "0.9.5",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "want",
+          "version": "0.3.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "wasi",
+          "version": "0.11.1+wasi-snapshot-preview1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "wasm-bindgen",
+          "version": "0.2.126",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "wasm-bindgen-futures",
+          "version": "0.4.76",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "wasm-bindgen-macro",
+          "version": "0.2.126",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "wasm-bindgen-macro-support",
+          "version": "0.2.126",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "wasm-bindgen-shared",
+          "version": "0.2.126",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "web-sys",
+          "version": "0.3.103",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "AbortController",
+            "AbortSignal",
+            "Blob",
+            "BlobPropertyBag",
+            "EventTarget",
+            "File",
+            "FormData",
+            "Headers",
+            "ReadableStream",
+            "Request",
+            "RequestCache",
+            "RequestCredentials",
+            "RequestInit",
+            "RequestMode",
+            "Response",
+            "ServiceWorkerGlobalScope",
+            "Window",
+            "WorkerGlobalScope",
+            "default",
+            "std"
+          ]
+        },
+        {
+          "name": "web-time",
+          "version": "1.1.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "webpki-roots",
+          "version": "1.0.9",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows-link",
+          "version": "0.2.1",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows-sys",
+          "version": "0.52.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "Win32",
+            "Win32_Foundation",
+            "Win32_System",
+            "Win32_System_Threading",
+            "default"
+          ]
+        },
+        {
+          "name": "windows-sys",
+          "version": "0.61.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "Wdk",
+            "Wdk_Foundation",
+            "Wdk_Storage",
+            "Wdk_Storage_FileSystem",
+            "Wdk_System",
+            "Wdk_System_IO",
+            "Win32",
+            "Win32_Foundation",
+            "Win32_Networking",
+            "Win32_Networking_WinSock",
+            "Win32_Security",
+            "Win32_Storage",
+            "Win32_Storage_FileSystem",
+            "Win32_System",
+            "Win32_System_Console",
+            "Win32_System_Diagnostics",
+            "Win32_System_Diagnostics_Debug",
+            "Win32_System_IO",
+            "Win32_System_Pipes",
+            "Win32_System_SystemServices",
+            "Win32_System_Threading",
+            "Win32_System_WindowsProgramming",
+            "default"
+          ]
+        },
+        {
+          "name": "windows-targets",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_aarch64_gnullvm",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_aarch64_msvc",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_i686_gnu",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_i686_gnullvm",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_i686_msvc",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_x86_64_gnu",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_x86_64_gnullvm",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "windows_x86_64_msvc",
+          "version": "0.52.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "writeable",
+          "version": "0.6.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "yoke",
+          "version": "0.8.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "derive",
+            "zerofrom"
+          ]
+        },
+        {
+          "name": "yoke-derive",
+          "version": "0.8.2",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "zerofrom",
+          "version": "0.1.8",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "derive"
+          ]
+        },
+        {
+          "name": "zerofrom-derive",
+          "version": "0.1.7",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "zeroize",
+          "version": "1.9.0",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "alloc",
+            "default"
+          ]
+        },
+        {
+          "name": "zerotrie",
+          "version": "0.2.4",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "yoke",
+            "zerofrom"
+          ]
+        },
+        {
+          "name": "zerovec",
+          "version": "0.11.6",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": [
+            "derive",
+            "yoke"
+          ]
+        },
+        {
+          "name": "zerovec-derive",
+          "version": "0.11.3",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        },
+        {
+          "name": "zmij",
+          "version": "1.0.23",
+          "source": "sparse+https://rust.pkg.re/",
+          "features": []
+        }
+      ]
+    }
+  },
+  "workspace_union": {
+    "package_count_including_two_roots": 174,
+    "third_party_package_count": 172,
+    "selected_feature_pair_count": 347
+  }
+}

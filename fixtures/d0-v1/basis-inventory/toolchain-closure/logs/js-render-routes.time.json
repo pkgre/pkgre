@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/nix/store/w571i59xsy6xabx7xp4n7mkxn6w76fv5-pkgre-js-0.1.0/bin/pkgre-js",
+    "render-routes",
+    "/home/dev0/repos/pkgre-js/bootstrap/js-v0.1.0/catalog.json",
+    "/home/dev0/repos/pkgre-js/bootstrap/js-v0.1.0/archives",
+    "/home/dev0/repos/pkgre-js/bootstrap/js-v0.1.0/site-previous",
+    "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/performance/js-site-routes"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 0.09510676329955459,
+  "ru_maxrss_kib": 43856
+}

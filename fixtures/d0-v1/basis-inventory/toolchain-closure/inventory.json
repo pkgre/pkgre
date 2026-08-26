@@ -1,0 +1,676 @@
+{
+  "blockers": [
+    {
+      "detail": "no fresh-builder max RSS;Nix outputs cached and daemonized",
+      "id": "fresh-builder-rss",
+      "scope": "this evidence"
+    },
+    {
+      "detail": "no native aarch64 build/check on x86_64 collector",
+      "id": "aarch64",
+      "scope": "this evidence"
+    },
+    {
+      "detail": "no export timing;exact-tip CLIs have no export subcommand",
+      "id": "export-cli",
+      "scope": "this evidence"
+    },
+    {
+      "detail": "Git cleanliness/upstream state and performance input commits survive as collection record claims,not independent transcripts",
+      "id": "collection-status-proof",
+      "scope": "this evidence"
+    },
+    {
+      "detail": "network/deployment/TLS/ruleset/signing/raw-nginx/archive-import/quota/time/lifecycle evidence remains separate and was intentionally not collected here",
+      "id": "remaining-d0",
+      "scope": "canonical rollout"
+    }
+  ],
+  "cargo_closure": {
+    "lock_proof": "closure/Cargo.lock",
+    "metadata_proof": "closure/cargo-metadata.json",
+    "metadata_scope": "resolve graph includes selected normal/build/dev target nodes used by workspace tests",
+    "method": [
+      "cargo metadata --locked --offline --format-version 1",
+      "cargo tree --locked --offline -p <root> -e features"
+    ],
+    "roots": {
+      "pkgre-proxy": {
+        "packages_including_root": 155,
+        "selected_package_feature_pairs": 305,
+        "third_party_packages": 154
+      },
+      "pkgre-rust": {
+        "packages_including_root": 55,
+        "selected_package_feature_pairs": 113,
+        "third_party_packages": 54
+      }
+    },
+    "rows": "closure/cargo-closure-summary.json",
+    "third_party_source_requirement": "sparse+https://rust.pkg.re/",
+    "workspace_union": {
+      "packages_including_two_roots": 174,
+      "selected_package_feature_pairs": 347,
+      "third_party_packages": 172,
+      "workspace_local_packages": 2
+    }
+  },
+  "cargo_registry_policy": {
+    "config_path_at_basis": ".cargo/config.toml",
+    "crates_io_replaced_with": "disabled-crates-io",
+    "default_registry": "pkgre",
+    "disabled_directory": "vendor/empty",
+    "evidence_copy": "config/cargo-config.toml",
+    "exact_index": "sparse+https://rust.pkg.re/"
+  },
+  "evaluated_check_derivations": {
+    "checks.x86_64-linux.formatting": "/nix/store/hmv0pqplvfyk8wvj9cl16gfmp3kl2biv-pkgre-formatting.drv",
+    "checks.x86_64-linux.js-compatibility-bun-current": "/nix/store/qhzdwbfmgx9a09pykmdmpmbdqlbd5k5l-pkgre-js-compatibility-bun-current.drv",
+    "checks.x86_64-linux.js-compatibility-bun-minimum": "/nix/store/6gdmby6nn1w6j4dlrssxfr4yh9y9d0rw-pkgre-js-compatibility-bun-minimum.drv",
+    "checks.x86_64-linux.js-compatibility-deno-current": "/nix/store/5ncf3ykjjapgp4fvh07mj1zriqkvpbz3-pkgre-js-compatibility-deno-current.drv",
+    "checks.x86_64-linux.js-compatibility-deno-minimum": "/nix/store/53k6vkgr7xg4h0159jv9qx74w27wizxd-pkgre-js-compatibility-deno-minimum.drv",
+    "checks.x86_64-linux.js-compatibility-node-current": "/nix/store/6q8skhhs27fg6g606g9p5wnxaygqwr8c-pkgre-js-compatibility-node-current.drv",
+    "checks.x86_64-linux.js-compatibility-node-minimum": "/nix/store/avc4w32a1xw95rsmq5s15ihizvyrjafv-pkgre-js-compatibility-node-minimum.drv",
+    "formatter.x86_64-linux": "/nix/store/qhwkwfrpdp2yhkk6pfq9v0al1csc7wi4-nixfmt-1.4.0.drv"
+  },
+  "evidence_schema": "pkgre-d0-toolchain-closure-v1",
+  "evidence_selection": {
+    "excluded": [
+      "full source tar",
+      "extracted source tree",
+      "rendered output trees",
+      "human cargo tree logs",
+      "irrelevant/noisy failed test log remainder"
+    ],
+    "exclusion_rationale": "avoid duplicating large/noisy artifacts;retain exact hashes,fixed Git basis,complete machine closure and sufficient provenance",
+    "included": [
+      "complete normalized closure rows",
+      "cargo metadata resolve proof",
+      "Cargo lock and registry config",
+      "flake/tool pin+wrapper configs",
+      "exact successful build/test/performance time records",
+      "exact pass summaries and bounded diagnostic failure excerpt",
+      "render output inventories"
+    ]
+  },
+  "flake_pins": {
+    "lock_version": 7,
+    "nixpkgs": {
+      "lastModified": 1787360063,
+      "narHash": "sha256-dt4WdcvsA8/RCe+VZZwqU0X+XMM3wBbGCWA0/sFWzGo=",
+      "owner": "NixOS",
+      "repo": "nixpkgs",
+      "rev": "2c423e03bbafcff28bfadc6781a4a8257f205cb5"
+    },
+    "rust-overlay": {
+      "lastModified": 1787367552,
+      "narHash": "sha256-YT4Fs2k7bi+7YzuLt93EtIRgjpwHK5ZfsQEIh5dEQSk=",
+      "owner": "oxalica",
+      "repo": "rust-overlay",
+      "rev": "fd2ebb9cc4323d0c5a1336138dab5c3c5a5d8bd9"
+    }
+  },
+  "implementation_basis": {
+    "collection_record": {
+      "primary_branch": "main",
+      "primary_final_head": "066293df21743cbf41fb571a38f2bb94059e7274",
+      "primary_initial_head": "066293df21743cbf41fb571a38f2bb94059e7274",
+      "primary_status": "## main...origin/main",
+      "primary_upstream_divergence": [
+        0,
+        0
+      ],
+      "status": "reported by original collection;no surviving independent status transcript"
+    },
+    "commit_proof": [
+      "logs/commit",
+      "source archive global PAX comment (archive referenced,not copied)"
+    ],
+    "git_commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+    "repository_remote_observation": "not separately captured",
+    "repository_url_from_package_manifest": "https://github.com/pkgre/pkgre.git",
+    "short_commit": "066293df",
+    "source_archive": {
+      "archive_bytes": 1464320,
+      "copied": false,
+      "extracted_source_equivalence": {
+        "bytes": 1366202,
+        "extra": 0,
+        "hash_mismatch": 0,
+        "missing": 0,
+        "observed": true,
+        "paths": 105
+      },
+      "original_path": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-pkgre-066293df/logs/source.tar",
+      "reason": "full source/archive intentionally excluded;selected exact config+lock files retained",
+      "regular_file_bytes": 1366202,
+      "regular_file_count": 105,
+      "sha256": "33526e0f3276a5dd79f2f7d8d54580547957bcb21a3a8941c7ba7b6153d30b26",
+      "total_member_count": 126
+    }
+  },
+  "lock_and_schema_versions": {
+    "cargo_lock": 4,
+    "cargo_metadata_format": 1,
+    "cargo_package_count": 174,
+    "js_catalog": "pkgre-js-catalog-v1",
+    "js_site_inventory": "pkgre-js-site-v1",
+    "npm_lockfile": 3,
+    "redirect_marker": "redirect-marker-v1",
+    "rust_catalog": 4,
+    "rust_download_catalog": 1,
+    "rust_release": 4
+  },
+  "observed_vs_proposed": {
+    "independently_revalidated_by_distillation": [
+      "JSON parse",
+      "closure graph/count/feature/source equivalence",
+      "Cargo lock package/source counts",
+      "flake/npm lock versions and pins",
+      "selected log result consistency",
+      "inventory line count+byte sums+hashes",
+      "SHA256SUMS",
+      "secret scan"
+    ],
+    "observed": "all values marked PASS,paths,hashes,versions,counts,timings/RSS and listed caveats derive from surviving D0 artifacts",
+    "proposed": "no production configuration or deployment proposal is asserted;only future validation/blocker work is listed"
+  },
+  "performance": {
+    "cli_limitation": {
+      "blocking": false,
+      "js_export_subcommand": false,
+      "measured_equivalents": [
+        "rust render",
+        "js render-routes",
+        "js render-final"
+      ],
+      "rust_export_subcommand": false
+    },
+    "inputs": [
+      {
+        "clean_before_after": true,
+        "commit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+        "evidence_status": "original collection record only;no surviving commit/status capture",
+        "id": "rust-catalog"
+      },
+      {
+        "clean_before_after": true,
+        "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+        "evidence_status": "original collection record only;no surviving commit/status capture",
+        "id": "js-bootstrap"
+      }
+    ],
+    "measurement": {
+      "cache": "warm",
+      "capacity_bound": false,
+      "clock": "wall",
+      "rss_method": "resource.getrusage(RUSAGE_CHILDREN).ru_maxrss",
+      "sample_count_per_operation": 1
+    },
+    "operations": [
+      {
+        "elapsed_seconds": 0.02551786880940199,
+        "id": "rust-check",
+        "input": "rust-catalog",
+        "log": "logs/rust-check.time.json",
+        "output": null,
+        "packages": 747,
+        "ru_maxrss_kib": 11592,
+        "status": "PASS"
+      },
+      {
+        "elapsed_seconds": 1.4841489950194955,
+        "id": "rust-render",
+        "input": "rust-catalog",
+        "log": "logs/rust-render.time.json",
+        "output": {
+          "byte_count": 2129784,
+          "copied": false,
+          "crate_archives": 3,
+          "download_routes": 747,
+          "file_count": 563,
+          "index_files": 555,
+          "inventory_copy": "performance/rust-site.inventory",
+          "inventory_sha256": "3bb3bb68f3b1b7335050d2ad254bb32dcee1e35208c6f6c1b80fe22a1bef8dce",
+          "metadata_files": 5,
+          "original_subtree": "performance/rust-site",
+          "valid_json_line_records": 747
+        },
+        "ru_maxrss_kib": 11560,
+        "status": "PASS_VERIFY_PASS"
+      },
+      {
+        "elapsed_seconds": 0.09510676329955459,
+        "id": "js-render-routes",
+        "input": "js-bootstrap",
+        "log": "logs/js-render-routes.time.json",
+        "output": {
+          "byte_count": 18640,
+          "catalog_sha256": "b92834fb5571e00c01c389f776ba1e4749ab11be8b64f7ee5beaa8a34507fafc",
+          "copied": false,
+          "file_count": 7,
+          "inventory_copy": "performance/js-site-routes.inventory",
+          "inventory_sha256": "b8afe7d5ed2664e81278f7ac366820a5dcb0a18cab2150afef4f43963e92f94e",
+          "original_subtree": "performance/js-site-routes"
+        },
+        "ru_maxrss_kib": 43856,
+        "status": "PASS_VERIFY_CANONICAL_DIFF_PASS"
+      },
+      {
+        "elapsed_seconds": 0.0890561412088573,
+        "id": "js-render-final",
+        "input": "js-bootstrap",
+        "log": "logs/js-render-final.time.json",
+        "output": {
+          "byte_count": 19785,
+          "catalog_sha256": "b92834fb5571e00c01c389f776ba1e4749ab11be8b64f7ee5beaa8a34507fafc",
+          "copied": false,
+          "file_count": 8,
+          "inventory_copy": "performance/js-site-final.inventory",
+          "inventory_sha256": "fbc5ccb289a61182502217ae170034e170f3073fbe9c7bfbc411c1c05701595b",
+          "original_subtree": "performance/js-site-final"
+        },
+        "ru_maxrss_kib": 45160,
+        "status": "PASS_VERIFY_CANONICAL_DIFF_PASS"
+      }
+    ]
+  },
+  "results": {
+    "flake_check": {
+      "cache_caveat": "all x86_64 check outputs already in store;validation/evaluation of cached results,not fresh builders;RSS is client only",
+      "elapsed_seconds": 3.5485330750234425,
+      "exit": 0,
+      "message": "all checks passed!",
+      "nix_client_ru_maxrss_kib": 557388,
+      "omitted_systems": [
+        "aarch64-linux"
+      ],
+      "running_checks": 0,
+      "status": "PASS"
+    },
+    "js_node_test": {
+      "elapsed_seconds": 0.18562188325449824,
+      "exit": 0,
+      "fail": 0,
+      "pass": 47,
+      "ru_maxrss_kib": 53564,
+      "runtime": "Node 24.19.0 from pkgs.nodejs_24",
+      "status": "PASS",
+      "tests": 47
+    },
+    "nix_build": {
+      "attrs": [
+        "rust",
+        "proxy",
+        "js",
+        "js-client-node-minimum",
+        "js-client-node-current",
+        "js-client-bun-minimum",
+        "js-client-bun-current",
+        "js-client-deno-minimum",
+        "js-client-deno-current"
+      ],
+      "cache_caveat": "outputs already available;RSS is client,not daemonized builders",
+      "elapsed_seconds": 0.8666725060902536,
+      "exit": 0,
+      "nix_client_ru_maxrss_kib": 205304,
+      "status": "PASS"
+    },
+    "rust_workspace_test_clean": {
+      "elapsed_seconds": 15.914631830062717,
+      "exit": 0,
+      "failed_total": 0,
+      "passed_total": 173,
+      "ru_maxrss_kib": 1188220,
+      "status": "PASS",
+      "summary_group_pass_counts": [
+        23,
+        0,
+        2,
+        145,
+        0,
+        1,
+        2,
+        0,
+        0
+      ]
+    },
+    "rust_workspace_test_initial": {
+      "collection_explanation": "external CARGO_TARGET_DIR redirected output while test expects local target/debug/consumer",
+      "elapsed_seconds": 33.31108468910679,
+      "exit": 101,
+      "observed_failure": "registry_e2e nested consumer executable not found",
+      "proof": "logs/rust-workspace-test-initial-failure-excerpt.txt",
+      "ru_maxrss_kib": 1126868,
+      "status": "EXPECTED_DIAGNOSTIC_FAILURE_RESOLVED_BY_CLEAN_RERUN"
+    }
+  },
+  "scope": {
+    "collection_mode": "surviving local artifacts only",
+    "excluded_operations": [
+      "network",
+      "deployment",
+      "settings",
+      "credentials",
+      "project repository mutation",
+      "build/test/render reruns"
+    ],
+    "requested": "read-only D0 toolchain/build/dependency-closure/performance evidence distillation",
+    "system": "x86_64-linux"
+  },
+  "tools": [
+    {
+      "config_paths": [],
+      "drv_path": "/nix/store/iza23qnw05vpa85g804b841rd4yqr1z5-nix-2.34.8.drv",
+      "id": "nix-host",
+      "nix_attribute_or_context": "host /run/current-system/sw",
+      "output_path": "/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8",
+      "role": "host evaluator/build client",
+      "source": {
+        "hash": null,
+        "kind": "host_store_artifact",
+        "status": "source URL/hash not captured",
+        "url": null
+      },
+      "version": "2.34.8",
+      "wrapper_paths": []
+    },
+    {
+      "config_paths": [],
+      "drv_path": "/nix/store/bny4hxrsvnaj060b6rbd68233x4fw32h-git-2.54.0.drv",
+      "id": "git-host",
+      "nix_attribute_or_context": "invoking user profile",
+      "output_path": "/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0",
+      "role": "host source-capture command",
+      "source": {
+        "hash": null,
+        "kind": "host_store_artifact",
+        "status": "source URL/hash not captured",
+        "url": null
+      },
+      "version": "2.54.0",
+      "wrapper_paths": []
+    },
+    {
+      "config_paths": [],
+      "drv_path": "/nix/store/y1bhwp1rl04s5qw50qdbmx83x8yy9nmf-git-2.55.0.drv",
+      "id": "git-flake",
+      "nix_attribute_or_context": "pkgs.git",
+      "output_path": "/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0",
+      "role": "devShell/source operations",
+      "source": {
+        "direct_archive_hash": null,
+        "direct_archive_url": null,
+        "input": "nixpkgs",
+        "kind": "flake_input_supply",
+        "status": "not separately captured;identity fixed by flake pin"
+      },
+      "version": "2.55.0",
+      "wrapper_paths": []
+    },
+    {
+      "config_paths": [
+        "config/rust-toolchain.toml",
+        "config/flake.nix"
+      ],
+      "drv_path": "/nix/store/hpi7bjzbbz2ilfdcjwyckvjl2x5x3k00-rust-default-1.95.0.drv",
+      "id": "rust-toolchain",
+      "nix_attribute_or_context": "pkgs.rust-bin.stable.\"1.95.0\".default.override { extensions=[\"clippy\" \"rustfmt\"]; }",
+      "output_path": "/nix/store/n4d5w91wqhiisr5rkjxhfssllbcdwai5-rust-default-1.95.0",
+      "role": "Rust build/test/cargo-metadata/tree/clippy/rustfmt",
+      "source": {
+        "direct_archive_hash": null,
+        "direct_archive_url": null,
+        "input": "rust-overlay+nixpkgs",
+        "kind": "flake_input_supply",
+        "status": "not separately captured;identity fixed by flake pin"
+      },
+      "version": "rustc 1.95.0 (59807616e1fa2540724bfbac14d7976d7e4a3860);cargo 1.95.0 (f2d3ce0bd7f24a49f8f72d9000448f8838c4e850)",
+      "wrapper_paths": []
+    },
+    {
+      "config_paths": [
+        "config/flake.nix"
+      ],
+      "drv_path": "/nix/store/px8hj7awj6ffpcamsaf95ywrmnn8n6aq-nodejs-24.19.0.drv",
+      "id": "node-indexer",
+      "nix_attribute_or_context": "pkgs.nodejs_24",
+      "output_path": "/nix/store/glcp73hgagq2b24i80jlgbvj28vdb6kk-nodejs-24.19.0",
+      "role": "pkgre-js build/check runtime",
+      "source": {
+        "direct_archive_hash": null,
+        "direct_archive_url": null,
+        "input": "nixpkgs",
+        "kind": "flake_input_supply",
+        "status": "not separately captured;identity fixed by flake pin"
+      },
+      "version": "Node 24.19.0;npm 11.17.0",
+      "wrapper_paths": [
+        "/nix/store/w571i59xsy6xabx7xp4n7mkxn6w76fv5-pkgre-js-0.1.0/bin/pkgre-js"
+      ]
+    },
+    {
+      "config_paths": [
+        "config/js-compatibility-clients.nix",
+        "config/package.json"
+      ],
+      "drv_path": "/nix/store/99x4lfl8mr0d44k1w7hhkcj97jpkmgpq-pkgre-js-compat-node-npm-24.15.0-12.0.2.drv",
+      "id": "node-minimum",
+      "nix_attribute_or_context": "packages.x86_64-linux.js-client-node-minimum",
+      "output_path": "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2",
+      "role": "JS npm compatibility minimum",
+      "source": [
+        {
+          "hash_sri_sha256": "sha256-RyZVWB+4UVWXMMSHY+DJ07wll1xZ1RgAP8CEnT5LoPY=",
+          "kind": "fixed_output_archive",
+          "system": "x86_64-linux",
+          "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz"
+        },
+        {
+          "hash_sri_sha256": "sha256-XbuGxx0HoZV/LpBzQJLdali9zZ68LY1ByhxuaiHTZOE=",
+          "kind": "fixed_output_archive",
+          "system": "x86_64-linux",
+          "url": "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz"
+        }
+      ],
+      "version": "Node 24.15.0;npm 12.0.2",
+      "wrapper_paths": [
+        "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2/bin/npm",
+        "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2/bin/npx"
+      ]
+    },
+    {
+      "config_paths": [
+        "config/js-compatibility-clients.nix",
+        "config/package.json"
+      ],
+      "drv_path": "/nix/store/k275mh0nrpwd36q1nk926bmpz6lxx8ch-pkgre-js-compat-node-npm-26.7.0-12.0.2.drv",
+      "id": "node-current",
+      "nix_attribute_or_context": "packages.x86_64-linux.js-client-node-current",
+      "output_path": "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2",
+      "role": "JS npm compatibility current",
+      "source": [
+        {
+          "hash_sri_sha256": "sha256-mCqiTdi+TIicaoqzN93/OwiWZFsg9COTVugFUsFid+4=",
+          "kind": "fixed_output_archive",
+          "system": "x86_64-linux",
+          "url": "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.xz"
+        },
+        {
+          "hash_sri_sha256": "sha256-XbuGxx0HoZV/LpBzQJLdali9zZ68LY1ByhxuaiHTZOE=",
+          "kind": "fixed_output_archive",
+          "system": "x86_64-linux",
+          "url": "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz"
+        }
+      ],
+      "version": "Node 26.7.0;npm 12.0.2",
+      "wrapper_paths": [
+        "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2/bin/npm",
+        "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2/bin/npx"
+      ]
+    },
+    {
+      "config_paths": [
+        "config/js-compatibility-clients.nix"
+      ],
+      "drv_path": "/nix/store/xh6ybvw0dnv7v5lgrvdmmvn9s1i0ym89-pkgre-js-compat-bun-1.3.14.drv",
+      "id": "bun-minimum",
+      "nix_attribute_or_context": "packages.x86_64-linux.js-client-bun-minimum",
+      "output_path": "/nix/store/97nqn1lwdhhc995sfni0zrfxi3xpaq00-pkgre-js-compat-bun-1.3.14",
+      "role": "JS Bun compatibility minimum",
+      "source": {
+        "hash_sri_sha256": "sha256-lR7iruhV8IWVruxiJSJqKY0/6oOj3NZGXAnLzN9+hI8=",
+        "kind": "fixed_output_archive",
+        "system": "x86_64-linux",
+        "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip"
+      },
+      "version": "1.3.14",
+      "wrapper_paths": []
+    },
+    {
+      "config_paths": [
+        "config/js-compatibility-clients.nix"
+      ],
+      "drv_path": "/nix/store/jvj8fg55y3c2a90jn4fyb3prm6xlg7p4-pkgre-js-compat-bun-1.4.0.drv",
+      "id": "bun-current",
+      "nix_attribute_or_context": "packages.x86_64-linux.js-client-bun-current",
+      "output_path": "/nix/store/4a3ipscbmyb712xb9yzb5aypwz26ldb3-pkgre-js-compat-bun-1.4.0",
+      "role": "JS Bun compatibility current",
+      "source": {
+        "hash_sri_sha256": "sha256-LQP7X7g6yLVnrKCigbLOGhoZ1Ij1bClo2Iw/Jekv5FI=",
+        "kind": "fixed_output_archive",
+        "system": "x86_64-linux",
+        "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-linux-x64.zip"
+      },
+      "version": "1.4.0",
+      "wrapper_paths": []
+    },
+    {
+      "aliasing": {
+        "minimum_equals_current": true,
+        "same_drv_path": true,
+        "same_output_path": true
+      },
+      "config_paths": [
+        "config/js-compatibility-clients.nix"
+      ],
+      "drv_path": "/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv",
+      "id": "deno-minimum",
+      "nix_attribute_or_context": "packages.x86_64-linux.js-client-deno-minimum",
+      "note": "EXPLICIT ALIAS:denoCurrent=denoMinimum in source;not two independently pinned versions",
+      "output_path": "/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5",
+      "role": "JS Deno compatibility minimum",
+      "source": {
+        "hash_sri_sha256": "sha256-iwEKOxpKAYimfNuKeic0iypQGveK7H/HTyrOFnNo1TA=",
+        "kind": "fixed_output_archive",
+        "system": "x86_64-linux",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip"
+      },
+      "version": "Deno 2.9.5;V8 15.0.245.2-rusty;TypeScript 6.0.3",
+      "wrapper_paths": []
+    },
+    {
+      "aliasing": {
+        "minimum_equals_current": true,
+        "same_drv_path": true,
+        "same_output_path": true
+      },
+      "config_paths": [
+        "config/js-compatibility-clients.nix"
+      ],
+      "drv_path": "/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv",
+      "id": "deno-current",
+      "nix_attribute_or_context": "packages.x86_64-linux.js-client-deno-current",
+      "note": "EXPLICIT ALIAS:denoCurrent=denoMinimum in source;current coverage does not exercise a version newer than minimum",
+      "output_path": "/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5",
+      "role": "JS Deno compatibility current (alias of minimum)",
+      "source": {
+        "hash_sri_sha256": "sha256-iwEKOxpKAYimfNuKeic0iypQGveK7H/HTyrOFnNo1TA=",
+        "kind": "fixed_output_archive",
+        "system": "x86_64-linux",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip"
+      },
+      "version": "Deno 2.9.5;V8 15.0.245.2-rusty;TypeScript 6.0.3",
+      "wrapper_paths": []
+    },
+    {
+      "config_paths": [
+        "config/flake.nix",
+        "config/cargo-config.toml",
+        "closure/Cargo.lock"
+      ],
+      "drv_path": "/nix/store/6c2aa3pzzdm5k5nalk1crdcinynwwvzj-pkgre-rust-0.5.0.drv",
+      "id": "pkgre-rust",
+      "nix_attribute_or_context": "packages.x86_64-linux.rust (aliases:default,indexer;checks:build-and-test)",
+      "output_path": "/nix/store/bqiaxi9lhg0a8mva3qwmnys70mhnx1wk-pkgre-rust-0.5.0",
+      "role": "Rust catalog check/render/verify implementation",
+      "source": {
+        "git_commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+        "kind": "source_capture_at_fixed_git_basis"
+      },
+      "version": "0.5.0",
+      "wrapper_paths": [
+        "/nix/store/bqiaxi9lhg0a8mva3qwmnys70mhnx1wk-pkgre-rust-0.5.0/bin/pkgre-rust"
+      ]
+    },
+    {
+      "config_paths": [
+        "config/flake.nix",
+        "config/cargo-config.toml",
+        "closure/Cargo.lock"
+      ],
+      "drv_path": "/nix/store/a0950b3qzcanrcalvwlp1b45nrya39xn-pkgre-proxy-0.2.0.drv",
+      "id": "pkgre-proxy",
+      "nix_attribute_or_context": "packages.x86_64-linux.proxy (alias:download-serve;checks:proxy,download-serve)",
+      "output_path": "/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0",
+      "role": "Rust download redirect implementation/build/test",
+      "source": {
+        "git_commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+        "kind": "source_capture_at_fixed_git_basis"
+      },
+      "version": "0.2.0",
+      "wrapper_paths": [
+        "/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0/bin/pkgre-proxy"
+      ]
+    },
+    {
+      "config_paths": [
+        "config/flake.nix",
+        "config/package.json",
+        "config/package-lock.json"
+      ],
+      "drv_path": "/nix/store/wvjs6v8qlpsjmg7vh569kabnax4bslvx-pkgre-js-0.1.0.drv",
+      "id": "pkgre-js",
+      "nix_attribute_or_context": "packages.x86_64-linux.js (check:js)",
+      "output_path": "/nix/store/w571i59xsy6xabx7xp4n7mkxn6w76fv5-pkgre-js-0.1.0",
+      "role": "JS index/render/verify implementation",
+      "source": {
+        "git_commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+        "kind": "source_capture_at_fixed_git_basis"
+      },
+      "version": "0.1.0",
+      "wrapper_paths": [
+        "/nix/store/w571i59xsy6xabx7xp4n7mkxn6w76fv5-pkgre-js-0.1.0/bin/pkgre-js"
+      ]
+    },
+    {
+      "config_paths": [
+        "config/flake.nix"
+      ],
+      "drv_path": "/nix/store/0d7b506d024c2w7pmc0yydvgmm7adn0b-nix-shell.drv",
+      "id": "dev-shell",
+      "nix_attribute_or_context": "devShells.x86_64-linux.default",
+      "output_path": "/nix/store/b7zd05mddk2as744f53ykpf2jb73vqls-nix-shell",
+      "role": "exact development environment",
+      "source": {
+        "direct_archive_hash": null,
+        "direct_archive_url": null,
+        "input": "nixpkgs+rust-overlay",
+        "kind": "flake_input_supply",
+        "status": "not separately captured;identity fixed by flake pin"
+      },
+      "version": null,
+      "wrapper_paths": []
+    }
+  ]
+}

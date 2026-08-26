@@ -1,0 +1,10 @@
+{
+  "command": [
+    "/nix/store/bqiaxi9lhg0a8mva3qwmnys70mhnx1wk-pkgre-rust-0.5.0/bin/pkgre-rust",
+    "check",
+    "/home/dev0/repos/pkgre-rust/registry"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 0.02551786880940199,
+  "ru_maxrss_kib": 11592
+}

@@ -1,0 +1,80 @@
+{
+    "bunCurrent": {
+        "drvPath": "/nix/store/jvj8fg55y3c2a90jn4fyb3prm6xlg7p4-pkgre-js-compat-bun-1.4.0.drv",
+        "outputPath": "/nix/store/4a3ipscbmyb712xb9yzb5aypwz26ldb3-pkgre-js-compat-bun-1.4.0",
+        "pname": "pkgre-js-compat-bun",
+        "version": "1.4.0"
+    },
+    "bunMinimum": {
+        "drvPath": "/nix/store/xh6ybvw0dnv7v5lgrvdmmvn9s1i0ym89-pkgre-js-compat-bun-1.3.14.drv",
+        "outputPath": "/nix/store/97nqn1lwdhhc995sfni0zrfxi3xpaq00-pkgre-js-compat-bun-1.3.14",
+        "pname": "pkgre-js-compat-bun",
+        "version": "1.3.14"
+    },
+    "denoCurrent": {
+        "drvPath": "/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv",
+        "outputPath": "/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5",
+        "pname": "pkgre-js-compat-deno",
+        "version": "2.9.5"
+    },
+    "denoMinimum": {
+        "drvPath": "/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv",
+        "outputPath": "/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5",
+        "pname": "pkgre-js-compat-deno",
+        "version": "2.9.5"
+    },
+    "devShell": {
+        "drvPath": "/nix/store/0d7b506d024c2w7pmc0yydvgmm7adn0b-nix-shell.drv",
+        "outputPath": "/nix/store/b7zd05mddk2as744f53ykpf2jb73vqls-nix-shell",
+        "pname": null,
+        "version": null
+    },
+    "git": {
+        "drvPath": "/nix/store/y1bhwp1rl04s5qw50qdbmx83x8yy9nmf-git-2.55.0.drv",
+        "outputPath": "/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0",
+        "pname": "git",
+        "version": "2.55.0"
+    },
+    "jsPackage": {
+        "drvPath": "/nix/store/wvjs6v8qlpsjmg7vh569kabnax4bslvx-pkgre-js-0.1.0.drv",
+        "outputPath": "/nix/store/w571i59xsy6xabx7xp4n7mkxn6w76fv5-pkgre-js-0.1.0",
+        "pname": "pkgre-js",
+        "version": "0.1.0"
+    },
+    "nodeCurrent": {
+        "drvPath": "/nix/store/k275mh0nrpwd36q1nk926bmpz6lxx8ch-pkgre-js-compat-node-npm-26.7.0-12.0.2.drv",
+        "outputPath": "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2",
+        "pname": "pkgre-js-compat-node-npm",
+        "version": "26.7.0-12.0.2"
+    },
+    "nodeMinimum": {
+        "drvPath": "/nix/store/99x4lfl8mr0d44k1w7hhkcj97jpkmgpq-pkgre-js-compat-node-npm-24.15.0-12.0.2.drv",
+        "outputPath": "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2",
+        "pname": "pkgre-js-compat-node-npm",
+        "version": "24.15.0-12.0.2"
+    },
+    "nodejs24": {
+        "drvPath": "/nix/store/px8hj7awj6ffpcamsaf95ywrmnn8n6aq-nodejs-24.19.0.drv",
+        "outputPath": "/nix/store/glcp73hgagq2b24i80jlgbvj28vdb6kk-nodejs-24.19.0",
+        "pname": "nodejs",
+        "version": "24.19.0"
+    },
+    "proxyPackage": {
+        "drvPath": "/nix/store/a0950b3qzcanrcalvwlp1b45nrya39xn-pkgre-proxy-0.2.0.drv",
+        "outputPath": "/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0",
+        "pname": "pkgre-proxy",
+        "version": "0.2.0"
+    },
+    "rustPackage": {
+        "drvPath": "/nix/store/6c2aa3pzzdm5k5nalk1crdcinynwwvzj-pkgre-rust-0.5.0.drv",
+        "outputPath": "/nix/store/bqiaxi9lhg0a8mva3qwmnys70mhnx1wk-pkgre-rust-0.5.0",
+        "pname": "pkgre-rust",
+        "version": "0.5.0"
+    },
+    "rustToolchain": {
+        "drvPath": "/nix/store/hpi7bjzbbz2ilfdcjwyckvjl2x5x3k00-rust-default-1.95.0.drv",
+        "outputPath": "/nix/store/n4d5w91wqhiisr5rkjxhfssllbcdwai5-rust-default-1.95.0",
+        "pname": "rust-default",
+        "version": "1.95.0"
+    }
+}

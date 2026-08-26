@@ -1,0 +1,8 @@
+nix_command=/run/current-system/sw/bin/nix
+nix_resolved=/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8/bin/nix
+nix_store_output=/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8
+nix_deriver=/nix/store/iza23qnw05vpa85g804b841rd4yqr1z5-nix-2.34.8.drv
+git_command=/home/dev0/.nix-profile/bin/git
+git_resolved=/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0/bin/git
+git_store_output=/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0
+git_deriver=/nix/store/bny4hxrsvnaj060b6rbd68233x4fw32h-git-2.54.0.drv
