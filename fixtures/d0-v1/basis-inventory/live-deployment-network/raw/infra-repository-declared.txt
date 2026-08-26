@@ -1,0 +1,610 @@
+## classification
+repository-declared facts;commit may be matched to deployed live topology/store but live system does not expose source commit directly
+
+## infra_commit
+commit=5f68539bd99c6952b6d73fe2596c27ad4a319f57
+author_date=2026-08-25T21:52:30Z
+subject=rain: ignore upstream nginx control headers
+
+## hosts/rain/containers/pkgre.nix
+{
+  config,
+  pkgreDownloadServePkg,
+  pkgreProxyPkg,
+  ...
+}:
+
+let
+  definitions = config.definitions;
+  rainSubnet = definitions.networks.server.subnets.rain;
+  localNet = definitions.networks.rain-local;
+  serverIp = rainSubnet.ips.pkgre.ipv4;
+  localIp = localNet.ips.pkgre.ipv4;
+  hostLocalIp = localNet.ips.host.ipv4;
+  gandiCredentialFile = "/var/lib/keys/pkgre-js-gandiv5-token";
+  legacyPort = definitions.ports.pkgreDownload;
+  proxyPort = definitions.ports.pkgreProxy;
+in
+{
+  security.acme.certs."js.pkg.re" = {
+    dnsProvider = "gandiv5";
+    credentialFiles.GANDIV5_PERSONAL_ACCESS_TOKEN_FILE = gandiCredentialFile;
+  };
+
+  security.acme.certs."rust.pkg.re" = {
+    dnsProvider = "gandiv5";
+    credentialFiles.GANDIV5_PERSONAL_ACCESS_TOKEN_FILE = gandiCredentialFile;
+  };
+
+  services.nginx.appendHttpConfig = ''
+    limit_req_zone $binary_remote_addr zone=pkgre_registry:10m rate=20r/s;
+    proxy_headers_hash_bucket_size 128;
+    proxy_headers_hash_max_size 1024;
+  '';
+  services.nginx.resolver = {
+    addresses = [ "127.0.0.1" ];
+    valid = "300s";
+    ipv6 = false;
+  };
+  services.nginx.upstreams.pkgre-rust-pages = {
+    servers."pkgre.github.io:443" = {
+      resolve = true;
+      max_fails = 2;
+      fail_timeout = "30s";
+    };
+    extraConfig = ''
+      zone pkgre_rust_pages 64k;
+      resolver_timeout 3s;
+      keepalive 8;
+      keepalive_timeout 30s;
+    '';
+  };
+  services.nginx.upstreams.pkgre-js-pages = {
+    servers."pkgre.github.io:443" = {
+      resolve = true;
+      max_fails = 2;
+      fail_timeout = "30s";
+    };
+    extraConfig = ''
+      zone pkgre_js_pages 64k;
+      resolver_timeout 3s;
+      keepalive 8;
+      keepalive_timeout 30s;
+    '';
+  };
+
+  services.nginx.virtualHosts."rust.pkg.re" = {
+    acmeRoot = null;
+    enableACME = true;
+    forceSSL = true;
+
+    locations."/v1/" = {
+      proxyPass = "http://${localIp}:${toString proxyPort}";
+      recommendedProxySettings = false;
+      extraConfig = ''
+        limit_except GET HEAD { deny all; }
+        limit_req zone=pkgre_registry burst=40 nodelay;
+        client_max_body_size 1k;
+
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_pass_request_headers off;
+        proxy_set_header Host "rust.pkg.re";
+        proxy_set_header X-Pkgre-Original-URI $request_uri;
+        proxy_set_header Connection "";
+        proxy_set_header Content-Length "";
+        proxy_set_header Transfer-Encoding "";
+        proxy_set_header Authorization "";
+        proxy_set_header Proxy-Authorization "";
+        proxy_set_header Cookie "";
+        proxy_set_header Forwarded "";
+        proxy_set_header Via "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 20s;
+        send_timeout 20s;
+        proxy_next_upstream off;
+        proxy_ignore_headers X-Accel-Redirect X-Accel-Expires X-Accel-Limit-Rate X-Accel-Buffering X-Accel-Charset;
+        proxy_hide_header X-Accel-Redirect;
+        proxy_hide_header X-Accel-Expires;
+        proxy_hide_header X-Accel-Limit-Rate;
+        proxy_hide_header X-Accel-Buffering;
+        proxy_hide_header X-Accel-Charset;
+        proxy_redirect off;
+        proxy_buffering off;
+      '';
+    };
+
+    locations."/" = {
+      proxyPass = "https://pkgre-rust-pages";
+      recommendedProxySettings = false;
+      extraConfig = ''
+        limit_except GET HEAD { deny all; }
+        limit_req zone=pkgre_registry burst=40 nodelay;
+        client_max_body_size 1k;
+
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_pass_request_headers off;
+        proxy_set_header Host "rust.pkg.re";
+        proxy_set_header Connection "";
+        proxy_set_header Content-Length "";
+        proxy_set_header Transfer-Encoding "";
+        proxy_set_header Authorization "";
+        proxy_set_header Proxy-Authorization "";
+        proxy_set_header Cookie "";
+        proxy_set_header Forwarded "";
+        proxy_set_header Via "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_set_header X-Pkgre-Original-URI "";
+        proxy_ssl_server_name on;
+        proxy_ssl_name "rust.pkg.re";
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 3;
+        proxy_ssl_trusted_certificate ${config.security.pki.caBundle};
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 30s;
+        send_timeout 30s;
+        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
+        proxy_ignore_headers X-Accel-Redirect X-Accel-Expires X-Accel-Limit-Rate X-Accel-Buffering X-Accel-Charset;
+        proxy_hide_header X-Accel-Redirect;
+        proxy_hide_header X-Accel-Expires;
+        proxy_hide_header X-Accel-Limit-Rate;
+        proxy_hide_header X-Accel-Buffering;
+        proxy_hide_header X-Accel-Charset;
+        proxy_redirect off;
+        proxy_intercept_errors on;
+        proxy_hide_header Set-Cookie;
+        proxy_buffering off;
+        error_page 301 302 303 307 308 =502 @pkgre-rust-pages-reject;
+      '';
+    };
+
+    locations."@pkgre-rust-pages-reject" = {
+      return = 502;
+      extraConfig = ''
+        internal;
+        add_header Cache-Control "no-store" always;
+      '';
+    };
+  };
+
+  services.nginx.virtualHosts."js.pkg.re" = {
+    acmeRoot = null;
+    enableACME = true;
+    onlySSL = true;
+
+    locations."/v1/js/" = {
+      proxyPass = "http://${localIp}:${toString proxyPort}";
+      recommendedProxySettings = false;
+      extraConfig = ''
+        limit_except GET HEAD { deny all; }
+        limit_req zone=pkgre_registry burst=40 nodelay;
+        client_max_body_size 1k;
+
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_pass_request_headers off;
+        proxy_set_header Host "js.pkg.re";
+        proxy_set_header X-Pkgre-Original-URI $request_uri;
+        proxy_set_header Connection "";
+        proxy_set_header Content-Length "";
+        proxy_set_header Transfer-Encoding "";
+        proxy_set_header Authorization "";
+        proxy_set_header Proxy-Authorization "";
+        proxy_set_header Cookie "";
+        proxy_set_header Forwarded "";
+        proxy_set_header Via "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 20s;
+        send_timeout 20s;
+        proxy_next_upstream off;
+        proxy_ignore_headers X-Accel-Redirect X-Accel-Expires X-Accel-Limit-Rate X-Accel-Buffering X-Accel-Charset;
+        proxy_hide_header X-Accel-Redirect;
+        proxy_hide_header X-Accel-Expires;
+        proxy_hide_header X-Accel-Limit-Rate;
+        proxy_hide_header X-Accel-Buffering;
+        proxy_hide_header X-Accel-Charset;
+        proxy_redirect off;
+        proxy_buffering off;
+      '';
+    };
+
+    locations."/" = {
+      proxyPass = "https://pkgre-js-pages";
+      recommendedProxySettings = false;
+      extraConfig = ''
+        limit_except GET HEAD { deny all; }
+        limit_req zone=pkgre_registry burst=40 nodelay;
+        client_max_body_size 1k;
+
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_pass_request_headers off;
+        proxy_set_header Host "js.pkg.re";
+        proxy_set_header Connection "";
+        proxy_set_header Content-Length "";
+        proxy_set_header Transfer-Encoding "";
+        proxy_set_header Authorization "";
+        proxy_set_header Proxy-Authorization "";
+        proxy_set_header Cookie "";
+        proxy_set_header Forwarded "";
+        proxy_set_header Via "";
+        proxy_set_header X-Forwarded-For "";
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Proto "";
+        proxy_set_header X-Pkgre-Original-URI "";
+        proxy_ssl_server_name on;
+        proxy_ssl_name "js.pkg.re";
+        proxy_ssl_verify on;
+        proxy_ssl_verify_depth 3;
+        proxy_ssl_trusted_certificate ${config.security.pki.caBundle};
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 30s;
+        send_timeout 30s;
+        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
+        proxy_next_upstream_tries 2;
+        proxy_ignore_headers X-Accel-Redirect X-Accel-Expires X-Accel-Limit-Rate X-Accel-Buffering X-Accel-Charset;
+        proxy_hide_header X-Accel-Redirect;
+        proxy_hide_header X-Accel-Expires;
+        proxy_hide_header X-Accel-Limit-Rate;
+        proxy_hide_header X-Accel-Buffering;
+        proxy_hide_header X-Accel-Charset;
+        proxy_redirect off;
+        proxy_intercept_errors on;
+        proxy_hide_header Set-Cookie;
+        proxy_buffering off;
+        error_page 301 302 303 307 308 =502 @pkgre-js-pages-reject;
+      '';
+    };
+
+    locations."@pkgre-js-pages-reject" = {
+      return = 502;
+      extraConfig = ''
+        internal;
+        add_header Cache-Control "no-store" always;
+      '';
+    };
+  };
+
+  services.nginx.upstreams.pkgre-js-pages-challenge = {
+    extraConfig = ''
+      keepalive 4;
+    '';
+    # GitHub Pages IPv4 publication set observed through independent resolvers on 2026-08-25.
+    servers = {
+      "185.199.108.153:80" = {
+        fail_timeout = "30s";
+        max_fails = 1;
+      };
+      "185.199.109.153:80" = {
+        fail_timeout = "30s";
+        max_fails = 1;
+      };
+      "185.199.110.153:80" = {
+        fail_timeout = "30s";
+        max_fails = 1;
+      };
+      "185.199.111.153:80" = {
+        fail_timeout = "30s";
+        max_fails = 1;
+      };
+    };
+  };
+
+  services.nginx.virtualHosts."js.pkg.re-http-challenge" = {
+    serverName = "js.pkg.re";
+    listen = map (addr: {
+      inherit addr;
+      port = 80;
+    }) config.services.nginx.defaultListenAddresses;
+
+    locations."~ \"^/\\.well-known/acme-challenge/[A-Za-z0-9_-]{22,128}$\"" = {
+      proxyPass = "http://pkgre-js-pages-challenge";
+      recommendedProxySettings = false;
+      extraConfig = ''
+        if ($request_uri !~ "^/\.well-known/acme-challenge/[A-Za-z0-9_-]{22,128}$") { return 400; }
+        limit_except GET { deny all; }
+
+        proxy_http_version 1.1;
+        proxy_pass_request_body off;
+        proxy_pass_request_headers off;
+        proxy_set_header Host "js.pkg.re";
+        proxy_set_header Connection "";
+        proxy_set_header Content-Length "";
+        proxy_set_header Transfer-Encoding "";
+        proxy_set_header Authorization "";
+        proxy_set_header Proxy-Authorization "";
+        proxy_set_header Cookie "";
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 5s;
+        proxy_read_timeout 10s;
+        send_timeout 10s;
+        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
+        proxy_next_upstream_tries 4;
+        proxy_ignore_headers X-Accel-Redirect X-Accel-Expires X-Accel-Limit-Rate X-Accel-Buffering X-Accel-Charset;
+        proxy_hide_header X-Accel-Redirect;
+        proxy_hide_header X-Accel-Expires;
+        proxy_hide_header X-Accel-Limit-Rate;
+        proxy_hide_header X-Accel-Buffering;
+        proxy_hide_header X-Accel-Charset;
+        proxy_redirect off;
+        proxy_intercept_errors on;
+        proxy_hide_header Set-Cookie;
+        error_page 301 302 303 307 308 =502 @pkgre-js-pages-challenge-reject;
+
+        access_log /var/log/nginx/pkgre-js-pages-challenge.log combined;
+        error_log /var/log/nginx/pkgre-js-pages-challenge-error.log warn;
+      '';
+    };
+
+    locations."@pkgre-js-pages-challenge-reject" = {
+      return = 502;
+      extraConfig = ''
+        internal;
+      '';
+    };
+
+    locations."/" = {
+      return = 404;
+    };
+  };
+
+  services.nginx.virtualHosts."dl.rust.pkg.re" = {
+    enableACME = true;
+    forceSSL = true;
+    locations."/" = {
+      proxyPass = "http://${localIp}:${toString legacyPort}";
+      extraConfig = ''
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_set_header X-Pkgre-Original-URI $request_uri;
+      '';
+    };
+  };
+
+  systemd.network.networks."vbs-pkgre" = {
+    name = "vbs-pkgre";
+    bridge = [ "br-server" ];
+  };
+
+  systemd.network.networks."vbl-pkgre" = {
+    name = "vbl-pkgre";
+    bridge = [ "br-local" ];
+  };
+
+  virtualisation.nspawn.pkgre = {
+    autoStart = true;
+    networkConfig = {
+      VirtualEthernet = false;
+      VirtualEthernetExtra = [
+        "vbs-pkgre"
+        "vbl-pkgre"
+      ];
+    };
+
+    config = {
+      systemd.network.networks."vbs-pkgre" = {
+        name = "vbs-pkgre";
+        address = [
+          "${serverIp}/${toString rainSubnet.ipv4Netmask}"
+        ];
+        gateway = [ rainSubnet.gateway.ipv4 ];
+        dns = [ rainSubnet.gateway.ipv4 ];
+        DHCP = "no";
+      };
+
+      systemd.network.networks."vbl-pkgre" = {
+        name = "vbl-pkgre";
+        address = [
+          "${localIp}/${toString localNet.ipv4Netmask}"
+        ];
+        DHCP = "no";
+      };
+
+      networking.firewall.enable = true;
+      networking.firewall.extraInputRules = ''
+        iifname "vbl-pkgre" ip saddr ${hostLocalIp} tcp dport { ${toString legacyPort}, ${toString proxyPort} } accept
+      '';
+      networking.nftables.enable = true;
+
+      systemd.services.pkgre-download-serve = {
+        description = "Legacy checksum-bound Cargo download router";
+        wantedBy = [ "multi-user.target" ];
+        wants = [ "network-online.target" ];
+        after = [ "network-online.target" ];
+        serviceConfig = {
+          Type = "simple";
+          ExecStart = "${pkgreDownloadServePkg}/bin/pkgre-download-serve --listen ${localIp}:${toString legacyPort} --refresh-seconds 300 --minimum-refresh-seconds 120";
+          Restart = "always";
+          RestartSec = "5s";
+          DynamicUser = true;
+          CapabilityBoundingSet = "";
+          LockPersonality = true;
+          MemoryDenyWriteExecute = true;
+          NoNewPrivileges = true;
+          PrivateDevices = true;
+          PrivateTmp = true;
+          ProtectClock = true;
+          ProtectControlGroups = true;
+          ProtectHome = true;
+          ProtectHostname = true;
+          ProtectKernelLogs = true;
+          ProtectKernelModules = true;
+          ProtectKernelTunables = true;
+          ProtectProc = "invisible";
+          ProtectSystem = "strict";
+          RemoveIPC = true;
+          RestrictAddressFamilies = [
+            "AF_INET"
+            "AF_INET6"
+            "AF_UNIX"
+          ];
+          RestrictNamespaces = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          SystemCallArchitectures = "native";
+          UMask = "0077";
+        };
+      };
+
+      systemd.services.pkgre-proxy = {
+        description = "Static marker redirect proxy for pkg.re registries";
+        wantedBy = [ "multi-user.target" ];
+        wants = [ "network-online.target" ];
+        after = [ "network-online.target" ];
+        serviceConfig = {
+          Type = "simple";
+          ExecStart = "${pkgreProxyPkg}/bin/pkgre-proxy --listen ${localIp}:${toString proxyPort} --canary-seconds 60 --readiness-seconds 180";
+          Restart = "always";
+          RestartSec = "5s";
+          DynamicUser = true;
+          CapabilityBoundingSet = "";
+          LockPersonality = true;
+          MemoryDenyWriteExecute = true;
+          NoNewPrivileges = true;
+          PrivateDevices = true;
+          PrivateTmp = true;
+          ProtectClock = true;
+          ProtectControlGroups = true;
+          ProtectHome = true;
+          ProtectHostname = true;
+          ProtectKernelLogs = true;
+          ProtectKernelModules = true;
+          ProtectKernelTunables = true;
+          ProtectProc = "invisible";
+          ProtectSystem = "strict";
+          RemoveIPC = true;
+          RestrictAddressFamilies = [
+            "AF_INET"
+            "AF_INET6"
+            "AF_UNIX"
+          ];
+          RestrictNamespaces = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          SystemCallArchitectures = "native";
+          UMask = "0077";
+        };
+      };
+
+      system.stateVersion = "25.11";
+    };
+  };
+}
+
+## network rows
+              ipv6 = "2a0e:8387:0:16::1:1";
+            };
+          };
+
+          subnets = {
+            rain = {
+              ipv4Range = "10.22.2.0/24";
+              ipv4Netmask = 24;
+              ipv6Range = "2a0e:8387:0:16::2:0/112";
+              ipv6Netmask = 112;
+
+              gateway = {
+                ipv4 = "10.22.2.1";
+                ipv6 = "2a0e:8387:0:16::2:1";
+                hasDns = true;
+              };
+
+              ips = {
+                outline = {
+                  ipv4 = "10.22.2.2";
+                  ipv6 = "2a0e:8387:0:16::2:2";
+                };
+                matrix-bitarraynet = {
+                  ipv4 = "10.22.2.3";
+                  ipv6 = "2a0e:8387:0:16::2:3";
+                };
+                palent = {
+                  ipv4 = "10.22.2.4";
+                };
+                pkgre = {
+                  ipv4 = "10.22.2.5";
+                };
+              };
+            };
+
+            wind = {
+              ipv4Range = "10.22.3.0/24";
+              ipv4Netmask = 24;
+              ipv6Range = "2a0e:8387:0:16::3:0/112";
+        rain-local = {
+          type = "private";
+          privateType = "virtualisation";
+          ipv4Range = "10.131.7.0/24";
+          ipv4Netmask = 24;
+
+          ips = {
+            host = {
+              ipv4 = "10.131.7.1";
+            };
+            outline = {
+              ipv4 = "10.131.7.2";
+            };
+            matrix-bitarraynet = {
+              ipv4 = "10.131.7.3";
+            };
+            pkgre = {
+              ipv4 = "10.131.7.4";
+            };
+          };
+        };
+
+        rain-localdev = {
+          type = "private";
+
+## port rows
+      karakeep = 9002;
+      fastcrw = 9003;
+      talent = 9004;
+      talent-chrome = 9005;
+      talent-desktop = 9006;
+      palent = 9007;
+      pkgreDownload = 9008;
+      pkgreProxy = 9009;
+      netbird = 31820;
+      mullvad = 61820;
+      mullvadSocks = 1080;
+
+## flake source rows
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pkgre = {
+      url = "github:pkgre/pkgre/768265251c021a3cea3c59cd0d49f342c7076d38";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    pkgreLegacy = {
+      url = "github:pkgre/pkgre/ae1dfbfd4e965dffb538e356f005e4fbb32fdb77";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+
+      mkModuleArgs = system: {
+        ipkgs = ipkgs."${system}";
+        npkgs = npkgs."${system}";
+        pkgreProxyPkg = pkgre.packages.${system}.proxy;
+        pkgreDownloadServePkg = pkgreLegacy.packages.${system}.download-serve;
+        buildSystem = mkHost;
+        inherit

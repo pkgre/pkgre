@@ -1,0 +1,24 @@
+## classification
+historical deployed observation;bounded excerpt;current unprivileged SSH cannot traverse leaf paths;current parent ownership+same generation/config/process continuity captured separately
+source_sha256=74aa2c99f16cbc8175db15d0386e63b6b9a2fb29d3e9e5e162b76791556879db
+eeb69be6aebb5e69fdbc12c9019e648f64308b1738c153715411db607d701d51  /nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf
+
+## ACME metadata only
+directory 750 acme:nginx 993:60 8 /var/lib/acme/rust.pkg.re
+/var/lib/acme/rust.pkg.re
+regular file 640 acme:nginx 993:60 4807 /var/lib/acme/rust.pkg.re/fullchain.pem
+/var/lib/acme/rust.pkg.re/fullchain.pem
+regular file 640 acme:nginx 993:60 227 /var/lib/acme/rust.pkg.re/key.pem
+/var/lib/acme/rust.pkg.re/key.pem
+directory 750 acme:nginx 993:60 8 /var/lib/acme/js.pkg.re
+/var/lib/acme/js.pkg.re
+regular file 640 acme:nginx 993:60 4799 /var/lib/acme/js.pkg.re/fullchain.pem
+/var/lib/acme/js.pkg.re/fullchain.pem
+regular file 640 acme:nginx 993:60 227 /var/lib/acme/js.pkg.re/key.pem
+/var/lib/acme/js.pkg.re/key.pem
+directory 750 acme:nginx 993:60 8 /var/lib/acme/dl.rust.pkg.re
+/var/lib/acme/dl.rust.pkg.re
+regular file 640 acme:nginx 993:60 4811 /var/lib/acme/dl.rust.pkg.re/fullchain.pem
+/var/lib/acme/dl.rust.pkg.re/fullchain.pem
+regular file 640 acme:nginx 993:60 227 /var/lib/acme/dl.rust.pkg.re/key.pem
+/var/lib/acme/dl.rust.pkg.re/key.pem

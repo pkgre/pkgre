@@ -1,0 +1,554 @@
+## collected_at
+2026-08-26T13:21:40.480718511Z
+
+## tool_versions
+DiG 9.20.26
+OpenSSL 3.6.3 9 Jun 2026 (Library: OpenSSL 3.6.3 9 Jun 2026)
+curl 8.20.0 (x86_64-pc-linux-gnu) libcurl/8.20.0 OpenSSL/3.6.2 zlib/1.3.2 brotli/1.2.0 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.5 libssh2/1.11.1 nghttp2/1.69.0 ngtcp2/1.22.1 nghttp3/1.15.0 mit-krb5/1.22.2
+Release-Date: 2026-04-29
+usage: nc [-46cDdFhklNnrStUuvz] [-C certfile] [-e name] [-H hash] [-I length]
+
+## dns_delegation
+pkg.re.			10800	IN	NS	ns-167-c.gandi.net.
+pkg.re.			10800	IN	NS	ns-98-a.gandi.net.
+pkg.re.			10800	IN	NS	ns-136-b.gandi.net.
+ns-136-b.gandi.net.
+ns-167-c.gandi.net.
+ns-98-a.gandi.net.
+
+## dns rust.pkg.re
+-- recursive=system --
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		299	IN	CNAME	pkgre.github.io.
+pkgre.github.io.	808	IN	A	185.199.111.153
+pkgre.github.io.	808	IN	A	185.199.109.153
+pkgre.github.io.	808	IN	A	185.199.110.153
+pkgre.github.io.	808	IN	A	185.199.108.153
+rust.pkg.re.		299	IN	CNAME	pkgre.github.io.
+pkgre.github.io.	808	IN	AAAA	2606:50c0:8003::153
+pkgre.github.io.	808	IN	AAAA	2606:50c0:8001::153
+pkgre.github.io.	808	IN	AAAA	2606:50c0:8000::153
+pkgre.github.io.	808	IN	AAAA	2606:50c0:8002::153
+-- recursive=1.1.1.1 --
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+pkgre.github.io.	3600	IN	A	185.199.108.153
+pkgre.github.io.	3600	IN	A	185.199.109.153
+pkgre.github.io.	3600	IN	A	185.199.110.153
+pkgre.github.io.	3600	IN	A	185.199.111.153
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8000::153
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8003::153
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8001::153
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8002::153
+-- recursive=8.8.8.8 --
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+pkgre.github.io.	3600	IN	A	185.199.109.153
+pkgre.github.io.	3600	IN	A	185.199.111.153
+pkgre.github.io.	3600	IN	A	185.199.108.153
+pkgre.github.io.	3600	IN	A	185.199.110.153
+rust.pkg.re.		299	IN	CNAME	pkgre.github.io.
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8001::153
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8002::153
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8003::153
+pkgre.github.io.	3600	IN	AAAA	2606:50c0:8000::153
+-- authoritative=ns-136-b.gandi.net --
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+-- authoritative=ns-167-c.gandi.net --
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+-- authoritative=ns-98-a.gandi.net --
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+rust.pkg.re.		300	IN	CNAME	pkgre.github.io.
+
+## dns js.pkg.re
+-- recursive=system --
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+js.pkg.re.		299	IN	CNAME	rain.pacna.org.
+rain.pacna.org.		38	IN	A	65.21.163.108
+js.pkg.re.		299	IN	CNAME	rain.pacna.org.
+-- recursive=1.1.1.1 --
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+rain.pacna.org.		300	IN	A	65.21.163.108
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+-- recursive=8.8.8.8 --
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+rain.pacna.org.		300	IN	A	65.21.163.108
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+-- authoritative=ns-136-b.gandi.net --
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+-- authoritative=ns-167-c.gandi.net --
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+-- authoritative=ns-98-a.gandi.net --
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+js.pkg.re.		300	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+
+## dns dl.rust.pkg.re
+-- recursive=system --
+dl.rust.pkg.re.		2042	IN	CNAME	rain.pacna.org.
+dl.rust.pkg.re.		2042	IN	CNAME	rain.pacna.org.
+rain.pacna.org.		38	IN	A	65.21.163.108
+dl.rust.pkg.re.		2042	IN	CNAME	rain.pacna.org.
+-- recursive=1.1.1.1 --
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+rain.pacna.org.		300	IN	A	65.21.163.108
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+-- recursive=8.8.8.8 --
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+dl.rust.pkg.re.		5642	IN	CNAME	rain.pacna.org.
+rain.pacna.org.		300	IN	A	65.21.163.108
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+-- authoritative=ns-136-b.gandi.net --
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+-- authoritative=ns-167-c.gandi.net --
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+-- authoritative=ns-98-a.gandi.net --
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+dl.rust.pkg.re.		10800	IN	CNAME	rain.pacna.org.
+pacna.org.		10800	IN	SOA	ns1.gandi.net. hostmaster.gandi.net. 1787184000 10800 3600 604800 10800
+
+## tls rust.pkg.re
+subject=CN=rust.pkg.re
+issuer=C=US, O=Let's Encrypt, CN=YR2
+serial=05BEB74A5AAC57F17A620014D92B8588C5F6
+notBefore=Aug 22 16:35:34 2026 GMT
+notAfter=Nov 20 16:35:33 2026 GMT
+sha256 Fingerprint=7E:44:59:7E:84:B8:3F:05:3E:33:B1:43:D5:14:C7:4E:FE:E5:47:49:DC:1C:91:E9:2D:DD:BD:3D:D7:15:9F:85
+X509v3 Subject Alternative Name: 
+    DNS:rust.pkg.re
+
+## tls js.pkg.re
+subject=CN=js.pkg.re
+issuer=C=US, O=Let's Encrypt, CN=YE1
+serial=0681A7A8F5D05B15FA6891491E33AE34E402
+notBefore=Aug 25 23:07:02 2026 GMT
+notAfter=Nov 23 23:07:01 2026 GMT
+sha256 Fingerprint=7A:1A:0A:03:4D:C4:E2:85:ED:A7:02:EA:87:54:67:9C:E4:D3:2F:9E:FE:5F:96:DD:9C:CA:F0:0B:6C:28:09:B6
+X509v3 Subject Alternative Name: 
+    DNS:js.pkg.re
+
+## tls dl.rust.pkg.re
+subject=CN=dl.rust.pkg.re
+issuer=C=US, O=Let's Encrypt, CN=YE1
+serial=0672F030C03859C11C1A4BF1916D308A375A
+notBefore=Aug 24 17:42:44 2026 GMT
+notAfter=Nov 22 17:42:43 2026 GMT
+sha256 Fingerprint=71:4E:12:9F:6C:0C:DC:CD:4F:23:0A:AE:C6:EE:E8:72:40:D4:B7:17:CC:82:89:65:75:0D:7F:53:63:89:05:D8
+X509v3 Subject Alternative Name: 
+    DNS:dl.rust.pkg.re
+
+## http rust_canary
+url=https://rust.pkg.re/origin-health/v1.txt
+status=200
+effective_url=https://rust.pkg.re/origin-health/v1.txt
+remote_ip=185.199.109.153
+http_version=2
+content_type=text/plain; charset=utf-8
+redirect_url=
+curl_result=success
+HTTP/2 200 
+server: GitHub.com
+content-type: text/plain; charset=utf-8
+x-origin-cache: HIT
+last-modified: Tue, 25 Aug 2026 21:48:39 GMT
+access-control-allow-origin: *
+etag: "6a8e0db7-15"
+expires: Wed, 26 Aug 2026 12:25:33 GMT
+cache-control: max-age=600
+x-proxy-cache: MISS
+x-github-request-id: C078:266D9A:5EC354:5F94F3:6A8ED8E5
+x-github-edge-region: fra
+accept-ranges: bytes
+age: 0
+date: Wed, 26 Aug 2026 13:21:44 GMT
+via: 1.1 varnish
+x-served-by: cache-fra-etou8220030-FRA
+x-cache: HIT
+x-cache-hits: 0
+x-timer: S1787750504.098347,VS0,VE101
+vary: Accept-Encoding
+x-fastly-request-id: 35bfc255c92e99c6d8ff601137668d3e291709f4
+content-length: 21
+
+body_bytes=21
+body_sha256=1c4ae542a193c155b36b0c9f0e0682ff54a3dd2e231db46b86cb011f34e00a3b
+
+## http js_canary
+url=https://js.pkg.re/origin-health/v1.txt
+status=502
+effective_url=https://js.pkg.re/origin-health/v1.txt
+remote_ip=65.21.163.108
+http_version=2
+content_type=text/html
+redirect_url=
+curl_result=success
+HTTP/2 502 
+server: nginx
+date: Wed, 26 Aug 2026 13:21:44 GMT
+content-type: text/html
+content-length: 150
+
+body_bytes=150
+body_sha256=61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db
+
+## http rust_config
+url=https://rust.pkg.re/config.json
+status=200
+effective_url=https://rust.pkg.re/config.json
+remote_ip=185.199.109.153
+http_version=2
+content_type=application/json; charset=utf-8
+redirect_url=
+curl_result=success
+HTTP/2 200 
+server: GitHub.com
+content-type: application/json; charset=utf-8
+x-origin-cache: HIT
+last-modified: Tue, 25 Aug 2026 21:48:39 GMT
+access-control-allow-origin: *
+etag: "6a8e0db7-4c"
+expires: Wed, 26 Aug 2026 11:53:08 GMT
+cache-control: max-age=600
+x-proxy-cache: MISS
+x-github-request-id: 1A32:266D9A:51B74D:526B26:6A8ED14C
+x-github-edge-region: fra
+accept-ranges: bytes
+age: 0
+date: Wed, 26 Aug 2026 13:21:44 GMT
+via: 1.1 varnish
+x-served-by: cache-fra-etou8220158-FRA
+x-cache: HIT
+x-cache-hits: 0
+x-timer: S1787750504.426442,VS0,VE117
+vary: Accept-Encoding
+x-fastly-request-id: caafc971820d57ff9cf8c42d6911467aa2a9e089
+content-length: 76
+
+body_bytes=76
+body_sha256=9a591cbdb924a588f69f88170e52be8d52b0d08e2261dc1b1b0732171e35ebcc
+
+## http legacy_health
+url=https://dl.rust.pkg.re/healthz
+status=200
+effective_url=https://dl.rust.pkg.re/healthz
+remote_ip=65.21.163.108
+http_version=2
+content_type=
+redirect_url=
+curl_result=success
+HTTP/2 200 
+server: nginx
+date: Wed, 26 Aug 2026 13:21:44 GMT
+content-length: 0
+cache-control: no-store
+
+body_bytes=0
+body_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+## http legacy_status
+url=https://dl.rust.pkg.re/status
+status=200
+effective_url=https://dl.rust.pkg.re/status
+remote_ip=65.21.163.108
+http_version=2
+content_type=application/json
+redirect_url=
+curl_result=success
+HTTP/2 200 
+server: nginx
+date: Wed, 26 Aug 2026 13:21:44 GMT
+content-type: application/json
+content-length: 396
+vary: Accept-Encoding
+cache-control: no-store
+
+body_bytes=396
+body_sha256=079c30eb292bde48287e9806af225cd003de72d9154fb29721fb78e37a121147
+
+## http legacy_archive_follow
+url=https://dl.rust.pkg.re/v1/main/accessory/2.1.0/28e416a3ab45838bac2ab2d81b1088d738d7b2d2c5272a54d39366565a29bd80
+status=200
+effective_url=https://static.crates.io/crates/accessory/2.1.0/download
+remote_ip=167.82.50.137
+http_version=2
+content_type=application/gzip
+redirect_url=
+curl_result=success
+HTTP/2 307 
+server: nginx
+date: Wed, 26 Aug 2026 13:21:44 GMT
+content-length: 0
+location: https://static.crates.io/crates/accessory/2.1.0/download
+cache-control: no-store
+
+HTTP/2 200 
+x-cache-hits: 469
+x-amz-id-2: 86uvDtEjGWQInOenairG86qx7WHrk82sEVQd+rcEw6TJqcsHXdcgfqotZn8d/zgETZIRRgzgo+w4AHgdvn/ibBqf+fWRJTjN
+x-amz-request-id: RG1MZQKYH8C5QN2A
+date: Fri, 21 Aug 2026 13:28:40 GMT
+x-amz-replication-status: COMPLETED
+last-modified: Sun, 28 Jun 2026 14:35:18 GMT
+x-amz-server-side-encryption: AES256
+etag: "d9bb412d7267429c85260f86034e50d2"
+x-amz-version-id: apkgqvP2qzjw6lh7W4QI96zkxCi9m15P
+server: AmazonS3
+accept-ranges: bytes
+content-type: application/gzip
+cache-control: public,max-age=31536000,immutable
+age: 431587
+x-cache: HIT
+x-served-by: cache-fra-etou8220143-FRA
+content-length: 13195
+
+body_bytes=13195
+body_sha256=28e416a3ab45838bac2ab2d81b1088d738d7b2d2c5272a54d39366565a29bd80
+
+## http rust_default_pages
+url=https://pkgre.github.io/rust/origin-health/v1.txt
+status=301
+effective_url=https://pkgre.github.io/rust/origin-health/v1.txt
+remote_ip=185.199.109.153
+http_version=2
+content_type=text/html
+redirect_url=https://rust.pkg.re/origin-health/v1.txt
+curl_result=success
+HTTP/2 301 
+server: GitHub.com
+content-type: text/html
+location: https://rust.pkg.re/origin-health/v1.txt
+x-github-request-id: FFBE:266D9A:785015:795E76:6A8EE868
+x-github-edge-region: fra
+accept-ranges: bytes
+age: 0
+date: Wed, 26 Aug 2026 13:21:45 GMT
+via: 1.1 varnish
+x-served-by: cache-fra-etou8220128-FRA
+x-cache: MISS
+x-cache-hits: 0
+x-timer: S1787750505.072769,VS0,VE95
+vary: Accept-Encoding
+x-fastly-request-id: d744f0608c9c7bcf7b597799fa8059cc13272291
+content-length: 162
+
+body_bytes=162
+body_sha256=9e17cb15dd75bbbd5dbb984eda674863c3b10ab72613cf8a39a00c3e11a8492a
+
+## http js_default_pages
+url=https://pkgre.github.io/js/origin-health/v1.txt
+status=301
+effective_url=https://pkgre.github.io/js/origin-health/v1.txt
+remote_ip=185.199.108.153
+http_version=2
+content_type=text/html
+redirect_url=http://js.pkg.re/origin-health/v1.txt
+curl_result=success
+HTTP/2 301 
+server: GitHub.com
+content-type: text/html
+location: http://js.pkg.re/origin-health/v1.txt
+x-github-request-id: 6ADE:2F7BC7:796E37:7A7D1D:6A8EE869
+x-github-edge-region: fra
+accept-ranges: bytes
+age: 0
+date: Wed, 26 Aug 2026 13:21:45 GMT
+via: 1.1 varnish
+x-served-by: cache-fra-etou8220027-FRA
+x-cache: MISS
+x-cache-hits: 0
+x-timer: S1787750505.208063,VS0,VE101
+vary: Accept-Encoding
+x-fastly-request-id: 76121abe3bef37cbc402bc2b977c82c2ec4cc94d
+content-length: 162
+
+body_bytes=162
+body_sha256=9e17cb15dd75bbbd5dbb984eda674863c3b10ab72613cf8a39a00c3e11a8492a
+
+## raw_host_sni_mismatch
+-- sni=rust.pkg.re host=invalid.example --
+HTTP/1.1 302 Found
+Server: nginx
+Date: Wed, 26 Aug 2026 13:21:45 GMT
+Content-Length: 0
+Connection: close
+Location: https://admin.keycloak.pacna.net/admin/
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
+-- sni=js.pkg.re host=invalid.example --
+HTTP/1.1 302 Found
+Server: nginx
+Date: Wed, 26 Aug 2026 13:21:46 GMT
+Content-Length: 0
+Connection: close
+Location: https://admin.keycloak.pacna.net/admin/
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
+-- sni=dl.rust.pkg.re host=invalid.example --
+HTTP/1.1 302 Found
+Server: nginx
+Date: Wed, 26 Aug 2026 13:21:47 GMT
+Content-Length: 0
+Connection: close
+Location: https://admin.keycloak.pacna.net/admin/
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-Robots-Tag: none
+
+
+## external_backend_denial
+vantage=Talent worker public network
+target=65.21.163.108
+-- port=9008 --
+nc: connect to 65.21.163.108 port 9008 (tcp) failed: Connection timed out
+-- port=9009 --
+nc: connect to 65.21.163.108 port 9009 (tcp) failed: Connection timed out
+
+## tls_verify_brief
+-- rust.pkg.re --
+Connecting to 185.199.110.153
+CONNECTION ESTABLISHED
+Protocol version: TLSv1.3
+Ciphersuite: TLS_AES_128_GCM_SHA256
+Peer certificate: CN=rust.pkg.re
+Hash used: SHA256
+Signature type: rsa_pss_rsae_sha256
+Verification: OK
+Verified peername: rust.pkg.re
+Negotiated TLS1.3 group: X25519MLKEM768
+DONE
+-- js.pkg.re --
+Connecting to 65.21.163.108
+CONNECTION ESTABLISHED
+Protocol version: TLSv1.3
+Ciphersuite: TLS_AES_256_GCM_SHA384
+Peer certificate: CN=js.pkg.re
+Hash used: SHA256
+Signature type: ecdsa_secp256r1_sha256
+Verification: OK
+Verified peername: js.pkg.re
+Negotiated TLS1.3 group: X25519MLKEM768
+DONE
+-- dl.rust.pkg.re --
+Connecting to 65.21.163.108
+CONNECTION ESTABLISHED
+Protocol version: TLSv1.3
+Ciphersuite: TLS_AES_256_GCM_SHA384
+Peer certificate: CN=dl.rust.pkg.re
+Hash used: SHA256
+Signature type: ecdsa_secp256r1_sha256
+Verification: OK
+Verified peername: dl.rust.pkg.re
+Negotiated TLS1.3 group: X25519MLKEM768
+DONE
+
+## rain_direct_vhost_correct_sni_host
+vantage=Talent worker;target=65.21.163.108;public DNS bypass overridden only for probe
+-- host=rust.pkg.re path=/origin-health/v1.txt --
+status=200
+remote_ip=65.21.163.108
+http_version=2
+HTTP/2 200 
+server: nginx
+date: Wed, 26 Aug 2026 13:24:33 GMT
+content-type: text/plain; charset=utf-8
+content-length: 21
+last-modified: Tue, 25 Aug 2026 21:48:39 GMT
+access-control-allow-origin: *
+etag: "6a8e0db7-15"
+expires: Wed, 26 Aug 2026 00:12:21 GMT
+cache-control: max-age=600
+x-proxy-cache: MISS
+x-github-request-id: 655A:3CE285:176A4B:1940E5:6A8E2D0D
+x-github-edge-region: swedencentral
+accept-ranges: bytes
+via: 1.1 varnish
+age: 69
+x-served-by: cache-bma-essb1270022-BMA
+x-cache: HIT
+x-cache-hits: 1
+x-timer: S1787750674.968201,VS0,VE1
+vary: Accept-Encoding
+x-fastly-request-id: ef75cb4effa49edef493eca1cc1aabc7cc18a817
+
+body_bytes=21
+body_sha256=1c4ae542a193c155b36b0c9f0e0682ff54a3dd2e231db46b86cb011f34e00a3b
+-- host=js.pkg.re path=/origin-health/v1.txt --
+status=502
+remote_ip=65.21.163.108
+http_version=2
+HTTP/2 502 
+server: nginx
+date: Wed, 26 Aug 2026 13:24:34 GMT
+content-type: text/html
+content-length: 150
+
+body_bytes=150
+body_sha256=61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db
+-- host=dl.rust.pkg.re path=/healthz --
+status=200
+remote_ip=65.21.163.108
+http_version=2
+HTTP/2 200 
+server: nginx
+date: Wed, 26 Aug 2026 13:24:34 GMT
+content-length: 0
+cache-control: no-store
+
+body_bytes=0
+body_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+## rain_direct_rust_tls
+subject=CN=rust.pkg.re
+issuer=C=US, O=Let's Encrypt, CN=YE2
+serial=06F353D1E951359CBE74FA66E4C9F8A2189F
+notBefore=Aug 25 23:06:58 2026 GMT
+notAfter=Nov 23 23:06:57 2026 GMT
+sha256 Fingerprint=78:E2:5B:28:23:35:5F:3D:99:B9:CE:84:1C:BB:F3:5E:48:7B:AD:80:4E:0F:67:4B:EA:3D:13:24:16:00:FC:BB
+X509v3 Subject Alternative Name: 
+    DNS:rust.pkg.re
+Connecting to 65.21.163.108
+CONNECTION ESTABLISHED
+Protocol version: TLSv1.3
+Ciphersuite: TLS_AES_256_GCM_SHA384
+Peer certificate: CN=rust.pkg.re
+Hash used: SHA256
+Signature type: ecdsa_secp256r1_sha256
+Verification: OK
+Verified peername: rust.pkg.re
+Negotiated TLS1.3 group: X25519MLKEM768
+DONE

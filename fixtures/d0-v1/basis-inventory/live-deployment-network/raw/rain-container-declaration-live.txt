@@ -1,0 +1,143 @@
+## collected_at
+2026-08-26T13:20:02.440053446Z
+
+## nspawn_unit
+# /etc/systemd/system/systemd-nspawn@.service -> /nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/example/systemd/system/systemd-nspawn@.service
+#  SPDX-License-Identifier: LGPL-2.1-or-later
+#
+#  This file is part of systemd.
+#
+#  systemd is free software; you can redistribute it and/or modify it
+#  under the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation; either version 2.1 of the License, or
+#  (at your option) any later version.
+
+[Unit]
+Description=Container %i
+Documentation=man:systemd-nspawn(1)
+Wants=modprobe@tun.service modprobe@loop.service modprobe@dm_mod.service
+PartOf=machines.target
+Before=machines.target
+After=network.target modprobe@tun.service modprobe@loop.service modprobe@dm_mod.service
+RequiresMountsFor=/var/lib/machines/%i
+
+[Service]
+# Make sure the DeviceAllow= lines below can properly resolve the 'block-loop' expression (and others)
+ExecStart=systemd-nspawn --quiet --keep-unit --boot --link-journal=try-guest --network-veth -U --settings=override --machine=%i
+ExecStopPost=systemd-nspawn --cleanup --machine=%i
+KillMode=mixed
+Type=notify
+RestartForceExitStatus=133
+SuccessExitStatus=133
+Slice=machine.slice
+Delegate=yes
+DelegateSubgroup=supervisor
+CoredumpReceive=yes
+TasksMax=16384
+TimeoutSec=2min
+WatchdogSec=3min
+
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rwm
+DeviceAllow=char-pts rw
+DeviceAllow=/dev/fuse rwm
+
+# nspawn itself needs access to /dev/loop-control and /dev/loop, to implement
+# the --image= option. Add these here, too.
+DeviceAllow=/dev/loop-control rw
+DeviceAllow=block-loop rw
+DeviceAllow=block-blkext rw
+
+# nspawn can set up LUKS encrypted loopback files, in which case it needs
+# access to /dev/mapper/control and the block devices /dev/mapper/*.
+DeviceAllow=/dev/mapper/control rw
+DeviceAllow=block-device-mapper rw
+
+[Install]
+WantedBy=machines.target
+
+# /nix/store/qa0lsj069mh5w2m0c67hn8a77fssxyxw-system-units/systemd-nspawn@pkgre.service.d/overrides.conf -> /nix/store/mqshif3qd2gz1gbzwnsr7nr74pk2c4hn-unit-systemd-nspawn-pkgre.service/systemd-nspawn@pkgre.service
+[Unit]
+X-Restart-Triggers=/nix/store/bzaicyqz35zb9ysdm9wisg34h6rkl2a7-X-Restart-Triggers-systemd-nspawn-pkgre
+
+[Service]
+Environment="LOCALE_ARCHIVE=/nix/store/c59mcax29xrwyfdqs308wkmn2srnmzkn-glibc-locales-2.42-67/lib/locale/locale-archive"
+Environment="PATH=/nix/store/97d5ygrvqj55f4nx1x34wfdcc7qn11c0-coreutils-9.11/bin:/nix/store/ibg16grw5is7i7ilnflc5xmj6fwksqkl-findutils-4.11.0/bin:/nix/store/4dgym2zhac9vy0vrih4gsplh0wpfl13m-gnugrep-3.12/bin:/nix/store/rxd8p6g4k4s0sx4q1szmzvp9rsmhmfys-gnused-4.10/bin:/nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/bin:/nix/store/97d5ygrvqj55f4nx1x34wfdcc7qn11c0-coreutils-9.11/sbin:/nix/store/ibg16grw5is7i7ilnflc5xmj6fwksqkl-findutils-4.11.0/sbin:/nix/store/4dgym2zhac9vy0vrih4gsplh0wpfl13m-gnugrep-3.12/sbin:/nix/store/rxd8p6g4k4s0sx4q1szmzvp9rsmhmfys-gnused-4.10/sbin:/nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/sbin"
+Environment="TZDIR=/nix/store/vlgjd2179ahfh509p1aid8fl22bw8ri3-tzdata-2026c/share/zoneinfo"
+ExecStartPre=/nix/store/1a5rdw9iix46rxfrzdb73vlrr34wv2xk-unit-script-systemd-nspawn_pkgre-pre-start/bin/systemd-nspawn_pkgre-pre-start
+
+## nspawn_settings
+-- /etc/systemd/nspawn/pkgre.nspawn --
+[Exec]
+Boot=false
+Ephemeral=true
+KillSignal=SIGRTMIN+3
+LinkJournal=try-host
+NotifyReady=false
+Parameters=/nix/store/jai70s8kdn3jc71qvsn9l20zma9aam4g-nixos-system-pkgre-26.11.20260818.9588f1a/init
+PrivateUsers=pick
+Timezone=off
+
+
+[Files]
+BindReadOnly=/nix/store:/nix/store:idmap
+BindReadOnly=/nix/var/nix/daemon-socket:/nix/var/nix/daemon-socket:idmap
+BindReadOnly=/nix/var/nix/db:/nix/var/nix/db:idmap
+PrivateUsersOwnership=auto
+
+
+[Network]
+Private=true
+VirtualEthernet=false
+VirtualEthernetExtra=vbs-pkgre
+VirtualEthernetExtra=vbl-pkgre
+
+-- /run/systemd/nspawn/pkgre.nspawn --
+unavailable_or_absent
+-- /var/lib/machines/pkgre.nspawn --
+unavailable_or_absent
+
+## nspawn_prestart_script
+path=/nix/store/1a5rdw9iix46rxfrzdb73vlrr34wv2xk-unit-script-systemd-nspawn_pkgre-pre-start/bin/systemd-nspawn_pkgre-pre-start
+#!/nix/store/byi2zpy2bgcf3dr6y0l8m50rmjj8z7q1-bash-5.3p15/bin/bash
+set -e
+
+mkdir -p -m 0755 /var/lib/machines/pkgre
+# systemd-nspawn now runs an OS-tree check on the ephemeral snapshot and
+# refuses to start unless the rootfs has a /usr. Our rootfs is otherwise
+# empty (init comes from the Nix store via Parameters=), so plant a marker.
+mkdir -p -m 0755 /var/lib/machines/pkgre/usr
+
+
+
+
+## machine_image_metadata
+pkgre
+	    Type: directory
+	    Path: /var/lib/machines/pkgre
+	      RO: writable
+	 Created: Mon 2026-08-24 18:40:59 UTC; 1 day 18h ago
+Name=pkgre
+Path=/var/lib/machines/pkgre
+Type=directory
+ReadOnly=no
+CreationTimestamp=Mon 2026-08-24 18:40:59 UTC
+Usage=18446744073709551615
+Limit=infinity
+UsageExclusive=18446744073709551615
+LimitExclusive=infinity
+
+## machine_root_mount
+
+## nspawn_properties
+RootDirectory=
+RootImage=
+ReadWritePaths=
+ReadOnlyPaths=
+InaccessiblePaths=
+RuntimeDirectory=
+StateDirectory=
+ConfigurationDirectory=
+BindPaths=
+BindReadOnlyPaths=
+TemporaryFileSystem=

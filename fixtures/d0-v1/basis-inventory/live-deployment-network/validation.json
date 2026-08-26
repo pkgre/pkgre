@@ -1,0 +1,23 @@
+{
+  "checks": {
+    "checksumCoverage": true,
+    "classifications": true,
+    "criticalValues": true,
+    "jsonParsing": true,
+    "noCredentialValues": true,
+    "noSymlinks": true,
+    "rawIdentity": true,
+    "splitVerdict": true
+  },
+  "classificationCounts": {
+    "absent": 5,
+    "blocked": 13,
+    "observed": 24,
+    "proposed": 0
+  },
+  "d0Overall": "BLOCKED",
+  "d1Authorized": false,
+  "packetStatus": "PASS",
+  "rawFiles": 10,
+  "schema": "pkgre-d0-live-deployment-network-validation-v1"
+}

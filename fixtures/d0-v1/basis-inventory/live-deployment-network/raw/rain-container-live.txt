@@ -1,0 +1,191 @@
+## collected_at
+2026-08-26T13:19:27.790943855Z
+
+## host_processes
+1315483       1     0     0 root     root       47829  6060  10608 systemd-nspawn --quiet --keep-unit --boot --link-journal=try-guest --network-veth -U --settings=override --machine=pkgre
+1315904 1315495 1164769998 1164769998 vu-pkgr+ vg-pkgr+ 47825 9000 6568372 /nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0/bin/pkgre-download-serve --listen 10.131.7.4:9008 --refresh-seconds 300 --minimum-refresh-seconds 120
+1315905 1315495 1164767017 1164767017 vu-pkgr+ vg-pkgr+ 47825 6992 6635372 /nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0/bin/pkgre-proxy --listen 10.131.7.4:9009 --canary-seconds 60 --readiness-seconds 180
+1427314 1427311  1000   100 wei      users          0  1524   3740 grep -E [p]kgre-download-serve|[p]kgre-proxy|systemd-nspawn.*pkgre
+
+## proc_status pid=1315904
+Name:	pkgre-download-
+Pid:	1315904
+PPid:	1315495
+Uid:	1164769998	1164769998	1164769998	1164769998
+Gid:	1164769998	1164769998	1164769998	1164769998
+FDSize:	128
+Groups:	1164769998 
+VmSize:	 6568372 kB
+VmRSS:	    9000 kB
+Threads:	97
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000000000000000
+CapAmb:	0000000000000000
+NoNewPrivs:	1
+Seccomp:	2
+exe=cwd=fd_count=0
+mountinfo_target=3694 3605 0:30 /machines/.#snapshot.pkgre559b2cb1c470c68c / ro,nosuid,relatime,idmapped shared:3410 master:3011 - zfs zroot/root/varlib rw,xattr,posixacl,casesensitive
+3695 3694 0:196 / /tmp rw,nosuid,nodev shared:3411 master:3012 - tmpfs tmpfs rw,size=26358324k,nr_inodes=409600,uid=1164705792,gid=1164705792
+3696 3694 0:197 / /sys ro,nosuid,nodev,noexec,relatime shared:3413 master:3013 - tmpfs tmpfs rw,size=4096k,nr_inodes=1024,mode=555,uid=1164705792,gid=1164705792
+3704 3694 0:198 / /dev rw,nosuid shared:3426 master:3014 - tmpfs tmpfs rw,size=4096k,nr_inodes=65536,mode=755,uid=1164705792,gid=1164705792
+3705 3704 0:199 / /dev/shm rw,nosuid,nodev shared:3427 master:3015 - tmpfs tmpfs rw,size=26358324k,nr_inodes=409600,uid=1164705792,gid=1164705792
+3706 3704 0:201 / /dev/pts rw,nosuid,noexec,relatime shared:3428 master:3016 - devpts devpts rw,gid=1164705795,mode=600,ptmxmode=666
+3708 3694 0:200 / /run rw,nosuid,nodev shared:3439 master:3017 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+3709 3708 0:200 /host /run/host ro,nosuid,nodev,noexec shared:3440 master:3018 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+3710 3709 0:29 /store/2pkh800f7y0884vm8dh2jdaz88hjmlfa-etc-os-release /run/host/os-release ro,nosuid,nodev,noexec,relatime shared:3441 master:3019 - zfs zroot/root/nix rw,xattr,posixacl,casesensitive
+3711 3709 0:195 / /run/host/unix-export rw,nosuid,nodev,noexec,relatime,nosymfollow shared:3442 master:3020 - tmpfs tmpfs rw,size=4096k,nr_inodes=64,mode=755
+3712 3709 0:25 /systemd/nspawn/propagate/pkgre /run/host/incoming ro,nosuid shared:3443 master:3021 - tmpfs tmpfs rw,size=65895804k,mode=755
+3713 3708 0:202 / /run/keys rw,nosuid,nodev,relatime shared:3444 master:2996 - ramfs ramfs rw,mode=750
+3716 3708 0:215 / /run/wrappers rw,nosuid,nodev,relatime shared:3445 master:3133 - tmpfs tmpfs rw,size=131791604k,mode=755,uid=1164705792,gid=1164705792
+3743 3704 0:222 / /dev ro,nosuid,noexec shared:3429 - tmpfs tmpfs rw,size=4096k,nr_inodes=65536,mode=755,uid=1164705792,gid=1164705792
+3744 3743 0:201 / /dev/pts rw,nosuid,noexec,relatime shared:3430 master:3016 - devpts devpts rw,gid=1164705795,mode=600,ptmxmode=666
+3746 3743 0:199 / /dev/shm rw,nosuid,nodev shared:3431 master:3015 - tmpfs tmpfs rw,size=26358324k,nr_inodes=409600,uid=1164705792,gid=1164705792
+3747 3743 0:204 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:3432 master:3028 - mqueue mqueue rw
+3759 3694 0:224 / /proc rw,nosuid,nodev,noexec,relatime shared:3452 - proc proc rw,hidepid=invisible
+3671 3708 0:200 /host/inaccessible/dir /run/credentials ro,nosuid,nodev,noexec shared:3446 master:3018 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+3689 3708 0:200 /host/inaccessible/dir /run/user ro,nosuid,nodev,noexec shared:3447 master:3018 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+
+## proc_status pid=1315905
+Name:	pkgre-proxy
+Pid:	1315905
+PPid:	1315495
+Uid:	1164767017	1164767017	1164767017	1164767017
+Gid:	1164767017	1164767017	1164767017	1164767017
+FDSize:	128
+Groups:	1164767017 
+VmSize:	 6635372 kB
+VmRSS:	    6992 kB
+Threads:	99
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000000000000000
+CapAmb:	0000000000000000
+NoNewPrivs:	1
+Seccomp:	2
+exe=cwd=fd_count=0
+mountinfo_target=3650 3135 0:30 /machines/.#snapshot.pkgre559b2cb1c470c68c / ro,nosuid,relatime,idmapped shared:3350 master:3011 - zfs zroot/root/varlib rw,xattr,posixacl,casesensitive
+3651 3650 0:196 / /tmp rw,nosuid,nodev shared:3351 master:3012 - tmpfs tmpfs rw,size=26358324k,nr_inodes=409600,uid=1164705792,gid=1164705792
+3652 3650 0:197 / /sys ro,nosuid,nodev,noexec,relatime shared:3353 master:3013 - tmpfs tmpfs rw,size=4096k,nr_inodes=1024,mode=555,uid=1164705792,gid=1164705792
+3660 3650 0:198 / /dev rw,nosuid shared:3366 master:3014 - tmpfs tmpfs rw,size=4096k,nr_inodes=65536,mode=755,uid=1164705792,gid=1164705792
+3661 3660 0:199 / /dev/shm rw,nosuid,nodev shared:3367 master:3015 - tmpfs tmpfs rw,size=26358324k,nr_inodes=409600,uid=1164705792,gid=1164705792
+3662 3660 0:201 / /dev/pts rw,nosuid,noexec,relatime shared:3368 master:3016 - devpts devpts rw,gid=1164705795,mode=600,ptmxmode=666
+3664 3650 0:200 / /run rw,nosuid,nodev shared:3379 master:3017 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+3665 3664 0:200 /host /run/host ro,nosuid,nodev,noexec shared:3380 master:3018 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+3666 3665 0:29 /store/2pkh800f7y0884vm8dh2jdaz88hjmlfa-etc-os-release /run/host/os-release ro,nosuid,nodev,noexec,relatime shared:3381 master:3019 - zfs zroot/root/nix rw,xattr,posixacl,casesensitive
+3667 3665 0:195 / /run/host/unix-export rw,nosuid,nodev,noexec,relatime,nosymfollow shared:3382 master:3020 - tmpfs tmpfs rw,size=4096k,nr_inodes=64,mode=755
+3668 3665 0:25 /systemd/nspawn/propagate/pkgre /run/host/incoming ro,nosuid shared:3383 master:3021 - tmpfs tmpfs rw,size=65895804k,mode=755
+3669 3664 0:202 / /run/keys rw,nosuid,nodev,relatime shared:3384 master:2996 - ramfs ramfs rw,mode=750
+3672 3664 0:215 / /run/wrappers rw,nosuid,nodev,relatime shared:3385 master:3133 - tmpfs tmpfs rw,size=131791604k,mode=755,uid=1164705792,gid=1164705792
+3738 3660 0:221 / /dev ro,nosuid,noexec shared:3369 - tmpfs tmpfs rw,size=4096k,nr_inodes=65536,mode=755,uid=1164705792,gid=1164705792
+3739 3738 0:201 / /dev/pts rw,nosuid,noexec,relatime shared:3370 master:3016 - devpts devpts rw,gid=1164705795,mode=600,ptmxmode=666
+3740 3738 0:199 / /dev/shm rw,nosuid,nodev shared:3371 master:3015 - tmpfs tmpfs rw,size=26358324k,nr_inodes=409600,uid=1164705792,gid=1164705792
+3741 3738 0:204 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:3372 master:3028 - mqueue mqueue rw
+3707 3650 0:223 / /proc rw,nosuid,nodev,noexec,relatime shared:3392 - proc proc rw,hidepid=invisible
+3670 3664 0:200 /host/inaccessible/dir /run/credentials ro,nosuid,nodev,noexec shared:3386 master:3018 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+3673 3664 0:200 /host/inaccessible/dir /run/user ro,nosuid,nodev,noexec shared:3387 master:3018 - tmpfs tmpfs rw,size=52716644k,nr_inodes=819200,mode=755,uid=1164705792,gid=1164705792
+
+## machine_systemctl_units
+-- pkgre-download-serve.service --
+Failed to connect to system scope bus via machine transport: Permission denied
+-- pkgre-proxy.service --
+Failed to connect to system scope bus via machine transport: Permission denied
+
+## machine_system_identity
+Failed to connect to system scope bus via machine transport: Permission denied
+pkgre(a455e3691c324d1d8f68e5c67eadda43)
+	   Since: Wed 2026-08-26 00:02:18 UTC; 13h ago
+	  Leader: 1315495 (systemd)
+	 Superv.: 1315483 (systemd-nspawn)
+	 Service: systemd-nspawn; class container
+	    Root: /var/lib/machines/.#snapshot.pkgre559b2cb1c470c68c
+	 Address: 10.22.2.5
+	          10.131.7.4
+	          fe80::d0df:39ff:feec:5c76
+	          fe80::f0d2:bbff:fe60:435b
+	ID Shift: 1164705792
+	    Unit: systemd-nspawn@pkgre.service
+	Subgroup: payload
+		  |-init.scope
+		  | `-1315495 /run/current-system/systemd/lib/systemd/systemd
+		  `-system.slice
+		    |-console-getty.service
+		    | `-1315901 /nix/store/156fzvaz2nsq2hk0fkzn9jwk90bnzyn9-util-linux-2.42.2-bin/bin/agetty --login-program /nix/store/mi6lawlrw5m3s8g3wkf9spwpqbx604fc-shadow-4.20.0/bin/login --issue-file /etc/issue:/etc/issue.d:/run/issue:/run/issue.d --noclear --keep-baud console 115200,38400,9600 dumb
+		    |-dbus-broker.service
+		    | |-1315862 /nix/store/4508vwbi27i71nan15ldwn6q1zgzs9y6-dbus-broker-37/bin/dbus-broker-launch --scope system --audit
+		    | `-1315885 dbus-broker --log 10 --controller 9 --machine-id a455e3691c324d1d8f68e5c67eadda43 --max-bytes 536870912 --max-fds 4096 --max-matches 16384 --audit
+		    |-nscd.service
+		    | `-1315853 /nix/store/jm4vx2qpmsy10kgi4h05vmv0sg9a76gs-nsncd-1.5.2/bin/nsncd
+		    |-pkgre-download-serve.service
+		    | `-1315904 /nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0/bin/pkgre-download-serve --listen 10.131.7.4:9008 --refresh-seconds 300 --minimum-refresh-seconds 120
+		    |-pkgre-proxy.service
+		    | `-1315905 /nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0/bin/pkgre-proxy --listen 10.131.7.4:9009 --canary-seconds 60 --readiness-seconds 180
+		    |-systemd-journald.service
+		    | `-1315760 /nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-journald
+		    |-systemd-logind.service
+		    | `-1315878 /nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-logind
+		    |-systemd-networkd.service
+		    | `-1315891 /nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-networkd
+		    |-systemd-oomd.service
+		    | `-1315761 /nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-oomd
+		    `-systemd-resolved.service
+		      `-1315766 /nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-resolved
+
+Aug 26 00:02:21 rain systemd-nspawn[1315483]: [  OK  ] Finished Wait for Network to be Online.
+Aug 26 00:02:21 rain systemd-nspawn[1315483]: [  OK  ] Reached target Network is Online.
+Aug 26 00:02:21 rain systemd-nspawn[1315483]: [  OK  ] Started Legacy checksum-bound Cargo download router.
+Aug 26 00:02:21 rain systemd-nspawn[1315483]: [  OK  ] Started Static marker redirect proxy for pkg.re registries.
+Aug 26 00:02:21 rain systemd-nspawn[1315483]: [  OK  ] Reached target Multi-User System.
+Aug 26 00:02:22 rain systemd-nspawn[1315483]: 
+Aug 26 00:02:22 rain systemd-nspawn[1315483]: 
+Aug 26 00:02:22 rain systemd-nspawn[1315483]: <<< Welcome to NixOS 26.11.20260818.9588f1a (x86_64) - console >>>
+Aug 26 00:02:22 rain systemd-nspawn[1315483]: 
+Aug 26 00:02:22 rain systemd-nspawn[1315483]: 
+
+## host_nspawn_unit
+Id=systemd-nspawn@pkgre.service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/systemd-nspawn@.service
+DropInPaths=/nix/store/qa0lsj069mh5w2m0c67hn8a77fssxyxw-system-units/systemd-nspawn@pkgre.service.d/overrides.conf
+ActiveEnterTimestamp=Wed 2026-08-26 00:02:18 UTC
+InvocationID=278160eacb4f4daf897ef743179667b3
+MainPID=1315483
+ExecStart={ path=systemd-nspawn ; argv[]=systemd-nspawn --quiet --keep-unit --boot --link-journal=try-guest --network-veth -U --settings=override --machine=pkgre ; ignore_errors=no ; start_time=[Wed 2026-08-26 00:02:18 UTC] ; stop_time=[n/a] ; pid=1315483 ; code=(null) ; status=0/0 }
+ControlGroup=/machine.slice/systemd-nspawn@pkgre.service
+MemoryCurrent=52879360
+MemoryPeak=73572352
+TasksCurrent=217
+DevicePolicy=closed
+LimitNOFILE=524288
+ReadWritePaths=
+ReadOnlyPaths=
+ProtectSystem=no
+
+## public_store_closure_from_process_paths
+-- binary=/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0/bin/pkgre-proxy --
+root=/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0
+sha256:0c9n3izsafmiqqafw2bclflzn3f2gndv7yasxcf4974xqiv0njsa
+5613352
+/nix/store/a0950b3qzcanrcalvwlp1b45nrya39xn-pkgre-proxy-0.2.0.drv
+/nix/store/0d8g8n0a11v6f5m2h416ajyxmnkwc3md-glibc-2.42-67
+/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0
+/nix/store/cjgm8gv32xdrjgzbgc0zk2fypiys9ylf-gcc-15.3.0-libgcc
+/nix/store/h5yzhyi8j6iq4r26giryd0rh9ynsayan-libunistring-1.4.2
+/nix/store/kpcd405yxfc3pfv8x4mv5j3fj54v946p-libidn2-2.3.8
+/nix/store/r48746qznwqxxl9qzd8f08ny8mg1dg2y-gcc-15.3.0-lib
+/nix/store/v4zcvckzr9hqpg1f6bmkbf2q7fmszzvk-xgcc-15.3.0-libgcc
+-- binary=/nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0/bin/pkgre-download-serve --
+root=/nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0
+sha256:05md2grwzlh97ghwf8q3kwmy13ik8gxf5d4mgb3g1jn2ljqmvs20
+6178808
+/nix/store/8hdzlq6lr5x025xsywhs2wbfprn4zvby-pkgre-download-serve-0.1.0.drv
+/nix/store/0d8g8n0a11v6f5m2h416ajyxmnkwc3md-glibc-2.42-67
+/nix/store/cjgm8gv32xdrjgzbgc0zk2fypiys9ylf-gcc-15.3.0-libgcc
+/nix/store/h5yzhyi8j6iq4r26giryd0rh9ynsayan-libunistring-1.4.2
+/nix/store/kpcd405yxfc3pfv8x4mv5j3fj54v946p-libidn2-2.3.8
+/nix/store/r48746qznwqxxl9qzd8f08ny8mg1dg2y-gcc-15.3.0-lib
+/nix/store/v4zcvckzr9hqpg1f6bmkbf2q7fmszzvk-xgcc-15.3.0-libgcc
+/nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0

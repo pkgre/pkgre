@@ -1,0 +1,371 @@
+
+## identity
+rain
+uid=1000(wei) gid=100(users) groups=100(users),1(wheel)
+2026-08-26T13:18:39.450768766Z
+Linux 6.18.31 x86_64 GNU/Linux
+{"nixosVersion":"26.11.20260818.9588f1a","nixpkgsRevision":"9588f1a6c197ae61c6222a3baa6ac220ec1cc4d9"}
+current_system=/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a
+boot_id=511bae5a-75f9-41b9-8633-46d23cc440d9
+uptime_seconds=8269828.61
+
+## privilege_boundary
+sudo_n_available=false;privileged metadata unavailable in this session
+
+## container_identity
+Name=pkgre
+Id=a455e3691c324d1d8f68e5c67eadda43
+Timestamp=Wed 2026-08-26 00:02:18 UTC
+Service=systemd-nspawn
+Unit=systemd-nspawn@pkgre.service
+Leader=1315495
+RootDirectory=/var/lib/machines/.#snapshot.pkgre559b2cb1c470c68c
+State=running
+UID=0
+bash: line 14: nixos-container: command not found
+unavailable_or_absent path=/var/lib/nixos-containers/pkgre
+unavailable_or_absent path=/var/lib/machines/pkgre
+unavailable_or_absent path=/nix/var/nix/profiles/per-container/pkgre
+unavailable_or_absent path=/nix/var/nix/profiles/per-container/pkgre/system
+
+## target_listeners
+LISTEN 0      511                                  10.22.0.1:443   0.0.0.0:*
+LISTEN 0      511                                  10.22.0.1:80    0.0.0.0:*
+LISTEN 0      511                                  127.0.0.1:443   0.0.0.0:*
+LISTEN 0      511                                  127.0.0.1:80    0.0.0.0:*
+LISTEN 0      511                              65.21.163.108:443   0.0.0.0:*
+LISTEN 0      511                              65.21.163.108:80    0.0.0.0:*
+LISTEN 0      4096                                  10.1.1.7:443   0.0.0.0:*
+
+## target_addresses_routes
+lo               UNKNOWN        127.0.0.1/8 2a0e:8380::1/128 ::1/128 
+vbld-research@if2 UP             
+vbs-mtrx-bitarr@if2 UP             
+vbl-mtrx-bitarr@if3 UP             
+vbs-palent@if2   UP             
+vbs-pkgre@if2    UP             
+vbl-pkgre@if3    UP             
+default via 65.21.163.65 dev eth0 proto static 
+10.131.7.0/24 dev br-local proto kernel scope link src 10.131.7.1 
+65.21.163.65 dev eth0 proto kernel scope link src 65.21.163.108 
+
+## nginx_unit
+Id=nginx.service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/nginx.service
+DropInPaths=
+ActiveEnterTimestamp=Wed 2026-08-26 00:02:17 UTC
+InvocationID=79ef0e488c504b68beef52d3947716e4
+MainPID=1315322
+ExecStart={ path=/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4/bin/nginx ; argv[]=/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4/bin/nginx -c /nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf ; ignore_errors=no ; start_time=[Wed 2026-08-26 00:02:17 UTC] ; stop_time=[n/a] ; pid=1315322 ; code=(null) ; status=0/0 }
+MemoryHigh=infinity
+MemoryMax=infinity
+LimitNOFILE=524288
+User=nginx
+Group=nginx
+DynamicUser=no
+ReadWritePaths=
+ProtectSystem=strict
+nginx_exec=/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4/bin/nginx
+nginx_conf=/nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf
+nginx version: nginx/1.30.4
+built by gcc 15.3.0 (GCC) 
+built with OpenSSL 4.0.1 9 Jun 2026
+TLS SNI support enabled
+configure arguments: --prefix=/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4 --sbin-path=bin/nginx --with-http_ssl_module --with-http_v2_module --with-http_v3_module --with-http_realip_module --with-http_addition_module --with-http_xslt_module --with-http_sub_module --with-http_dav_module --with-http_flv_module --with-http_mp4_module --with-http_gunzip_module --with-http_gzip_static_module --with-http_auth_request_module --with-http_random_index_module --with-http_secure_link_module --with-http_degradation_module --with-http_stub_status_module --with-threads --with-pcre-jit --http-log-path=/var/log/nginx/access.log --error-log-path=/var/log/nginx/error.log --pid-path=/var/log/nginx/nginx.pid --http-client-body-temp-path=/tmp/nginx_client_body --http-proxy-temp-path=/tmp/nginx_proxy --http-fastcgi-temp-path=/tmp/nginx_fastcgi --http-uwsgi-temp-path=/tmp/nginx_uwsgi --http-scgi-temp-path=/tmp/nginx_scgi --with-openssl-opt=enable-ktls --with-stream --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module --with-file-aio --add-module=/build/4ljq7ia66asmdi06nzl0rinvbab90h16-nginx-mod-rtmp-1.2.2 --add-module=/build/68wc4ddfx2gik51kqczxyw9ii3fk1mzg-nginx-mod-moreheaders-0.40
+eeb69be6aebb5e69fdbc12c9019e648f64308b1738c153715411db607d701d51  /nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf
+kind=regular file mode=444 owner=root:root uid=0 gid=0 size=27683 path=/nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf
+
+## nginx_target_config
+13:    resolver 127.0.0.1 valid=300s ipv6=off;
+14:    upstream pkgre-js-pages {
+21:    upstream pkgre-js-pages-challenge {
+28:    upstream pkgre-rust-pages {
+75:        listen 127.0.0.1:80;
+76:        listen 10.22.0.1:80;
+77:        listen 65.21.163.108:80;
+89:        listen 127.0.0.1:443 ssl;
+90:        listen 10.22.0.1:443 ssl;
+91:        listen 65.21.163.108:443 ssl;
+94:        ssl_certificate /var/lib/acme/admin.keycloak.pacna.net/fullchain.pem;
+95:        ssl_certificate_key /var/lib/acme/admin.keycloak.pacna.net/key.pem;
+96:        ssl_trusted_certificate /var/lib/acme/admin.keycloak.pacna.net/chain.pem;
+107:            proxy_set_header Host $host;
+115:        listen 127.0.0.1:80;
+116:        listen 10.22.0.1:80;
+117:        listen 65.21.163.108:80;
+129:        listen 127.0.0.1:443 ssl;
+130:        listen 10.22.0.1:443 ssl;
+131:        listen 65.21.163.108:443 ssl;
+134:        ssl_certificate /var/lib/acme/bitarray.net/fullchain.pem;
+135:        ssl_certificate_key /var/lib/acme/bitarray.net/key.pem;
+136:        ssl_trusted_certificate /var/lib/acme/bitarray.net/chain.pem;
+157:        listen 127.0.0.1:80 default_server;
+158:        listen 10.22.0.1:80 default_server;
+159:        listen 65.21.163.108:80 default_server;
+164:        listen 127.0.0.1:80;
+165:        listen 10.22.0.1:80;
+166:        listen 65.21.163.108:80;
+167:        server_name dl.rust.pkg.re;
+178:        listen 127.0.0.1:443 ssl;
+179:        listen 10.22.0.1:443 ssl;
+180:        listen 65.21.163.108:443 ssl;
+181:        server_name dl.rust.pkg.re;
+183:        ssl_certificate /var/lib/acme/dl.rust.pkg.re/fullchain.pem;
+184:        ssl_certificate_key /var/lib/acme/dl.rust.pkg.re/key.pem;
+185:        ssl_trusted_certificate /var/lib/acme/dl.rust.pkg.re/chain.pem;
+192:            proxy_pass http://10.131.7.4:9008;
+194:            proxy_set_header Host $host;
+196:            proxy_set_header X-Pkgre-Original-URI $request_uri;
+201:        listen 127.0.0.1:443 ssl;
+202:        listen 10.22.0.1:443 ssl;
+203:        listen 65.21.163.108:443 ssl;
+204:        server_name js.pkg.re;
+206:        ssl_certificate /var/lib/acme/js.pkg.re/fullchain.pem;
+207:        ssl_certificate_key /var/lib/acme/js.pkg.re/key.pem;
+208:        ssl_trusted_certificate /var/lib/acme/js.pkg.re/chain.pem;
+210:            proxy_pass https://pkgre-js-pages;
+219:            proxy_set_header Host "js.pkg.re";
+231:            proxy_set_header X-Pkgre-Original-URI "";
+232:            proxy_ssl_server_name on;
+233:            proxy_ssl_name "js.pkg.re";
+234:            proxy_ssl_verify on;
+235:            proxy_ssl_verify_depth 3;
+236:            proxy_ssl_trusted_certificate /nix/store/fcqyc7ffz6axayxj4ilqjw3pmma73gj2-nss-cacert-3.126/etc/ssl/certs/ca-bundle.crt;
+257:            proxy_pass http://10.131.7.4:9009;
+266:            proxy_set_header Host "js.pkg.re";
+267:            proxy_set_header X-Pkgre-Original-URI $request_uri;
+300:        listen 127.0.0.1:80;
+301:        listen 10.22.0.1:80;
+302:        listen 65.21.163.108:80;
+303:        server_name js.pkg.re;
+312:            proxy_pass http://pkgre-js-pages-challenge;
+322:            proxy_set_header Host "js.pkg.re";
+350:        listen 127.0.0.1:80;
+351:        listen 10.22.0.1:80;
+352:        listen 65.21.163.108:80;
+364:        listen 127.0.0.1:443 ssl;
+365:        listen 10.22.0.1:443 ssl;
+366:        listen 65.21.163.108:443 ssl;
+369:        ssl_certificate /var/lib/acme/keycloak.pacna.net/fullchain.pem;
+370:        ssl_certificate_key /var/lib/acme/keycloak.pacna.net/key.pem;
+371:        ssl_trusted_certificate /var/lib/acme/keycloak.pacna.net/chain.pem;
+382:            proxy_set_header Host $host;
+390:        listen 127.0.0.1:80;
+391:        listen 10.22.0.1:80;
+392:        listen 65.21.163.108:80;
+404:        listen 127.0.0.1:443 ssl;
+405:        listen 10.22.0.1:443 ssl;
+406:        listen 65.21.163.108:443 ssl;
+409:        ssl_certificate /var/lib/acme/keycloak.pacna.org/fullchain.pem;
+410:        ssl_certificate_key /var/lib/acme/keycloak.pacna.org/key.pem;
+411:        ssl_trusted_certificate /var/lib/acme/keycloak.pacna.org/chain.pem;
+422:            proxy_set_header Host $host;
+430:        listen 127.0.0.1:80;
+431:        listen 10.22.0.1:80;
+432:        listen 65.21.163.108:80;
+443:        listen 127.0.0.1:80;
+444:        listen 10.22.0.1:80;
+445:        listen 65.21.163.108:80;
+457:        listen 127.0.0.1:443 ssl;
+458:        listen 10.22.0.1:443 ssl;
+459:        listen 65.21.163.108:443 ssl;
+462:        ssl_certificate /var/lib/acme/matrix.bitarray.net/fullchain.pem;
+463:        ssl_certificate_key /var/lib/acme/matrix.bitarray.net/key.pem;
+464:        ssl_trusted_certificate /var/lib/acme/matrix.bitarray.net/chain.pem;
+484:        listen 127.0.0.1:80;
+485:        listen 10.22.0.1:80;
+486:        listen 65.21.163.108:80;
+498:        listen 127.0.0.1:443 ssl;
+499:        listen 10.22.0.1:443 ssl;
+500:        listen 65.21.163.108:443 ssl;
+503:        ssl_certificate /var/lib/acme/netbird.pacna.org/fullchain.pem;
+504:        ssl_certificate_key /var/lib/acme/netbird.pacna.org/key.pem;
+505:        ssl_trusted_certificate /var/lib/acme/netbird.pacna.org/chain.pem;
+545:        listen 127.0.0.1:80;
+546:        listen 10.22.0.1:80;
+547:        listen 65.21.163.108:80;
+559:        listen 127.0.0.1:443 ssl;
+560:        listen 10.22.0.1:443 ssl;
+561:        listen 65.21.163.108:443 ssl;
+564:        ssl_certificate /var/lib/acme/rain.bitarray.net/fullchain.pem;
+565:        ssl_certificate_key /var/lib/acme/rain.bitarray.net/key.pem;
+566:        ssl_trusted_certificate /var/lib/acme/rain.bitarray.net/chain.pem;
+576:        listen 127.0.0.1:80;
+577:        listen 10.22.0.1:80;
+578:        listen 65.21.163.108:80;
+579:        server_name rust.pkg.re;
+585:        listen 127.0.0.1:443 ssl;
+586:        listen 10.22.0.1:443 ssl;
+587:        listen 65.21.163.108:443 ssl;
+588:        server_name rust.pkg.re;
+590:        ssl_certificate /var/lib/acme/rust.pkg.re/fullchain.pem;
+591:        ssl_certificate_key /var/lib/acme/rust.pkg.re/key.pem;
+592:        ssl_trusted_certificate /var/lib/acme/rust.pkg.re/chain.pem;
+594:            proxy_pass https://pkgre-rust-pages;
+603:            proxy_set_header Host "rust.pkg.re";
+615:            proxy_set_header X-Pkgre-Original-URI "";
+616:            proxy_ssl_server_name on;
+617:            proxy_ssl_name "rust.pkg.re";
+618:            proxy_ssl_verify on;
+619:            proxy_ssl_verify_depth 3;
+620:            proxy_ssl_trusted_certificate /nix/store/fcqyc7ffz6axayxj4ilqjw3pmma73gj2-nss-cacert-3.126/etc/ssl/certs/ca-bundle.crt;
+641:            proxy_pass http://10.131.7.4:9009;
+650:            proxy_set_header Host "rust.pkg.re";
+651:            proxy_set_header X-Pkgre-Original-URI $request_uri;
+
+## acme_unit_metadata
+-- rust.pkg.re --
+Id=acme-rust.pkg.re.service
+LoadState=loaded
+ActiveState=active
+SubState=exited
+FragmentPath=/etc/systemd/system/acme-rust.pkg.re.service
+DropInPaths=
+ExecStart={ path=/nix/store/y8zs6mqx5q00m4rvj3rqlz7sh7xh4a6l-unit-script-acme-rust.pkg.re-start/bin/acme-rust.pkg.re-start ; argv[]=/nix/store/y8zs6mqx5q00m4rvj3rqlz7sh7xh4a6l-unit-script-acme-rust.pkg.re-start/bin/acme-rust.pkg.re-start ; ignore_errors=no ; start_time=[Wed 2026-08-26 00:02:17 UTC] ; stop_time=[Wed 2026-08-26 00:02:17 UTC] ; pid=1315269 ; code=exited ; status=0 }
+User=acme
+Group=nginx
+LoadCredential=[unprintable]
+LoadCredentialEncrypted=[unprintable]
+SupplementaryGroups=
+RuntimeDirectory=
+StateDirectory=acme/rust.pkg.re
+-- js.pkg.re --
+Id=acme-js.pkg.re.service
+LoadState=loaded
+ActiveState=active
+SubState=exited
+FragmentPath=/etc/systemd/system/acme-js.pkg.re.service
+DropInPaths=
+ExecStart={ path=/nix/store/3wpcajgr01q714sssf7m6lyjg8f9ga4s-unit-script-acme-js.pkg.re-start/bin/acme-js.pkg.re-start ; argv[]=/nix/store/3wpcajgr01q714sssf7m6lyjg8f9ga4s-unit-script-acme-js.pkg.re-start/bin/acme-js.pkg.re-start ; ignore_errors=no ; start_time=[Wed 2026-08-26 00:02:17 UTC] ; stop_time=[Wed 2026-08-26 00:02:17 UTC] ; pid=1315268 ; code=exited ; status=0 }
+User=acme
+Group=nginx
+LoadCredential=[unprintable]
+LoadCredentialEncrypted=[unprintable]
+SupplementaryGroups=
+RuntimeDirectory=
+StateDirectory=acme/js.pkg.re
+-- dl.rust.pkg.re --
+Id=acme-dl.rust.pkg.re.service
+LoadState=loaded
+ActiveState=active
+SubState=exited
+FragmentPath=/etc/systemd/system/acme-dl.rust.pkg.re.service
+DropInPaths=
+ExecStart={ path=/nix/store/v0hrx1icds4pqqp1rgcapy5aj0kgi0ji-unit-script-acme-dl.rust.pkg.re-start/bin/acme-dl.rust.pkg.re-start ; argv[]=/nix/store/v0hrx1icds4pqqp1rgcapy5aj0kgi0ji-unit-script-acme-dl.rust.pkg.re-start/bin/acme-dl.rust.pkg.re-start ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+User=acme
+Group=nginx
+LoadCredential=[unprintable]
+LoadCredentialEncrypted=[unprintable]
+SupplementaryGroups=
+RuntimeDirectory=
+StateDirectory=acme/dl.rust.pkg.re
+
+## certificate_and_key_path_metadata_only
+kind=directory mode=750 owner=acme:nginx uid=993 gid=60 size=8 path=/var/lib/acme/rust.pkg.re
+unavailable_or_absent path=/var/lib/acme/rust.pkg.re/fullchain.pem
+unavailable_or_absent path=/var/lib/acme/rust.pkg.re/chain.pem
+unavailable_or_absent path=/var/lib/acme/rust.pkg.re/key.pem
+kind=directory mode=750 owner=acme:nginx uid=993 gid=60 size=8 path=/var/lib/acme/js.pkg.re
+unavailable_or_absent path=/var/lib/acme/js.pkg.re/fullchain.pem
+unavailable_or_absent path=/var/lib/acme/js.pkg.re/chain.pem
+unavailable_or_absent path=/var/lib/acme/js.pkg.re/key.pem
+kind=directory mode=750 owner=acme:nginx uid=993 gid=60 size=8 path=/var/lib/acme/dl.rust.pkg.re
+unavailable_or_absent path=/var/lib/acme/dl.rust.pkg.re/fullchain.pem
+unavailable_or_absent path=/var/lib/acme/dl.rust.pkg.re/chain.pem
+unavailable_or_absent path=/var/lib/acme/dl.rust.pkg.re/key.pem
+
+## credential_path_metadata_only
+kind=regular file mode=644 owner=root:root uid=0 gid=0 size=41 path=/var/lib/keys/pkgre-js-gandiv5-token
+f: /var/lib/keys/pkgre-js-gandiv5-token
+drwxr-xr-x root root /
+drwxr-xr-x root root var
+drwxr-xr-x root root lib
+drwxr-xr-x root root keys
+-rw-r--r-- root root pkgre-js-gandiv5-token
+user::rw-
+group::r--
+other::r--
+
+
+## firewall_target_rules
+Id=nftables.service
+LoadState=loaded
+ActiveState=active
+SubState=exited
+FragmentPath=/etc/systemd/system/nftables.service
+ExecStart={ path=/nix/store/3yakl086k78j5zj4cqb7lz8h67p9byp1-nftables-ensure-deletions ; argv[]=/nix/store/3yakl086k78j5zj4cqb7lz8h67p9byp1-nftables-ensure-deletions ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+ExecStart={ path=/nix/store/hm4gnk9x6aq7vbcng01rfq6yj55k4xxd-nftables-rules ; argv[]=/nix/store/hm4gnk9x6aq7vbcng01rfq6yj55k4xxd-nftables-rules ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+
+## filesystem_mount_zfs
+-- / --
+/ zroot/root zfs rw,relatime,xattr,posixacl,casesensitive
+kind=directory mode=755 owner=root:root uid=0 gid=0 size=18 path=/ device=28
+-- /nix --
+/nix zroot/root/nix zfs rw,relatime,xattr,posixacl,casesensitive
+kind=directory mode=755 owner=root:root uid=0 gid=0 size=4 path=/nix device=29
+-- /var/lib/machines --
+/var/lib zroot/root/varlib zfs rw,relatime,xattr,posixacl,casesensitive
+kind=directory mode=700 owner=root:root uid=0 gid=0 size=14 path=/var/lib/machines device=30
+-- /var/lib/machines/pkgre --
+stat: cannot statx '/var/lib/machines/pkgre': Permission denied
+stat=unavailable_or_absent
+zfs_metadata=unavailable_without_passwordless_sudo_or_no_matching_rows
+
+## target_disk_usage
+container_disk_usage=unavailable_without_passwordless_sudo
+
+## time_services
+               Local time: Wed 2026-08-26 13:18:39 UTC
+           Universal time: Wed 2026-08-26 13:18:39 UTC
+                 RTC time: Wed 2026-08-26 13:18:39
+                Time zone: UTC (UTC, +0000)
+System clock synchronized: yes
+              NTP service: active
+          RTC in local TZ: no
+       Server: 195.72.61.39 (0.nixos.pool.ntp.org)
+Poll interval: 34min 8s (min: 32s; max 34min 8s)
+         Leap: normal
+      Version: 4
+      Stratum: 4
+    Reference: CFC5577C
+    Precision: 1us (-25)
+Root distance: 831us (max: 5s)
+       Offset: -198us
+        Delay: 6.844ms
+       Jitter: 463us
+ Packet count: 309
+    Frequency: -5.182ppm
+Id=systemd-timesyncd.service
+LoadState=loaded
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/systemd-timesyncd.service
+ActiveEnterTimestamp=Wed 2026-08-19 07:59:52 UTC
+MainPID=3518947
+ExecStart={ path=/nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-timesyncd ; argv[]=/nix/store/mc901k2s1n3v1disrj0356l7lwz7l6vg-systemd-261.1/lib/systemd/systemd-timesyncd ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+Id=chronyd.service
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+FragmentPath=
+ActiveEnterTimestamp=
+MainPID=0
+Id=ntpd.service
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+FragmentPath=
+ActiveEnterTimestamp=
+MainPID=0
+# /etc/systemd/timesyncd.conf -> /nix/store/5ffhh7i1239zk277ggbpkfaq2qn8v4nh-etc-systemd-timesyncd.conf
+[Time]
+FallbackNTP=0.nixos.pool.ntp.org 1.nixos.pool.ntp.org 2.nixos.pool.ntp.org 3.nixos.pool.ntp.org
+
+
+## dual_clock_sample
+realtime_start_ns=1787750319749265919
+uptime_start_seconds=8269828.90
+realtime_end_ns=1787750321757053235
+uptime_end_seconds=8269830.91

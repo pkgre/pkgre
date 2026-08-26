@@ -1,0 +1,31 @@
+## collected_at
+2026-08-26T13:25:39.123347129Z
+## note
+Generated public unit/script declaration lines only;no certificate,key,account,or credential content read.
+
+## rust.pkg.re
+Id=acme-rust.pkg.re.service
+ExecStart={ path=/nix/store/y8zs6mqx5q00m4rvj3rqlz7sh7xh4a6l-unit-script-acme-rust.pkg.re-start/bin/acme-rust.pkg.re-start ; argv[]=/nix/store/y8zs6mqx5q00m4rvj3rqlz7sh7xh4a6l-unit-script-acme-rust.pkg.re-start/bin/acme-rust.pkg.re-start ; ignore_errors=no ; start_time=[Wed 2026-08-26 00:02:17 UTC] ; stop_time=[Wed 2026-08-26 00:02:17 UTC] ; pid=1315269 ; code=exited ; status=0 }
+User=acme
+Group=nginx
+StateDirectory=acme/rust.pkg.re
+script_path=/nix/store/y8zs6mqx5q00m4rvj3rqlz7sh7xh4a6l-unit-script-acme-rust.pkg.re-start/bin/acme-rust.pkg.re-start
+33:# Create files to match directory layout for real certificates
+
+## js.pkg.re
+Id=acme-js.pkg.re.service
+ExecStart={ path=/nix/store/3wpcajgr01q714sssf7m6lyjg8f9ga4s-unit-script-acme-js.pkg.re-start/bin/acme-js.pkg.re-start ; argv[]=/nix/store/3wpcajgr01q714sssf7m6lyjg8f9ga4s-unit-script-acme-js.pkg.re-start/bin/acme-js.pkg.re-start ; ignore_errors=no ; start_time=[Wed 2026-08-26 00:02:17 UTC] ; stop_time=[Wed 2026-08-26 00:02:17 UTC] ; pid=1315268 ; code=exited ; status=0 }
+User=acme
+Group=nginx
+StateDirectory=acme/js.pkg.re
+script_path=/nix/store/3wpcajgr01q714sssf7m6lyjg8f9ga4s-unit-script-acme-js.pkg.re-start/bin/acme-js.pkg.re-start
+33:# Create files to match directory layout for real certificates
+
+## dl.rust.pkg.re
+Id=acme-dl.rust.pkg.re.service
+ExecStart={ path=/nix/store/v0hrx1icds4pqqp1rgcapy5aj0kgi0ji-unit-script-acme-dl.rust.pkg.re-start/bin/acme-dl.rust.pkg.re-start ; argv[]=/nix/store/v0hrx1icds4pqqp1rgcapy5aj0kgi0ji-unit-script-acme-dl.rust.pkg.re-start/bin/acme-dl.rust.pkg.re-start ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+User=acme
+Group=nginx
+StateDirectory=acme/dl.rust.pkg.re
+script_path=/nix/store/v0hrx1icds4pqqp1rgcapy5aj0kgi0ji-unit-script-acme-dl.rust.pkg.re-start/bin/acme-dl.rust.pkg.re-start
+33:# Create files to match directory layout for real certificates

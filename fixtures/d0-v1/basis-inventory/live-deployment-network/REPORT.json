@@ -1,0 +1,705 @@
+{
+  "blockingOperatorInputs": [
+    "out-of-band attestation of Rain SSH-Ed25519 host key",
+    "Gandi credential permission repair+rotation/revocation+scope/audit evidence;metadata only",
+    "production SSH-Ed25519 signer principal+public fingerprint,allowedSigners path+digest,and revocation-set digest",
+    "release identity/custody plus intended rulesets,required checks,environment reviewers,and writer permissions",
+    "Rain state dataset/quota/reserve/persistent bind layout,static UID/GID mapping,parent+leaf modes/ACLs/idmap,sole writers/readers,and backup reader",
+    "production same-filesystem rename+fsync/power-loss proof and backup/restore policy+rehearsal",
+    "approval or replacement of separately recorded resource proposals and rollout horizons",
+    "exact Rain acceptance clock policy/config where current observation is insufficient"
+  ],
+  "claims": [
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/collection",
+        "raw/rain-host-live.txt#privilege_boundary",
+        "raw/rain-acme-declaration-live.txt#note"
+      ],
+      "id": "collection-boundary",
+      "summary": "Evidence collection was bounded and read-only;GitHub used authenticated REST GET;SSH identity was unprivileged wei;no provider/deployment/DNS mutation and no certificate,key,ACME-account,or credential value read.",
+      "values": {
+        "deploymentMutation": false,
+        "dnsMutation": false,
+        "providerMutation": false,
+        "secretValueRead": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-host-live.txt#identity"
+      ],
+      "id": "rain-host-generation",
+      "summary": "Rain ran NixOS generation bhfadnw\u2026 at collection time.",
+      "values": {
+        "nixpkgsRevision": "9588f1a6c197ae61c6222a3baa6ac220ec1cc4d9",
+        "system": "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-container-declaration-live.txt#nspawn_settings",
+        "raw/rain-container-live.txt#machine_system_identity"
+      ],
+      "id": "rain-container-generation",
+      "summary": "The running pkgre nspawn container used generation jai70s\u2026 and an ephemeral,read-only,idmapped snapshot.",
+      "values": {
+        "ephemeral": true,
+        "rootMount": "read-only,idmapped ZFS snapshot",
+        "system": "/nix/store/jai70s8kdn3jc71qvsn9l20zma9aam4g-nixos-system-pkgre-26.11.20260818.9588f1a"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-container-live.txt#machine_system_identity",
+        "raw/infra-repository-declared.txt#network rows"
+      ],
+      "id": "rain-container-addresses",
+      "summary": "The pkgre container had server address 10.22.2.5 and host-local address 10.131.7.4;host peer was declared as 10.131.7.1.",
+      "values": {
+        "container": [
+          "10.22.2.5",
+          "10.131.7.4"
+        ],
+        "hostPeer": "10.131.7.1"
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/infra-repository-declared.txt#classification",
+        "raw/infra-repository-declared.txt#infra_commit",
+        "raw/rain-host-live.txt#identity"
+      ],
+      "id": "deployed-source-commit",
+      "summary": "Live generations do not expose the exact infra source commit;5f68539\u2026 is the matching repository declaration,not a proven deployed-source identity.",
+      "values": {
+        "declaredInfraCommit": "5f68539bd99c6952b6d73fe2596c27ad4a319f57",
+        "deployedInfraCommit": null
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-host-live.txt#nginx_unit"
+      ],
+      "id": "nginx-runtime",
+      "summary": "Rain nginx 1.30.4 was active with the captured immutable config and SHA-256 digest.",
+      "values": {
+        "config": "/nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf",
+        "configSha256": "eeb69be6aebb5e69fdbc12c9019e648f64308b1738c153715411db607d701d51",
+        "version": "1.30.4"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-container-live.txt#host_processes",
+        "raw/infra-repository-declared.txt#port rows"
+      ],
+      "id": "legacy-backend-listeners",
+      "summary": "Legacy download and marker-proxy processes listened on host-local container endpoints 10.131.7.4:9008 and :9009.",
+      "values": {
+        "download": "10.131.7.4:9008",
+        "proxy": "10.131.7.4:9009"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/infra-repository-declared.txt#hosts/rain/containers/pkgre.nix",
+        "raw/public-dns-tls-http-live.txt#external_backend_denial"
+      ],
+      "id": "legacy-backend-firewall",
+      "summary": "Repository-declared container firewall admits ports 9008/9009 only from host-local 10.131.7.1;an external worker saw timeouts to public-IP ports.",
+      "values": {
+        "declaredAllowedSource": "10.131.7.1",
+        "externalProbe": "timeout",
+        "externalProbeVantage": "Talent worker public network"
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/public-dns-tls-http-live.txt#external_backend_denial"
+      ],
+      "id": "external-denial-scope",
+      "summary": "One external timeout observation does not prove all-vantage network denial or the future dynamic-listener boundary.",
+      "values": {
+        "globalDenialProved": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-container-live.txt#public_store_closure_from_process_paths",
+        "raw/rain-container-units-live.txt#service_paths_metadata"
+      ],
+      "id": "legacy-download-binary",
+      "summary": "pkgre-download-serve 0.1.0 ran from wjrv\u2026;its Nix closure size was 6,178,808 bytes.",
+      "values": {
+        "closureBytes": 6178808,
+        "storePath": "/nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-container-live.txt#public_store_closure_from_process_paths",
+        "raw/rain-container-units-live.txt#service_paths_metadata"
+      ],
+      "id": "legacy-proxy-binary",
+      "summary": "pkgre-proxy 0.2.0 ran from 1a25\u2026;its Nix closure size was 5,613,352 bytes.",
+      "values": {
+        "closureBytes": 5613352,
+        "storePath": "/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-container-units-live.txt#unit pkgre-download-serve.service",
+        "raw/rain-container-units-live.txt#unit pkgre-proxy.service"
+      ],
+      "id": "legacy-unit-hardening",
+      "summary": "Both legacy units used DynamicUser,empty capability bounding sets,NoNewPrivileges,ProtectSystem=strict,seccomp,and other captured hardening.",
+      "values": {
+        "capabilities": false,
+        "dynamicUser": true,
+        "noNewPrivileges": true,
+        "protectSystem": "strict",
+        "seccompObserved": true
+      }
+    },
+    {
+      "classification": "absent",
+      "evidence": [
+        "raw/rain-container-units-live.txt#unit pkgre-download-serve.service",
+        "raw/rain-container-units-live.txt#unit pkgre-proxy.service"
+      ],
+      "id": "legacy-unit-resource-contract",
+      "summary": "Legacy unit declarations had no explicit StateDirectory,MemoryHigh,MemoryMax,TasksMax,or LimitNOFILE values required for dynamic v1 instances.",
+      "values": {
+        "explicitLimitNOFILE": false,
+        "explicitMemoryHigh": false,
+        "explicitMemoryMax": false,
+        "explicitStateDirectory": false,
+        "explicitTasksMax": false
+      }
+    },
+    {
+      "classification": "absent",
+      "evidence": [
+        "raw/rain-container-units-live.txt",
+        "raw/rain-container-live.txt"
+      ],
+      "id": "dynamic-services",
+      "summary": "No pkgre-rust-serve or pkgre-js-serve unit,listener,state root,accepted manifest,or dynamic snapshot existed in the captured deployment.",
+      "values": {
+        "dynamicStateRoots": 0,
+        "jsServe": false,
+        "rustServe": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/public-dns-tls-http-live.txt#dns rust.pkg.re",
+        "raw/public-dns-tls-http-live.txt#dns js.pkg.re",
+        "raw/public-dns-tls-http-live.txt#dns dl.rust.pkg.re"
+      ],
+      "id": "dns-topology",
+      "summary": "Authoritative and recursive DNS returned rust.pkg.re\u2192pkgre.github.io,js.pkg.re\u2192rain.pacna.org,and dl.rust.pkg.re\u2192rain.pacna.org;Rain public IPv4 was 65.21.163.108.",
+      "values": {
+        "js": {
+          "ttl": 300,
+          "type": "CNAME",
+          "value": "rain.pacna.org."
+        },
+        "legacyDownload": {
+          "ttl": 10800,
+          "type": "CNAME",
+          "value": "rain.pacna.org."
+        },
+        "rainIPv4": "65.21.163.108",
+        "rust": {
+          "ttl": 300,
+          "type": "CNAME",
+          "value": "pkgre.github.io."
+        }
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/public-dns-tls-http-live.txt#tls_verify_brief",
+        "raw/public-dns-tls-http-live.txt#rain_direct_rust_tls"
+      ],
+      "id": "public-tls",
+      "summary": "TLS chain+hostname verification passed for rust.pkg.re,js.pkg.re,and dl.rust.pkg.re at collection time;Rain also presented a valid direct rust.pkg.re certificate.",
+      "values": {
+        "rainDirectRustVerified": true,
+        "verifiedHosts": [
+          "rust.pkg.re",
+          "js.pkg.re",
+          "dl.rust.pkg.re"
+        ]
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-host-live.txt#acme_unit_metadata",
+        "raw/rain-acme-declaration-live.txt"
+      ],
+      "id": "acme-runtime",
+      "summary": "Rain ACME units for rust.pkg.re and js.pkg.re had exited successfully in the active generation;all three units run as acme:nginx with per-name StateDirectory and unprinted credentials.",
+      "values": {
+        "group": "nginx",
+        "jsExitStatus": 0,
+        "rustExitStatus": 0,
+        "user": "acme"
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-host-live.txt#certificate_and_key_path_metadata_only"
+      ],
+      "id": "certificate-path-current-metadata",
+      "summary": "Unprivileged SSH could inspect ACME parent directories but could not traverse certificate/key leaves;current leaf metadata was unavailable.",
+      "values": {
+        "currentLeafMetadataAvailable": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/prior-privileged-path-metadata.txt#ACME metadata only"
+      ],
+      "id": "certificate-path-historical-metadata",
+      "summary": "A bounded same-generation historical record reported ACME directories 0750 acme:nginx and certificate/key leaves 0640 acme:nginx;contents were not read.",
+      "values": {
+        "directoryMode": "0750",
+        "group": "nginx",
+        "leafMode": "0640",
+        "owner": "acme"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/rust/pages",
+        "raw/github-pages-provider-live.json#/repositories/rust/deployments/0",
+        "raw/public-dns-tls-http-live.txt#http rust_canary"
+      ],
+      "id": "rust-pages",
+      "summary": "Rust Pages used workflow build from main,/;custom domain rust.pkg.re was verified;HTTPS enforcement and certificate approval were enabled;latest captured deployment at f9b5\u2026 succeeded.",
+      "values": {
+        "deploymentId": 6092749507,
+        "httpsEnforced": true,
+        "publicCanaryStatus": 200,
+        "tip": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b"
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/js/pages",
+        "raw/github-pages-provider-live.json#/repositories/js/deployments/0",
+        "raw/public-dns-tls-http-live.txt#http js_canary"
+      ],
+      "id": "js-pages",
+      "summary": "JS Pages used workflow build from main,/;custom domain js.pkg.re was saved+verified,but HTTPS enforcement was false;latest captured deployment at f43b\u2026 succeeded while Rain public canary returned 502.",
+      "values": {
+        "continuityAnchor": false,
+        "deploymentId": 6094120375,
+        "httpsEnforced": false,
+        "publicCanaryStatus": 502,
+        "tip": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17"
+      }
+    },
+    {
+      "classification": "absent",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/js/pages/https_enforced",
+        "raw/public-dns-tls-http-live.txt#http js_default_pages"
+      ],
+      "id": "js-pages-https-enforcement",
+      "summary": "GitHub Pages HTTPS enforcement for js.pkg.re was disabled at collection time and its default origin redirected to an http:// custom-domain URL.",
+      "values": {
+        "defaultOriginLocation": "http://js.pkg.re/origin-health/v1.txt",
+        "httpsEnforced": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/rust/repository_actions_permissions",
+        "raw/github-pages-provider-live.json#/repositories/js/repository_actions_permissions"
+      ],
+      "id": "pages-actions-policy",
+      "summary": "Rust Actions allowed selected actions and required SHA pinning;JS Actions allowed all actions and did not require SHA pinning.",
+      "values": {
+        "js": {
+          "allowed": "all",
+          "shaPinning": false
+        },
+        "rust": {
+          "allowed": "selected",
+          "shaPinning": true
+        }
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/rust/repository/default_tip",
+        "raw/github-pages-provider-live.json#/repositories/js/repository/default_tip"
+      ],
+      "id": "catalog-tip-signatures",
+      "summary": "Captured Rust default tip was GitHub-verified PGP;captured JS default tip was unsigned;neither is the required v1 SSH-Ed25519 release proof.",
+      "values": {
+        "js": "unsigned",
+        "rust": "verified-pgp",
+        "v1SshEd25519Ready": false
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/rust/artifacts/0",
+        "raw/github-pages-provider-live.json#/repositories/js/artifacts/0"
+      ],
+      "id": "pages-artifact-retention",
+      "summary": "Captured Pages artifacts used one-day retention and do not constitute durable D7 rollback bundles;restore order+independent artifact custody+rehearsal remain unresolved.",
+      "values": {
+        "durableRollbackBundle": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/public-dns-tls-http-live.txt#http rust_canary",
+        "raw/public-dns-tls-http-live.txt#http rust_config",
+        "raw/public-dns-tls-http-live.txt#http js_canary",
+        "raw/public-dns-tls-http-live.txt#http legacy_health",
+        "raw/public-dns-tls-http-live.txt#http legacy_archive_follow"
+      ],
+      "id": "public-legacy-routes",
+      "summary": "rust.pkg.re canary+config returned 200 via GitHub Pages;js.pkg.re canary returned 502 via Rain;dl.rust.pkg.re health+status returned 200;one legacy archive route returned 307 then exact expected archive bytes.",
+      "values": {
+        "archiveBytes": 13195,
+        "archiveInitialStatus": 307,
+        "archiveSha256": "28e416a3ab45838bac2ab2d81b1088d738d7b2d2c5272a54d39366565a29bd80",
+        "jsCanary": 502,
+        "legacyHealth": 200,
+        "legacyStatus": 200,
+        "rustCanary": 200,
+        "rustConfig": 200
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/public-dns-tls-http-live.txt#raw_host_sni_mismatch"
+      ],
+      "id": "wrong-host-dispatch",
+      "summary": "With registry SNI and Host invalid.example,the current edge selected an unrelated default vhost and issued a Keycloak 302 for all three names.",
+      "values": {
+        "hostsTested": [
+          "rust.pkg.re",
+          "js.pkg.re",
+          "dl.rust.pkg.re"
+        ],
+        "location": "https://admin.keycloak.pacna.net/admin/",
+        "status": 302
+      }
+    },
+    {
+      "classification": "absent",
+      "evidence": [
+        "raw/public-dns-tls-http-live.txt#raw_host_sni_mismatch",
+        "raw/rain-host-live.txt#nginx_target_config"
+      ],
+      "id": "exact-sni-authority-rejection",
+      "summary": "The required fail-closed exact SNI/vhost/authority rejection contract is not implemented by the captured edge.",
+      "values": {
+        "implemented": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-host-live.txt#time_services",
+        "raw/rain-host-live.txt#dual_clock_sample"
+      ],
+      "id": "time-sync",
+      "summary": "systemd-timesyncd was active;clock synchronized+NTP active;captured offset=-198us and root distance=831us.",
+      "values": {
+        "ntpActive": true,
+        "offsetUs": -198,
+        "rootDistanceUs": 831,
+        "service": "systemd-timesyncd",
+        "synchronized": true
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-host-live.txt#time_services",
+        "raw/rain-host-live.txt#dual_clock_sample"
+      ],
+      "id": "acceptance-clock-policy",
+      "summary": "The exact production dual-clock/future-skew acceptance policy and tolerance are not present in the deployment evidence;D1 cannot infer them from one clock sample.",
+      "values": {
+        "productionAcceptancePolicy": null
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-host-live.txt#filesystem_mount_zfs",
+        "raw/rain-container-live.txt#proc_status pid=1315904"
+      ],
+      "id": "host-filesystem",
+      "summary": "Rain /,/nix,and /var/lib are ZFS with xattr,posixacl,casesensitive;the ephemeral container root is a read-only idmapped ZFS snapshot.",
+      "values": {
+        "containerSnapshot": "read-only,idmapped",
+        "features": [
+          "xattr",
+          "posixacl",
+          "casesensitive"
+        ],
+        "filesystem": "zfs"
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-host-live.txt#filesystem_mount_zfs",
+        "raw/rain-host-live.txt#target_disk_usage",
+        "raw/rain-container-declaration-live.txt#machine_image_metadata"
+      ],
+      "id": "production-state-dataset",
+      "summary": "Dynamic state dataset identity,mount/subvolume,quota,reserve,free-space ceiling,and persistent bind layout are unavailable or undecided.",
+      "values": {
+        "dataset": null,
+        "quota": null,
+        "reserve": null,
+        "stateLayout": null
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-container-declaration-live.txt#nspawn_settings",
+        "raw/rain-host-live.txt#filesystem_mount_zfs"
+      ],
+      "id": "production-state-ownership",
+      "summary": "Static UID/GID mapping,all parent/leaf modes+ACLs,idmap contract,sole writer/readers,backup reader,and writable-path sandbox contract for each dynamic instance remain unresolved.",
+      "values": {
+        "completeIdentityTable": false
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-host-live.txt#filesystem_mount_zfs"
+      ],
+      "id": "production-rename-proof",
+      "summary": "Same-filesystem atomic-rename+file/directory fsync and power-loss behavior have not been proved on the intended Rain dynamic-state dataset.",
+      "values": {
+        "proved": false
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-host-live.txt#target_disk_usage",
+        "raw/rain-container-declaration-live.txt#nspawn_properties"
+      ],
+      "id": "backup-restore",
+      "summary": "No dynamic-state backup reader,backup format,restore command order,empty-root restore rehearsal,or remote-unavailable restart proof exists.",
+      "values": {
+        "backupDefined": false,
+        "restoreRehearsed": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/rain-host-live.txt#credential_path_metadata_only"
+      ],
+      "id": "gandi-credential-metadata",
+      "summary": "/var/lib/keys/pkgre-js-gandiv5-token was root:root mode 0644,size 41,ACL group/other readable;the value was not read.",
+      "values": {
+        "bytes": 41,
+        "group": "root",
+        "mode": "0644",
+        "owner": "root",
+        "path": "/var/lib/keys/pkgre-js-gandiv5-token",
+        "valueRead": false
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/rain-host-live.txt#credential_path_metadata_only",
+        "raw/infra-repository-declared.txt#hosts/rain/containers/pkgre.nix"
+      ],
+      "id": "gandi-credential-remediation",
+      "summary": "The over-broad Gandi token exposure requires operator permission repair,rotation/revocation,provider scope+audit review,and metadata-only returned evidence before D1.",
+      "values": {
+        "permissionRepaired": false,
+        "providerAuditReviewed": false,
+        "rotatedOrRevoked": false
+      }
+    },
+    {
+      "classification": "observed",
+      "evidence": [
+        "raw/ssh-host-key-continuity.txt"
+      ],
+      "id": "rain-ssh-continuity",
+      "summary": "Ten SSH-Ed25519 scans matched SHA256:+lFm\u2026 and SSH succeeded as wei;this is continuity/TOFU evidence only.",
+      "values": {
+        "algorithm": "ssh-ed25519",
+        "fingerprint": "SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI",
+        "matchingScans": 10,
+        "principal": "wei"
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/ssh-host-key-continuity.txt"
+      ],
+      "id": "rain-ssh-attestation",
+      "summary": "Production Rain host-key trust lacks operator out-of-band attestation;continuity/TOFU is insufficient.",
+      "values": {
+        "operatorAttested": false
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "raw/github-pages-provider-live.json#/repositories/rust/repository/default_tip",
+        "raw/github-pages-provider-live.json#/repositories/js/repository/default_tip"
+      ],
+      "id": "release-signing-authority",
+      "summary": "Production SSH-Ed25519 signer principal+fingerprint,allowedSigners path+digest,revocation-set digest,release identity/custody,and provider rules/reviewers/writer permissions remain operator-owned and unavailable.",
+      "values": {
+        "v1AuthorityComplete": false
+      }
+    },
+    {
+      "classification": "absent",
+      "evidence": [
+        "raw/infra-repository-declared.txt#hosts/rain/containers/pkgre.nix",
+        "raw/rain-container-units-live.txt"
+      ],
+      "id": "lan-instances",
+      "summary": "No LAN-public Rust or JS instance,hostname,listener,state root,catalog ref,credential,DNS view,or TLS identity exists in this packet;selection remains deferred to D13.",
+      "values": {
+        "selected": false
+      }
+    },
+    {
+      "classification": "blocked",
+      "evidence": [
+        "REPORT.md",
+        "validation.json"
+      ],
+      "id": "packet-verdict",
+      "summary": "Packet integrity can pass while plan D0 remains blocked;D1 implementation,schemas,server work,and infra edits are not authorized.",
+      "values": {
+        "d0Overall": "BLOCKED",
+        "d1Authorized": false,
+        "packetStatus": "PASS"
+      }
+    }
+  ],
+  "classificationCounts": {
+    "absent": 5,
+    "blocked": 13,
+    "observed": 24,
+    "proposed": 0
+  },
+  "classificationVocabulary": [
+    "observed",
+    "proposed",
+    "absent",
+    "blocked"
+  ],
+  "collectionWindow": {
+    "end": "2026-08-26T13:25:39.123347129Z",
+    "start": "2026-08-26T13:15:02.158697447Z"
+  },
+  "d0Overall": "BLOCKED",
+  "d1Authorized": false,
+  "limitations": [
+    "live source commit could not be read from Nix generations;repository-declared infra commit is not claimed as exact deployed provenance",
+    "unprivileged SSH could not traverse ACME leaf paths;historical same-generation metadata is labeled separately",
+    "one external timeout vantage is not proof of universal backend denial",
+    "provider API capture is bounded and does not supply future signing/governance authority",
+    "no new network,API,SSH,provider,or deployment action was performed during finalization"
+  ],
+  "networkDuringFinalization": "none;reports+checksums derived only from preserved raw files",
+  "operations": {
+    "deploymentMutation": false,
+    "dnsMutation": false,
+    "providerMutation": false,
+    "repositoryModifiedByCollection": false,
+    "secretsRead": false
+  },
+  "packetStatus": "PASS",
+  "rawFiles": {
+    "github-pages-provider-live.json": {
+      "bytes": 30590,
+      "sha256": "76bfa2c7d0740a2b8c2abd4c5fb42aa9d382a4ed3e7efe38c63aed5cf8e95656"
+    },
+    "infra-repository-declared.txt": {
+      "bytes": 19434,
+      "sha256": "e0fa3d8b92fea4d8653cc7877654645b3856f2f50b44016c414efed5854440a7"
+    },
+    "prior-privileged-path-metadata.txt": {
+      "bytes": 1373,
+      "sha256": "3a7db70949e6018497dbc80b7f58635fd31d376281492d6be0ef5bcac46cfda1"
+    },
+    "public-dns-tls-http-live.txt": {
+      "bytes": 17922,
+      "sha256": "ed985eacd2c4b0d2d13490548ba698b7b108e3dc1ca9d48039bd1cb8f154e639"
+    },
+    "rain-acme-declaration-live.txt": {
+      "bytes": 2114,
+      "sha256": "f1f5c3cd704e9c7971703a333c8cee97819d250795ea74e77536bf77d411b353"
+    },
+    "rain-container-declaration-live.txt": {
+      "bytes": 5126,
+      "sha256": "dd7af7553eaa9c9640a6154f8b31b944a64c74cfb08dc9c42d67208eeee2957b"
+    },
+    "rain-container-live.txt": {
+      "bytes": 13593,
+      "sha256": "d4b918e1294d906eb81fa5b001b1e86d4713fcee6eaa030ea0ea5f60b86d0944"
+    },
+    "rain-container-units-live.txt": {
+      "bytes": 39631,
+      "sha256": "19a0aca955aca128efd1ced1f360de6c4532baacc0fa5bb505251969e26353f5"
+    },
+    "rain-host-live.txt": {
+      "bytes": 17906,
+      "sha256": "31354b851b07aae96756bc8426da1690d530947e0378a5935a3c546992ea02db"
+    },
+    "ssh-host-key-continuity.txt": {
+      "bytes": 1677,
+      "sha256": "0b881cc8f015244391270c5ed7f27e8e035e5eb02f6129cfb9746d86fadb2554"
+    }
+  },
+  "schema": "pkgre-d0-live-deployment-network-report-v1",
+  "scope": "Rain live deployment,public DNS/TLS/HTTP,GitHub Pages,legacy services,filesystem/time,and credential metadata only"
+}
