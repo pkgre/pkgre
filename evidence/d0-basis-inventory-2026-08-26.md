@@ -93,7 +93,7 @@ Flake lock v7 pins `nixpkgs=2c423e03bbafcff28bfadc6781a4a8257f205cb5` (`narHash=
 | `pkgre-proxy` 0.2.0 | `packages.x86_64-linux.proxy` | `/nix/store/a0950b3qzcanrcalvwlp1b45nrya39xn-pkgre-proxy-0.2.0.drv`→`/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0` | fixed Git basis `066293df…` |
 | `pkgre-js` 0.1.0 | `packages.x86_64-linux.js` | `/nix/store/wvjs6v8qlpsjmg7vh569kabnax4bslvx-pkgre-js-0.1.0.drv`→`/nix/store/w571i59xsy6xabx7xp4n7mkxn6w76fv5-pkgre-js-0.1.0` | fixed Git basis `066293df…`;npm lock v3 |
 
-OBSERVED Cargo closure:lock v4;174 selected packages including two local roots;172 third-party packages;every third-party source is exactly `sparse+https://rust.pkg.re/`;indexer=55 packages/113 feature pairs;proxy=155/305;union=174/347. OBSERVED current `.cargo/config.toml` replaces crates.io but lacks mandatory `[net] offline=true`. BLOCKED:future `pkgre-rust-serve` feature/lock delta and removal of proxy-only `reqwest` closure do not exist;D3 admission remains blocked. Build/test evidence:173 Rust tests pass;47 JS tests pass;cached Nix outputs/checks pass;fresh-builder daemon RSS and native aarch64 execution are absent.
+OBSERVED Cargo closure:lock v4;174 selected packages including two local roots;172 third-party packages;every third-party source is exactly `sparse+https://rust.pkg.re/`;indexer=55 packages/113 feature pairs;proxy=155/305;union=174/347. OBSERVED current `.cargo/config.toml` replaces crates.io and has no `[net] offline=true`;D0 inventories this posture and does not edit config. LATER GATE(pre-D3):future `pkgre-rust-serve` feature/lock closure and removal of proxy-only `reqwest` closure must be admitted before server implementation. LATER GATE(pre-D5):`[net] offline=true` is mandatory for self-host/cold-replay fixtures. Build/test evidence:173 Rust tests pass;47 JS tests pass;cached Nix outputs/checks pass;fresh-builder daemon RSS and native aarch64 execution are absent.
 
 ## 6. JS client policy
 
@@ -237,7 +237,7 @@ Resource proposal still contains implementation-dependent/null hard-maxima input
 
 ABSENT:no LAN-public instance,hostname,origin,vhost,listener,address,range,firewall row,DNS view,TLS identity,catalog origin/full ref/bootstrap,config,state root,credential,signer,trust set,or public-base mode is selected. This is an explicit D0 deferral,not an invented placeholder and not authorization. Shared contract only:separate service identity,state root,trust set,credential path/readers,read-only provider,network admission,no public-instance reuse,and no catalog-selected trust/credential mechanism. D13 must create every concrete identity row before the first LAN source,implementation,configuration,credential,DNS,TLS,or deployment edit.
 
-## 15. Blocking register
+## 15. Open gate register
 
 | ID | Classification | Blocking fact | Primary evidence |
 |---|---|---|---|
@@ -255,7 +255,7 @@ ABSENT:no LAN-public instance,hostname,origin,vhost,listener,address,range,firew
 | D0-B12 | BLOCKED | acceptance clock policy unapproved;actual source/config and 24-hour Rain dual-clock/fault proof absent | `fixtures/d0-v1/basis-inventory/resource-time-lifecycle/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
 | D0-B13 | BLOCKED | protocol/header/config enums,complete hard maxima,trust digests,and compatibility/body/rollback instance digests remain absent/null | `fixtures/d0-v1/basis-inventory/rain-identity-design/`;`fixtures/d0-v1/basis-inventory/resource-time-lifecycle/` |
 | D0-B14 | LATER GATE(pre-D9/pre-D12) | D0 must not import bodies:Rust catalog currently has only 3/747 bodies;D2 may import or explicitly defer the blocking migration,with complete Rust/JS body closure mandatory before D9/D12 respectively | `fixtures/d0-v1/basis-inventory/rust-catalog/`;`fixtures/d0-v1/basis-inventory/js-catalog/` |
-| D0-B15 | BLOCKED | Cargo curated closure passes but mandatory `[net] offline=true` and future server lock/feature delta are absent | `fixtures/d0-v1/basis-inventory/rust-catalog/`;`fixtures/d0-v1/basis-inventory/toolchain-closure/` |
+| D0-B15 | LATER GATE(pre-D3/pre-D5) | D0 records that current `.cargo/config.toml` has no `[net] offline=true` and does not edit it;future server lock/feature closure must be admitted before D3 implementation,and `[net] offline=true` is mandatory for D5 self-host/cold-replay fixtures | `fixtures/d0-v1/basis-inventory/rust-catalog/`;`fixtures/d0-v1/basis-inventory/toolchain-closure/` |
 | D0-B16 | BLOCKED | JS live origin is unavailable and strict static rollback continuity/initial anchor is absent | `fixtures/d0-v1/basis-inventory/js-catalog/`;`fixtures/d0-v1/basis-inventory/public-routes/`;`fixtures/d0-v1/basis-inventory/git-storage/` |
 | D0-B17 | BLOCKED | Deno “current” is an alias of minimum 2.9.5,not independently newer coverage;scoped npm production fixture absent | `fixtures/d0-v1/basis-inventory/toolchain-closure/`;`fixtures/d0-v1/basis-inventory/js-catalog/` |
 | D0-B18 | BLOCKED historical constraint | one superseded Bun command contacted npmjs metadata;later loopback proof cannot erase incident | `fixtures/d0-v1/basis-inventory/js-client-policy/` |
@@ -263,7 +263,7 @@ ABSENT:no LAN-public instance,hostname,origin,vhost,listener,address,range,firew
 | D0-B20 | BLOCKED | enumerated route uniqueness+mapping covers only the source-derived current public URL universe;complete access logs were not captured,so access-log-only aliases and universal deployed-path completeness remain unproved | `fixtures/d0-v1/basis-inventory/public-routes/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
 | D0-B21 | ABSENT/BLOCKED | interim/early-hints `1xx` behavior was neither tested nor observed;D1 fixtures+later production-equivalent/real-edge proof must demonstrate the explicit no-`1xx` contract | `fixtures/d0-v1/basis-inventory/nginx-raw-target/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
 
-Closed bounded findings:fixed-basis refetch;route uniqueness+one-to-one mapping within the enumerated source-derived universe;current Rust+JS catalog closures;current Rust archive byte total;Cargo selected closure;isolated SSH signing compatibility;isolated nginx raw-field transport primitive;JS loopback client-policy subrun. Universal/access-log route completeness and `1xx` behavior remain blocked. None closes the blocking register above.
+Closed bounded findings:fixed-basis refetch;route uniqueness+one-to-one mapping within the enumerated source-derived universe;current Rust+JS catalog closures;current Rust archive byte total;Cargo selected closure;isolated SSH signing compatibility;isolated nginx raw-field transport primitive;JS loopback client-policy subrun. Universal/access-log route completeness and `1xx` behavior remain blocked. None closes the immediate blockers or later phase gates above.
 
 ## 16. OPERATOR-HANDOFF D0
 
