@@ -1,0 +1,102 @@
+{
+  "blockers": [
+    "plan-wide D0 evidence outside this client-policy scope",
+    "historical public-contact constraint failure",
+    "independent review+Git commit absent;packet directory is not a Git repository"
+  ],
+  "d0Overall": "BLOCKED",
+  "d1Authorized": false,
+  "incident": {
+    "constraint": "no-public-registry-contact",
+    "impact": "one metadata GET;no install/publish/login/token/mutation",
+    "path": "raw/incident.txt",
+    "request": "GET https://registry.npmjs.org/probe-missing",
+    "response": 404,
+    "sha256": "9d06853e9fa692c4b6347af8ac4bb85049d76322c41330768b5782e5df888efe",
+    "status": "FAIL-historical"
+  },
+  "limitations": [
+    "existing clean subrun not rerun during finalization",
+    "production profile structurally verified only;no production request",
+    "strace socket observation is not a formal covert-channel proof"
+  ],
+  "networkDuringFinalization": "none;existing loopback subrun not rerun",
+  "packetStatus": "PASS",
+  "precedence": {
+    "bun-1.3.14": "project .npmrc overrides explicit/project bunfig;environment and CLI registry override project .npmrc",
+    "bun-1.4.0": "CLI registry > BUN_CONFIG_REGISTRY/NPM_CONFIG_REGISTRY > explicit/project bunfig > project .npmrc > user/global",
+    "deno-age": "deno install CLI --minimum-dependency-age > deno.json > .npmrc/NPM_CONFIG_MIN_RELEASE_AGE;deno ci has no equivalent override",
+    "deno-registry": "NPM_CONFIG_REGISTRY > project .npmrc > HOME/.npmrc;NPM_CONFIG_USERCONFIG ignored",
+    "npm": "CLI --registry > NPM_CONFIG_REGISTRY > project .npmrc > selected user config;CLI --userconfig > NPM_CONFIG_USERCONFIG"
+  },
+  "profiles": {
+    "loopback": {
+      "path": "configs/loopback/profile.json",
+      "registry": "http://127.0.0.1:48730/",
+      "testOnly": true
+    },
+    "production": {
+      "executed": false,
+      "path": "configs/production/profile.json",
+      "registry": "https://js.pkg.re/"
+    }
+  },
+  "schema": "pkgre-d0-js-client-policy-final-report-v2",
+  "scope": "JavaScript client-policy packet only",
+  "subrun": {
+    "clients": [
+      "npm-minimum",
+      "npm-current",
+      "bun-minimum",
+      "bun-current",
+      "deno-minimum",
+      "deno-current"
+    ],
+    "counts": {
+      "accepted": 36,
+      "cases": 66,
+      "networkConnects": 36,
+      "registryRequests": 36,
+      "rejections": 30,
+      "unexpectedNetworkConnects": 0
+    },
+    "invariants": {
+      "ageSelections": true,
+      "allRejectionsBeforeClientExec": true,
+      "cacheOnlyZeroNetwork": true,
+      "coldObservedRegistry": true,
+      "frozenCommandsExact": true,
+      "onlyLoopbackRegistryDestination": true,
+      "warmBounded": true
+    },
+    "path": "raw/subrun/RESULT.json",
+    "sandbox": {
+      "egressPossible": false,
+      "interfaces": [
+        "lo"
+      ],
+      "registry": "http://127.0.0.1:48730/",
+      "type": "unshare user+network namespace"
+    },
+    "sha256": "ed3fa224b9305805c70ee5fcbc9680f6ec6287eeff482ef08f715952d9e7e525",
+    "status": "PASS"
+  },
+  "verification": {
+    "checksumCoverage": "all regular files except manifest itself",
+    "checksums": "SHA256SUMS",
+    "secretScan": "offline pattern+high-entropy;PASS",
+    "verifier": "verify_artifact.py",
+    "whitespace": "git diff --no-index --check per file:303/313 clean;10 preserved Deno stderr transcripts have new blank line at EOF;0 trailing-whitespace findings"
+  },
+  "wrapper": {
+    "failClosedAgainst": [
+      "caller CLI extras",
+      "NPM_CONFIG_*/BUN_CONFIG_*/DENO_* and token/proxy/TLS environment",
+      "project/user/global config",
+      "manifest alternate sources/scripts/trustedDependencies",
+      "lock extensions/foreign URLs/scripts/schema drift"
+    ],
+    "path": "wrappers/policy_wrapper.py",
+    "schema": "pkgre-js-client-policy-wrapper-v1"
+  }
+}

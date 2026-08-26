@@ -1,0 +1,7 @@
+node=v24.15.0 npm=12.0.2
+
+up to date in 132ms
+rc=0
+age-probe 1.0.0 http://127.0.0.1:4999/age-probe/-/age-probe-1.0.0.tgz
+pkgre-js 2.0.0 http://127.0.0.1:4999/pkgre-js/-/pkgre-js-2.0.0.tgz
+lockfileVersion 3

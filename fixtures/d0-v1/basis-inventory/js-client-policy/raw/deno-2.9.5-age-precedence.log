@@ -1,0 +1,4 @@
+config_P30D rc=0 selected=1.0.0
+npmrc_zero rc=0 selected=1.0.0
+env_zero rc=0 selected=1.0.0
+cli_zero rc=0 selected=2.0.0

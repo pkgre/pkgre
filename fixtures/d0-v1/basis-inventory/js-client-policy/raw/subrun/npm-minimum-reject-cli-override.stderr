@@ -1,0 +1,1 @@
+{"clientExecAttempted": false, "clientId": "npm-minimum", "decision": "REJECT", "detail": "--registry=https://registry.npmjs.org/", "mode": "inspect", "rejectCode": "HOSTILE_CLI", "schema": "pkgre-js-client-policy-wrapper-v1"}

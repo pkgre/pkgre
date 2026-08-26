@@ -1,0 +1,21 @@
+version=1.4.0
+bun install v1.4.0 (34cbb9a40)
+Resolving dependencies
+Resolved, downloaded and extracted [8]
+Saved lockfile
+
++ age-probe@1.0.0
++ pkgre-js@2.0.0
+
+2 packages installed [8.00ms]
+rc=0
+lock selections:
+        "age-probe": "*",
+        "pkgre-js": "*",
+    "age-probe": ["age-probe@1.0.0", "http://127.0.0.1:4890/age-probe/-/age-probe-1.0.0.tgz", {}, "sha512-1s8RYEby6j8Cti+HoViX/6FxNp0Ztqjch4/+BoYOH0eowO2VTVBRQG8WJJ3/7uwspnHlCD8019HYwq5sfWk/ZQ=="],
+    "pkgre-js": ["pkgre-js@2.0.0", "http://127.0.0.1:4890/pkgre-js/-/pkgre-js-2.0.0.tgz", {}, "sha512-PK81MOZOtRCoNifjqC4sxJqruxo/KdwmVzq2KHxZibvYABXs5Afxw40see/a3yx4RWjOhE9HWHczgQvB/Ze4pg=="],
+requests:
+/age-probe
+/pkgre-js
+/age-probe/-/age-probe-1.0.0.tgz
+/pkgre-js/-/pkgre-js-2.0.0.tgz

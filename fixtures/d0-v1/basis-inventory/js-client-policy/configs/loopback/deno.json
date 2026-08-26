@@ -1,0 +1,12 @@
+{
+  "minimumDependencyAge": {
+    "age": "P30D",
+    "exclude": ["npm:pkgre-js"]
+  },
+  "allowScripts": [],
+  "nodeModulesDir": "manual",
+  "lock": {
+    "path": "./deno.lock",
+    "frozen": true
+  }
+}

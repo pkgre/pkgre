@@ -1,0 +1,1 @@
+{"clientExecAttempted": false, "clientId": "npm-current", "decision": "REJECT", "detail": "NPM_CONFIG_USERCONFIG", "mode": "inspect", "rejectCode": "HOSTILE_ENV", "schema": "pkgre-js-client-policy-wrapper-v1"}

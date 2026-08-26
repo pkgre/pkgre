@@ -1,0 +1,12 @@
+Initialize age-probe@1.0.0
+Initialize pkgre-js@2.0.0
+Installed 2 packages in 2ms
+Reused 2 packages from cache
+++
+Downloaded 0 packages from JSR
+Downloaded 0 packages from npm
+
+Dependencies:
++ npm:age-probe 1.0.0
++ npm:pkgre-js 2.0.0
+

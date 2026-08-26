@@ -1,0 +1,7 @@
+[install]
+registry = "http://127.0.0.1:48730/"
+minimumReleaseAge = 2592000
+minimumReleaseAgeExcludes = ["pkgre-js"]
+ignoreScripts = true
+auto = "disable"
+frozenLockfile = false

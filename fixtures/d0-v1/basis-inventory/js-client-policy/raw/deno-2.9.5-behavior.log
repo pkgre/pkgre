@@ -1,0 +1,94 @@
+$ generate lock/cache with baseline config overridden only by --frozen=false
+Download http://127.0.0.1:4900/age-probe
+Download http://127.0.0.1:4900/pkgre-js
+Download http://127.0.0.1:4900/age-probe/-/age-probe-1.0.0.tgz
+Download http://127.0.0.1:4900/pkgre-js/-/pkgre-js-2.0.0.tgz
+Initialize age-probe@1.0.0
+Initialize pkgre-js@2.0.0
+Installed 2 packages in 11ms
+Reused 0 packages from cache
+Downloaded 0 packages from JSR
+Downloaded 2 packages from npm
+++
+
+Dependencies:
++ npm:age-probe 1.0.0
++ npm:pkgre-js 2.0.0
+
+╭ Warning
+│
+│  Ignored build scripts for packages:
+│  npm:age-probe@1.0.0
+│  npm:pkgre-js@2.0.0
+│
+│  Run "deno approve-scripts" to run build scripts.
+╰─
+rc=0
+$ lock selections
+    "npm:age-probe@*": "1.0.0",
+    "npm:pkgre-js@*": "2.0.0"
+    "age-probe@1.0.0": {
+      "tarball": "http://127.0.0.1:4900/age-probe/-/age-probe-1.0.0.tgz"
+    "pkgre-js@2.0.0": {
+      "tarball": "http://127.0.0.1:4900/pkgre-js/-/pkgre-js-2.0.0.tgz"
+        "npm:age-probe@*",
+        "npm:pkgre-js@*"
+node_modules_after_install=present
+$ exact deno ci
+Removing /tmp/tmp.q5VkNrsZ9b/proj/node_modules
+Initialize age-probe@1.0.0
+Initialize pkgre-js@2.0.0
+Installed 2 packages in 0ms
+Reused 2 packages from cache
+++
+Downloaded 0 packages from JSR
+Downloaded 0 packages from npm
+
+Dependencies:
++ npm:age-probe 1.0.0
++ npm:pkgre-js 2.0.0
+
+╭ Warning
+│
+│  Ignored build scripts for packages:
+│  npm:age-probe@1.0.0
+│  npm:pkgre-js@2.0.0
+│
+│  Run "deno approve-scripts" to run build scripts.
+╰─
+rc=0
+node_modules_after_ci=present sentinel_after=no script_markers=0
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/pkgre-js
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/age-probe
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/.deno/.setup-cache.bin
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/.deno/age-probe@1.0.0/.scripts-warned
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/.deno/age-probe@1.0.0/.initialized
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/.deno/pkgre-js@2.0.0/.scripts-warned
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/.deno/pkgre-js@2.0.0/.initialized
+/tmp/tmp.q5VkNrsZ9b/proj/node_modules/.deno/.deno.lock
+$ requests
+4900 /age-probe
+4900 /pkgre-js
+4900 /age-probe/-/age-probe-1.0.0.tgz
+4900 /pkgre-js/-/pkgre-js-2.0.0.tgz
+$ frozen mismatch
+Removing /tmp/tmp.q5VkNrsZ9b/proj/node_modules
+Download http://127.0.0.1:4900/selection-probe
+error: The lockfile is out of date. Run `deno install --frozen=false`, or rerun with `--frozen=false` to update it.
+changes:
+ 5 | -    "npm:pkgre-js@*": "2.0.0"
+ 5 | +    "npm:pkgre-js@*": "2.0.0",
+ 6 | +    "npm:selection-probe@1.0.0": "1.0.0"
+   | ...
+18 | +    },
+19 | +    "selection-probe@1.0.0": {
+20 | +      "integrity": "sha512-ZQT/l+ilmog2gHnCuO/D/EP+PouRXh2LWrQ5I97ZWL2uFlmTqYgWF8qo9sJAXflGoc171oB0lronkREM07wJ9Q==",
+21 | +      "scripts": true,
+22 | +      "tarball": "http://127.0.0.1:4900/selection-probe/-/selection-probe-1.0.0.tgz"
+   | ...
+23 | -        "npm:pkgre-js@*"
+29 | +        "npm:pkgre-js@*",
+30 | +        "npm:selection-probe@1.0.0"
+rc=1
+mismatch_requests:
+4900 /selection-probe

@@ -1,0 +1,6 @@
+sandbox=loopback-only-netns status=PASS cases=66
+clients=npm-minimum,npm-current,bun-minimum,bun-current,deno-minimum,deno-current
+rejections=30 accepted=36
+networkConnects=36 unexpected=0 registryRequests=36
+invariants={"ageSelections": true, "allRejectionsBeforeClientExec": true, "cacheOnlyZeroNetwork": true, "coldObservedRegistry": true, "frozenCommandsExact": true, "onlyLoopbackRegistryDestination": true, "warmBounded": true}
+resultSha256=ed3fa224b9305805c70ee5fcbc9680f6ec6287eeff482ef08f715952d9e7e525

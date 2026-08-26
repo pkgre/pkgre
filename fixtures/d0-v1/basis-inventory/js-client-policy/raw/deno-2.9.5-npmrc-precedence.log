@@ -1,0 +1,14 @@
+project .npmrc vs HOME .npmrc
+rc=0
+4912 4912 /selection-probe,NPM_CONFIG_USERCONFIG vs project .npmrc
+rc=0
+4912 4912 /selection-probe,HOME .npmrc when project .npmrc absent
+rc=0
+4911 4911 /selection-probe,NPM_CONFIG_REGISTRY overrides HOME .npmrc
+rc=0
+4914 4914 /selection-probe,deno ci rejects --config
+error: unexpected argument '--config' found
+
+Usage: deno ci [OPTIONS]
+
+rc=1

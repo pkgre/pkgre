@@ -1,0 +1,5 @@
+constraint=no-public-registry-contact
+result=FAIL
+observed=During the first Bun probe, `bun install --config /tmp/policy.toml ...` placed `--config` after the subcommand and used a space-separated value; Bun interpreted the path as a dependency, did not apply the policy registry, then a deliberately missing dependency produced `GET https://registry.npmjs.org/probe-missing - 404`.
+scope=At least one public npm metadata GET was observed; no package installation, publish, login, token, or mutation occurred.
+correction=All subsequent Bun probes used `--config=/absolute/path` and loopback registries only; authoritative results exclude the superseded first probe.

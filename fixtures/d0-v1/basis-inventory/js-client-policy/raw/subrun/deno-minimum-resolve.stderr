@@ -1,0 +1,16 @@
+Download http://127.0.0.1:48730/age-probe
+Download http://127.0.0.1:48730/pkgre-js
+Download http://127.0.0.1:48730/age-probe/-/age-probe-1.0.0.tgz
+Download http://127.0.0.1:48730/pkgre-js/-/pkgre-js-2.0.0.tgz
+Initialize age-probe@1.0.0
+Initialize pkgre-js@2.0.0
+Installed 2 packages in 5ms
+Reused 0 packages from cache
+Downloaded 0 packages from JSR
+Downloaded 2 packages from npm
+++
+
+Dependencies:
++ npm:age-probe 1.0.0
++ npm:pkgre-js 2.0.0
+

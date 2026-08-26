@@ -1,0 +1,7 @@
+[install]
+registry = "https://js.pkg.re/"
+minimumReleaseAge = 2592000
+minimumReleaseAgeExcludes = ["pkgre-js"]
+ignoreScripts = true
+auto = "disable"
+frozenLockfile = true

@@ -1,0 +1,89 @@
+$ nix-build --no-out-link --option substituters "" --option builders "" provenance/deno-current-independent.nix
+this derivation will be built:
+  /nix/store/jsnp4gnaqg5j73ar1n0ka0k3idyx1xrz-pkgre-js-compat-deno-current-independent-2.9.5.drv
+building '/nix/store/jsnp4gnaqg5j73ar1n0ka0k3idyx1xrz-pkgre-js-compat-deno-current-independent-2.9.5.drv'...
+Running phase: patchPhase
+Running phase: updateAutotoolsGnuConfigScriptsPhase
+Running phase: configurePhase
+no configure script, doing nothing
+Running phase: buildPhase
+no Makefile or custom buildPhase, doing nothing
+Running phase: installPhase
+Running phase: fixupPhase
+shrinking RPATHs of ELF executables and libraries in /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5
+shrinking /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5/bin/deno
+checking for references to /build/ in /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5...
+patching script interpreter paths in /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5
+stripping (with command strip and flags -S -p) in /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5/bin
+automatically fixing dependencies for ELF files
+{'add_existing': True,
+ 'append_rpaths': [],
+ 'extra_args': [],
+ 'ignore_missing': [],
+ 'keep_libc': False,
+ 'libs': [PosixPath('/nix/store/xvm9lan870i8vy003ldvr8wxldb41xn2-auto-patchelf-hook/lib'),
+          PosixPath('/nix/store/vrh8jxcxagh2i75nnax8a1vz8dzwbsbx-auto-patchelf-0-unstable-2024-08-14/lib'),
+          PosixPath('/nix/store/vjzk5gfvq5hm66lhksmkddzmpvb7x9bj-binutils-wrapper-2.46/lib'),
+          PosixPath('/nix/store/jyljmf7fiy8pya39flyfs3xlyqr7j7ya-unzip-6.0/lib'),
+          PosixPath('/nix/store/iyinjjn7gv8c77w9qgicfmz4mc4dwq5j-patchelf-0.15.2/lib'),
+          PosixPath('/nix/store/yxd0x5xa3s1iayxy59rgn0r3wjrgd6pj-update-autotools-gnu-config-scripts-hook/lib'),
+          PosixPath('/nix/store/0y5xmdb7qfvimjwbq7ibg1xdgkgjwqng-no-broken-symlinks.sh/lib'),
+          PosixPath('/nix/store/cv1d7p48379km6a85h4zp6kr86brh32q-audit-tmpdir.sh/lib'),
+          PosixPath('/nix/store/85clx3b0xkdf58jn161iy80y5223ilbi-compress-man-pages.sh/lib'),
+          PosixPath('/nix/store/p3l1a5y7nllfyrjn2krlwgcc3z0cd3fq-make-symlinks-relative.sh/lib'),
+          PosixPath('/nix/store/5yzw0vhkyszf2d179m0qfkgxmp5wjjx4-move-docs.sh/lib'),
+          PosixPath('/nix/store/fyaryjvghbkpfnsyw97hb3lyb37s1pd6-move-lib64.sh/lib'),
+          PosixPath('/nix/store/kd4xwxjpjxi71jkm6ka0np72if9rm3y0-move-sbin.sh/lib'),
+          PosixPath('/nix/store/pag6l61paj1dc9sv15l7bm5c17xn5kyk-move-systemd-user-units.sh/lib'),
+          PosixPath('/nix/store/cmzya9irvxzlkh7lfy6i82gbp0saxqj3-multiple-outputs.sh/lib'),
+          PosixPath('/nix/store/x8c40nfigps493a07sdr2pm5s9j1cdc0-patch-shebangs.sh/lib'),
+          PosixPath('/nix/store/cickvswrvann041nqxb0rxilc46svw1n-prune-libtool-files.sh/lib'),
+          PosixPath('/nix/store/xyff06pkhki3qy1ls77w10s0v79c9il0-reproducible-builds.sh/lib'),
+          PosixPath('/nix/store/z7k98578dfzi6l3hsvbivzm7hfqlk0zc-set-source-date-epoch-to-latest.sh/lib'),
+          PosixPath('/nix/store/89igyzp72y4ky0qyj4x5r52z84w203ki-strip.sh/lib'),
+          PosixPath('/nix/store/r48746qznwqxxl9qzd8f08ny8mg1dg2y-gcc-15.3.0-lib/lib'),
+          PosixPath('/nix/store/xvm9lan870i8vy003ldvr8wxldb41xn2-auto-patchelf-hook/lib'),
+          PosixPath('/nix/store/vrh8jxcxagh2i75nnax8a1vz8dzwbsbx-auto-patchelf-0-unstable-2024-08-14/lib'),
+          PosixPath('/nix/store/vjzk5gfvq5hm66lhksmkddzmpvb7x9bj-binutils-wrapper-2.46/lib'),
+          PosixPath('/nix/store/jyljmf7fiy8pya39flyfs3xlyqr7j7ya-unzip-6.0/lib'),
+          PosixPath('/nix/store/iyinjjn7gv8c77w9qgicfmz4mc4dwq5j-patchelf-0.15.2/lib'),
+          PosixPath('/nix/store/yxd0x5xa3s1iayxy59rgn0r3wjrgd6pj-update-autotools-gnu-config-scripts-hook/lib'),
+          PosixPath('/nix/store/0y5xmdb7qfvimjwbq7ibg1xdgkgjwqng-no-broken-symlinks.sh/lib'),
+          PosixPath('/nix/store/cv1d7p48379km6a85h4zp6kr86brh32q-audit-tmpdir.sh/lib'),
+          PosixPath('/nix/store/85clx3b0xkdf58jn161iy80y5223ilbi-compress-man-pages.sh/lib'),
+          PosixPath('/nix/store/p3l1a5y7nllfyrjn2krlwgcc3z0cd3fq-make-symlinks-relative.sh/lib'),
+          PosixPath('/nix/store/5yzw0vhkyszf2d179m0qfkgxmp5wjjx4-move-docs.sh/lib'),
+          PosixPath('/nix/store/fyaryjvghbkpfnsyw97hb3lyb37s1pd6-move-lib64.sh/lib'),
+          PosixPath('/nix/store/kd4xwxjpjxi71jkm6ka0np72if9rm3y0-move-sbin.sh/lib'),
+          PosixPath('/nix/store/pag6l61paj1dc9sv15l7bm5c17xn5kyk-move-systemd-user-units.sh/lib'),
+          PosixPath('/nix/store/cmzya9irvxzlkh7lfy6i82gbp0saxqj3-multiple-outputs.sh/lib'),
+          PosixPath('/nix/store/x8c40nfigps493a07sdr2pm5s9j1cdc0-patch-shebangs.sh/lib'),
+          PosixPath('/nix/store/cickvswrvann041nqxb0rxilc46svw1n-prune-libtool-files.sh/lib'),
+          PosixPath('/nix/store/xyff06pkhki3qy1ls77w10s0v79c9il0-reproducible-builds.sh/lib'),
+          PosixPath('/nix/store/z7k98578dfzi6l3hsvbivzm7hfqlk0zc-set-source-date-epoch-to-latest.sh/lib'),
+          PosixPath('/nix/store/89igyzp72y4ky0qyj4x5r52z84w203ki-strip.sh/lib'),
+          PosixPath('/nix/store/r48746qznwqxxl9qzd8f08ny8mg1dg2y-gcc-15.3.0-lib/lib')],
+ 'paths': [PosixPath('/nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5')],
+ 'preserve_origin': False,
+ 'recursive': True,
+ 'runtime_dependencies': [],
+ 'structured_logs': False}
+setting interpreter of /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5/bin/deno
+searching for dependencies of /nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5/bin/deno
+    libgcc_s.so.1 -> found: /nix/store/cjgm8gv32xdrjgzbgc0zk2fypiys9ylf-gcc-15.3.0-libgcc/lib
+setting RPATH to: /nix/store/cjgm8gv32xdrjgzbgc0zk2fypiys9ylf-gcc-15.3.0-libgcc/lib
+auto-patchelf: 0 dependencies could not be satisfied
+Running phase: installCheckPhase
+out=/nix/store/pfwrkxxcvdx1hh1i02hffb3mbi92igkg-pkgre-js-compat-deno-current-independent-2.9.5
+drv=/nix/store/jsnp4gnaqg5j73ar1n0ka0k3idyx1xrz-pkgre-js-compat-deno-current-independent-2.9.5.drv
+version=deno 2.9.5 (stable, release, x86_64-unknown-linux-gnu)
+narHash=sha256:1hhn907xmir30nbryisckqpxhgx9j2kqh3wxfh92k9vxqbm5qhij
+archiveSha256=8b010a3b1a4a0188a67cdb8a7a27348b2a501af78aec7fc74f2ace167368d530
+archiveNixHash=sha256-iwEKOxpKAYimfNuKeic0iypQGveK7H/HTyrOFnNo1TA=
+nixpkgsRevision=2c423e03bbafcff28bfadc6781a4a8257f205cb5
+nixpkgsSource=/nix/store/d6mryll7gbj6hbczvyrvnflcyxxq11zn-source
+sourceExpressionSha256=7ca383d2005f2b07ac8984984dfd668aa5e99351d052c3cced23667a94756ed2
+minimumDrv=/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv
+independentDrv=/nix/store/jsnp4gnaqg5j73ar1n0ka0k3idyx1xrz-pkgre-js-compat-deno-current-independent-2.9.5.drv
+independentDrv=true
+networkPolicy=substituters-empty;builders-empty;local immutable archive only

@@ -1,0 +1,5 @@
+automatic rc=1 requests=4874 /precedence-probe,
+explicit rc=1 requests=4875 /precedence-probe,
+BUN_CONFIG_REGISTRY rc=1 requests=4876 /precedence-probe,
+NPM_CONFIG_REGISTRY rc=1 requests=4877 /precedence-probe,
+CLI_registry rc=1 requests=4878 /precedence-probe,

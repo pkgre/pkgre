@@ -1,0 +1,1 @@
+{"clientExecAttempted": false, "clientId": "deno-minimum", "decision": "REJECT", "detail": "--config=/tmp/hostile", "mode": "inspect", "rejectCode": "HOSTILE_CLI", "schema": "pkgre-js-client-policy-wrapper-v1"}

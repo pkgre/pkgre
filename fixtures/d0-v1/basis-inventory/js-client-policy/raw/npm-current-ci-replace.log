@@ -1,0 +1,8 @@
+locked=http://localhost:4999/age-probe/-/age-probe-1.0.0.tgz
+
+added 1 package in 118ms
+rc=0
+requests:
+4930 /npm
+4930 /age-probe/-/age-probe-1.0.0.tgz
+script_markers=0

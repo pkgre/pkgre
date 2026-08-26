@@ -1,0 +1,5 @@
+version=1.4.0
+error: Cannot find package 'auto-probe' from '/tmp/tmp.n6cwfHiTvW/current/probe.js'
+
+Bun v1.4.0 (Linux x64)
+rc=1

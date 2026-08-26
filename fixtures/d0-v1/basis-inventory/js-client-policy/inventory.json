@@ -1,0 +1,328 @@
+{
+  "blockers": [
+    {
+      "detail": "A hostile project .npmrc overrides the controlled bunfig registry even when --config= is explicit; canonical baseline requirement is not met by client configuration alone.",
+      "id": "BUN-1.3.14-PRECEDENCE",
+      "severity": "blocking"
+    },
+    {
+      "detail": "An initial superseded Bun probe contacted registry.npmjs.org after CLI misparsing; see raw/incident.txt.",
+      "id": "NO-PUBLIC-CONTACT-CONSTRAINT",
+      "severity": "task-constraint-failure"
+    }
+  ],
+  "bun": {
+    "acceptedConfig": {
+      "install.auto": "disable",
+      "install.frozenLockfile": true,
+      "install.ignoreScripts": true,
+      "install.minimumReleaseAge": 2592000,
+      "install.minimumReleaseAgeExcludes": [
+        "pkgre-js"
+      ],
+      "install.registry": "URL",
+      "package.json.trustedDependencies": []
+    },
+    "behavior": {
+      "autoDisable": "PASS: missing import failed locally without auto-install",
+      "frozenWithLock": "PASS",
+      "frozenWithoutLock": "Bun succeeds and writes no lock for an empty project; committed-lock precheck remains mandatory",
+      "ignoreScripts": "PASS: root/dependency scripts did not run in fixtures",
+      "minimumAge": "PASS: old age-probe selected; excluded young pkgre-js selected",
+      "trustedDependencies": "accepted as package.json field; Bun does not require explicit presence, so scanner must"
+    },
+    "cleanInvocation": "env -i HOME=$home XDG_CONFIG_HOME=$xdg BUN_INSTALL_CACHE_DIR=$cache PATH=$bun/bin bun --config=$policy install --frozen-lockfile --ignore-scripts",
+    "configSelection": {
+      "safeSpelling": "--config=/absolute/path",
+      "spaceAfterSubcommand": "unsafe/ambiguous in observed invocation; path was parsed as a dependency"
+    },
+    "effectiveInspection": {
+      "detail": "no Bun command prints the merged effective install config; behavior/socket assertion required",
+      "result": "ABSENT"
+    },
+    "frozenCommand": {
+      "command": "bun install --frozen-lockfile --ignore-scripts",
+      "result": "PASS with a lock at 1.3.14 and 1.4.0"
+    },
+    "lockBehavior": {
+      "schema": "text bun.lock",
+      "source": "exact registry tarball URL retained",
+      "sourcePolicy": "no allow-* equivalent; scanner mandatory"
+    },
+    "precedenceObserved": {
+      "1.3.14": "project .npmrc registry overrode both project bunfig and explicit --config= bunfig; minimum baseline therefore fails the canonical precedence assumption",
+      "1.4.0": "CLI registry > BUN_CONFIG_REGISTRY or NPM_CONFIG_REGISTRY > explicit/project bunfig > project .npmrc > user/global sources"
+    },
+    "versionsTested": [
+      "1.3.14",
+      "1.4.0"
+    ]
+  },
+  "canonicalPlan": {
+    "path": "plans/pkgre-dynamic-registry-rollout.md",
+    "repoCommit": "1d44dfeaeafef2b1a5341c13bf73647dcbc925ec",
+    "sections": [
+      "8.2",
+      "11"
+    ]
+  },
+  "constraints": {
+    "allAuthoritativeBehaviorProbes": "isolated temp HOME/cache; config-only or loopback mock",
+    "authoritativeSubrun": "raw/subrun/RESULT.json:PASS loopback-only",
+    "projectReposChanged": false,
+    "publicRegistryContactAvoided": false,
+    "publicRegistryIncident": "raw/incident.txt"
+  },
+  "deno": {
+    "acceptedConfig": {
+      "allowScripts": [],
+      "lock": {
+        "frozen": true,
+        "path": "./deno.lock"
+      },
+      "minimumDependencyAge": {
+        "age": "P30D",
+        "exclude": [
+          "npm:pkgre-js"
+        ]
+      },
+      "nodeModulesDir": "manual"
+    },
+    "agePrecedenceObserved": [
+      "deno.json minimumDependencyAge overrode .npmrc min-release-age=0",
+      "deno.json overrode NPM_CONFIG_MIN_RELEASE_AGE=0",
+      "deno install --minimum-dependency-age=0 overrode deno.json",
+      "deno ci has no corresponding override flag"
+    ],
+    "behavior": {
+      "allowScriptsEmpty": "PASS: lifecycle scripts recorded in lock but ignored; no marker executed",
+      "ci": "PASS with lock; missing lock/out-of-date config failed",
+      "ciCleanup": "PASS: sentinel in node_modules removed",
+      "lockFrozen": "PASS: mismatch failed",
+      "minimumAge": "PASS: old age-probe selected; excluded young pkgre-js selected",
+      "nodeModulesDirManual": "PASS: deno install materialized node_modules explicitly; deno ci removed and rebuilt it"
+    },
+    "ciCommand": {
+      "acceptedOverrides": "none relevant; deno ci rejects --config and exposes no minimum-age/node-modules/script/frozen override flags",
+      "command": "deno ci",
+      "result": "PASS"
+    },
+    "cleanInvocation": "env -i HOME=$home DENO_DIR=$cache DENO_NO_UPDATE_CHECK=1 PATH=$deno/bin deno ci",
+    "effectiveInspection": {
+      "detail": "deno has no config subcommand; deno info --json reports cache paths, not merged policy",
+      "result": "ABSENT"
+    },
+    "lockBehavior": {
+      "schema": 5,
+      "source": "npm lock entries retain exact tarball URL plus integrity and scripts=true",
+      "sourcePolicy": "no config-level prohibition for JSR/HTTP/Git/file/import maps; scanner mandatory"
+    },
+    "npmrcSelection": {
+      "NPM_CONFIG_USERCONFIG": "ignored in observed 2.9.5 behavior",
+      "controlledSelection": "no direct selector; wrapper must use controlled project root/HOME and reject hostile project .npmrc",
+      "precedence": "NPM_CONFIG_REGISTRY > project-root .npmrc > $HOME/.npmrc"
+    },
+    "officialLatest": {
+      "api": "https://api.github.com/repos/denoland/deno/releases/latest",
+      "checkedAt": "2026-08-26T12:30:19.892950+00:00",
+      "currentPinIndependent": true,
+      "immutable": true,
+      "pinMatchesLatest": true,
+      "publishedAt": "2026-08-06T15:05:43Z",
+      "status": 200,
+      "tag": "v2.9.5"
+    },
+    "versionsTested": [
+      "2.9.5 minimum/current alias"
+    ]
+  },
+  "environment": {
+    "flakeNixpkgsRevision": "2c423e03bbafcff28bfadc6781a4a8257f205cb5",
+    "nix": "2.34.8",
+    "system": "x86_64-linux"
+  },
+  "finalization": {
+    "d0Overall": "BLOCKED",
+    "d1Authorized": false,
+    "profiles": [
+      "configs/production/profile.json",
+      "configs/loopback/profile.json"
+    ],
+    "report": "REPORT.json",
+    "subrun": "raw/subrun/RESULT.json",
+    "verifier": "verify_artifact.py",
+    "wrapper": "wrappers/policy_wrapper.py"
+  },
+  "generatedAt": "2026-08-26T12:30:19Z",
+  "npm": {
+    "acceptedConfig": {
+      "allow-directory": "none",
+      "allow-file": "none",
+      "allow-git": "none",
+      "allow-remote": "none",
+      "audit": false,
+      "foreground-scripts": false,
+      "fund": false,
+      "ignore-scripts": true,
+      "min-release-age": 30,
+      "min-release-age-exclude": [
+        "pkgre-js"
+      ],
+      "offline": false,
+      "progress": false,
+      "registry": "URL",
+      "replace-registry-host": "always",
+      "save-exact": true,
+      "strict-npmrc": true
+    },
+    "cleanInvocation": "env -i HOME=$home PATH=$node/bin NPM_CONFIG_USERCONFIG=$policy NPM_CONFIG_CACHE=$cache npm ci",
+    "effectiveInspection": {
+      "caveat": "npm config/help/version intentionally bypass strict unknown-config validation",
+      "command": "npm --userconfig=$POLICY config ls -l",
+      "result": "all proposed keys and typed values visible"
+    },
+    "frozenCommand": {
+      "command": "npm ci",
+      "result": "PASS on mock lock at both version pairs"
+    },
+    "lockBehavior": {
+      "replay": "replace-registry-host=always redirected a foreign-host locked tarball to the configured registry during npm ci",
+      "schema": 3,
+      "sourcePolicy": "allow-* keys are accepted; scanner still required for manifests, lock roots/extensions, scope registries and aliases",
+      "write": "package-lock preserves the packument dist.tarball URL"
+    },
+    "minimumAge": {
+      "mockSelection": {
+        "age-probe": "1.0.0 old",
+        "pkgre-js excluded": "2.0.0 young"
+      },
+      "replay": "npm ci uses the lock and must not be claimed to re-evaluate age",
+      "result": "PASS",
+      "unit": "days"
+    },
+    "precedenceObserved": [
+      "CLI --registry > NPM_CONFIG_REGISTRY > project .npmrc > selected userconfig",
+      "CLI --userconfig overrides NPM_CONFIG_USERCONFIG selection",
+      "project .npmrc remains discoverable and can override a wrapper-selected userconfig"
+    ],
+    "strictNpmrc": {
+      "behavior": "unknown selected-user or project .npmrc key yields EUNKNOWNCONFIG on install commands before network; config get still succeeds by design",
+      "result": "PASS"
+    },
+    "versionsTested": [
+      "Node 24.15.0 + npm 12.0.2",
+      "Node 26.7.0 + npm 12.0.2"
+    ]
+  },
+  "rawEvidence": [
+    "raw/npm-minimum.log",
+    "raw/npm-current.log",
+    "raw/npm-strict-source.log",
+    "raw/npm-minimum-age-lock.log",
+    "raw/npm-current-age-lock.log",
+    "raw/npm-minimum-ci-replace.log",
+    "raw/npm-current-ci-replace.log",
+    "raw/bun-minimum-age.log",
+    "raw/bun-current-age.log",
+    "raw/bun-minimum-precedence.log",
+    "raw/bun-current-precedence.log",
+    "raw/bun-minimum-auto.log",
+    "raw/bun-current-auto.log",
+    "raw/bun-minimum-frozen.log",
+    "raw/bun-current-frozen.log",
+    "raw/deno-2.9.5-behavior.log",
+    "raw/deno-2.9.5-npmrc-precedence.log",
+    "raw/deno-2.9.5-age-precedence.log",
+    "raw/deno-latest.json",
+    "raw/incident.txt"
+  ],
+  "schema": "pkgre-d0-js-client-policy-inventory-v2",
+  "scope": "read/behavior inventory only; no project-repository edits",
+  "status": "superseded-by-final-report-v2-for-verdict;raw-precedence-findings-retained",
+  "toolchains": [
+    {
+      "attribute": "packages.x86_64-linux.js-client-node-minimum",
+      "composition": "Node upstream archive with bundled npm removed and separately pinned npm 12.0.2 overlaid",
+      "drv": "/nix/store/99x4lfl8mr0d44k1w7hhkcj97jpkmgpq-pkgre-js-compat-node-npm-24.15.0-12.0.2.drv",
+      "id": "node-npm-minimum",
+      "out": "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2",
+      "sources": [
+        {
+          "nixHash": "sha256-RyZVWB+4UVWXMMSHY+DJ07wll1xZ1RgAP8CEnT5LoPY=",
+          "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-linux-x64.tar.xz"
+        },
+        {
+          "nixHash": "sha256-XbuGxx0HoZV/LpBzQJLdali9zZ68LY1ByhxuaiHTZOE=",
+          "url": "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz"
+        }
+      ],
+      "versions": {
+        "node": "24.15.0",
+        "npm": "12.0.2"
+      }
+    },
+    {
+      "attribute": "packages.x86_64-linux.js-client-node-current",
+      "composition": "independent Node derivation; same separately pinned npm archive",
+      "drv": "/nix/store/k275mh0nrpwd36q1nk926bmpz6lxx8ch-pkgre-js-compat-node-npm-26.7.0-12.0.2.drv",
+      "id": "node-npm-current",
+      "out": "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2",
+      "sources": [
+        {
+          "nixHash": "sha256-mCqiTdi+TIicaoqzN93/OwiWZFsg9COTVugFUsFid+4=",
+          "url": "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.xz"
+        },
+        {
+          "nixHash": "sha256-XbuGxx0HoZV/LpBzQJLdali9zZ68LY1ByhxuaiHTZOE=",
+          "url": "https://registry.npmjs.org/npm/-/npm-12.0.2.tgz"
+        }
+      ],
+      "versions": {
+        "node": "26.7.0",
+        "npm": "12.0.2"
+      }
+    },
+    {
+      "attribute": "packages.x86_64-linux.js-client-bun-minimum",
+      "drv": "/nix/store/xh6ybvw0dnv7v5lgrvdmmvn9s1i0ym89-pkgre-js-compat-bun-1.3.14.drv",
+      "id": "bun-minimum",
+      "out": "/nix/store/97nqn1lwdhhc995sfni0zrfxi3xpaq00-pkgre-js-compat-bun-1.3.14",
+      "source": {
+        "nixHash": "sha256-lR7iruhV8IWVruxiJSJqKY0/6oOj3NZGXAnLzN9+hI8=",
+        "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip"
+      },
+      "version": "1.3.14"
+    },
+    {
+      "attribute": "packages.x86_64-linux.js-client-bun-current",
+      "drv": "/nix/store/jvj8fg55y3c2a90jn4fyb3prm6xlg7p4-pkgre-js-compat-bun-1.4.0.drv",
+      "id": "bun-current",
+      "out": "/nix/store/4a3ipscbmyb712xb9yzb5aypwz26ldb3-pkgre-js-compat-bun-1.4.0",
+      "source": {
+        "nixHash": "sha256-LQP7X7g6yLVnrKCigbLOGhoZ1Ij1bClo2Iw/Jekv5FI=",
+        "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-linux-x64.zip"
+      },
+      "version": "1.4.0"
+    },
+    {
+      "attribute": "packages.x86_64-linux.js-client-deno-minimum",
+      "drv": "/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv",
+      "id": "deno-minimum",
+      "out": "/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5",
+      "source": {
+        "nixHash": "sha256-iwEKOxpKAYimfNuKeic0iypQGveK7H/HTyrOFnNo1TA=",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.5/deno-x86_64-unknown-linux-gnu.zip"
+      },
+      "version": "2.9.5"
+    },
+    {
+      "attribute": "packages.x86_64-linux.js-client-deno-current",
+      "drv": "/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv",
+      "id": "deno-current",
+      "independentPin": false,
+      "out": "/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5",
+      "reason": "nix/js-compatibility-clients.nix defines denoCurrent = denoMinimum; identical derivation and output",
+      "version": "2.9.5"
+    }
+  ]
+}

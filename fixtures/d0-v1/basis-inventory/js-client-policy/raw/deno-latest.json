@@ -1,0 +1,12 @@
+{
+  "checkedAt": "2026-08-26T12:30:19.892950+00:00",
+  "url": "https://api.github.com/repos/denoland/deno/releases/latest",
+  "status": 200,
+  "tag_name": "v2.9.5",
+  "name": "v2.9.5",
+  "draft": false,
+  "prerelease": false,
+  "immutable": true,
+  "published_at": "2026-08-06T15:05:43Z",
+  "html_url": "https://github.com/denoland/deno/releases/tag/v2.9.5"
+}

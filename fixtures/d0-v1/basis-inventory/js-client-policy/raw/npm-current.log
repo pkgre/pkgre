@@ -1,0 +1,41 @@
+$ node --version
+v26.7.0
+$ npm --version
+12.0.2
+$ npm config ls -l --userconfig=policy (selected lines)
+allow-directory = "none"
+allow-file = "none"
+allow-git = "none"
+allow-remote = "none"
+audit = false
+foreground-scripts = false
+fund = false
+ignore-scripts = true
+min-release-age = 30
+min-release-age-exclude = ["pkgre-js"]
+offline = false
+progress = false
+registry = "http://127.0.0.1:4873/"
+replace-registry-host = "always"
+save-exact = true
+strict-npmrc = true
+$ project .npmrc precedence over selected userconfig registry
+http://127.0.0.1:4874/
+rc=0
+$ env NPM_CONFIG_REGISTRY precedence over selected userconfig registry
+http://127.0.0.1:4875/
+rc=0
+$ CLI --registry precedence over selected userconfig registry
+http://127.0.0.1:4876/
+rc=0
+$ explicit --userconfig precedence over NPM_CONFIG_USERCONFIG selection
+http://127.0.0.1:4873/
+rc=0
+$ strict-npmrc=true rejects unknown key in selected userconfig
+http://127.0.0.1:4873/
+rc=0
+$ strict-npmrc=true rejects unknown key in project .npmrc
+http://127.0.0.1:4873/
+rc=0
+$ npm ci --help acceptance (no install/network)
+rc=0

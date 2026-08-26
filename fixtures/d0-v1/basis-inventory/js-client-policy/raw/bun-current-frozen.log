@@ -1,0 +1,10 @@
+exact command with lock
+bun install v1.4.0 (34cbb9a40)
+
+Checked 1 install across 2 packages (no changes) [2.00ms]
+rc=0
+manifest/lock mismatch
+bun install v1.4.0 (34cbb9a40)
+error: No version matching "age-probe" found for specifier "2.0.0" (blocked by minimum-release-age: 2592000 seconds)
+error: age-probe@2.0.0 failed to resolve
+rc=1
