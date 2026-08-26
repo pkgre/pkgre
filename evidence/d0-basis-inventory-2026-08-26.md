@@ -78,7 +78,7 @@ PROPOSED intentional changes:D8 Rust same-host `/v1` `404→307`;D9/D10 `307→b
 
 ## 5. Toolchain+provenance+locked closure
 
-Flake lock v7 pins `nixpkgs=2c423e03bbafcff28bfadc6781a4a8257f205cb5` (`narHash=sha256-dt4WdcvsA8/RCe+VZZwqU0X+XMM3wBbGCWA0/sFWzGo=`) and `rust-overlay=fd2ebb9cc4323d0c5a1336138dab5c3c5a5d8bd9` (`narHash=sha256-YT4Fs2k7bi+7YzuLt93EtIRgjpwHK5ZfsQEIh5dEQSk=`). Machine-authoritative per-row versions,Nix attributes/contexts,derivations,outputs,wrappers,config paths,and direct source URLs/SRI hashes only where captured are in `fixtures/d0-v1/basis-inventory/toolchain-closure/inventory.json`. ABSENT direct upstream archive provenance:host Nix 2.34.8+Git 2.54.0 and flake-supplied Git 2.55.0,Rust 1.95.0,indexer Node 24.19.0,and devShell;their observed Nix/flake identities do not substitute for uncaptured direct archive URL+hash rows.
+Flake lock v7 pins `nixpkgs=2c423e03bbafcff28bfadc6781a4a8257f205cb5` (`narHash=sha256-dt4WdcvsA8/RCe+VZZwqU0X+XMM3wBbGCWA0/sFWzGo=`) and `rust-overlay=fd2ebb9cc4323d0c5a1336138dab5c3c5a5d8bd9` (`narHash=sha256-YT4Fs2k7bi+7YzuLt93EtIRgjpwHK5ZfsQEIh5dEQSk=`);these are flake-tree NAR hashes,not tool archive hashes. Machine-authoritative per-row versions,Nix attributes/contexts,derivations,outputs,wrappers,config paths,and source composition are in `fixtures/d0-v1/basis-inventory/toolchain-closure/inventory.json`;retained derivation source rows,hash semantics,source-output presence,and local rehash results are in `source-provenance.json`. RESOLVED flake-supplied provenance:Git 2.55.0 has a flat archive URL+SHA-256;Rust 1.95.0 is a six-archive composition with all six retained archives locally rehashed;Node 24.19.0 has a flat archive URL+SHA-256 and npm 11.17.0 is bundled in the Node source;devShell is a composition and has no single upstream archive. BLOCKED original host provenance:captured Nix 2.34.8+Git 2.54.0 package derivations are absent;same-output surrogate derivations expose corroborating source rows but cannot prove the missing original derivation declarations.
 
 | Role/version | Nix attribute/context | Derivation→output | Source/config note |
 |---|---|---|---|
@@ -262,6 +262,7 @@ ABSENT:no LAN-public instance,hostname,origin,vhost,listener,address,range,firew
 | D0-B19 | ABSENT deferred | no LAN instance selected;must re-enter full D13 gate before any LAN edit | `fixtures/d0-v1/basis-inventory/live-deployment-network/`;`fixtures/d0-v1/basis-inventory/rain-identity-design/` |
 | D0-B20 | BLOCKED | enumerated route uniqueness+mapping covers only the source-derived current public URL universe;complete access logs were not captured,so access-log-only aliases and universal deployed-path completeness remain unproved | `fixtures/d0-v1/basis-inventory/public-routes/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
 | D0-B21 | ABSENT/BLOCKED | interim/early-hints `1xx` behavior was neither tested nor observed;D1 fixtures+later production-equivalent/real-edge proof must demonstrate the explicit no-`1xx` contract | `fixtures/d0-v1/basis-inventory/nginx-raw-target/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
+| D0-B22 | BLOCKED | captured original host Nix 2.34.8 and Git 2.54.0 package derivations are absent;same-output surrogate source rows are corroboration only,so required original source-declaration provenance remains unproved | `fixtures/d0-v1/basis-inventory/toolchain-closure/` |
 
 Closed bounded findings:fixed-basis refetch;route uniqueness+one-to-one mapping within the enumerated source-derived universe;current Rust+JS catalog closures;current Rust archive byte total;Cargo selected closure;isolated SSH signing compatibility;isolated nginx raw-field transport primitive;JS loopback client-policy subrun. Universal/access-log route completeness and `1xx` behavior remain blocked. None closes the immediate blockers or later phase gates above.
 
@@ -295,6 +296,7 @@ Deploy:none. D0 does not authorize Rain deployment,DNS or GitHub-setting changes
 8. **Storage policy inputs:**return operator-selected append-only planning horizon,growth assumption,Rain quota/reserve/free-space floor,backup destination capacity+reader+retention,and any nonpublic provider/account ceiling. Public provider limits and scratch clone/fetch/checkout/backup/restore/power-loss measurements are agent-owned follow-up;ordinary Git failure against any reviewed ceiling stops before D2.
 9. **Client coverage timing:**approve `Deno current=minimum 2.9.5` for this dated D0 with an independently newer current pin required before D6,or select another exact version;choose scoped npm production fixture deadline no later than D6.
 10. **LAN deferral:**confirm `no LAN instance selected` for this rollout stage. This authorizes no LAN source,configuration,credential,DNS,TLS,or deployment action.
+11. **Original host-tool provenance:**provide the exact original Nix 2.34.8+Git 2.54.0 package `.drv` records from a retained binary cache/collection archive so their declared sources+hashes can be verified,or explicitly approve an evidence-policy amendment accepting the exact observed output paths plus same-output surrogate source provenance. The surrogate rows are currently corroboration only;the agent may not silently treat them as original derivation proof.
 
 ### 16.2 Agent-owned follow-up—not requested from operator
 
@@ -314,7 +316,7 @@ After the corresponding decisions/amendments are returned and independently revi
 | pre-D12 | import+verify complete JS archive bodies and freeze distinct JS body identity |
 | D13 | optional LAN selection re-enters complete identity gate;monitoring redesign remains non-gating long-term work |
 
-Returned evidence:items 1–10 keyed to the aggregate-containing commit+UTC. Agent verifies and commits supplements separately,then requests another independent D0 review. Partial answers leave corresponding blockers open.
+Returned evidence:items 1–11 keyed to the aggregate-containing commit+UTC. Agent verifies and commits supplements separately,then requests another independent D0 review. Partial answers leave corresponding blockers open.
 
 Observe:none requested for public traffic unless item 7 explicitly authorizes bounded access-log collection;monitoring redesign remains deferred+non-gating.
 

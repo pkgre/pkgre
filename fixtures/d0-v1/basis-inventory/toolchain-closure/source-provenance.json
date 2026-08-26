@@ -1,0 +1,287 @@
+{
+  "collectedAt": "2026-08-26T15:59:57Z",
+  "collection": {
+    "method": [
+      "nix derivation show <retained .drv>",
+      "test -e <declared source output>",
+      "nix hash file --type sha256 <retained flat source output>"
+    ],
+    "networkUsed": false,
+    "projectMutationUsed": false,
+    "scope": "retained local Nix derivations and store objects only",
+    "secretRead": false
+  },
+  "disposition": {
+    "blocked": [
+      "nix-host",
+      "git-host"
+    ],
+    "blockedReason": "captured original host package derivations are absent;surrogate derivations are corroboration only",
+    "resolved": [
+      "git-flake",
+      "rust-toolchain",
+      "node-indexer",
+      "dev-shell"
+    ]
+  },
+  "hashSemantics": {
+    "derivation-or-output-store-path": "Nix recipe/output identity;not an upstream source hash",
+    "flake-narHash": "recursive NAR hash of fetched flake tree;not a tool archive hash",
+    "flat-archive-sha256": "SHA-256 of exact fetched archive bytes as declared by fixed-output source derivation",
+    "recursive-source-nar-sha256": "recursive NAR hash of unpacked/normalized source tree;not upstream archive-byte hash"
+  },
+  "schema": "pkgre-d0-toolchain-source-provenance-v1",
+  "tools": [
+    {
+      "caveat": "surrogate currently produces the same observed output path but cannot prove the missing original derivation source declaration;direct upstream archive-byte SHA-256 remains unavailable",
+      "id": "nix-host",
+      "observedOutput": "/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8",
+      "originalPackageDerivation": "/nix/store/iza23qnw05vpa85g804b841rd4yqr1z5-nix-2.34.8.drv",
+      "originalPackageDerivationPresentAtCollection": false,
+      "status": "blocked-original-derivation-missing",
+      "surrogate": {
+        "hash": "sha256-Rvy1PmIUMGI0IS/kwDwmf/VrorU8v1iZYejssSVu1rY=",
+        "hashMethod": "recursive-source-nar-sha256",
+        "localHashReverified": false,
+        "packageDerivation": "/nix/store/y9rx70ykgm2hqniaw2qrqp6kqc5n6xbf-nix-2.34.8.drv",
+        "packageOutput": "/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8",
+        "sourceDerivation": "/nix/store/1gys5xmkzxr4qbycxl7ilkb15d35z1g2-source.drv",
+        "sourceOutput": "/nix/store/2ijv0g6069dsh55z3bdr5ln2iv69mw7r-source",
+        "sourceOutputPresentAtCollection": false,
+        "urls": [
+          "https://github.com/NixOS/nix/archive/refs/tags/2.34.8.tar.gz"
+        ]
+      }
+    },
+    {
+      "caveat": "surrogate currently produces the same observed output path but cannot prove the missing original derivation source declaration",
+      "id": "git-host",
+      "observedOutput": "/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0",
+      "originalPackageDerivation": "/nix/store/bny4hxrsvnaj060b6rbd68233x4fw32h-git-2.54.0.drv",
+      "originalPackageDerivationPresentAtCollection": false,
+      "status": "blocked-original-derivation-missing",
+      "surrogate": {
+        "hash": "sha256-9okWI2TBDeee+Jqo2/SHMesFfjTtu9IKylEM4BVGgaM=",
+        "hashMethod": "flat-archive-sha256",
+        "localHashReverified": false,
+        "packageDerivation": "/nix/store/214n5nb1k4qzynzgw7xpsp4fp19vni8i-git-2.54.0.drv",
+        "packageOutput": "/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0",
+        "sourceDerivation": "/nix/store/cgrzc3wys8sljv5k23xfmmlzx0s21vjv-git-2.54.0.tar.xz.drv",
+        "sourceOutput": "/nix/store/drcyzlalnx264vlmp2js5vp2kkvyn132-git-2.54.0.tar.xz",
+        "sourceOutputPresentAtCollection": false,
+        "urls": [
+          "https://www.kernel.org/pub/software/scm/git/git-2.54.0.tar.xz"
+        ]
+      }
+    },
+    {
+      "id": "git-flake",
+      "source": {
+        "hash": "sha256-RX/bBNyHKOAH1GiGleaRLm9oByeSDypAvxHqzBdQU1c=",
+        "hashMethod": "flat-archive-sha256",
+        "localHashReverified": false,
+        "packageDerivation": "/nix/store/y1bhwp1rl04s5qw50qdbmx83x8yy9nmf-git-2.55.0.drv",
+        "packageOutput": "/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0",
+        "sourceDerivation": "/nix/store/p9kr2fzxzmk6lb2s29yhzyimmflin7g9-git-2.55.0.tar.xz.drv",
+        "sourceOutput": "/nix/store/pad3p4y8amwrv3aaqh43b63b4dcv65j7-git-2.55.0.tar.xz",
+        "sourceOutputPresentAtCollection": false,
+        "urls": [
+          "https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"
+        ]
+      },
+      "status": "resolved-retained-source-derivation"
+    },
+    {
+      "components": [
+        {
+          "component": "cargo",
+          "hash": "sha256-507dLPfQ8fE4O08A65DIQ3ULxInizPchTmR2Z4qQdCU=",
+          "hashMethod": "flat-archive-sha256",
+          "localHashReverified": true,
+          "packageDerivation": "/nix/store/0fnpjq6kn2wqfar6ws9dvgcvpzbd40sc-cargo-1.95.0-x86_64-unknown-linux-gnu.drv",
+          "packageOutput": "/nix/store/fwlr7g9qbsg0m0vd9qdjrwvs3l7mq9nn-cargo-1.95.0-x86_64-unknown-linux-gnu",
+          "sourceDerivation": "/nix/store/98hhmkpmdq1pxxf18w697ira68p4b5ja-cargo-1.95.0-x86_64-unknown-linux-gnu.tar.xz.drv",
+          "sourceOutput": "/nix/store/5zw3p750l28qkf679hmz2x3qv02p47q9-cargo-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sourceOutputPresentAtCollection": true,
+          "urls": [
+            "https://static.rust-lang.org/dist/2026-04-16/cargo-1.95.0-x86_64-unknown-linux-gnu.tar.xz"
+          ]
+        },
+        {
+          "component": "rustc",
+          "hash": "sha256-hCaj0XClh59WgvX73QJKF3mzlR57q6aFry1twypt/BU=",
+          "hashMethod": "flat-archive-sha256",
+          "localHashReverified": true,
+          "packageDerivation": "/nix/store/dxk5wxf91wfsyw7kq3gj806380rafg0p-rustc-1.95.0-x86_64-unknown-linux-gnu.drv",
+          "packageOutput": "/nix/store/62v23bx2p2yp4xxidd99m4rbsmdywsnc-rustc-1.95.0-x86_64-unknown-linux-gnu",
+          "sourceDerivation": "/nix/store/ca63857ikdgxdfw93avwb4ndyf0fnk6r-rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz.drv",
+          "sourceOutput": "/nix/store/5v313am8mb46zk2l1b3wd1l423lvl55y-rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sourceOutputPresentAtCollection": true,
+          "urls": [
+            "https://static.rust-lang.org/dist/2026-04-16/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz"
+          ]
+        },
+        {
+          "component": "rust-std",
+          "hash": "sha256-BH6nCYgD01APoQcunO5Tkml+IVJVWeRFgSiiv4dKo4I=",
+          "hashMethod": "flat-archive-sha256",
+          "localHashReverified": true,
+          "packageDerivation": "/nix/store/gryzhr9qkfvmqml0gx2dqp7s3iiis506-rust-std-1.95.0-x86_64-unknown-linux-gnu.drv",
+          "packageOutput": "/nix/store/gp0zh408m9kvdx5xfi7qghaaczxh5jgk-rust-std-1.95.0-x86_64-unknown-linux-gnu",
+          "sourceDerivation": "/nix/store/j3xa3bafmablkjjy2i4yqwq5pvwl1mdz-rust-std-1.95.0-x86_64-unknown-linux-gnu.tar.xz.drv",
+          "sourceOutput": "/nix/store/mrj52s1qyh5pfi6jhpfizag591xqbfqw-rust-std-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sourceOutputPresentAtCollection": true,
+          "urls": [
+            "https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-x86_64-unknown-linux-gnu.tar.xz"
+          ]
+        },
+        {
+          "component": "rust-docs",
+          "hash": "sha256-D0cv4qH4GVYQ3Vh6x85QfTOktk6u0G57ktO9EroTdF8=",
+          "hashMethod": "flat-archive-sha256",
+          "localHashReverified": true,
+          "packageDerivation": "/nix/store/wa7mpaj99hsbja3b35sx0mg5iw689gjf-rust-docs-1.95.0-x86_64-unknown-linux-gnu.drv",
+          "packageOutput": "/nix/store/1d59n1s2smjify1rjk98yshg7wixl7ms-rust-docs-1.95.0-x86_64-unknown-linux-gnu",
+          "sourceDerivation": "/nix/store/1rnz9facm1glnpnccbxr2647bjw2xfrw-rust-docs-1.95.0-x86_64-unknown-linux-gnu.tar.xz.drv",
+          "sourceOutput": "/nix/store/4v38bmczl4gf8m3ssr4hknlba2w7biha-rust-docs-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sourceOutputPresentAtCollection": true,
+          "urls": [
+            "https://static.rust-lang.org/dist/2026-04-16/rust-docs-1.95.0-x86_64-unknown-linux-gnu.tar.xz"
+          ]
+        },
+        {
+          "component": "clippy",
+          "hash": "sha256-rHebyYOd1HGAgGsTPk4lY8SjRxYoTNW4/t6O8on0Uso=",
+          "hashMethod": "flat-archive-sha256",
+          "localHashReverified": true,
+          "packageDerivation": "/nix/store/96jkq28zxh6wgmwv2g2rqsgikp4pi468-clippy-preview-1.95.0-x86_64-unknown-linux-gnu.drv",
+          "packageOutput": "/nix/store/xwrgh6syk13w5k7dcyq85j153r2f358l-clippy-preview-1.95.0-x86_64-unknown-linux-gnu",
+          "sourceDerivation": "/nix/store/axdcvqlpzqhjhdik6h1jf4wyr0lcj1b7-clippy-1.95.0-x86_64-unknown-linux-gnu.tar.xz.drv",
+          "sourceOutput": "/nix/store/nclxlqpvgk500m74rmyawlmwxw2bbqn9-clippy-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sourceOutputPresentAtCollection": true,
+          "urls": [
+            "https://static.rust-lang.org/dist/2026-04-16/clippy-1.95.0-x86_64-unknown-linux-gnu.tar.xz"
+          ]
+        },
+        {
+          "component": "rustfmt",
+          "hash": "sha256-8bKnMBUT/92V6/Iuu92TLk0X/IBvdI2TkkdA0Cl7E5Y=",
+          "hashMethod": "flat-archive-sha256",
+          "localHashReverified": true,
+          "packageDerivation": "/nix/store/826nxw07kw8n79p5m5bjs3ws6cf6ph27-rustfmt-preview-1.95.0-x86_64-unknown-linux-gnu.drv",
+          "packageOutput": "/nix/store/ncrh6zsz0adxg7bij2f60p9zv4nx8shs-rustfmt-preview-1.95.0-x86_64-unknown-linux-gnu",
+          "sourceDerivation": "/nix/store/7arh11xm1y5sh0q6jlgrk06d32d2bj3c-rustfmt-1.95.0-x86_64-unknown-linux-gnu.tar.xz.drv",
+          "sourceOutput": "/nix/store/1dy0gjfh551xm926gvalbmmpxlhr74gy-rustfmt-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sourceOutputPresentAtCollection": true,
+          "urls": [
+            "https://static.rust-lang.org/dist/2026-04-16/rustfmt-1.95.0-x86_64-unknown-linux-gnu.tar.xz"
+          ]
+        }
+      ],
+      "compositionDerivation": "/nix/store/hpi7bjzbbz2ilfdcjwyckvjl2x5x3k00-rust-default-1.95.0.drv",
+      "compositionOutput": "/nix/store/n4d5w91wqhiisr5rkjxhfssllbcdwai5-rust-default-1.95.0",
+      "id": "rust-toolchain",
+      "singleUpstreamSourceApplicable": false,
+      "status": "resolved-composition"
+    },
+    {
+      "aggregateDerivation": "/nix/store/px8hj7awj6ffpcamsaf95ywrmnn8n6aq-nodejs-24.19.0.drv",
+      "aggregateOutput": "/nix/store/glcp73hgagq2b24i80jlgbvj28vdb6kk-nodejs-24.19.0",
+      "id": "node-indexer",
+      "nodeSource": {
+        "hash": "sha256-9tleEKBDHuEGf8aqvp92KQi0cW3TUyTh3bSxRmt2ZZ8=",
+        "hashMethod": "flat-archive-sha256",
+        "localHashReverified": false,
+        "packageDerivation": "/nix/store/31mpjnibvjda1fgcgg0y06rm4v9srg3n-nodejs-slim-24.19.0.drv",
+        "packageOutput": "/nix/store/bfqsxlviikq7vlp36kasy5hhamlxlkd2-nodejs-slim-24.19.0",
+        "sourceDerivation": "/nix/store/q1rl5lbagby3ik3i2zxjff763caa8ngr-node-v24.19.0.tar.xz.drv",
+        "sourceOutput": "/nix/store/7w9s1sbk3zf9x41g1fqmcjp5rxd7anap-node-v24.19.0.tar.xz",
+        "sourceOutputPresentAtCollection": false,
+        "urls": [
+          "https://nodejs.org/dist/v24.19.0/node-v24.19.0.tar.xz"
+        ]
+      },
+      "npm": {
+        "componentOutput": "/nix/store/6x3bfz00nsp3qhcgg6wzvgfv67dhgy9j-nodejs-slim-24.19.0-npm",
+        "separateSourceDerivationApplicable": false,
+        "sourceDisposition": "bundled-in-node-source",
+        "version": "11.17.0"
+      },
+      "status": "resolved-bundled-source"
+    },
+    {
+      "components": [
+        {
+          "id": "rust-toolchain",
+          "provenanceRef": "tools[rust-toolchain]"
+        },
+        {
+          "id": "curl",
+          "source": {
+            "hash": "sha256-qhtmpw6s6D3GJFCHRWRsCK5WHeUSq0A63/uTrIf8cuY=",
+            "hashMethod": "flat-archive-sha256",
+            "localHashReverified": true,
+            "packageDerivation": "/nix/store/hk4x7gsvlyqf09wdjrwn3sinbifpkgxy-curl-8.21.0.drv",
+            "packageOutput": "/nix/store/42ixphp7ffr0vc2pn0pwsmd28igrd0fh-curl-8.21.0",
+            "sourceDerivation": "/nix/store/4wagy8dngaal1ns0k35882x4h0pccnww-curl-8.21.0.tar.xz.drv",
+            "sourceOutput": "/nix/store/jzx0a9klq9y6776kz1603j8zk3qlr18j-curl-8.21.0.tar.xz",
+            "sourceOutputPresentAtCollection": true,
+            "urls": [
+              "https://curl.haxx.se/download/curl-8.21.0.tar.xz",
+              "https://github.com/curl/curl/releases/download/curl-8_21_0/curl-8.21.0.tar.xz"
+            ]
+          }
+        },
+        {
+          "id": "git-flake",
+          "provenanceRef": "tools[git-flake]"
+        },
+        {
+          "id": "gnutar",
+          "source": {
+            "hash": "sha256-TWL/NzQux67XSFNTI5MMfPlKz3HDWRiCsmp+pQ8+3BY=",
+            "hashMethod": "flat-archive-sha256",
+            "localHashReverified": true,
+            "packageDerivation": "/nix/store/9vb3vl3mbywd9g85qykbp6h80cykk1cv-gnutar-1.35.drv",
+            "packageOutput": "/nix/store/7p7xgcfdry74qk9ilhdiv6w0hv6pyvs9-gnutar-1.35",
+            "sourceDerivation": "/nix/store/ca7bngbf8s8yzqc5wafcdza52dya204w-tar-1.35.tar.xz.drv",
+            "sourceOutput": "/nix/store/vijsp4ywmsvr6jk5ypbb8hszayn7bwdd-tar-1.35.tar.xz",
+            "sourceOutputPresentAtCollection": true,
+            "urls": [
+              "mirror://gnu/tar/tar-1.35.tar.xz"
+            ]
+          }
+        },
+        {
+          "id": "nixfmt",
+          "source": {
+            "hash": "sha256-55vYTAvrK1ZIFbO84F4KJqhOvhNFkWpR3fQBT8FhdYg=",
+            "hashMethod": "recursive-source-nar-sha256",
+            "localHashReverified": false,
+            "packageDerivation": "/nix/store/qhwkwfrpdp2yhkk6pfq9v0al1csc7wi4-nixfmt-1.4.0.drv",
+            "packageOutput": "/nix/store/5274jcnvnkh1mnwvw8ayv3h8i0g2xab9-nixfmt-1.4.0",
+            "sourceDerivation": "/nix/store/v08r50g2g1hbm6llmc9y98hajlfc8v3q-source.drv",
+            "sourceOutput": "/nix/store/lb6sp47llmw2n0i074db6f8a4kp1135r-source",
+            "sourceOutputPresentAtCollection": false,
+            "urls": [
+              "https://github.com/nixos/nixfmt/archive/v1.4.0.tar.gz"
+            ]
+          }
+        },
+        {
+          "id": "node-indexer",
+          "provenanceRef": "tools[node-indexer]"
+        }
+      ],
+      "compositionDerivation": "/nix/store/0d7b506d024c2w7pmc0yydvgmm7adn0b-nix-shell.drv",
+      "compositionMachinery": [
+        "stdenv",
+        "bash"
+      ],
+      "compositionOutput": "/nix/store/b7zd05mddk2as744f53ykpf2jb73vqls-nix-shell",
+      "id": "dev-shell",
+      "singleUpstreamSourceApplicable": false,
+      "status": "resolved-composition"
+    }
+  ]
+}

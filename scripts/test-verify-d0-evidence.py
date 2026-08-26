@@ -130,11 +130,11 @@ CASES = (
         "Pages durable rollback bundle status",
     ),
     MutationCase(
-        "direct-toolchain-provenance",
+        "original-host-toolchain-provenance",
         "toolchain-closure/inventory.json",
-        "do not substitute for per-tool direct source provenance",
-        "substitute for per-tool direct source provenance",
-        "toolchain provenance blocker does not reject substitute identities",
+        "host Nix 2.34.8 and Git 2.54.0 derivations are absent",
+        "host derivations are available",
+        "toolchain host provenance blocker changed or disappeared",
     ),
     MutationCase(
         "minimum-npm-executable",

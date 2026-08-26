@@ -258,17 +258,46 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     for tool in toolchain["tools"]:
         require(tool["id"] not in tool_rows, f"duplicate toolchain row ID: {tool['id']!r}")
         tool_rows[tool["id"]] = tool
+    source_provenance = load_json(root / "toolchain-closure" / "source-provenance.json")
+    assert_equal(source_provenance["schema"], "pkgre-d0-toolchain-source-provenance-v1", "toolchain source-provenance schema")
+    assert_equal(
+        source_provenance["disposition"],
+        {
+            "blocked": ["nix-host", "git-host"],
+            "blockedReason": "captured original host package derivations are absent;surrogate derivations are corroboration only",
+            "resolved": ["git-flake", "rust-toolchain", "node-indexer", "dev-shell"],
+        },
+        "toolchain source-provenance disposition",
+    )
+    source_rows = {row["id"]: row for row in source_provenance["tools"]}
+    assert_equal(len(source_rows), len(source_provenance["tools"]), "toolchain source-provenance unique IDs")
+    assert_equal(set(source_rows), {"nix-host", "git-host", "git-flake", "rust-toolchain", "node-indexer", "dev-shell"}, "toolchain source-provenance IDs")
     for tool_id in ("nix-host", "git-host"):
-        source = tool_rows[tool_id]["source"]
-        assert_equal(source["url"], None, f"{tool_id} direct source URL absence")
-        assert_equal(source["hash"], None, f"{tool_id} direct source hash absence")
-    for tool_id in ("git-flake", "rust-toolchain", "node-indexer", "dev-shell"):
-        source = tool_rows[tool_id]["source"]
-        assert_equal(source["direct_archive_url"], None, f"{tool_id} direct archive URL absence")
-        assert_equal(source["direct_archive_hash"], None, f"{tool_id} direct archive hash absence")
+        source = source_rows[tool_id]
+        assert_equal(source["status"], "blocked-original-derivation-missing", f"{tool_id} original source status")
+        assert_equal(source["originalPackageDerivationPresentAtCollection"], False, f"{tool_id} original derivation presence")
+        assert_equal(source["surrogate"]["packageOutput"], source["observedOutput"], f"{tool_id} surrogate output corroboration")
+        assert_equal(tool_rows[tool_id]["source"]["surrogate_only"], True, f"{tool_id} surrogate-only classification")
+    git_source = source_rows["git-flake"]["source"]
+    assert_equal(git_source["urls"], ["https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz"], "flake Git source URL")
+    assert_equal(git_source["hash"], "sha256-RX/bBNyHKOAH1GiGleaRLm9oByeSDypAvxHqzBdQU1c=", "flake Git source hash")
+    assert_equal(git_source["hashMethod"], "flat-archive-sha256", "flake Git source hash method")
+    rust_source = source_rows["rust-toolchain"]
+    assert_equal(rust_source["status"], "resolved-composition", "Rust source disposition")
+    assert_equal(rust_source["singleUpstreamSourceApplicable"], False, "Rust single-source applicability")
+    assert_equal([component["component"] for component in rust_source["components"]], ["cargo", "rustc", "rust-std", "rust-docs", "clippy", "rustfmt"], "Rust source components")
+    require(all(component["hashMethod"] == "flat-archive-sha256" and component["sourceOutputPresentAtCollection"] is True and component["localHashReverified"] is True for component in rust_source["components"]), "Rust source component hash proof incomplete")
+    node_source = source_rows["node-indexer"]
+    assert_equal(node_source["nodeSource"]["hash"], "sha256-9tleEKBDHuEGf8aqvp92KQi0cW3TUyTh3bSxRmt2ZZ8=", "Node indexer source hash")
+    assert_equal(node_source["npm"]["sourceDisposition"], "bundled-in-node-source", "indexer npm source disposition")
+    assert_equal(node_source["npm"]["separateSourceDerivationApplicable"], False, "indexer npm separate-source applicability")
+    dev_source = source_rows["dev-shell"]
+    assert_equal(dev_source["status"], "resolved-composition", "devShell source disposition")
+    assert_equal([component["id"] for component in dev_source["components"]], ["rust-toolchain", "curl", "git-flake", "gnutar", "nixfmt", "node-indexer"], "devShell source components")
     provenance_blockers = {blocker["id"]: blocker for blocker in toolchain["blockers"]}
     require("direct-source-provenance" in provenance_blockers, "toolchain direct-source-provenance blocker missing")
-    require("do not substitute" in provenance_blockers["direct-source-provenance"]["detail"], "toolchain provenance blocker does not reject substitute identities")
+    require("host Nix 2.34.8 and Git 2.54.0 derivations are absent" in provenance_blockers["direct-source-provenance"]["detail"], "toolchain host provenance blocker changed or disappeared")
+    require("flake-supplied Git/Rust/Node/devShell provenance is resolved" in provenance_blockers["direct-source-provenance"]["detail"], "toolchain resolved provenance classification changed or disappeared")
     assert_equal(tool_rows["node-minimum"]["effective_executables"]["npm"], NPM_MINIMUM, "minimum npm executable")
     assert_equal(tool_rows["node-current"]["effective_executables"]["npm"], NPM_CURRENT, "current npm executable")
     for profile_name, expected_registry in (("loopback", "http://127.0.0.1:48730/"), ("production", "https://js.pkg.re/")):
@@ -366,7 +395,10 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     require("interim/early-hints `1xx` behavior was neither tested nor observed" in aggregate_text, "aggregate gate register lacks explicit no-1xx blocker")
     require("direct `https://pkgre.github.io/rust/origin-health/v1.txt`=`HTTP/2 301`" in aggregate_text, "aggregate misstates direct Rust default Pages result")
     require("provider artifacts expired same day" in aggregate_text and "not mirrored to operator-controlled immutable custody" in aggregate_text, "aggregate lacks non-durable Pages rollback boundary")
-    require("ABSENT direct upstream archive provenance:" in aggregate_text and "do not substitute for uncaptured direct archive URL+hash rows" in aggregate_text, "aggregate lacks direct toolchain provenance gap")
+    require("RESOLVED flake-supplied provenance:" in aggregate_text, "aggregate lacks resolved flake-supplied toolchain provenance")
+    require("BLOCKED original host provenance:" in aggregate_text, "aggregate lacks original-host toolchain provenance blocker")
+    require("| D0-B22 | BLOCKED |" in aggregate_text and "same-output surrogate source rows are corroboration only" in aggregate_text, "aggregate lacks D0-B22 original-host provenance blocker")
+    require("11. **Original host-tool provenance:**" in aggregate_text and "exact original Nix 2.34.8+Git 2.54.0 package `.drv` records" in aggregate_text and "evidence-policy amendment" in aggregate_text, "aggregate lacks original-host provenance operator alternatives")
     require(f"npm={NPM_MINIMUM}" in aggregate_text, "aggregate lacks exact minimum npm executable")
     require(f"npm={NPM_CURRENT}" in aggregate_text, "aggregate lacks exact current npm executable")
     require("it does not mutate a protected catalog to import bodies" in aggregate_text, "aggregate implies D0 archive-body import")

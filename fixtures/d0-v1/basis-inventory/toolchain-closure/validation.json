@@ -7,7 +7,7 @@
     },
     {
       "details": {
-        "file_count": 16
+        "file_count": 17
       },
       "name": "all_json_parse",
       "status": "pass"
@@ -26,11 +26,13 @@
     },
     {
       "details": {
-        "fixed_source_rows": 8,
+        "blocked_source_rows": 2,
+        "compat_fixed_source_rows": 8,
+        "resolved_source_rows": 4,
         "tool_count": 15,
-        "unique_fixed_sources": 6
+        "unique_compat_fixed_sources": 6
       },
-      "name": "tool_paths_sources_wrappers_and_deno_alias",
+      "name": "tool_paths_sources_compositions_wrappers_and_deno_alias",
       "status": "pass"
     },
     {
@@ -74,7 +76,7 @@
     },
     {
       "details": {
-        "files_scanned": 43,
+        "files_scanned": 44,
         "findings": 0,
         "pattern_classes": 5
       },
