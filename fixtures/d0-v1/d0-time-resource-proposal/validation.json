@@ -1,0 +1,297 @@
+{
+  "checks": [
+    {
+      "detail": null,
+      "name": "schema",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "status",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "classification-separation",
+      "pass": true
+    },
+    {
+      "detail": [
+        61210624,
+        61210624
+      ],
+      "name": "rust-single-snapshot-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        12582912,
+        12582912
+      ],
+      "name": "rust-request-buffer-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        397541376,
+        397541376
+      ],
+      "name": "rust-candidate-peak-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-memory-order",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-task-fd",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-state-quota",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-tree-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-graph-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-response-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-archive-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-limits-positive",
+      "pass": true
+    },
+    {
+      "detail": [
+        119537664,
+        119537664
+      ],
+      "name": "js-single-snapshot-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        12582912,
+        12582912
+      ],
+      "name": "js-request-buffer-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        606076928,
+        606076928
+      ],
+      "name": "js-candidate-peak-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-memory-order",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-task-fd",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-state-quota",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-tree-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-graph-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-response-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-archive-headroom",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-limits-positive",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-state-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-state-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "clock-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "watch-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "reload-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "lifecycle-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "http-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-300s",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-60s\u00b115s",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-30s/35s/5s",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-4,096B/64/32,768B/8,192B",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-384MiB/512MiB",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-512MiB/768MiB",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-4GiB",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-2GiB",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-24h",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-72h",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-7d",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-14d",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-30d",
+      "pass": true
+    },
+    {
+      "detail": {
+        "clean": true,
+        "porcelainSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "name": "source-clean-pkgre",
+      "pass": true
+    },
+    {
+      "detail": {
+        "clean": true,
+        "porcelainSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "name": "source-clean-pkgre-rust",
+      "pass": true
+    },
+    {
+      "detail": {
+        "clean": true,
+        "porcelainSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "name": "source-clean-pkgre-js",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "output-containment",
+      "pass": true
+    }
+  ],
+  "result": "PASS",
+  "schema": "pkgre-d0-time-resource-validation-v1",
+  "sourceRepositoryStatus": {
+    "pkgre": {
+      "clean": true,
+      "porcelainSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "pkgre-js": {
+      "clean": true,
+      "porcelainSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "pkgre-rust": {
+      "clean": true,
+      "porcelainSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "validatedFiles": {
+    "README.md": "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d",
+    "proposal.json": "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da",
+    "validate.py": "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826"
+  }
+}

@@ -1,0 +1,532 @@
+{
+  "conservativeFormulas": {
+    "classification": "conservativeFormulas",
+    "fdBudget": {
+      "formula": "64 fixed/listeners/logs + 256 request sockets + 64 archive FDs + 128 Git/loader FDs + 16 admin/status FDs + 512 reserve = 1040",
+      "limit": 2048
+    },
+    "headroomRule": {
+      "archiveTotalRustFactor": 3.101299151785022,
+      "formula": "limit=reviewed power-of-two ceiling >= baseline*factor;factor chosen per risk,then candidate rejected at exact integer limit",
+      "largestInlineRustFactor": 2.284394695621295,
+      "note": "large JS ratios are bootstrap room,not measured growth predictions"
+    },
+    "processCandidatePeakEstimateBytes": {
+      "admissionRule": "reject candidate before construction unless estimate <= MemoryMaxBytes-67108864;MemoryHigh is soft pressure threshold,not admission ceiling",
+      "formula": "3*singleSnapshotResidentEstimateBytes + runtimeReserveBytes + loaderWorkerReserveBytes + maxConcurrentRequests*requestBufferBytes + maxConcurrentArchiveStreams*streamBufferBytes",
+      "threeSnapshots": [
+        "live",
+        "candidate",
+        "old-in-flight"
+      ]
+    },
+    "singleSnapshotResidentEstimateBytes": {
+      "archivePayloadBytesIncluded": false,
+      "formula": "2097152 + 2*snapshotBytes + 256*routes + 128*versions + 96*dependencyEdges + 256*packages + 96*archives",
+      "reason": "manifest+typed maps/strings+indexes;archive payloads stay file-backed and stream through bounded buffers"
+    },
+    "stateQuota": {
+      "js": "268435456 mirror + 5*268435456 checkout slots + 67108864 audit/refs + 469762048 reserve = 2147483648",
+      "preflight": "candidate requires usedBytes + 2*maxCheckoutAllocatedBytes <= 85% of quota and filesystem free bytes >= same amount;reject without eviction",
+      "rust": "536870912 mirror + 5*536870912 checkout slots(active,rollback,old-lease,candidate,staging) + 134217728 audit/refs + 939524096 reserve = 4294967296"
+    },
+    "tasksBudget": {
+      "formula": "16 runtime + 1 watcher + 8 loader/Git + 4 JS worker allowance + 35 reserve = 64",
+      "limit": 64
+    }
+  },
+  "hardBlockers": [
+    {
+      "effect": "values remain proposal;D7 activation blocked",
+      "id": "DYNAMIC-MEASUREMENTS",
+      "missing": "actual live+candidate+old-stream RSS,FDs,100-cycle reload latency,shutdown/drain and lease-expiry evidence for native servers",
+      "severity": "hard"
+    },
+    {
+      "effect": "must prove manifest fits exact 16MiB Rust/32MiB JS limits",
+      "id": "PROJECTION-BASELINE",
+      "missing": "implemented canonical manifest and measured current snapshotBytes",
+      "severity": "hard"
+    },
+    {
+      "effect": "frontend cutover blocked",
+      "id": "HTTP-LIMIT-PROOF",
+      "missing": "production-equivalent raw ingress/backend proof for 413/414/431,header counts,target bytes,body framing and 256/64 concurrency overload",
+      "severity": "hard"
+    },
+    {
+      "effect": "archive feasibility/D1 remains blocked despite successful current-closure scratch rehearsal",
+      "id": "ARCHIVE-HISTORY-CAPACITY",
+      "missing": "append-only history-growth model,provider ceiling,production ZFS quota create/fill/failure/recovery,backup/restore time",
+      "severity": "hard"
+    },
+    {
+      "effect": "body mode not authorized",
+      "id": "BODY-CLOSURE-IN-SOURCE",
+      "missing": "forward Rust/JS catalog commits containing every retained body for body instances",
+      "severity": "hard"
+    },
+    {
+      "effect": "new acceptance activation blocked",
+      "id": "CLOCK-PROOF",
+      "missing": "24h dual-clock/time-sync capture including backward/forward fault fixtures",
+      "severity": "hard"
+    },
+    {
+      "effect": "D13/D14 blocked",
+      "id": "RESTORE-HORIZON",
+      "missing": "empty-root offline restore with remote unreachable and exact projection reconstruction inside operator-approved duration",
+      "severity": "hard"
+    }
+  ],
+  "instances": {
+    "js": {
+      "appliesTo": [
+        "public-compatibility",
+        "public-body",
+        "same-ecosystem-rollback"
+      ],
+      "calculatedAtMaxima": {
+        "admissionCeilingBytes": 738197504,
+        "processCandidatePeakEstimateBytes": 606076928,
+        "requestAndStreamBuffersBytes": 12582912,
+        "singleSnapshotResidentEstimateBytes": 119537664
+      },
+      "classification": "operatorPolicyChoices",
+      "growthHeadroomRatios": {
+        "archiveCount": 32768.0,
+        "archiveTotalBytes": 12043.22,
+        "currentCheckoutToQuota": 10711.55,
+        "gitTreeLogical": 2855.76,
+        "largestArchive": 8028.82,
+        "largestInlineResponse": 4211.15,
+        "packages": 4096.0,
+        "routes": 6553.6,
+        "treeEntries": 244.54,
+        "versions": 32768.0
+      },
+      "headroomCaveat": "current JS bootstrap is one package;large ratios are explicit initial operating envelope,not empirical growth support",
+      "limits": {
+        "maxArchiveBytes": 134217728,
+        "maxArchiveCount": 32768,
+        "maxArchiveTotalBytes": 201326592,
+        "maxCatalogBytes": 67108864,
+        "maxCategories": 128,
+        "maxConcurrentArchiveStreams": 64,
+        "maxConcurrentRequests": 256,
+        "maxDependencyEdges": 262144,
+        "maxGitFetchNetworkBytes": 268435456,
+        "maxGitFetchPackBytes": 268435456,
+        "maxGitInflatedObjectBytes": 536870912,
+        "maxGitObjects": 65536,
+        "maxGitTreeLogicalBytes": 268435456,
+        "maxInlineResponseBytes": 4194304,
+        "maxMaterializedCheckoutAllocatedBytes": 268435456,
+        "maxNonArchiveFileBytes": 16777216,
+        "maxPackages": 4096,
+        "maxPackumentBytes": 4194304,
+        "maxPathComponentBytes": 255,
+        "maxRawPathBytes": 4095,
+        "maxRegistries": 8,
+        "maxRegularFileBytes": 134217728,
+        "maxReloadSeconds": 120,
+        "maxRoutes": 65536,
+        "maxSnapshotBytes": 33554432,
+        "maxSparseRowBytes": 0,
+        "maxStateBytes": 2147483648,
+        "maxTreeDepth": 16,
+        "maxTreeDirectories": 4096,
+        "maxTreeEntries": 16384,
+        "maxVersions": 32768,
+        "streamBufferBytes": 65536
+      },
+      "nodeWorker": {
+        "maxTransferableSnapshotBytes": 33554432,
+        "resourceLimitsCodeRangeSizeMiB": 32,
+        "resourceLimitsMaxOldGenerationSizeMiB": 192,
+        "resourceLimitsMaxYoungGenerationSizeMiB": 32
+      },
+      "systemd": {
+        "LimitNOFILE": 2048,
+        "MemoryHighBytes": 536870912,
+        "MemoryMaxBytes": 805306368,
+        "TasksMax": 64
+      },
+      "zfs": {
+        "datasetPerInstance": true,
+        "property": "quota",
+        "quotaBytes": 2147483648
+      }
+    },
+    "rust": {
+      "appliesTo": [
+        "public-compatibility",
+        "public-body",
+        "same-ecosystem-rollback"
+      ],
+      "calculatedAtMaxima": {
+        "admissionCeilingBytes": 469762048,
+        "processCandidatePeakEstimateBytes": 397541376,
+        "requestAndStreamBuffersBytes": 12582912,
+        "singleSnapshotResidentEstimateBytes": 61210624
+      },
+      "classification": "operatorPolicyChoices",
+      "growthHeadroomRatios": {
+        "archiveCount": 5.48,
+        "archiveTotalBytes": 3.1,
+        "dependencyEdges": 23.75,
+        "gitTreeLogical": 274.11,
+        "largestArchive": 13.87,
+        "largestInlineResponse": 2.28,
+        "largestSparseRow": 4.87,
+        "packages": 8.99,
+        "rehearsedRepoPlusCheckoutPeakToQuota": 16.45,
+        "routes": 15.89,
+        "treeEntries": 21.2,
+        "versions": 21.93
+      },
+      "limits": {
+        "maxArchiveBytes": 134217728,
+        "maxArchiveCount": 4096,
+        "maxArchiveTotalBytes": 402653184,
+        "maxCatalogBytes": 33554432,
+        "maxCategories": 128,
+        "maxConcurrentArchiveStreams": 64,
+        "maxConcurrentRequests": 256,
+        "maxDependencyEdges": 131072,
+        "maxGitFetchNetworkBytes": 536870912,
+        "maxGitFetchPackBytes": 536870912,
+        "maxGitInflatedObjectBytes": 1073741824,
+        "maxGitObjects": 65536,
+        "maxGitTreeLogicalBytes": 536870912,
+        "maxInlineResponseBytes": 1048576,
+        "maxMaterializedCheckoutAllocatedBytes": 536870912,
+        "maxNonArchiveFileBytes": 16777216,
+        "maxPackages": 8192,
+        "maxPackumentBytes": 0,
+        "maxPathComponentBytes": 255,
+        "maxRawPathBytes": 4095,
+        "maxRegistries": 8,
+        "maxRegularFileBytes": 134217728,
+        "maxReloadSeconds": 120,
+        "maxRoutes": 32768,
+        "maxSnapshotBytes": 16777216,
+        "maxSparseRowBytes": 524288,
+        "maxStateBytes": 4294967296,
+        "maxTreeDepth": 16,
+        "maxTreeDirectories": 4096,
+        "maxTreeEntries": 16384,
+        "maxVersions": 16384,
+        "streamBufferBytes": 65536
+      },
+      "systemd": {
+        "LimitNOFILE": 2048,
+        "MemoryHighBytes": 402653184,
+        "MemoryMaxBytes": 536870912,
+        "TasksMax": 64
+      },
+      "zfs": {
+        "datasetPerInstance": true,
+        "property": "quota",
+        "quotaBytes": 4294967296
+      }
+    }
+  },
+  "measuredBaseline": {
+    "basisObservedUtc": "2026-08-26",
+    "caveat": "single warm-cache/local samples and read-only inventories;not production two-snapshot,network,drain,or quota proof",
+    "classification": "measuredFacts",
+    "crossEcosystem": {
+      "allObservedPublicUrls": 2072,
+      "maxObservedMappedBodyBytes": 459017,
+      "sumObservedMappedBodiesBytes": 9184799
+    },
+    "existingServiceBaseline": {
+      "LimitNOFILE": 524288,
+      "MemoryHigh": "infinity",
+      "MemoryMax": "infinity",
+      "TasksMax": 308853,
+      "legacyRssKiB": 9008,
+      "proxyRssKiB": 6988
+    },
+    "hostFilesystem": {
+      "blockAndFragmentBytes": 131072,
+      "caseSensitive": true,
+      "caseVariantsDistinct": true,
+      "nfcNfdDistinct": true,
+      "sameDirectoryRenameAndParentFsyncProbe": "pass",
+      "type": "ZFS"
+    },
+    "js": {
+      "allLocalGitDecompressedObjectBytes": 88278,
+      "archiveClosure": {
+        "archives": 1,
+        "largestBytes": 16717,
+        "rawBytes": 16717,
+        "uncompressedTarBytes": 77824
+      },
+      "basisCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "catalogBytes": 1650,
+      "categories": 0,
+      "checkoutFilesystemApparentBytes": 200483,
+      "dependencyEdges": 0,
+      "gitBlobPathCount": 37,
+      "gitObjectFormat": "sha1",
+      "gitStorageFileBytes": 65358,
+      "gitTreeEntries": 67,
+      "gitTreeLogicalBytes": 93998,
+      "largestCurrentSourceFileBytes": 16717,
+      "largestCurrentSourceFilePath": "bootstrap/js-v0.1.0/archives/<sha256>.tgz",
+      "maxRawPathBytes": 109,
+      "maxTreeDepth": 7,
+      "packages": 1,
+      "registries": 1,
+      "renderer": {
+        "finalElapsedSeconds": 0.0891,
+        "finalPeakRssKiB": 45160,
+        "largestInlineResponseBytes": 996,
+        "largestPackumentBytes": 996,
+        "outputBytes": 19785,
+        "outputFiles": 8,
+        "routesElapsedSeconds": 0.0951,
+        "routesPeakRssKiB": 43856
+      },
+      "routeInventory": {
+        "allObservedPublicUrls": 10,
+        "note": "packument+content-addressed package body+typed redirect;7 expected-404/control rows",
+        "targetDynamicBodyOrRedirectDescriptors": 3
+      },
+      "uniqueGitBlobBytes": 57651,
+      "versions": 1
+    },
+    "rust": {
+      "allLocalGitDecompressedObjectBytes": 4292447,
+      "archiveClosureRehearsal": {
+        "archives": 747,
+        "checkoutCloneSeconds": 0.6751068672165275,
+        "downloadConcurrency": 8,
+        "downloadSeconds": 19.133080821018666,
+        "downloadTimeoutSeconds": 120,
+        "explicitCheckoutSeconds": 0.15189507696777582,
+        "fixedRefFetchSeconds": 0.5220722937956452,
+        "importSeconds": 1.2614009929820895,
+        "largestBytes": 9679450,
+        "packSeconds": 2.3470200742594898,
+        "packedRepoAllocatedBytes": 129585152,
+        "packedRepoApparentBytes": 129497688,
+        "rawBytes": 129833713,
+        "repoPlusCheckoutPeakAllocatedBytes": 261058560,
+        "repoPlusCheckoutPeakApparentBytes": 259463968,
+        "scope": "scratch tmpfs ordinary-Git feasibility;external current closure imported into a synthetic repo;not current catalog-tree or production network/quota/history evidence"
+      },
+      "basisCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "catalogBytesExcludingCrateObjects": 1705601,
+      "catalogNames": 911,
+      "categories": 9,
+      "checkoutFilesystemApparentBytes": 4080798,
+      "dependencyEdges": 5518,
+      "gitBlobPathCount": 763,
+      "gitObjectFormat": "sha1",
+      "gitStorageFileBytes": 1949410,
+      "gitTreeEntries": 773,
+      "gitTreeLogicalBytes": 1958607,
+      "largestCurrentSourceFileBytes": 320545,
+      "largestCurrentSourceFilePath": "registry/main.lock",
+      "maxRawPathBytes": 94,
+      "maxTreeDepth": 4,
+      "packages": 911,
+      "registries": 1,
+      "renderedSparseRows": 555,
+      "renderer": {
+        "checkElapsedSeconds": 0.0255,
+        "checkPeakRssKiB": 11592,
+        "largestInlineResponseBytes": 459017,
+        "largestInlineResponsePath": "release.json",
+        "largestSparseRowBytes": 107745,
+        "largestSparseRowPath": "we/b-/web-sys",
+        "outputBytes": 2129784,
+        "outputFiles": 563,
+        "renderElapsedSeconds": 1.4841,
+        "renderPeakRssKiB": 11560
+      },
+      "reservedNamesWithoutRows": 356,
+      "routeInventory": {
+        "allObservedPublicUrls": 2062,
+        "note": "2062 ecosystem rows minus 7 expected-404 negative/control rows;route schema not yet implemented",
+        "targetDynamicBodyOrRedirectDescriptors": 2055
+      },
+      "versions": 747
+    }
+  },
+  "operatorDecisions": [
+    {
+      "decision": "operator+independent reviewer approve exact proposal integers before instance digest/config freeze",
+      "id": "APPROVE-VALUES",
+      "status": "required"
+    },
+    {
+      "decision": "pin actual Rain time-sync daemon,sources,configuration,and offset evidence matching prerequisite",
+      "id": "CLOCK-SOURCE",
+      "status": "required"
+    },
+    {
+      "decision": "body and compatibility modes use distinct instance digests/state roots;decide creation schedule;never reinterpret roots",
+      "id": "BODY-INSTANCE-ROOTS",
+      "status": "required"
+    },
+    {
+      "decision": "operator timestamps each horizon only after corresponding qualification criteria and rollback rehearsal pass",
+      "id": "OBSERVATION-START",
+      "status": "required"
+    }
+  ],
+  "rejectBehavior": {
+    "MemoryHigh": "alert+throttle candidate work;not kill threshold",
+    "MemoryMax": "systemd hard cap;any OOM kill fails qualification and blocks cutover",
+    "boundedCodes": [
+      "TIME_CLOCK_UNTRUSTED",
+      "FETCH_TIMEOUT",
+      "FETCH_BYTES",
+      "GIT_OBJECT_LIMIT",
+      "TREE_LIMIT",
+      "FILE_LIMIT",
+      "CATALOG_LIMIT",
+      "ARCHIVE_LIMIT",
+      "ROUTE_LIMIT",
+      "SNAPSHOT_LIMIT",
+      "MEMORY_ESTIMATE",
+      "RELOAD_TIMEOUT",
+      "STATE_SPACE",
+      "RESOURCE_FAILURE"
+    ],
+    "candidateOverAnyLimit": "reject before accepted mutation;delete only recognized staging temp;record one bounded code;serve LKG;do not retry same hash automatically",
+    "classification": "operatorPolicyChoices",
+    "oldLeaseExpiry": "cancel remaining stream;offline reference-aware GC only",
+    "quotaOrPreflightFailure": "reject candidate;never evict active/rollback/leased state",
+    "resourceAllocationFailure": "reject candidate;serve LKG"
+  },
+  "repositoryMutation": "none intended;read-only status fingerprints recorded in validation report",
+  "schema": "pkgre-d0-time-resource-proposal-v1",
+  "scope": "public Rust+JS compatibility/body/rollback instance policy envelope;no LAN instance selected here",
+  "sharedPolicy": {
+    "classification": "operatorPolicyChoices",
+    "clock": {
+      "afterBootRule": "monotonic epoch reset;require 600s trusted sync before acceptance;startup validates persisted source ordering but never reevaluates accepted generation against current clock",
+      "maxBackwardRealtimeMovementSeconds": 5,
+      "maxFutureSkewSeconds": 300,
+      "maxRealtimeVsMonotonicDeviationSeconds": 2,
+      "persistedObservation": "record bounded wall instant,boot identifier,and monotonic sample in audit record;not serving readiness",
+      "sampleAt": [
+        "candidate-start",
+        "pre-linearization"
+      ],
+      "timeSyncPrerequisite": {
+        "kernelSynchronizedRequired": true,
+        "lostOrUntrustedSyncBehavior": "reject new acceptance;serve LKG",
+        "maxReportedOffsetSeconds": 1,
+        "required": true,
+        "source": "operator-pinned chrony/systemd-timesyncd configuration",
+        "stableBeforeAcceptanceSeconds": 600
+      },
+      "withinBootRule": "deltaRealtime must be >= -5 and abs(deltaRealtime-deltaMonotonic)<=2;else reject TIME_CLOCK_UNTRUSTED"
+    },
+    "http": {
+      "headerTimeoutStatus": 408,
+      "maxConcurrentArchiveStreams": 64,
+      "maxConcurrentRequests": 256,
+      "maxConditionalEtags": 16,
+      "maxConditionalHeaderBytes": 4096,
+      "maxHeaderCount": 64,
+      "maxRawTargetBytes": 4096,
+      "maxRequestBodyBytes": 0,
+      "maxSingleHeaderFieldBytes": 8192,
+      "maxTotalHeaderBytes": 32768,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "nonzeroBodyOrFramingStatus": 413,
+      "overHeaderStatus": 431,
+      "overTargetStatus": 414,
+      "requestBufferBytes": 32768,
+      "requestSaturation": {
+        "Retry-After": "1",
+        "bodyBytes": 0,
+        "status": 503
+      },
+      "streamBufferBytes": 65536
+    },
+    "lifecycle": {
+      "archiveStreamLeaseSeconds": 120,
+      "httpDrainDeadlineSeconds": 30,
+      "leaseExpiryBehavior": "cancel connection,close immutable archive FD,release snapshot+checkout lease;never unlink online",
+      "oldGenerationLeaseSeconds": 120,
+      "requestHeaderReadTimeoutSeconds": 10,
+      "requestIdleTimeoutSeconds": 15,
+      "requestTotalLeaseSeconds": 120,
+      "restartOverlap": "single lifetime state lock;new process fails before state read until old exits",
+      "shutdownLeaseOverrideSeconds": 30,
+      "sigkillAfterApplicationDeadlineSeconds": 5,
+      "sigtermBehavior": "stop watcher;cancel pre-linearization candidate work;stop accepting public requests;drain existing HTTP;never alter accepted",
+      "systemdTimeoutStopSeconds": 35
+    },
+    "observationHorizons": {
+      "clockSyncQualificationSeconds": 86400,
+      "criteria": "no unexplained restart/OOM/quota failure/accepted-state mismatch;all candidate rejects bounded;RSS p99 < 75% MemoryHigh;state use < 70% quota;archive hash/route completeness 100%;HTTP 5xx excluding deliberate overload=0 in controlled probes",
+      "legacyRetirementMinimumSecondsAfterLastSuccessfulRollbackRehearsal": 2592000,
+      "perArchiveBodyCutoverSeconds": 604800,
+      "preCutoverCanarySeconds": 259200,
+      "publicSustainedOperationsSeconds": 1209600,
+      "resourceStressCyclesPerInstance": 100,
+      "resourceStressMinimumSeconds": 21600
+    },
+    "reload": {
+      "archiveVerificationAndSnapshotBuildTimeoutSeconds": 90,
+      "durableCommitTimeoutSeconds": 10,
+      "materializeTimeoutSeconds": 45,
+      "postFetchEndToEndTimeoutSeconds": 120,
+      "rule": "phase caps share post-fetch 120s wall deadline;timeout before accepted linearization rejects candidate;timeout after linearization requires exact prepared publish or immediate process exit",
+      "strictGitVerificationTimeoutSeconds": 30
+    },
+    "status": "exact proposal;requires implementation fixtures+operator approval",
+    "watcher": {
+      "connectTimeoutSeconds": 10,
+      "fetchCpuSeconds": 20,
+      "fetchOverallTimeoutSeconds": 30,
+      "fetchTimeoutBehavior": "terminate fetch process group;delete only recognized staging temp;preserve LKG",
+      "hashCoalescing": true,
+      "pollIntervalSeconds": 60,
+      "pollJitterMethod": "uniform deterministic per instance in [-15,+15]",
+      "pollJitterSeconds": 15,
+      "rejectedHashSuppressedUntilHashChangeOrExplicitRetry": true,
+      "retryBackoffInitialSeconds": 30,
+      "retryBackoffMaxSeconds": 900,
+      "retryBackoffMultiplier": 2,
+      "retryJitterPercent": 20
+    }
+  },
+  "sources": {
+    "architecture": "research/pkgre-dynamic-view-serving.md",
+    "archiveRehearsal": "~/repos/pkgre/fixtures/d0-v1/archive-git-rehearsal/{README.md,download-summary.json,git-metrics.json,checkout-timing.json}",
+    "gitStorage": "d0-git-storage-inventory/repositories.json + filesystem.json",
+    "httpEdge": "evidence/d0-public-http-edge-2026-08-26/REPORT.md",
+    "js": "d0-js-child-report.md",
+    "plan": "plans/pkgre-dynamic-registry-rollout.md \u00a7\u00a75,11,24",
+    "rainDesign": "evidence/d0-rain-identity-design/{README.md,design.json}",
+    "renderer": "d0-pkgre-066293df/REPORT.md",
+    "routes": "d0-route-inventory/validation.json + routes.json"
+  },
+  "status": "proposal-not-approved-not-deployment-authority",
+  "units": {
+    "bytes": "exact integer bytes",
+    "counts": "exact inclusive maxima",
+    "rss": "KiB only in measured facts;systemd bytes in proposals",
+    "seconds": "wall seconds unless CPU explicitly named"
+  },
+  "validation": {
+    "checkCount": 49,
+    "command": "python3 validate.py",
+    "resultFile": "validation.json",
+    "status": "passed"
+  }
+}
