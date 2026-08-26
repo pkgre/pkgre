@@ -1,0 +1,1332 @@
+{
+  "document": {
+    "kind": "pkgre-rain-d0-identity-resource-design",
+    "version": 1,
+    "createdUtc": "2026-08-26T12:24:32Z",
+    "scope": "read-only future design for Rust+JS public compatibility units and dormant rollback anchors;body-mode and LAN identities excluded",
+    "authority": "proposal only;identities/resources are not current observed deployment;no repo/host/remote mutation or secret read",
+    "deploymentReady": false,
+    "status": "proposal-only;incomplete-D0-input",
+    "currentObservedDeployment": false,
+    "d0CompletionClaim": false,
+    "completionNote": "This bounded future design is not an observed Rain deployment and does not claim D0 completion; every unresolved gate remains blocking."
+  },
+  "sourceBasis": {
+    "canonicalPlan": {
+      "path": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/plans/pkgre-dynamic-registry-rollout.md",
+      "sections": [
+        "5",
+        "11",
+        "18"
+      ]
+    },
+    "repositories": {
+      "infra": {
+        "path": "/home/dev0/repos/infra",
+        "branch": "master",
+        "commit": "5f68539bd99c6952b6d73fe2596c27ad4a319f57",
+        "workingTreeObserved": "clean"
+      },
+      "pkgre": {
+        "path": "/home/dev0/repos/pkgre",
+        "commit": "1d44dfeaeafef2b1a5341c13bf73647dcbc925ec"
+      },
+      "pkgre-rust": {
+        "path": "/home/dev0/repos/pkgre-rust",
+        "ref": "refs/heads/main",
+        "commit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+        "remoteObservation": "fresh git ls-remote"
+      },
+      "pkgre-js": {
+        "path": "/home/dev0/repos/pkgre-js",
+        "ref": "refs/heads/main",
+        "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+        "remoteObservation": "fresh git ls-remote"
+      }
+    },
+    "liveEvidence": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/evidence/d0-rain-live-2026-08-26/"
+  },
+  "observedFacts": {
+    "status": "observed/read-only;not proposed",
+    "container": {
+      "name": "pkgre",
+      "publicAddress": "10.22.2.5",
+      "hostLocalAddress": "10.131.7.4",
+      "hostLocalHostAddress": "10.131.7.1",
+      "privateUsers": "pick",
+      "observedUidShift": 1164705792,
+      "rootFilesystem": "ephemeral idmapped ZFS snapshot"
+    },
+    "existingServices": [
+      {
+        "role": "legacy",
+        "listen": "10.131.7.4:9008"
+      },
+      {
+        "role": "proxy",
+        "listen": "10.131.7.4:9009"
+      }
+    ],
+    "existingUnitDefaults": {
+      "DynamicUser": true,
+      "StateDirectory": null,
+      "MemoryHigh": "infinity",
+      "MemoryMax": "infinity",
+      "TasksMax": 308853,
+      "LimitNOFILE": 524288,
+      "rssApproxKiB": {
+        "legacy": 9008,
+        "proxy": 6988
+      }
+    },
+    "currentStorage": {
+      "dataset": "zroot/root/varlib",
+      "usedApproxBytes": 168800000000,
+      "availableApproxBytes": 3522000000000,
+      "quota": 0,
+      "refquota": 0,
+      "nspawnStateHostGrammar": "/var/lib/machine-states/<container>/<state-name>",
+      "stateBind": "idmap",
+      "currentStateDirectoryMode": "0755-only"
+    },
+    "allocationReview": {
+      "highestDefinedStaticId": 1975,
+      "candidateIds1976Through1980Absent": true,
+      "definedPorts": "9001..9009",
+      "candidatePorts9010Through9013And9110Through9113Absent": true,
+      "liveCandidateListenersAbsent": true
+    },
+    "idmapFact": "on an idmapped nspawn state bind container UID/GID z maps to identical host UID/GID z;ordinary root-tree files use the PrivateUsers shift",
+    "limitations": [
+      "existing state option does not manage required owner/mode/ACL/quota",
+      "StateDirectoryQuota project-quota behavior is unproved on this ZFS deployment",
+      "no measured dynamic two-snapshot peak yet"
+    ]
+  },
+  "measurements": {
+    "rustArchiveGitRehearsal": {
+      "status": "observed committed rehearsal evidence;not a proposal and not production quota proof",
+      "routeCount": 747,
+      "uniqueArchiveObjectCount": 747,
+      "rawUniqueBytes": 129833713,
+      "rawArchiveBytes": 129833713,
+      "logicalRouteBytes": 129833713,
+      "largestArchiveBytes": 9679450,
+      "packedRepoApparentBytes": 129497688,
+      "packedRepoAllocatedBytes": 129585152,
+      "checkoutRepoApparentBytes": 129475752,
+      "checkoutTreeApparentBytes": 129988057,
+      "repoPlusCheckoutPeakApparentBytes": 259463809,
+      "checkoutRepoAllocatedBytes": 129560576,
+      "checkoutTreeAllocatedBytes": 131497984,
+      "repoPlusCheckoutPeakAllocatedBytes": 261058560,
+      "authoritativeRawUniqueBytesFieldProof": {
+        "download-summary.json.raw_unique_bytes": 129833713,
+        "git-metrics.json.raw_unique_bytes": 129833713,
+        "git-metrics.json.checkout_verified_bytes": 129833713
+      },
+      "sourceFiles": [
+        {
+          "path": "/home/dev0/repos/pkgre/fixtures/d0-v1/archive-git-rehearsal/download-summary.json",
+          "sha256": "53e1a700d3c7ca0d9314bf2364e0387477388c25a6bcce386af28c602a63c68c"
+        },
+        {
+          "path": "/home/dev0/repos/pkgre/fixtures/d0-v1/archive-git-rehearsal/git-metrics.json",
+          "sha256": "a79b6d9f617e6a4b45727205b104f29b33c7bca009513f15c8f00e67f4804e00"
+        }
+      ],
+      "interpretation": "one-host feasibility evidence,not production quota proof"
+    },
+    "renderCheck": {
+      "rustFullRenderSeconds": 0.77,
+      "rustFullRenderPeakRssApproxMiB": 15,
+      "rustOutputApproxBytes": 2130000,
+      "rustCheckSeconds": 0.12,
+      "jsCheckNodeBaselineApproxMiB": 45
+    }
+  },
+  "proposal": {
+    "status": "future proposal only;not current observed deployment;not a D0 completion claim;noncollision holds only for checked infra definitions+2026-08-26 live evidence and must be re-evaluated before implementation",
+    "instances": [
+      {
+        "status": "proposed-read-only-design;not-currently-deployed;not-D0-complete",
+        "ecosystem": "rust",
+        "role": "compatibility",
+        "instanceName": "pkgre-rust-serve-public",
+        "host": "rain",
+        "container": "pkgre",
+        "unit": "pkgre-rust-serve-public.service",
+        "identity": {
+          "user": "pkgre-rust-serve-public",
+          "group": "pkgre-rust-serve-public",
+          "uid": 1976,
+          "gid": 1976,
+          "static": true,
+          "dynamicUser": false,
+          "systemAccount": true,
+          "loginShell": "/run/current-system/sw/bin/nologin",
+          "home": null,
+          "supplementaryGroups": [],
+          "idmappedStateBind": {
+            "hostUid": 1976,
+            "containerUid": 1976,
+            "hostGid": 1976,
+            "containerGid": 1976,
+            "mappingRule": "identity on idmap state bind;do not add PrivateUsers shift"
+          },
+          "ordinaryContainerRootMapping": {
+            "observedPrivateUsersShift": 1164705792,
+            "hostUidFormula": "1164705792+1976",
+            "appliesToStateBind": false,
+            "hostUid": 1164707768,
+            "hostGid": 1164707768
+          }
+        },
+        "network": {
+          "protocol": {
+            "listen": "10.131.7.4:9010",
+            "address": "10.131.7.4",
+            "port": 9010,
+            "transport": "tcp",
+            "applicationProtocol": "HTTP/1.1",
+            "classification": "container host-local;not public interface"
+          },
+          "admin": {
+            "listen": "127.0.0.1:9110",
+            "address": "127.0.0.1",
+            "port": 9110,
+            "transport": "tcp",
+            "classification": "container loopback only",
+            "nginxTarget": false,
+            "firewallAdmission": false
+          },
+          "allowedProtocolSource": "10.131.7.1/32",
+          "nginxTarget": true
+        },
+        "state": {
+          "stateDirectoryName": "pkgre-rust-serve-public",
+          "guestRoot": "/var/lib/pkgre-rust-serve-public",
+          "hostBackingPath": "/var/lib/machine-states/pkgre/pkgre-rust-serve-public",
+          "dataset": "zroot/root/varlib/machine-states/pkgre/pkgre-rust-serve-public",
+          "filesystem": "ZFS child dataset",
+          "mountpointProperty": "legacy",
+          "quotaBytes": 4294967296,
+          "quotaHuman": "4GiB",
+          "sameFilesystemScope": "mirror.git,checkouts,generations,retired-generation-ids,accepted,instance,lock,staging and all transaction temporaries remain in this dataset",
+          "paths": {
+            "mirror": "/var/lib/pkgre-rust-serve-public/mirror.git",
+            "checkouts": "/var/lib/pkgre-rust-serve-public/checkouts",
+            "generations": "/var/lib/pkgre-rust-serve-public/generations",
+            "retiredGenerationIds": "/var/lib/pkgre-rust-serve-public/retired-generation-ids",
+            "instance": "/var/lib/pkgre-rust-serve-public/instance",
+            "accepted": "/var/lib/pkgre-rust-serve-public/accepted",
+            "lock": "/var/lib/pkgre-rust-serve-public/lock",
+            "staging": "/var/lib/pkgre-rust-serve-public/staging"
+          },
+          "lockWrapper": "Nix-pinned flock --exclusive --nonblock --no-fork on <guestRoot>/lock;all production/test/repair/reseed/GC entrypoints use it before state read",
+          "ownership": {
+            "hostContainerParent": {
+              "path": "/var/lib/machine-states/pkgre",
+              "owner": "root",
+              "group": "root",
+              "mode": "0711"
+            },
+            "datasetRoot": {
+              "owner": "pkgre-rust-serve-public",
+              "group": "pkgre-rust-serve-public",
+              "uid": 1976,
+              "gid": 1976,
+              "mode": "0700"
+            },
+            "stateDirectories": {
+              "owner": "pkgre-rust-serve-public",
+              "group": "pkgre-rust-serve-public",
+              "mode": "0700"
+            },
+            "stateFiles": {
+              "owner": "pkgre-rust-serve-public",
+              "group": "pkgre-rust-serve-public",
+              "mode": "0600"
+            },
+            "configTrustParents": {
+              "owner": "root",
+              "group": "root",
+              "mode": "0755"
+            },
+            "configTrustLeaves": {
+              "owner": "root",
+              "group": "pkgre-rust-serve-public",
+              "mode": "0640"
+            },
+            "backupAcl": {
+              "access": "u:pkgre-state-backup:r-X",
+              "default": "d:u:pkgre-state-backup:r-X",
+              "write": false
+            }
+          },
+          "writers": [
+            "pkgre-rust-serve-public"
+          ],
+          "readers": [
+            "pkgre-rust-serve-public",
+            "root",
+            "pkgre-state-backup (POSIX ACL read/traverse only)"
+          ],
+          "crossInstanceRead": false,
+          "writableAfterSandbox": [
+            "/var/lib/pkgre-rust-serve-public",
+            "dedicated RuntimeDirectory if implementation needs an admin socket;no shared writable path"
+          ]
+        },
+        "deploymentInputs": {
+          "configPath": "/etc/pkgre/pkgre-rust-serve-public.json",
+          "configCredentialPath": null,
+          "gitCredentialPath": null,
+          "allowedSignersPath": "/etc/pkgre/trust/pkgre-rust-serve-public/allowed-signers",
+          "revocationsPath": "/etc/pkgre/trust/pkgre-rust-serve-public/revocations",
+          "secretInNixStore": false
+        },
+        "systemd": {
+          "MemoryHighBytes": 402653184,
+          "MemoryHigh": "384MiB",
+          "MemoryMaxBytes": 536870912,
+          "MemoryMax": "512MiB",
+          "TasksMax": 64,
+          "LimitNOFILE": 2048,
+          "DynamicUser": false,
+          "sandbox": {
+            "ProtectSystem": "strict",
+            "PrivateTmp": true,
+            "NoNewPrivileges": true,
+            "ReadWritePaths": [
+              "/var/lib/pkgre-rust-serve-public"
+            ],
+            "note": "final hardening set must be generated-unit reviewed"
+          }
+        },
+        "configProposal": {
+          "configStatus": "proposed-D0;not deployable until unresolved gates are frozen",
+          "schemaVersion": null,
+          "stateContract": "state-contract-v1",
+          "protocolContract": null,
+          "gitObjectFormat": "sha1",
+          "ecosystem": "rust",
+          "audience": "public",
+          "mode": "public",
+          "deliveryMode": "redirect",
+          "redirectMarkerSchema": null,
+          "source": {
+            "canonicalOrigin": "https://github.com/pkgre/rust.git",
+            "transport": "https-anonymous",
+            "credentialPath": null,
+            "remoteRef": "refs/heads/main",
+            "fetchRefspec": "+refs/heads/main:refs/pkgre/remotes/main",
+            "remoteTrackingRef": "refs/pkgre/remotes/main",
+            "candidateRefGrammar": "refs/pkgre/candidates/<40-lowercase-hex>",
+            "acceptedRefGrammar": "refs/pkgre/accepted/<40-lowercase-hex>",
+            "bootstrapCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+            "bootstrapStatus": "current reviewed main tip;re-fetch/review at D7 before freeze",
+            "tags": false,
+            "depth": "complete/non-shallow"
+          },
+          "updatePolicy": "watch-fixed-ref",
+          "watcher": {
+            "enabled": true,
+            "pollIntervalSeconds": 60,
+            "jitterMaxSeconds": 15,
+            "fetchTimeoutSeconds": 30,
+            "backoffInitialSeconds": 30,
+            "backoffMaxSeconds": 900,
+            "suppression": "rejected commit suppressed until ref hash changes or explicit operator retry"
+          },
+          "listeners": {
+            "protocol": "10.131.7.4:9010",
+            "admin": "127.0.0.1:9110"
+          },
+          "trust": {
+            "signatureFormat": "Git SSH Ed25519",
+            "allowedSignersPath": "/etc/pkgre/trust/pkgre-rust-serve-public/allowed-signers",
+            "revocationsPath": "/etc/pkgre/trust/pkgre-rust-serve-public/revocations",
+            "signerPrincipal": null,
+            "signerKeySha256Fingerprint": null,
+            "trustedKeySetSha256": null,
+            "revocationSetSha256": null,
+            "status": "BLOCKED:exact public signing authority/digests absent from this bounded design"
+          },
+          "instanceDigest": {
+            "value": null,
+            "status": "BLOCKED:schema/protocol enum+trust digests+full maxima not frozen;compute canonical digest only after all inputs resolve"
+          },
+          "limits": {
+            "status": "partially proposed;D4 measurement and D7 freeze required",
+            "maxArchiveBytes": 134217728,
+            "maxConcurrentRequests": 256,
+            "streamBufferBytes": 65536,
+            "maxReloadSeconds": 120,
+            "maxStateBytes": 4294967296,
+            "remainingRequiredMaxima": null
+          },
+          "requestOverloadBehavior": {
+            "status": 503,
+            "retryAfterHeader": true,
+            "boundedQueue": true
+          },
+          "instanceDigestInputs": [
+            "canonicalOrigin",
+            "remoteRef",
+            "ecosystem",
+            "mode",
+            "audience",
+            "stateContract",
+            "protocolContract",
+            "redirectMarkerSchema:null",
+            "deliveryMode",
+            "bootstrapCommit",
+            "schemaVersion",
+            "trustedKeySetSha256",
+            "revocationSetSha256",
+            "limits",
+            "updatePolicy"
+          ]
+        },
+        "rationale": {
+          "quota": "provisional initial ceiling;candidate preflight checks quota+free space and never evicts active/required rollback",
+          "resources": "measured full static render\u224815MiB RSS;D4 must prove live+candidate+old-in-flight peak under cap",
+          "rollbackIsolation": "watch only exact fixed public ref"
+        },
+        "currentlyDeployed": false,
+        "d0CompletionClaim": false
+      },
+      {
+        "status": "proposed-read-only-design;not-currently-deployed;not-D0-complete",
+        "ecosystem": "js",
+        "role": "compatibility",
+        "instanceName": "pkgre-js-serve-public",
+        "host": "rain",
+        "container": "pkgre",
+        "unit": "pkgre-js-serve-public.service",
+        "identity": {
+          "user": "pkgre-js-serve-public",
+          "group": "pkgre-js-serve-public",
+          "uid": 1977,
+          "gid": 1977,
+          "static": true,
+          "dynamicUser": false,
+          "systemAccount": true,
+          "loginShell": "/run/current-system/sw/bin/nologin",
+          "home": null,
+          "supplementaryGroups": [],
+          "idmappedStateBind": {
+            "hostUid": 1977,
+            "containerUid": 1977,
+            "hostGid": 1977,
+            "containerGid": 1977,
+            "mappingRule": "identity on idmap state bind;do not add PrivateUsers shift"
+          },
+          "ordinaryContainerRootMapping": {
+            "observedPrivateUsersShift": 1164705792,
+            "hostUidFormula": "1164705792+1977",
+            "appliesToStateBind": false,
+            "hostUid": 1164707769,
+            "hostGid": 1164707769
+          }
+        },
+        "network": {
+          "protocol": {
+            "listen": "10.131.7.4:9011",
+            "address": "10.131.7.4",
+            "port": 9011,
+            "transport": "tcp",
+            "applicationProtocol": "HTTP/1.1",
+            "classification": "container host-local;not public interface"
+          },
+          "admin": {
+            "listen": "127.0.0.1:9111",
+            "address": "127.0.0.1",
+            "port": 9111,
+            "transport": "tcp",
+            "classification": "container loopback only",
+            "nginxTarget": false,
+            "firewallAdmission": false
+          },
+          "allowedProtocolSource": "10.131.7.1/32",
+          "nginxTarget": true
+        },
+        "state": {
+          "stateDirectoryName": "pkgre-js-serve-public",
+          "guestRoot": "/var/lib/pkgre-js-serve-public",
+          "hostBackingPath": "/var/lib/machine-states/pkgre/pkgre-js-serve-public",
+          "dataset": "zroot/root/varlib/machine-states/pkgre/pkgre-js-serve-public",
+          "filesystem": "ZFS child dataset",
+          "mountpointProperty": "legacy",
+          "quotaBytes": 2147483648,
+          "quotaHuman": "2GiB",
+          "sameFilesystemScope": "mirror.git,checkouts,generations,retired-generation-ids,accepted,instance,lock,staging and all transaction temporaries remain in this dataset",
+          "paths": {
+            "mirror": "/var/lib/pkgre-js-serve-public/mirror.git",
+            "checkouts": "/var/lib/pkgre-js-serve-public/checkouts",
+            "generations": "/var/lib/pkgre-js-serve-public/generations",
+            "retiredGenerationIds": "/var/lib/pkgre-js-serve-public/retired-generation-ids",
+            "instance": "/var/lib/pkgre-js-serve-public/instance",
+            "accepted": "/var/lib/pkgre-js-serve-public/accepted",
+            "lock": "/var/lib/pkgre-js-serve-public/lock",
+            "staging": "/var/lib/pkgre-js-serve-public/staging"
+          },
+          "lockWrapper": "Nix-pinned flock --exclusive --nonblock --no-fork on <guestRoot>/lock;all production/test/repair/reseed/GC entrypoints use it before state read",
+          "ownership": {
+            "hostContainerParent": {
+              "path": "/var/lib/machine-states/pkgre",
+              "owner": "root",
+              "group": "root",
+              "mode": "0711"
+            },
+            "datasetRoot": {
+              "owner": "pkgre-js-serve-public",
+              "group": "pkgre-js-serve-public",
+              "uid": 1977,
+              "gid": 1977,
+              "mode": "0700"
+            },
+            "stateDirectories": {
+              "owner": "pkgre-js-serve-public",
+              "group": "pkgre-js-serve-public",
+              "mode": "0700"
+            },
+            "stateFiles": {
+              "owner": "pkgre-js-serve-public",
+              "group": "pkgre-js-serve-public",
+              "mode": "0600"
+            },
+            "configTrustParents": {
+              "owner": "root",
+              "group": "root",
+              "mode": "0755"
+            },
+            "configTrustLeaves": {
+              "owner": "root",
+              "group": "pkgre-js-serve-public",
+              "mode": "0640"
+            },
+            "backupAcl": {
+              "access": "u:pkgre-state-backup:r-X",
+              "default": "d:u:pkgre-state-backup:r-X",
+              "write": false
+            }
+          },
+          "writers": [
+            "pkgre-js-serve-public"
+          ],
+          "readers": [
+            "pkgre-js-serve-public",
+            "root",
+            "pkgre-state-backup (POSIX ACL read/traverse only)"
+          ],
+          "crossInstanceRead": false,
+          "writableAfterSandbox": [
+            "/var/lib/pkgre-js-serve-public",
+            "dedicated RuntimeDirectory if implementation needs an admin socket;no shared writable path"
+          ]
+        },
+        "deploymentInputs": {
+          "configPath": "/etc/pkgre/pkgre-js-serve-public.json",
+          "configCredentialPath": null,
+          "gitCredentialPath": null,
+          "allowedSignersPath": "/etc/pkgre/trust/pkgre-js-serve-public/allowed-signers",
+          "revocationsPath": "/etc/pkgre/trust/pkgre-js-serve-public/revocations",
+          "secretInNixStore": false
+        },
+        "systemd": {
+          "MemoryHighBytes": 536870912,
+          "MemoryHigh": "512MiB",
+          "MemoryMaxBytes": 805306368,
+          "MemoryMax": "768MiB",
+          "TasksMax": 64,
+          "LimitNOFILE": 2048,
+          "DynamicUser": false,
+          "sandbox": {
+            "ProtectSystem": "strict",
+            "PrivateTmp": true,
+            "NoNewPrivileges": true,
+            "ReadWritePaths": [
+              "/var/lib/pkgre-js-serve-public"
+            ],
+            "note": "final hardening set must be generated-unit reviewed"
+          }
+        },
+        "configProposal": {
+          "configStatus": "proposed-D0;not deployable until unresolved gates are frozen",
+          "schemaVersion": null,
+          "stateContract": "state-contract-v1",
+          "protocolContract": null,
+          "gitObjectFormat": "sha1",
+          "ecosystem": "js",
+          "audience": "public",
+          "mode": "public",
+          "deliveryMode": "redirect",
+          "redirectMarkerSchema": null,
+          "source": {
+            "canonicalOrigin": "https://github.com/pkgre/js.git",
+            "transport": "https-anonymous",
+            "credentialPath": null,
+            "remoteRef": "refs/heads/main",
+            "fetchRefspec": "+refs/heads/main:refs/pkgre/remotes/main",
+            "remoteTrackingRef": "refs/pkgre/remotes/main",
+            "candidateRefGrammar": "refs/pkgre/candidates/<40-lowercase-hex>",
+            "acceptedRefGrammar": "refs/pkgre/accepted/<40-lowercase-hex>",
+            "bootstrapCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "bootstrapStatus": "current reviewed main tip;re-fetch/review at D7 before freeze",
+            "tags": false,
+            "depth": "complete/non-shallow"
+          },
+          "updatePolicy": "watch-fixed-ref",
+          "watcher": {
+            "enabled": true,
+            "pollIntervalSeconds": 60,
+            "jitterMaxSeconds": 15,
+            "fetchTimeoutSeconds": 30,
+            "backoffInitialSeconds": 30,
+            "backoffMaxSeconds": 900,
+            "suppression": "rejected commit suppressed until ref hash changes or explicit operator retry"
+          },
+          "listeners": {
+            "protocol": "10.131.7.4:9011",
+            "admin": "127.0.0.1:9111"
+          },
+          "trust": {
+            "signatureFormat": "Git SSH Ed25519",
+            "allowedSignersPath": "/etc/pkgre/trust/pkgre-js-serve-public/allowed-signers",
+            "revocationsPath": "/etc/pkgre/trust/pkgre-js-serve-public/revocations",
+            "signerPrincipal": null,
+            "signerKeySha256Fingerprint": null,
+            "trustedKeySetSha256": null,
+            "revocationSetSha256": null,
+            "status": "BLOCKED:exact public signing authority/digests absent from this bounded design"
+          },
+          "instanceDigest": {
+            "value": null,
+            "status": "BLOCKED:schema/protocol enum+trust digests+full maxima not frozen;compute canonical digest only after all inputs resolve"
+          },
+          "limits": {
+            "status": "partially proposed;D4 measurement and D7 freeze required",
+            "maxArchiveBytes": 134217728,
+            "maxConcurrentRequests": 256,
+            "streamBufferBytes": 65536,
+            "maxReloadSeconds": 120,
+            "maxStateBytes": 2147483648,
+            "remainingRequiredMaxima": null
+          },
+          "requestOverloadBehavior": {
+            "status": 503,
+            "retryAfterHeader": true,
+            "boundedQueue": true
+          },
+          "instanceDigestInputs": [
+            "canonicalOrigin",
+            "remoteRef",
+            "ecosystem",
+            "mode",
+            "audience",
+            "stateContract",
+            "protocolContract",
+            "redirectMarkerSchema:null",
+            "deliveryMode",
+            "bootstrapCommit",
+            "schemaVersion",
+            "trustedKeySetSha256",
+            "revocationSetSha256",
+            "limits",
+            "updatePolicy"
+          ]
+        },
+        "rationale": {
+          "quota": "provisional initial ceiling;candidate preflight checks quota+free space and never evicts active/required rollback",
+          "resources": "measured checker\u224845MiB Node baseline;D4 must prove worker/live+candidate+old-in-flight peak under cap",
+          "rollbackIsolation": "watch only exact fixed public ref"
+        },
+        "currentlyDeployed": false,
+        "d0CompletionClaim": false
+      },
+      {
+        "status": "proposed-read-only-design;not-currently-deployed;not-D0-complete",
+        "ecosystem": "rust",
+        "role": "rollback",
+        "instanceName": "pkgre-rust-serve-public-rollback",
+        "host": "rain",
+        "container": "pkgre",
+        "unit": "pkgre-rust-serve-public-rollback.service",
+        "identity": {
+          "user": "pkgre-rust-serve-public-rollback",
+          "group": "pkgre-rust-serve-public-rollback",
+          "uid": 1978,
+          "gid": 1978,
+          "static": true,
+          "dynamicUser": false,
+          "systemAccount": true,
+          "loginShell": "/run/current-system/sw/bin/nologin",
+          "home": null,
+          "supplementaryGroups": [],
+          "idmappedStateBind": {
+            "hostUid": 1978,
+            "containerUid": 1978,
+            "hostGid": 1978,
+            "containerGid": 1978,
+            "mappingRule": "identity on idmap state bind;do not add PrivateUsers shift"
+          },
+          "ordinaryContainerRootMapping": {
+            "observedPrivateUsersShift": 1164705792,
+            "hostUidFormula": "1164705792+1978",
+            "appliesToStateBind": false,
+            "hostUid": 1164707770,
+            "hostGid": 1164707770
+          }
+        },
+        "network": {
+          "protocol": {
+            "listen": "10.131.7.4:9012",
+            "address": "10.131.7.4",
+            "port": 9012,
+            "transport": "tcp",
+            "applicationProtocol": "HTTP/1.1",
+            "classification": "container host-local;not public interface"
+          },
+          "admin": {
+            "listen": "127.0.0.1:9112",
+            "address": "127.0.0.1",
+            "port": 9112,
+            "transport": "tcp",
+            "classification": "container loopback only",
+            "nginxTarget": false,
+            "firewallAdmission": false
+          },
+          "allowedProtocolSource": "10.131.7.1/32",
+          "nginxTarget": true
+        },
+        "state": {
+          "stateDirectoryName": "pkgre-rust-serve-public-rollback",
+          "guestRoot": "/var/lib/pkgre-rust-serve-public-rollback",
+          "hostBackingPath": "/var/lib/machine-states/pkgre/pkgre-rust-serve-public-rollback",
+          "dataset": "zroot/root/varlib/machine-states/pkgre/pkgre-rust-serve-public-rollback",
+          "filesystem": "ZFS child dataset",
+          "mountpointProperty": "legacy",
+          "quotaBytes": 4294967296,
+          "quotaHuman": "4GiB",
+          "sameFilesystemScope": "mirror.git,checkouts,generations,retired-generation-ids,accepted,instance,lock,staging and all transaction temporaries remain in this dataset",
+          "paths": {
+            "mirror": "/var/lib/pkgre-rust-serve-public-rollback/mirror.git",
+            "checkouts": "/var/lib/pkgre-rust-serve-public-rollback/checkouts",
+            "generations": "/var/lib/pkgre-rust-serve-public-rollback/generations",
+            "retiredGenerationIds": "/var/lib/pkgre-rust-serve-public-rollback/retired-generation-ids",
+            "instance": "/var/lib/pkgre-rust-serve-public-rollback/instance",
+            "accepted": "/var/lib/pkgre-rust-serve-public-rollback/accepted",
+            "lock": "/var/lib/pkgre-rust-serve-public-rollback/lock",
+            "staging": "/var/lib/pkgre-rust-serve-public-rollback/staging"
+          },
+          "lockWrapper": "Nix-pinned flock --exclusive --nonblock --no-fork on <guestRoot>/lock;all production/test/repair/reseed/GC entrypoints use it before state read",
+          "ownership": {
+            "hostContainerParent": {
+              "path": "/var/lib/machine-states/pkgre",
+              "owner": "root",
+              "group": "root",
+              "mode": "0711"
+            },
+            "datasetRoot": {
+              "owner": "pkgre-rust-serve-public-rollback",
+              "group": "pkgre-rust-serve-public-rollback",
+              "uid": 1978,
+              "gid": 1978,
+              "mode": "0700"
+            },
+            "stateDirectories": {
+              "owner": "pkgre-rust-serve-public-rollback",
+              "group": "pkgre-rust-serve-public-rollback",
+              "mode": "0700"
+            },
+            "stateFiles": {
+              "owner": "pkgre-rust-serve-public-rollback",
+              "group": "pkgre-rust-serve-public-rollback",
+              "mode": "0600"
+            },
+            "configTrustParents": {
+              "owner": "root",
+              "group": "root",
+              "mode": "0755"
+            },
+            "configTrustLeaves": {
+              "owner": "root",
+              "group": "pkgre-rust-serve-public-rollback",
+              "mode": "0640"
+            },
+            "backupAcl": {
+              "access": "u:pkgre-state-backup:r-X",
+              "default": "d:u:pkgre-state-backup:r-X",
+              "write": false
+            }
+          },
+          "writers": [
+            "pkgre-rust-serve-public-rollback"
+          ],
+          "readers": [
+            "pkgre-rust-serve-public-rollback",
+            "root",
+            "pkgre-state-backup (POSIX ACL read/traverse only)"
+          ],
+          "crossInstanceRead": false,
+          "writableAfterSandbox": [
+            "/var/lib/pkgre-rust-serve-public-rollback",
+            "dedicated RuntimeDirectory if implementation needs an admin socket;no shared writable path"
+          ]
+        },
+        "deploymentInputs": {
+          "configPath": "/etc/pkgre/pkgre-rust-serve-public-rollback.json",
+          "configCredentialPath": null,
+          "gitCredentialPath": null,
+          "allowedSignersPath": "/etc/pkgre/trust/pkgre-rust-serve-public-rollback/allowed-signers",
+          "revocationsPath": "/etc/pkgre/trust/pkgre-rust-serve-public-rollback/revocations",
+          "secretInNixStore": false
+        },
+        "systemd": {
+          "MemoryHighBytes": 402653184,
+          "MemoryHigh": "384MiB",
+          "MemoryMaxBytes": 536870912,
+          "MemoryMax": "512MiB",
+          "TasksMax": 64,
+          "LimitNOFILE": 2048,
+          "DynamicUser": false,
+          "sandbox": {
+            "ProtectSystem": "strict",
+            "PrivateTmp": true,
+            "NoNewPrivileges": true,
+            "ReadWritePaths": [
+              "/var/lib/pkgre-rust-serve-public-rollback"
+            ],
+            "note": "final hardening set must be generated-unit reviewed"
+          }
+        },
+        "configProposal": {
+          "configStatus": "proposed-D0;not deployable until unresolved gates are frozen",
+          "schemaVersion": null,
+          "stateContract": "state-contract-v1",
+          "protocolContract": null,
+          "gitObjectFormat": "sha1",
+          "ecosystem": "rust",
+          "audience": "public",
+          "mode": "public",
+          "deliveryMode": "redirect",
+          "redirectMarkerSchema": null,
+          "source": {
+            "canonicalOrigin": "https://github.com/pkgre/rust.git",
+            "transport": "https-anonymous",
+            "credentialPath": null,
+            "remoteRef": "refs/heads/main",
+            "fetchRefspec": "+refs/heads/main:refs/pkgre/remotes/main",
+            "remoteTrackingRef": "refs/pkgre/remotes/main",
+            "candidateRefGrammar": "refs/pkgre/candidates/<40-lowercase-hex>",
+            "acceptedRefGrammar": "refs/pkgre/accepted/<40-lowercase-hex>",
+            "bootstrapCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+            "bootstrapStatus": "current reviewed main tip;re-fetch/review at D7 before freeze",
+            "tags": false,
+            "depth": "complete/non-shallow"
+          },
+          "updatePolicy": "frozen-no-watcher",
+          "watcher": {
+            "enabled": false,
+            "pollIntervalSeconds": null,
+            "jitterMaxSeconds": null,
+            "fetchTimeoutSeconds": null,
+            "backoffInitialSeconds": null,
+            "backoffMaxSeconds": null,
+            "suppression": null
+          },
+          "listeners": {
+            "protocol": "10.131.7.4:9012",
+            "admin": "127.0.0.1:9112"
+          },
+          "trust": {
+            "signatureFormat": "Git SSH Ed25519",
+            "allowedSignersPath": "/etc/pkgre/trust/pkgre-rust-serve-public-rollback/allowed-signers",
+            "revocationsPath": "/etc/pkgre/trust/pkgre-rust-serve-public-rollback/revocations",
+            "signerPrincipal": null,
+            "signerKeySha256Fingerprint": null,
+            "trustedKeySetSha256": null,
+            "revocationSetSha256": null,
+            "status": "BLOCKED:exact public signing authority/digests absent from this bounded design"
+          },
+          "instanceDigest": {
+            "value": null,
+            "status": "BLOCKED:schema/protocol enum+trust digests+full maxima not frozen;compute canonical digest only after all inputs resolve"
+          },
+          "limits": {
+            "status": "partially proposed;D4 measurement and D7 freeze required",
+            "maxArchiveBytes": 134217728,
+            "maxConcurrentRequests": 256,
+            "streamBufferBytes": 65536,
+            "maxReloadSeconds": 120,
+            "maxStateBytes": 4294967296,
+            "remainingRequiredMaxima": null
+          },
+          "requestOverloadBehavior": {
+            "status": 503,
+            "retryAfterHeader": true,
+            "boundedQueue": true
+          },
+          "instanceDigestInputs": [
+            "canonicalOrigin",
+            "remoteRef",
+            "ecosystem",
+            "mode",
+            "audience",
+            "stateContract",
+            "protocolContract",
+            "redirectMarkerSchema:null",
+            "deliveryMode",
+            "bootstrapCommit",
+            "schemaVersion",
+            "trustedKeySetSha256",
+            "revocationSetSha256",
+            "limits",
+            "updatePolicy"
+          ]
+        },
+        "rationale": {
+          "quota": "provisional initial ceiling;candidate preflight checks quota+free space and never evicts active/required rollback",
+          "resources": "measured full static render\u224815MiB RSS;D4 must prove live+candidate+old-in-flight peak under cap",
+          "rollbackIsolation": "independent state root+identity;never copy mutable compatibility state"
+        },
+        "currentlyDeployed": false,
+        "d0CompletionClaim": false
+      },
+      {
+        "status": "proposed-read-only-design;not-currently-deployed;not-D0-complete",
+        "ecosystem": "js",
+        "role": "rollback",
+        "instanceName": "pkgre-js-serve-public-rollback",
+        "host": "rain",
+        "container": "pkgre",
+        "unit": "pkgre-js-serve-public-rollback.service",
+        "identity": {
+          "user": "pkgre-js-serve-public-rollback",
+          "group": "pkgre-js-serve-public-rollback",
+          "uid": 1979,
+          "gid": 1979,
+          "static": true,
+          "dynamicUser": false,
+          "systemAccount": true,
+          "loginShell": "/run/current-system/sw/bin/nologin",
+          "home": null,
+          "supplementaryGroups": [],
+          "idmappedStateBind": {
+            "hostUid": 1979,
+            "containerUid": 1979,
+            "hostGid": 1979,
+            "containerGid": 1979,
+            "mappingRule": "identity on idmap state bind;do not add PrivateUsers shift"
+          },
+          "ordinaryContainerRootMapping": {
+            "observedPrivateUsersShift": 1164705792,
+            "hostUidFormula": "1164705792+1979",
+            "appliesToStateBind": false,
+            "hostUid": 1164707771,
+            "hostGid": 1164707771
+          }
+        },
+        "network": {
+          "protocol": {
+            "listen": "10.131.7.4:9013",
+            "address": "10.131.7.4",
+            "port": 9013,
+            "transport": "tcp",
+            "applicationProtocol": "HTTP/1.1",
+            "classification": "container host-local;not public interface"
+          },
+          "admin": {
+            "listen": "127.0.0.1:9113",
+            "address": "127.0.0.1",
+            "port": 9113,
+            "transport": "tcp",
+            "classification": "container loopback only",
+            "nginxTarget": false,
+            "firewallAdmission": false
+          },
+          "allowedProtocolSource": "10.131.7.1/32",
+          "nginxTarget": true
+        },
+        "state": {
+          "stateDirectoryName": "pkgre-js-serve-public-rollback",
+          "guestRoot": "/var/lib/pkgre-js-serve-public-rollback",
+          "hostBackingPath": "/var/lib/machine-states/pkgre/pkgre-js-serve-public-rollback",
+          "dataset": "zroot/root/varlib/machine-states/pkgre/pkgre-js-serve-public-rollback",
+          "filesystem": "ZFS child dataset",
+          "mountpointProperty": "legacy",
+          "quotaBytes": 2147483648,
+          "quotaHuman": "2GiB",
+          "sameFilesystemScope": "mirror.git,checkouts,generations,retired-generation-ids,accepted,instance,lock,staging and all transaction temporaries remain in this dataset",
+          "paths": {
+            "mirror": "/var/lib/pkgre-js-serve-public-rollback/mirror.git",
+            "checkouts": "/var/lib/pkgre-js-serve-public-rollback/checkouts",
+            "generations": "/var/lib/pkgre-js-serve-public-rollback/generations",
+            "retiredGenerationIds": "/var/lib/pkgre-js-serve-public-rollback/retired-generation-ids",
+            "instance": "/var/lib/pkgre-js-serve-public-rollback/instance",
+            "accepted": "/var/lib/pkgre-js-serve-public-rollback/accepted",
+            "lock": "/var/lib/pkgre-js-serve-public-rollback/lock",
+            "staging": "/var/lib/pkgre-js-serve-public-rollback/staging"
+          },
+          "lockWrapper": "Nix-pinned flock --exclusive --nonblock --no-fork on <guestRoot>/lock;all production/test/repair/reseed/GC entrypoints use it before state read",
+          "ownership": {
+            "hostContainerParent": {
+              "path": "/var/lib/machine-states/pkgre",
+              "owner": "root",
+              "group": "root",
+              "mode": "0711"
+            },
+            "datasetRoot": {
+              "owner": "pkgre-js-serve-public-rollback",
+              "group": "pkgre-js-serve-public-rollback",
+              "uid": 1979,
+              "gid": 1979,
+              "mode": "0700"
+            },
+            "stateDirectories": {
+              "owner": "pkgre-js-serve-public-rollback",
+              "group": "pkgre-js-serve-public-rollback",
+              "mode": "0700"
+            },
+            "stateFiles": {
+              "owner": "pkgre-js-serve-public-rollback",
+              "group": "pkgre-js-serve-public-rollback",
+              "mode": "0600"
+            },
+            "configTrustParents": {
+              "owner": "root",
+              "group": "root",
+              "mode": "0755"
+            },
+            "configTrustLeaves": {
+              "owner": "root",
+              "group": "pkgre-js-serve-public-rollback",
+              "mode": "0640"
+            },
+            "backupAcl": {
+              "access": "u:pkgre-state-backup:r-X",
+              "default": "d:u:pkgre-state-backup:r-X",
+              "write": false
+            }
+          },
+          "writers": [
+            "pkgre-js-serve-public-rollback"
+          ],
+          "readers": [
+            "pkgre-js-serve-public-rollback",
+            "root",
+            "pkgre-state-backup (POSIX ACL read/traverse only)"
+          ],
+          "crossInstanceRead": false,
+          "writableAfterSandbox": [
+            "/var/lib/pkgre-js-serve-public-rollback",
+            "dedicated RuntimeDirectory if implementation needs an admin socket;no shared writable path"
+          ]
+        },
+        "deploymentInputs": {
+          "configPath": "/etc/pkgre/pkgre-js-serve-public-rollback.json",
+          "configCredentialPath": null,
+          "gitCredentialPath": null,
+          "allowedSignersPath": "/etc/pkgre/trust/pkgre-js-serve-public-rollback/allowed-signers",
+          "revocationsPath": "/etc/pkgre/trust/pkgre-js-serve-public-rollback/revocations",
+          "secretInNixStore": false
+        },
+        "systemd": {
+          "MemoryHighBytes": 536870912,
+          "MemoryHigh": "512MiB",
+          "MemoryMaxBytes": 805306368,
+          "MemoryMax": "768MiB",
+          "TasksMax": 64,
+          "LimitNOFILE": 2048,
+          "DynamicUser": false,
+          "sandbox": {
+            "ProtectSystem": "strict",
+            "PrivateTmp": true,
+            "NoNewPrivileges": true,
+            "ReadWritePaths": [
+              "/var/lib/pkgre-js-serve-public-rollback"
+            ],
+            "note": "final hardening set must be generated-unit reviewed"
+          }
+        },
+        "configProposal": {
+          "configStatus": "proposed-D0;not deployable until unresolved gates are frozen",
+          "schemaVersion": null,
+          "stateContract": "state-contract-v1",
+          "protocolContract": null,
+          "gitObjectFormat": "sha1",
+          "ecosystem": "js",
+          "audience": "public",
+          "mode": "public",
+          "deliveryMode": "redirect",
+          "redirectMarkerSchema": null,
+          "source": {
+            "canonicalOrigin": "https://github.com/pkgre/js.git",
+            "transport": "https-anonymous",
+            "credentialPath": null,
+            "remoteRef": "refs/heads/main",
+            "fetchRefspec": "+refs/heads/main:refs/pkgre/remotes/main",
+            "remoteTrackingRef": "refs/pkgre/remotes/main",
+            "candidateRefGrammar": "refs/pkgre/candidates/<40-lowercase-hex>",
+            "acceptedRefGrammar": "refs/pkgre/accepted/<40-lowercase-hex>",
+            "bootstrapCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "bootstrapStatus": "current reviewed main tip;re-fetch/review at D7 before freeze",
+            "tags": false,
+            "depth": "complete/non-shallow"
+          },
+          "updatePolicy": "frozen-no-watcher",
+          "watcher": {
+            "enabled": false,
+            "pollIntervalSeconds": null,
+            "jitterMaxSeconds": null,
+            "fetchTimeoutSeconds": null,
+            "backoffInitialSeconds": null,
+            "backoffMaxSeconds": null,
+            "suppression": null
+          },
+          "listeners": {
+            "protocol": "10.131.7.4:9013",
+            "admin": "127.0.0.1:9113"
+          },
+          "trust": {
+            "signatureFormat": "Git SSH Ed25519",
+            "allowedSignersPath": "/etc/pkgre/trust/pkgre-js-serve-public-rollback/allowed-signers",
+            "revocationsPath": "/etc/pkgre/trust/pkgre-js-serve-public-rollback/revocations",
+            "signerPrincipal": null,
+            "signerKeySha256Fingerprint": null,
+            "trustedKeySetSha256": null,
+            "revocationSetSha256": null,
+            "status": "BLOCKED:exact public signing authority/digests absent from this bounded design"
+          },
+          "instanceDigest": {
+            "value": null,
+            "status": "BLOCKED:schema/protocol enum+trust digests+full maxima not frozen;compute canonical digest only after all inputs resolve"
+          },
+          "limits": {
+            "status": "partially proposed;D4 measurement and D7 freeze required",
+            "maxArchiveBytes": 134217728,
+            "maxConcurrentRequests": 256,
+            "streamBufferBytes": 65536,
+            "maxReloadSeconds": 120,
+            "maxStateBytes": 2147483648,
+            "remainingRequiredMaxima": null
+          },
+          "requestOverloadBehavior": {
+            "status": 503,
+            "retryAfterHeader": true,
+            "boundedQueue": true
+          },
+          "instanceDigestInputs": [
+            "canonicalOrigin",
+            "remoteRef",
+            "ecosystem",
+            "mode",
+            "audience",
+            "stateContract",
+            "protocolContract",
+            "redirectMarkerSchema:null",
+            "deliveryMode",
+            "bootstrapCommit",
+            "schemaVersion",
+            "trustedKeySetSha256",
+            "revocationSetSha256",
+            "limits",
+            "updatePolicy"
+          ]
+        },
+        "rationale": {
+          "quota": "provisional initial ceiling;candidate preflight checks quota+free space and never evicts active/required rollback",
+          "resources": "measured checker\u224845MiB Node baseline;D4 must prove worker/live+candidate+old-in-flight peak under cap",
+          "rollbackIsolation": "independent state root+identity;never copy mutable compatibility state"
+        },
+        "currentlyDeployed": false,
+        "d0CompletionClaim": false
+      }
+    ],
+    "backupReader": {
+      "user": "pkgre-state-backup",
+      "group": "pkgre-state-backup",
+      "uid": 1980,
+      "gid": 1980,
+      "static": true,
+      "systemAccount": true,
+      "supplementaryGroups": [],
+      "stateAccess": "explicit access+default POSIX ACL r-X on each root;no write bits/ACL",
+      "configTrustAccess": false,
+      "credentialAccess": false,
+      "serviceWritersGroupMembership": false,
+      "backupProcessRequirement": "open/read/walk only;write backup destination through a separately reviewed operator-owned mechanism"
+    },
+    "network": {
+      "compatibilityHostnames": {
+        "rust": "rust.pkg.re",
+        "js": "js.pkg.re"
+      },
+      "frontend": "existing Rain nginx/TLS remains unchanged during D7",
+      "backendProtocolAdmissions": [
+        {
+          "destination": "10.131.7.4",
+          "ports": [
+            9010,
+            9011,
+            9012,
+            9013
+          ],
+          "source": "10.131.7.1/32",
+          "owner": "pkgre container firewall ruleset"
+        }
+      ],
+      "adminAdmissions": [],
+      "externalDenial": "10.22.2.5 and public paths deny/directly expose none of 9010..9013 or 9110..9113",
+      "edgeRewrite": "nginx compatibility canary targets protocol listener only;preserve client authority/contract per separately captured raw-wire proof",
+      "canaryRule": "host-local exact route/resolve only;no public routing change at D7"
+    },
+    "storage": {
+      "approach": "four separate ZFS child datasets,one per state root",
+      "datasetProperties": {
+        "mountpoint": "legacy",
+        "quota": "per-instance bytes above",
+        "readonly": "off while daemon active",
+        "atime": "operator-reviewed;not frozen here"
+      },
+      "atomicityProofRequired": "for each instance create temp file in staging,fsync,rename into final directory,fsync parent;capture statfs/dev IDs proving same filesystem",
+      "quotaProofRequired": "write-to-limit/failure/recovery test without harming active/rollback state",
+      "backupConsistency": "backup under exclusive wrapper lock or from separately reviewed atomic ZFS snapshot;backup reader remains read-only"
+    },
+    "hardMaximaFreeze": {
+      "status": "BLOCKED until D4 measurement/inventory;D7 must replace nulls with exact integers before any service activation",
+      "fields": {
+        "maxGitFetchNetworkBytes": null,
+        "maxGitFetchPackBytes": null,
+        "maxGitInflatedObjectBytes": null,
+        "maxGitObjectCount": null,
+        "maxTreeEntries": null,
+        "maxTreeDepth": null,
+        "maxFileBytes": null,
+        "maxCheckoutBytes": null,
+        "maxRegistriesOrCategories": null,
+        "maxPackages": null,
+        "maxVersions": null,
+        "maxDependencyEdges": null,
+        "maxRoutes": null,
+        "maxInlineResponseBytes": null,
+        "maxPackumentBytes": null,
+        "maxSparseRowBytes": null,
+        "maxHeaderBytes": null,
+        "maxHeaderCount": null,
+        "maxTargetBytes": null,
+        "maxRequestBytes": null,
+        "maxSnapshotBytes": null,
+        "maxFetchSeconds": null,
+        "maxFetchCpuSeconds": null,
+        "maxOldSnapshotDrainSeconds": null
+      },
+      "alreadyProposedExactFields": {
+        "maxArchiveBytes": 134217728,
+        "maxConcurrentRequests": 256,
+        "streamBufferBytes": 65536,
+        "maxReloadSeconds": 120,
+        "maxStateBytesRust": 4294967296,
+        "maxStateBytesJs": 2147483648
+      }
+    },
+    "bodyModeBoundary": "D9/D11 archive-body services require new identities/state roots/configs and complete D0/D7 rows;never reinterpret these redirect compatibility roots",
+    "lanBoundary": "no LAN instance/config/credential proposed;D13 must create complete isolated rows before any LAN edit"
+  },
+  "unresolvedGates": [
+    {
+      "id": "TRUST",
+      "severity": "blocker",
+      "required": "exact per-ecosystem SSH-Ed25519 principal,key SHA-256 fingerprint,allowed-signers bytes digest,revocation-set digest,and isolated Git verification proof"
+    },
+    {
+      "id": "CONFIG-SCHEMA",
+      "severity": "blocker",
+      "required": "freeze actual binary config schemaVersion,protocolContract enum,canonical JSON grammar and unknown-key rejection;then compute each instance digest"
+    },
+    {
+      "id": "MAXIMA",
+      "severity": "blocker",
+      "required": "D4 inventory+stress yields every null hard maximum,two-snapshot+old-in-flight RSS/FD/reload/drain peak,and rejection proof;confirm unit caps"
+    },
+    {
+      "id": "STORAGE",
+      "severity": "blocker",
+      "required": "operator-reviewed ZFS child dataset creation/mount/quota/ACL/idmap/same-filesystem/backup-restore proof;current nspawn module is insufficient"
+    },
+    {
+      "id": "COLLISION-RECHECK",
+      "severity": "blocker",
+      "required": "fresh full Rain eval and live listener/ID/path check immediately before edits/deploy"
+    },
+    {
+      "id": "BOOTSTRAP-REFETCH",
+      "severity": "blocker",
+      "required": "re-fetch/review exact main tips at D7;rollback bootstrap must freeze the accepted compatibility generation selected for its rollback lease"
+    },
+    {
+      "id": "NGINX-WIRE",
+      "severity": "blocker",
+      "required": "capture exact vhost/SNI/authority/Host/backend rewrite/raw-wire health and external-denial rows before frontend canary"
+    },
+    {
+      "id": "ROLLBACK-BUNDLE",
+      "severity": "blocker",
+      "required": "build/readback/restore-test independent legacy bundle required by plan \u00a718 before first frontend change"
+    }
+  ],
+  "implementationSequence": [
+    {
+      "order": 1,
+      "futureOnly": true,
+      "change": "reserve IDs 1976..1980 in modules/definitions/ids.nix and ports 9010..9013+9110..9113 in modules/definitions/ports.nix;commit separately"
+    },
+    {
+      "order": 2,
+      "futureOnly": true,
+      "change": "extend modules/virtualisation/nspawn/host.nix or add reviewed host declarations for dataset mount,static owner/mode and ACL;do not rely on existing 0755 state creation"
+    },
+    {
+      "order": 3,
+      "futureOnly": true,
+      "change": "operator creates/mounts four quota-backed datasets and proves ID mapping,quota failure,ACL,atomic rename and backup restore before service activation"
+    },
+    {
+      "order": 4,
+      "futureOnly": true,
+      "change": "pin exact reviewed new pkgre source in flake.nix;add static accounts,root-owned configs/trust files,firewall and four units in hosts/rain/containers/pkgre.nix while preserving 9008/9009 and public routes"
+    },
+    {
+      "order": 5,
+      "futureOnly": true,
+      "change": "nix build/eval Rain+container;inspect generated passwd/groups,nspawn binds,mounts,units,sandbox,ports,firewall,nginx,quotas,limits and closure;run collision validator"
+    },
+    {
+      "order": 6,
+      "futureOnly": true,
+      "change": "operator activates reviewed D7 generation only after all blockers close;returns bounded logs/manifests,restart-with-remote-unavailable,invalid-candidate isolation,canary and unchanged-public-path evidence"
+    }
+  ],
+  "validation": {
+    "jsonParser": "PASS:Python json parser+python3 -m json.tool",
+    "uniquenessCrossCheck": "PASS:4 unique units/users/UIDs/GIDs/protocol ports/admin ports/state roots/datasets/config+trust paths;protocol/admin disjoint",
+    "repositoryMutation": false,
+    "remoteMutation": false,
+    "secretContentsRead": false,
+    "infraAllocationEval": "PASS:nix eval at infra 5f68539 shows IDs 1976..1980 and ports 9010..9013+9110..9113 absent",
+    "liveListenerCrossCheck": "PASS:captured 2026-08-26 evidence contains no proposed listener",
+    "remoteRefCrossCheck": "PASS:fresh ls-remote tips equal both proposed bootstrap commits",
+    "validatedUtc": "2026-08-26T12:40:15Z",
+    "canonicalStateContract": "PASS:exact canonical literal state-contract-v1 in all 4 instance configs;no stale contract literal in final artifacts",
+    "proposalStatus": "PASS:document+proposal+all instance rows explicitly not current observed deployment and not a D0 completion claim",
+    "archiveMetricCrossCheck": "PASS:committed download-summary.json+git-metrics.json agree raw_unique_bytes=129833713;design+README match;source SHA-256 recorded",
+    "sourceRepositoryImmutability": "PASS:infra,pkgre,pkgre-rust,pkgre-js status --porcelain empty",
+    "checksumManifest": "PASS:SHA256SUMS lists finalized README.md+design.json and sha256sum -c succeeds"
+  },
+  "harnessIssues": [
+    "one read-only exec_command was rejected because /home/dev0 itself is outside authorized workspace roots;rerun from an authorized root succeeded",
+    "one accidental broad grep produced 181779 bytes of truncated output;it exited successfully and made no edits"
+  ]
+}
