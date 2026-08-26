@@ -1,0 +1,1 @@
+256 SHA256:+uZsRMJhsMrNNuIpWh9wzwU8B9w5T6TMpEsmT2eBxvA state-contract-v1-compat@example.invalid (ED25519)

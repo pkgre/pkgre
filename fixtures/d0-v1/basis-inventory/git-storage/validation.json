@@ -1,0 +1,66 @@
+{
+  "schema": "pkgre-d0-inventory-validation-v1",
+  "status": "blocked",
+  "d0_gate_pass": false,
+  "validated_at": "2026-08-26T12:33:35Z",
+  "local_git_inventory": {
+    "pass": true,
+    "repositories": [
+      {"name":"pkgre","head":"1d44dfeaeafef2b1a5341c13bf73647dcbc925ec","branch":"main","clean":true,"ahead_behind":"1/0","reviewed_basis_ancestor":true,"tree_entries":139,"unique_blobs":116,"unique_blob_bytes":2198793,"reachable_objects":572,"reachable_decompressed_bytes":5933962,"all_local_objects":1213,"object_store_file_bytes":1158179,"dangling_objects":109,"worktrees":6,"max_path_bytes":58,"max_component_bytes":31,"canonical_tree_sha256":"a300d0d16f80e69616cd5f6f2cb1c6346e8e528861252df722e9cfb3a709f487"},
+      {"name":"pkgre-rust","head":"f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b","branch":"main","clean":true,"ahead_behind":"0/0","reviewed_basis_ancestor":true,"tree_entries":773,"unique_blobs":763,"unique_blob_bytes":1958607,"reachable_objects":905,"reachable_decompressed_bytes":4268529,"all_local_objects":1021,"object_store_file_bytes":1949410,"dangling_objects":97,"worktrees":1,"max_path_bytes":94,"max_component_bytes":70,"canonical_tree_sha256":"ebb632e21d7553d46da4b3db0c4dac5be1cdd6ec2b51a1c21a3c59e511492355"},
+      {"name":"pkgre-js","head":"f43bd58bd3d4e36f8b3f4df3c002735c977acd17","branch":"main","clean":true,"ahead_behind":"0/0","reviewed_basis_ancestor":true,"tree_entries":67,"unique_blobs":22,"unique_blob_bytes":57651,"reachable_objects":76,"reachable_decompressed_bytes":79350,"all_local_objects":126,"object_store_file_bytes":65358,"dangling_objects":47,"worktrees":1,"max_path_bytes":109,"max_component_bytes":68,"canonical_tree_sha256":"437e0a2c702e933d82fbbfad1cc89d68d17266e2cf56bedcb9a479c3ce425fdd"},
+      {"name":"infra","head":"5f68539bd99c6952b6d73fe2596c27ad4a319f57","branch":"master","clean":true,"ahead_behind":"0/0","reviewed_basis_ancestor":true,"tree_entries":348,"unique_blobs":275,"unique_blob_bytes":769434,"reachable_objects":16091,"reachable_decompressed_bytes":17819872,"all_local_objects":16173,"object_store_file_bytes":2830995,"dangling_objects":75,"worktrees":1,"max_path_bytes":64,"max_component_bytes":41,"canonical_tree_sha256":"236b4017dfdf691e31eba76041a6ad491ceca512145b350f9ab4ab864c424499"}
+    ],
+    "common_pass": ["Git 2.54.0","sha1 storage/input/output;40-hex IDs","strict fsck and HEAD connectivity exit 0","complete and non-shallow","no alternates,grafts,promisor,replace,namespace,gitlink,LFS pointer/filter,active hook","no tracked tree symlink/special mode","path grammar and NFC/NFD/casefold collision checks pass"],
+    "production_layout_fail": ["all four are non-bare development worktrees","pkgre has five additional detached worktrees","all fetch refspecs are broad refs/heads/*","origins are SSH development URLs","runtime exact-ref redirect-safe transport configuration absent","development roots/gitdirs are uid=1000,gid=100,0755 and broadly readable"]
+  },
+  "source_network": {
+    "pass": true,
+    "rust_main":"https://github.com/pkgre/rust.git refs/heads/main -> f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b;HTTP/2 200;no redirect;TLS verified",
+    "js_main":"https://github.com/pkgre/js.git refs/heads/main -> f43bd58bd3d4e36f8b3f4df3c002735c977acd17;HTTP/2 200;no redirect;TLS verified",
+    "fresh_fetch_performed": false
+  },
+  "local_filesystem": {
+    "pass_for_development_observation": true,
+    "fstype":"zfs",
+    "mount_options":"rw,relatime,idmapped,xattr,posixacl,casesensitive",
+    "name_max":255,
+    "path_max":4096,
+    "case_distinct":true,
+    "nfc_nfd_distinct":true,
+    "invalid_utf8_roundtrip":true,
+    "same_directory_rename_and_file_directory_fsync":true,
+    "production_durability_or_quota_proof":false
+  },
+  "live_deployment_legacy": {
+    "read_only_ssh_pass": true,
+    "nginx_active":true,
+    "container_active":true,
+    "legacy_units_active":2,
+    "legacy_listeners":["10.131.7.4:9008","10.131.7.4:9009"],
+    "dynamic_units_present":0,
+    "dynamic_state_roots_present":0,
+    "credential_metadata_pass":false,
+    "critical_finding":"/var/lib/keys/pkgre-js-gandiv5-token is 0644 root:root with group/other read ACL;value not read",
+    "js_pages_continuity":false,
+    "rust_pages_rollback_bundle_complete":false,
+    "raw_target_contract_proved":false
+  },
+  "blocking_failures": [
+    "Critical credential exposure metadata requires operator containment+rotation",
+    "Production bare mirrors/exact refspecs/runtime trust and credentials absent",
+    "Stable users,UID/GID mapping,state paths,ACLs,quota,backup,locks and crash durability absent",
+    "SSH-Ed25519 signer principal/fingerprint/allowedSigners/revocation digest and protected release authority absent",
+    "GitHub D2 governance incomplete;JS main unprotected/unsigned;operator audit retrieval unavailable",
+    "JS Pages custom origin is 502 containment only;Rust+JS immutable rollback bundles and restore rehearsals absent",
+    "Raw HTTP/1+HTTP/2 target-to-backend fidelity,SNI/authority agreement and fixed limits/errors unproved",
+    "Archive-in-Git full transitive import/provider+Rain quota rehearsal incomplete",
+    "Fresh D0 refetch before first edit intentionally not performed"
+  ],
+  "operator_owned_actions": 9,
+  "harness_issue_count": 2,
+  "repository_modifications": false,
+  "provider_modifications": false,
+  "deployment_modifications": false,
+  "secrets_read": false
+}

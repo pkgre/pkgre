@@ -1,0 +1,458 @@
+{
+  "artifacts": {
+    "data": {
+      "artifacts": [
+        {
+          "created_at": "2026-08-25T23:37:29Z",
+          "digest": "sha256:ba7bb13b843d585898552ecd68d2e9caee55ee27644f3721b48b63d29a5e32c5",
+          "expired": false,
+          "expires_at": "2026-08-26T23:37:29Z",
+          "id": 9586702051,
+          "name": "github-pages",
+          "node_id": "MDg6QXJ0aWZhY3Q5NTg2NzAyMDUx",
+          "size_in_bytes": 791,
+          "updated_at": "2026-08-25T23:37:29Z",
+          "workflow_run": {
+            "head_branch": "main",
+            "head_repository_id": 1345630585,
+            "head_sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "id": 32911556990,
+            "repository_id": 1345630585
+          }
+        },
+        {
+          "created_at": "2026-08-25T21:08:48Z",
+          "digest": "sha256:2768dba00780a1454ac85c189515f0d3c23576fc180b030dfadb66c49c01aed9",
+          "expired": false,
+          "expires_at": "2026-08-26T21:08:47Z",
+          "id": 9582439821,
+          "name": "github-pages",
+          "node_id": "MDg6QXJ0aWZhY3Q5NTgyNDM5ODIx",
+          "size_in_bytes": 791,
+          "updated_at": "2026-08-25T21:08:48Z",
+          "workflow_run": {
+            "head_branch": "main",
+            "head_repository_id": 1345630585,
+            "head_sha": "2f374669b7b00f4a58f72493b40c85a4b97b0972",
+            "id": 32899386450,
+            "repository_id": 1345630585
+          }
+        },
+        {
+          "created_at": "2026-08-25T21:05:00Z",
+          "digest": "sha256:71802f05c12bb5756542a8c87324a5998e9cc8f50bb3ff3c0e321928f464486c",
+          "expired": false,
+          "expires_at": "2026-08-26T21:04:59Z",
+          "id": 9582310175,
+          "name": "github-pages",
+          "node_id": "MDg6QXJ0aWZhY3Q5NTgyMzEwMTc1",
+          "size_in_bytes": 790,
+          "updated_at": "2026-08-25T21:05:00Z",
+          "workflow_run": {
+            "head_branch": "main",
+            "head_repository_id": 1345630585,
+            "head_sha": "a7dba2f7ce0aab27cbfd200fddc9308e41f1190f",
+            "id": 32898707169,
+            "repository_id": 1345630585
+          }
+        },
+        {
+          "created_at": "2026-08-25T21:03:51Z",
+          "digest": "sha256:8d0565b255351c8a4ce5741d7eb8452fd96e4b98cd34e15a2ac7ec374953eae1",
+          "expired": false,
+          "expires_at": "2026-08-26T21:03:50Z",
+          "id": 9582272105,
+          "name": "github-pages",
+          "node_id": "MDg6QXJ0aWZhY3Q5NTgyMjcyMTA1",
+          "size_in_bytes": 791,
+          "updated_at": "2026-08-25T21:03:51Z",
+          "workflow_run": {
+            "head_branch": "main",
+            "head_repository_id": 1345630585,
+            "head_sha": "b68236958fae4242a8b02d1b73a370c25c7e3121",
+            "id": 32898915266,
+            "repository_id": 1345630585
+          }
+        }
+      ],
+      "total_count": 4
+    },
+    "endpoint": "repos/pkgre/js/actions/artifacts?per_page=100",
+    "error": null,
+    "github_request_id": "BCDA:2052E6:2BBEAA3:2A43BBC:6A8EDA05",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "artifacts_limit": 100,
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "deployments": [
+    {
+      "creator": "sorpaas",
+      "deployment": {
+        "created_at": "2026-08-25T23:37:31Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6094120375,
+        "node_id": "DE_kwDOUDSxec8AAAABazzltw",
+        "performed_via_github_app": {
+          "id": 15368,
+          "name": "GitHub Actions",
+          "slug": "github-actions"
+        },
+        "production_environment": false,
+        "ref": "main",
+        "sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T23:37:44Z"
+      },
+      "statuses": {
+        "data": [
+          {
+            "created_at": "2026-08-25T23:37:44Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17333305604,
+            "node_id": "DES_kwDOUDSxec8AAAAECSVBBA",
+            "state": "success",
+            "updated_at": "2026-08-25T23:37:44Z"
+          },
+          {
+            "created_at": "2026-08-25T23:37:36Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17333301515,
+            "node_id": "DES_kwDOUDSxec8AAAAECSUxCw",
+            "state": "in_progress",
+            "updated_at": "2026-08-25T23:37:36Z"
+          },
+          {
+            "created_at": "2026-08-25T23:37:33Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17333300286,
+            "node_id": "DES_kwDOUDSxec8AAAAECSUsPg",
+            "state": "queued",
+            "updated_at": "2026-08-25T23:37:33Z"
+          },
+          {
+            "created_at": "2026-08-25T23:37:32Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17333299900,
+            "node_id": "DES_kwDOUDSxec8AAAAECSUqvA",
+            "state": "waiting",
+            "updated_at": "2026-08-25T23:37:32Z"
+          }
+        ],
+        "endpoint": "repos/pkgre/js/deployments/6094120375/statuses?per_page=100",
+        "error": null,
+        "github_request_id": "BCC0:66A7F:2E20BE9:2C91C18:6A8EDA04",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    },
+    {
+      "creator": "sorpaas",
+      "deployment": {
+        "created_at": "2026-08-25T21:08:52Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6092137517,
+        "node_id": "DE_kwDOUDSxec8AAAABax6kLQ",
+        "performed_via_github_app": {
+          "id": 15368,
+          "name": "GitHub Actions",
+          "slug": "github-actions"
+        },
+        "production_environment": false,
+        "ref": "main",
+        "sha": "2f374669b7b00f4a58f72493b40c85a4b97b0972",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T23:37:45Z"
+      },
+      "statuses": {
+        "data": [
+          {
+            "created_at": "2026-08-25T23:37:45Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17333305948,
+            "node_id": "DES_kwDOUDSxec8AAAAECSVCXA",
+            "state": "inactive",
+            "updated_at": "2026-08-25T23:37:45Z"
+          },
+          {
+            "created_at": "2026-08-25T21:09:05Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326334505,
+            "node_id": "DES_kwDOUDSxec8AAAAECLriKQ",
+            "state": "success",
+            "updated_at": "2026-08-25T21:09:05Z"
+          },
+          {
+            "created_at": "2026-08-25T21:08:57Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326328338,
+            "node_id": "DES_kwDOUDSxec8AAAAECLrKEg",
+            "state": "in_progress",
+            "updated_at": "2026-08-25T21:08:57Z"
+          },
+          {
+            "created_at": "2026-08-25T21:08:54Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326326414,
+            "node_id": "DES_kwDOUDSxec8AAAAECLrCjg",
+            "state": "queued",
+            "updated_at": "2026-08-25T21:08:54Z"
+          },
+          {
+            "created_at": "2026-08-25T21:08:53Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326325543,
+            "node_id": "DES_kwDOUDSxec8AAAAECLq_Jw",
+            "state": "waiting",
+            "updated_at": "2026-08-25T21:08:53Z"
+          }
+        ],
+        "endpoint": "repos/pkgre/js/deployments/6092137517/statuses?per_page=100",
+        "error": null,
+        "github_request_id": "BCC2:290643:2BC8B8E:2A46073:6A8EDA04",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    },
+    {
+      "creator": "sorpaas",
+      "deployment": {
+        "created_at": "2026-08-25T21:05:03Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6092074505,
+        "node_id": "DE_kwDOUDSxec8AAAABax2uCQ",
+        "performed_via_github_app": {
+          "id": 15368,
+          "name": "GitHub Actions",
+          "slug": "github-actions"
+        },
+        "production_environment": false,
+        "ref": "main",
+        "sha": "a7dba2f7ce0aab27cbfd200fddc9308e41f1190f",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T21:09:06Z"
+      },
+      "statuses": {
+        "data": [
+          {
+            "created_at": "2026-08-25T21:09:06Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326335107,
+            "node_id": "DES_kwDOUDSxec8AAAAECLrkgw",
+            "state": "inactive",
+            "updated_at": "2026-08-25T21:09:06Z"
+          },
+          {
+            "created_at": "2026-08-25T21:05:35Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326183487,
+            "node_id": "DES_kwDOUDSxec8AAAAECLiUPw",
+            "state": "success",
+            "updated_at": "2026-08-25T21:05:35Z"
+          },
+          {
+            "created_at": "2026-08-25T21:05:08Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326164366,
+            "node_id": "DES_kwDOUDSxec8AAAAECLhJjg",
+            "state": "in_progress",
+            "updated_at": "2026-08-25T21:05:08Z"
+          },
+          {
+            "created_at": "2026-08-25T21:05:05Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326161782,
+            "node_id": "DES_kwDOUDSxec8AAAAECLg_dg",
+            "state": "queued",
+            "updated_at": "2026-08-25T21:05:05Z"
+          },
+          {
+            "created_at": "2026-08-25T21:05:04Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326161036,
+            "node_id": "DES_kwDOUDSxec8AAAAECLg8jA",
+            "state": "waiting",
+            "updated_at": "2026-08-25T21:05:04Z"
+          }
+        ],
+        "endpoint": "repos/pkgre/js/deployments/6092074505/statuses?per_page=100",
+        "error": null,
+        "github_request_id": "BCCA:2F7D7D:2C4AB12:2ACDF85:6A8EDA04",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    },
+    {
+      "creator": "sorpaas",
+      "deployment": {
+        "created_at": "2026-08-25T21:03:54Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6092056579,
+        "node_id": "DE_kwDOUDSxec8AAAABax1oAw",
+        "performed_via_github_app": {
+          "id": 15368,
+          "name": "GitHub Actions",
+          "slug": "github-actions"
+        },
+        "production_environment": false,
+        "ref": "main",
+        "sha": "b68236958fae4242a8b02d1b73a370c25c7e3121",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T21:04:52Z"
+      },
+      "statuses": {
+        "data": [
+          {
+            "created_at": "2026-08-25T21:04:52Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326151751,
+            "node_id": "DES_kwDOUDSxec8AAAAECLgYRw",
+            "state": "error",
+            "updated_at": "2026-08-25T21:04:52Z"
+          },
+          {
+            "created_at": "2026-08-25T21:03:59Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326116903,
+            "node_id": "DES_kwDOUDSxec8AAAAECLeQJw",
+            "state": "in_progress",
+            "updated_at": "2026-08-25T21:03:59Z"
+          },
+          {
+            "created_at": "2026-08-25T21:03:56Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326114639,
+            "node_id": "DES_kwDOUDSxec8AAAAECLeHTw",
+            "state": "queued",
+            "updated_at": "2026-08-25T21:03:56Z"
+          },
+          {
+            "created_at": "2026-08-25T21:03:55Z",
+            "creator": "sorpaas",
+            "description": "",
+            "environment": "github-pages",
+            "id": 17326114022,
+            "node_id": "DES_kwDOUDSxec8AAAAECLeE5g",
+            "state": "waiting",
+            "updated_at": "2026-08-25T21:03:55Z"
+          }
+        ],
+        "endpoint": "repos/pkgre/js/deployments/6092056579/statuses?per_page=100",
+        "error": null,
+        "github_request_id": "BCD8:3C4426:30732AB:2EE5515:6A8EDA05",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    }
+  ],
+  "deployments_index": {
+    "data": [
+      {
+        "created_at": "2026-08-25T23:37:31Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6094120375,
+        "node_id": "DE_kwDOUDSxec8AAAABazzltw",
+        "production_environment": false,
+        "ref": "main",
+        "sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T23:37:44Z"
+      },
+      {
+        "created_at": "2026-08-25T21:08:52Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6092137517,
+        "node_id": "DE_kwDOUDSxec8AAAABax6kLQ",
+        "production_environment": false,
+        "ref": "main",
+        "sha": "2f374669b7b00f4a58f72493b40c85a4b97b0972",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T23:37:45Z"
+      },
+      {
+        "created_at": "2026-08-25T21:05:03Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6092074505,
+        "node_id": "DE_kwDOUDSxec8AAAABax2uCQ",
+        "production_environment": false,
+        "ref": "main",
+        "sha": "a7dba2f7ce0aab27cbfd200fddc9308e41f1190f",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T21:09:06Z"
+      },
+      {
+        "created_at": "2026-08-25T21:03:54Z",
+        "description": null,
+        "environment": "github-pages",
+        "id": 6092056579,
+        "node_id": "DE_kwDOUDSxec8AAAABax1oAw",
+        "production_environment": false,
+        "ref": "main",
+        "sha": "b68236958fae4242a8b02d1b73a370c25c7e3121",
+        "task": "deploy",
+        "transient_environment": false,
+        "updated_at": "2026-08-25T21:04:52Z"
+      }
+    ],
+    "endpoint": "repos/pkgre/js/deployments?per_page=20",
+    "error": null,
+    "github_request_id": "BCB2:31E15F:2C58A72:2AD0A4C:6A8EDA03",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "deployments_limit": 20
+}

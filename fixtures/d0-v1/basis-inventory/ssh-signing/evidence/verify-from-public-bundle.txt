@@ -1,0 +1,1 @@
+Good "git" signature for state-contract-v1-compat@example.invalid with ED25519 key SHA256:+uZsRMJhsMrNNuIpWh9wzwU8B9w5T6TMpEsmT2eBxvA

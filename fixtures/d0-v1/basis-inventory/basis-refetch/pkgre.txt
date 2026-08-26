@@ -1,0 +1,16 @@
+name=pkgre
+repo=/home/dev0/repos/pkgre
+branch=main
+reviewed=066293df21743cbf41fb571a38f2bb94059e7274
+started=2026-08-26T12:50:06Z
+origin=git@github.com:pkgre/pkgre.git
+head=1d44dfeaeafef2b1a5341c13bf73647dcbc925ec
+upstream=066293df21743cbf41fb571a38f2bb94059e7274
+object_format=sha1
+divergence=1 0
+
+reviewed_is_ancestor=true
+status_begin
+## main...origin/main [ahead 1]
+status_end
+completed=2026-08-26T12:50:08Z

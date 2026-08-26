@@ -1,0 +1,165 @@
+{
+  "check_runs": {
+    "data": {
+      "check_runs": [
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89298480134,
+          "completed_at": "2026-08-26T12:04:25Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98170209168,
+          "name": "Analyze (actions)",
+          "started_at": "2026-08-26T12:03:49Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89298480134,
+          "completed_at": "2026-08-26T12:04:52Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98170208954,
+          "name": "Analyze (javascript-typescript)",
+          "started_at": "2026-08-26T12:03:49Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89154226119,
+          "completed_at": "2026-08-25T23:31:25Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98005400333,
+          "name": "check",
+          "started_at": "2026-08-25T23:31:22Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89154225227,
+          "completed_at": "2026-08-25T23:28:07Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98004469531,
+          "name": "Analyze (javascript-typescript)",
+          "started_at": "2026-08-25T23:27:08Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89154225227,
+          "completed_at": "2026-08-25T23:27:53Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98004469245,
+          "name": "Analyze (actions)",
+          "started_at": "2026-08-25T23:27:09Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89154226119,
+          "completed_at": "2026-08-25T23:31:19Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98004467294,
+          "name": "check (x86_64-linux)",
+          "started_at": "2026-08-25T23:27:08Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89154226119,
+          "completed_at": "2026-08-25T23:30:18Z",
+          "conclusion": "success",
+          "head_sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+          "id": 98004466977,
+          "name": "check (aarch64-linux)",
+          "started_at": "2026-08-25T23:27:10Z",
+          "status": "completed"
+        }
+      ],
+      "total_count": 7
+    },
+    "endpoint": "repos/pkgre/pkgre/commits/066293df21743cbf41fb571a38f2bb94059e7274/check-runs?per_page=100",
+    "error": null,
+    "github_request_id": "ED16:266F89:2D8D984:2C049E0:6A8EDA10",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "combined_status": {
+    "data": {
+      "sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+      "state": "pending",
+      "statuses": [],
+      "total_count": 0
+    },
+    "endpoint": "repos/pkgre/pkgre/commits/066293df21743cbf41fb571a38f2bb94059e7274/status?per_page=100",
+    "error": null,
+    "github_request_id": "ED1E:28335B:2C92515:2B15412:6A8EDA10",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "commit": {
+    "data": {
+      "author": "sorpaas",
+      "commit_author_name": "Wei Tang",
+      "commit_committer_name": "GitHub",
+      "commit_date": "2026-08-25T23:27:01Z",
+      "committer": "web-flow",
+      "parents": [
+        "768265251c021a3cea3c59cd0d49f342c7076d38"
+      ],
+      "sha": "066293df21743cbf41fb571a38f2bb94059e7274",
+      "verification": {
+        "payload_sha256": "546a496c15d58ddfec2e785c51c35555f413f7460f48b016e39148f6c7e184a6",
+        "reason": "valid",
+        "signature_kind": "pgp",
+        "signature_present": true,
+        "signature_sha256": "901f1066948db1e7c26162f9938698aa853787715e390752bd8b3e6513995005",
+        "verified": true,
+        "verified_at": "2026-08-25T23:27:02Z"
+      }
+    },
+    "endpoint": "repos/pkgre/pkgre/commits/066293df21743cbf41fb571a38f2bb94059e7274",
+    "error": null,
+    "github_request_id": "ED10:B14C5:2CDB719:2B54C00:6A8EDA0F",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "default_branch": "main",
+  "tip_sha": "066293df21743cbf41fb571a38f2bb94059e7274"
+}

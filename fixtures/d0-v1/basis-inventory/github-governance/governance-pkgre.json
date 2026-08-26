@@ -1,0 +1,130 @@
+{
+  "branch_protection": {
+    "data": {
+      "allow_deletions": {
+        "enabled": false
+      },
+      "allow_force_pushes": {
+        "enabled": false
+      },
+      "allow_fork_syncing": {
+        "enabled": false
+      },
+      "block_creations": {
+        "enabled": false
+      },
+      "enforce_admins": {
+        "enabled": true
+      },
+      "lock_branch": {
+        "enabled": false
+      },
+      "required_conversation_resolution": {
+        "enabled": true
+      },
+      "required_linear_history": {
+        "enabled": true
+      },
+      "required_pull_request_reviews": {
+        "dismiss_stale_reviews": true,
+        "dismissal_restrictions": {
+          "apps": [],
+          "teams": [],
+          "users": []
+        },
+        "require_code_owner_reviews": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0
+      },
+      "required_signatures": {
+        "enabled": false
+      },
+      "required_status_checks": {
+        "checks": [
+          {
+            "app_id": 15368,
+            "context": "check"
+          }
+        ],
+        "contexts": [
+          "check"
+        ],
+        "strict": true
+      }
+    },
+    "endpoint": "repos/pkgre/pkgre/branches/main/protection",
+    "error": null,
+    "github_request_id": "EC60:BC2BD:2C41C9F:2AC46C5:6A8EDA09",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "effective_branch_rules": {
+    "data": [],
+    "endpoint": "repos/pkgre/pkgre/rules/branches/main?per_page=100",
+    "error": null,
+    "github_request_id": "EC66:267F64:D754FE8:D055A3D:6A8EDA0A",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "ruleset_details": [
+    {
+      "data": {
+        "bypass_actors": [],
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "refs/tags/indexer/v*"
+            ]
+          }
+        },
+        "created_at": "2026-08-22T20:38:53.985+02:00",
+        "current_user_can_bypass": "never",
+        "enforcement": "active",
+        "id": 21205882,
+        "name": "Immutable released indexer tags",
+        "rules": [
+          {
+            "type": "update"
+          },
+          {
+            "type": "deletion"
+          }
+        ],
+        "source": "pkgre/pkgre",
+        "source_type": "Repository",
+        "target": "tag",
+        "updated_at": "2026-08-22T20:38:54.005+02:00"
+      },
+      "endpoint": "repos/pkgre/pkgre/rulesets/21205882?includes_parents=true",
+      "error": null,
+      "github_request_id": "EC5C:1673F9:2F1DCC7:2D900C9:6A8EDA09",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 200
+    }
+  ],
+  "rulesets_index": {
+    "data": [
+      {
+        "created_at": "2026-08-22T20:38:53.985+02:00",
+        "enforcement": "active",
+        "id": 21205882,
+        "name": "Immutable released indexer tags",
+        "source": "pkgre/pkgre",
+        "source_type": "Repository",
+        "target": "tag",
+        "updated_at": "2026-08-22T20:38:54.005+02:00"
+      }
+    ],
+    "endpoint": "repos/pkgre/pkgre/rulesets?includes_parents=true&per_page=100",
+    "error": null,
+    "github_request_id": "EC50:266F89:2D87B07:2BFEF52:6A8EDA09",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  }
+}

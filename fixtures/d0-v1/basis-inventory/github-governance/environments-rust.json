@@ -1,0 +1,85 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "environments": [
+    {
+      "deployment_branch_policies": {
+        "data": {
+          "branch_policies": [
+            {
+              "id": 58004732,
+              "name": "main",
+              "node_id": "MDE2OkdhdGVCcmFuY2hQb2xpY3k1ODAwNDczMg==",
+              "type": "branch"
+            }
+          ],
+          "total_count": 1
+        },
+        "endpoint": "repos/pkgre/rust/environments/github-pages/deployment-branch-policies?per_page=100",
+        "error": null,
+        "github_request_id": "CC22:BC2BD:2C2F060:2AB2570:6A8ED9F3",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      },
+      "detail": {
+        "data": {
+          "can_admins_bypass": true,
+          "created_at": "2026-08-22T17:33:43Z",
+          "deployment_branch_policy": {
+            "custom_branch_policies": true,
+            "protected_branches": false
+          },
+          "id": 20395247571,
+          "name": "github-pages",
+          "node_id": "EN_kwDOUAsXU88AAAAEv6bH0w",
+          "protection_rules": [
+            {
+              "id": 63412785,
+              "node_id": "GA_kwDOUAsXU84Dx5ox",
+              "type": "branch_policy"
+            }
+          ],
+          "updated_at": "2026-08-22T17:33:43Z"
+        },
+        "endpoint": "repos/pkgre/rust/environments/github-pages",
+        "error": null,
+        "github_request_id": "CC14:267F64:D74033D:D0418EF:6A8ED9F2",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    }
+  ],
+  "index": {
+    "data": {
+      "environments": [
+        {
+          "can_admins_bypass": true,
+          "created_at": "2026-08-22T17:33:43Z",
+          "deployment_branch_policy": {
+            "custom_branch_policies": true,
+            "protected_branches": false
+          },
+          "id": 20395247571,
+          "name": "github-pages",
+          "node_id": "EN_kwDOUAsXU88AAAAEv6bH0w",
+          "protection_rules": [
+            {
+              "id": 63412785,
+              "node_id": "GA_kwDOUAsXU84Dx5ox",
+              "type": "branch_policy"
+            }
+          ],
+          "updated_at": "2026-08-22T17:33:43Z"
+        }
+      ],
+      "total_count": 1
+    },
+    "endpoint": "repos/pkgre/rust/environments?per_page=100",
+    "error": null,
+    "github_request_id": "9F26:E65D4:2C7D12E:2AFB174:6A8ED9F2",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  }
+}

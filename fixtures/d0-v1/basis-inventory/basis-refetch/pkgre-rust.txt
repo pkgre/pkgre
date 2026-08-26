@@ -1,0 +1,16 @@
+name=pkgre-rust
+repo=/home/dev0/repos/pkgre-rust
+branch=main
+reviewed=f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b
+started=2026-08-26T12:50:08Z
+origin=git@github.com:pkgre/rust.git
+head=f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b
+upstream=f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b
+object_format=sha1
+divergence=0 0
+
+reviewed_is_ancestor=true
+status_begin
+## main...origin/main
+status_end
+completed=2026-08-26T12:50:09Z

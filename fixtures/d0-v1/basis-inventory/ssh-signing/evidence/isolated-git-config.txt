@@ -1,0 +1,12 @@
+file:.git/config	core.repositoryformatversion=0
+file:.git/config	core.filemode=true
+file:.git/config	core.bare=false
+file:.git/config	core.logallrefupdates=true
+file:.git/config	user.name=D0 Compatibility Fixture (NOT PRODUCTION)
+file:.git/config	user.email=state-contract-v1-compat@example.invalid
+file:.git/config	user.useconfigonly=true
+file:.git/config	user.signingkey=<EPHEMERAL_WORKSPACE>/state-contract-v1-test-ed25519
+file:.git/config	gpg.format=ssh
+file:.git/config	gpg.ssh.program=/nix/store/aw4kb88y82xv4pl48lb388mhs48iq7iv-openssh-10.5p1/bin/ssh-keygen
+file:.git/config	gpg.ssh.allowedsignersfile=<PROOF_ROOT>/fixtures/allowed_signers
+file:.git/config	commit.gpgsign=true

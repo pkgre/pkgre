@@ -1,0 +1,244 @@
+{
+  "schema": "pkgre-d0-deployment-legacy-inventory-v1",
+  "status": "blocked",
+  "observations": {
+    "source_and_prior_live_evidence": "2026-08-26T11:53:36Z/2026-08-26T12:19:56.329913Z",
+    "fresh_read_only_ssh": "2026-08-26T12:33:35Z",
+    "public_wire": "2026-08-26T11:55:44Z/2026-08-26T11:58:29Z"
+  },
+  "safety": {
+    "repository_mutations": false,
+    "provider_mutations": false,
+    "deployment_mutations": false,
+    "secret_values_read": false,
+    "private_key_values_read": false,
+    "ssh_policy": "BatchMode=yes;StrictHostKeyChecking=yes;explicit evidence/rain-d0-known-hosts;read-only commands",
+    "notes": "Only credential/private-key path metadata was inspected;public certificate bytes may be hashed/read."
+  },
+  "basis": {
+    "infra_repository": "/home/dev0/repos/infra",
+    "infra_commit": "5f68539bd99c6952b6d73fe2596c27ad4a319f57",
+    "host_source": "/home/dev0/repos/infra/hosts/rain/containers/pkgre.nix",
+    "host_source_sha256": "fd215fbedae08026caa2959fd052f795ad4d3cc7cf7ab228aeebe9d57738c79b",
+    "plan": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/plans/pkgre-dynamic-registry-rollout.md",
+    "plan_sha256": "f20f2a5d7dd6b8acd68139b56bf6a278dd8f120d01a9078ec86caf392e9c74b6",
+    "nixpkgs_revision": "9588f1a6c197ae61c6222a3baa6ac220ec1cc4d9",
+    "nixos_version": "26.11.20260818.9588f1a"
+  },
+  "ssh_trust": {
+    "hostname": "rain.pacna.org",
+    "algorithm": "ssh-ed25519",
+    "fingerprint_sha256": "SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI",
+    "known_hosts_fixture": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/evidence/rain-d0-known-hosts",
+    "known_hosts_fixture_sha256": "6b3602c743b4093af71b344a09ddaadd9a40ae328d7842f8078a61d9aa419b9d",
+    "trust_classification": "TOFU fixture;strictly matched during this run;out-of-band/operator host-key attestation absent"
+  },
+  "live_host": {
+    "hostname": "rain",
+    "host_system": "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a",
+    "container_system": "/nix/store/jai70s8kdn3jc71qvsn9l20zma9aam4g-nixos-system-pkgre-26.11.20260818.9588f1a",
+    "nginx": {
+      "status": "active",
+      "version": "1.30.4",
+      "binary": "/nix/store/qzihfqlvbzx0zhjvmx6zimxdz9ghvwm0-nginx-1.30.4/bin/nginx",
+      "config": "/nix/store/nnqs127xdnxi93772sgmgfy7a890alxb-nginx.conf",
+      "config_sha256": "eeb69be6aebb5e69fdbc12c9019e648f64308b1738c153715411db607d701d51",
+      "identity": "nginx:nginx;uid=60;gid=60;DynamicUser=no"
+    },
+    "container": {
+      "name": "pkgre",
+      "status": "active",
+      "private_users": "pick",
+      "root": "/var/lib/machines/.#snapshot.pkgre559b2cb1c470c68c",
+      "server_address": "10.22.2.5/24",
+      "host_local_address": "10.131.7.4/24",
+      "host_local_peer": "10.131.7.1"
+    },
+    "filesystem": {
+      "host_var_lib_fstype": "zfs",
+      "dynamic_registry_state_paths_present": false,
+      "quota_or_reservation_proof_present": false,
+      "backup_reader_proof_present": false,
+      "same_filesystem_crash_durability_proof_present": false
+    }
+  },
+  "legacy_services": [
+    {
+      "unit": "pkgre-download-serve.service",
+      "status": "active",
+      "binary": "/nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0/bin/pkgre-download-serve",
+      "version": "0.1.0",
+      "listener": "10.131.7.4:9008/tcp/http",
+      "runtime_identity": "DynamicUser=yes;observed container uid:gid=64206:64206;not stable across lifecycles",
+      "state_directory": null,
+      "latest_observed_catalog": {
+        "source_commit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+        "manifest_sha256": "9c0cb103f61caeb95a52f76fc3cd479d94c261aef86a7b5d96711e902e26fe94",
+        "routes": 747,
+        "crates_io_routes": 744,
+        "git_tag_routes": 3
+      }
+    },
+    {
+      "unit": "pkgre-proxy.service",
+      "status": "active",
+      "binary": "/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0/bin/pkgre-proxy",
+      "version": "0.2.0",
+      "listener": "10.131.7.4:9009/tcp/http",
+      "runtime_identity": "DynamicUser=yes;observed container uid:gid=61225:61225;not stable across lifecycles",
+      "state_directory": null,
+      "latest_observed_health": {
+        "rust.pkg.re": "canary passed",
+        "js.pkg.re": "canary failed;origin_error=connection;ServiceUnavailable"
+      }
+    }
+  ],
+  "network": {
+    "container_firewall_admission": "iifname=vbl-pkgre;source=10.131.7.1;tcp dports={9008,9009};accept",
+    "public_frontend": "65.21.163.108:80,443;nginx",
+    "backend_publicly_bound": false,
+    "vhosts": [
+      {
+        "host": "rust.pkg.re",
+        "origin": "https://rust.pkg.re",
+        "marker_route": "/v1/ -> 10.131.7.4:9009",
+        "other_routes": "GitHub Pages pkgre.github.io:443 with upstream SNI+Host rust.pkg.re",
+        "public_dns": "CNAME pkgre.github.io.;current until D8",
+        "public_http": "config.json 200;Pages",
+        "rain_tls_available_but_not_public_dns_selected": true
+      },
+      {
+        "host": "js.pkg.re",
+        "origin": "https://js.pkg.re",
+        "marker_route": "/v1/js/ -> 10.131.7.4:9009",
+        "other_routes": "GitHub Pages pkgre.github.io:443 with upstream SNI+Host js.pkg.re",
+        "public_dns": "CNAME rain.pacna.org. -> 65.21.163.108",
+        "public_http": "502 containment;strict Pages custom origin unavailable",
+        "continuity_anchor": false
+      },
+      {
+        "host": "dl.rust.pkg.re",
+        "origin": "https://dl.rust.pkg.re",
+        "route": "/ -> 10.131.7.4:9008",
+        "public_dns": "CNAME rain.pacna.org. -> 65.21.163.108",
+        "public_http": "valid known route 307;zero body;closed static.crates.io Location"
+      }
+    ],
+    "known_contract_failures": [
+      "No strict SNI/Host/:authority agreement",
+      "No proven raw ingress target plus independent request-form verdict to backend bytes",
+      "Legacy accepts/normalizes some absolute forms,duplicate slash,dot segments,query,and duplicate Host",
+      "No fixed 405/413/414/431 or complete body/framing/header ownership proof",
+      "Global gzip/range/provider response transformations remain possible"
+    ]
+  },
+  "certificates": [
+    {
+      "host": "rust.pkg.re",
+      "acme_method": "Gandi DNS-01",
+      "state_directory": "/var/lib/acme/rust.pkg.re",
+      "directory_metadata": "0750 acme:nginx 993:60",
+      "fullchain_metadata": "0640 acme:nginx 993:60;4807 bytes",
+      "fullchain_sha256": "f16dbbf491092749712e1382463012196b9502311859c9dfa5645ba00ad0f3e3",
+      "private_key_metadata": "0640 acme:nginx 993:60;227 bytes;value not read",
+      "public_leaf_der_sha256": "7e44597e84b83f053e33b143d514c74efee54749dc1c91e92dddbd3dd7159f85",
+      "public_validity": "2026-08-22T16:35:34Z/2026-11-20T16:35:33Z"
+    },
+    {
+      "host": "js.pkg.re",
+      "acme_method": "Gandi DNS-01",
+      "state_directory": "/var/lib/acme/js.pkg.re",
+      "directory_metadata": "0750 acme:nginx 993:60",
+      "fullchain_metadata": "0640 acme:nginx 993:60;4799 bytes",
+      "fullchain_sha256": "649746880014a9164bde3144244718b14c883e310478e3ad5fdf93e7670c5b13",
+      "private_key_metadata": "0640 acme:nginx 993:60;227 bytes;value not read",
+      "public_leaf_der_sha256": "7a1a0a034dc4e285eda702ea8754679ce4d32f9efe5f96dd9ccaf00b6c2809b6",
+      "public_validity": "2026-08-25T23:07:02Z/2026-11-23T23:07:01Z"
+    },
+    {
+      "host": "dl.rust.pkg.re",
+      "acme_method": "HTTP-01/webroot",
+      "state_directory": "/var/lib/acme/dl.rust.pkg.re",
+      "directory_metadata": "0750 acme:nginx 993:60",
+      "fullchain_metadata": "0640 acme:nginx 993:60;4811 bytes",
+      "fullchain_sha256": "049ce655d412f206bcf5b570b7570dbec04c22ec960b0287249928bc373fcd17",
+      "private_key_metadata": "0640 acme:nginx 993:60;227 bytes;value not read",
+      "public_leaf_der_sha256": "714e129f6c0cdccd4f230aaec6eee87240d4b717cc828965750d7f53638905d8",
+      "public_validity": "2026-08-24T17:42:44Z/2026-11-22T17:42:43Z"
+    }
+  ],
+  "unsafe_credential_metadata": [
+    {
+      "severity": "critical",
+      "path": "/var/lib/keys/pkgre-js-gandiv5-token",
+      "metadata": "regular file;0644;root:root;uid=0;gid=0;41 bytes;ACL user::rw-,group::r--,other::r--",
+      "purpose": "shared Gandi DNS-01 PAT source for rust.pkg.re and js.pkg.re ACME units",
+      "finding": "world-readable secret-bearing file and shared credential blast radius;secret value was not read",
+      "operator_action": "Treat as exposed;restrict metadata immediately via operator-managed deployment,rotate/revoke PAT,verify scope and audit access;return path/owner/mode/ACL/token-scope/rotation evidence without token value"
+    }
+  ],
+  "pages_and_rollback": {
+    "rust": {
+      "repository": "pkgre/rust",
+      "retained_commit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "pages": "workflow;source main:/;cname=rust.pkg.re;https_enforced=true;certificate approved",
+      "deployment_id": 6092749507,
+      "artifact_id": 9583758375,
+      "artifact_digest": "sha256:2510e9d77f459d066261a88efe9005d5358c8a9a401aba7042d45fe6f1c2448c",
+      "artifact_bytes": 551735,
+      "artifact_expires_at": "2026-08-26T21:48:27Z",
+      "rollback_limit": "Mutable default branch plus short-lived provider artifact;not mirrored/readback-tested in operator-controlled storage;restore rehearsal absent"
+    },
+    "js": {
+      "repository": "pkgre/js",
+      "retained_commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "pages": "workflow;source main:/;cname=js.pkg.re;https_enforced=false;certificate absent",
+      "deployment_id": 6094120375,
+      "artifact_id": 9586702051,
+      "artifact_digest": "sha256:ba7bb13b843d585898552ecd68d2e9caee55ee27644f3721b48b63d29a5e32c5",
+      "artifact_bytes": 791,
+      "artifact_expires_at": "2026-08-26T23:37:29Z",
+      "rollback_limit": "Current custom origin is strict 502 containment only,never continuity;default-origin hash-pinned publication,legacy-static Rain profile,and JS-INITIAL-ANCHOR restore rehearsal absent"
+    },
+    "common_limits": [
+      "Pages builds endpoint returned no builds and latest-build returned 404 despite workflow deployments",
+      "Current artifacts expire within one day and do not satisfy D14 retention",
+      "Exact proxy/download closures exist locally/live but no independent rollback bundle mirror/readback/isolated restore test exists",
+      "DNS restoration and Pages custom-domain changes remain operator-only",
+      "Retention owner and approved expiry horizon absent"
+    ]
+  },
+  "absent_values": {
+    "dynamic_units": ["pkgre-rust-serve-public","pkgre-js-serve-public","rollback units"],
+    "dynamic_state": ["state roots","bare mirrors","checkouts","generations","retired-generation-ids","staging","locks","accepted refs","active manifests"],
+    "deployment_inputs": ["allowedSigners path","trusted/revoked key-set path+digest","runtime Git config","runtime Git credential path","static runtime users/groups","stable host-container UID/GID map"],
+    "storage_controls": ["pkg.re dataset/subvolume","quota/reservation","backup reader","same-filesystem crash/power-loss proof","lock wrapper"],
+    "resource_controls": ["MemoryHigh","MemoryMax","FD ceiling","fetch CPU/time/network ceilings","state-byte ceiling"],
+    "lan": ["selected LAN instance","LAN hostname","LAN listener/address/range","LAN DNS view","LAN certificate","LAN config","LAN credential"]
+  },
+  "operator_owned_blockers": [
+    "Out-of-band attest Rain SSH host key;TOFU fixture alone is not authority",
+    "Contain and rotate world-readable Gandi PAT;return metadata/scope/audit evidence without secret",
+    "Freeze/create dynamic unit,user,state,path,ACL,quota,backup,lock and stable UID/GID rows on Rain",
+    "Freeze Git origins/refspecs/accepted-ref grammars/SSH-Ed25519 signer principal+fingerprint/allowedSigners/revocation digest and deploy credentials",
+    "Apply and return exact GitHub rulesets/checks/release environment/reviewers/writer/token permissions plus audit retrieval",
+    "Create operator-controlled immutable Rust+JS rollback bundles;hash,readback,retain and rehearse without public activation",
+    "Create JS strict default-origin continuity anchor before treating Pages as rollback",
+    "Supply raw HTTP/1+HTTP/2 ingress-to-backend byte proof and freeze request/header/resource limits",
+    "Approve any DNS,Pages custom-domain,deployment,credential or retirement action;none performed here"
+  ],
+  "harness_issues": [
+    "Default SSH known_hosts lacked rain.pacna.org,so the first strict connection failed safely;the run then used the existing explicit TOFU fixture with StrictHostKeyChecking=yes and made no trust-store mutation.",
+    "One read-only remote public-certificate metadata command stopped after discovering openssl absent on Rain;it made no changes,and prior public-wire certificate evidence plus safe fullchain hashes were used."
+  ],
+  "evidence": [
+    {"path":"../evidence/d0-rain-live-2026-08-26/host-targeted.txt","sha256":"74aa2c99f16cbc8175db15d0386e63b6b9a2fb29d3e9e5e162b76791556879db"},
+    {"path":"../evidence/d0-rain-live-2026-08-26/container-baseline.txt","sha256":"3244fe7dfead79a87ac3972ecc1a6f588bb9501828d557e8bced7f434352b515"},
+    {"path":"../evidence/d0-public-http-edge-capture-2026-08-26.md","sha256":"e7a6a9125fb85761abe17905345085d316a757350a88c9510238fc5cee6fde13"},
+    {"path":"../d0-github-governance-2026-08-26/REPORT.md","sha256":"245c2bd65e7fea8af1da6033ff3f70119ce91096ff8e2a7e90deb915227aa453"},
+    {"path":"../d0-github-governance-2026-08-26/pages-rust.json","sha256":"cdd0592b5309dd8fbf86e80d206b96208ad8dee1f30831643778db9cd37a5f22"},
+    {"path":"../d0-github-governance-2026-08-26/pages-js.json","sha256":"94d3c63f76b1d4442afb6ce93a488fa889cfc077edfc1b7c4edf2beefea65470"},
+    {"path":"../d0-github-governance-2026-08-26/operations-rust.json","sha256":"7fa979f34ec7830222191b46ce04d869d22482a1df0550fdf597f7fa581d1bff"},
+    {"path":"../d0-github-governance-2026-08-26/operations-js.json","sha256":"65da0c8c89add75037339a0871a931dcbee4f970ff3ebe7e5ec837f4577a0ea3"}
+  ]
+}

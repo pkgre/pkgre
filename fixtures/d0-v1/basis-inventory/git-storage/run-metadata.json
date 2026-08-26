@@ -1,0 +1,43 @@
+{
+  "ambient_git_override_environment_before_scrub": {},
+  "argv": [
+    "./inventory.py",
+    "--output",
+    "."
+  ],
+  "command_environment_policy": {
+    "removed": [
+      "GIT_DIR",
+      "GIT_WORK_TREE",
+      "GIT_COMMON_DIR",
+      "GIT_OBJECT_DIRECTORY",
+      "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+      "GIT_NAMESPACE",
+      "GIT_INDEX_FILE",
+      "GIT_CONFIG",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_SYSTEM",
+      "GIT_CONFIG_NOSYSTEM",
+      "GIT_CONFIG_COUNT",
+      "GIT_CONFIG_KEY_*",
+      "GIT_CONFIG_VALUE_*"
+    ],
+    "set": {
+      "GIT_ATTR_NOSYSTEM": "1",
+      "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_CONFIG_NOSYSTEM": "1",
+      "GIT_CONFIG_SYSTEM": "/dev/null",
+      "GIT_OPTIONAL_LOCKS": "0",
+      "GIT_TERMINAL_PROMPT": "0",
+      "LC_ALL": "C.UTF-8"
+    }
+  },
+  "finished_at": "2026-08-26T12:13:46.356064Z",
+  "git": "git version 2.54.0",
+  "platform": "Linux deepocean-reposet-dev 6.18.38 #1-NixOS SMP PREEMPT_DYNAMIC Sat Jul  4 11:44:22 UTC 2026 x86_64 GNU/Linux",
+  "python": "3.13.13 (main, Apr  7 2026, 18:19:01) [GCC 15.2.0]",
+  "repository_mutations": "none intended;no fetch/gc/repack/checkout/worktree/submodule/LFS command",
+  "schema": "pkgre-d0-git-storage-inventory-v1",
+  "scope": "read-only source repositories;network read probes;filesystem writes only beneath output",
+  "started_at": "2026-08-26T12:13:42.148397Z"
+}

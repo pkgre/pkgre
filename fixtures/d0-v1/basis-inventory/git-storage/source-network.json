@@ -1,0 +1,314 @@
+{
+  "notes": [
+    "HTTPS Git probes use protocol.allow=never+protocol.https.allow=always,http.sslVerify=true,http.followRedirects=false and one exact full ref.",
+    "Local configured origins remain SSH and were not changed.",
+    "No network write or authenticated provider-setting API call performed."
+  ],
+  "observed_at": "2026-08-26T12:13:45.113156Z",
+  "repositories": [
+    {
+      "local_origin_bytes_utf8": "git@github.com:pkgre/pkgre.git",
+      "local_origin_hex": "676974406769746875622e636f6d3a706b6772652f706b6772652e676974",
+      "local_transport": "ssh-scp-like",
+      "repo": "pkgre",
+      "runtime_full_ref": null,
+      "runtime_origin_candidate": "https://github.com/pkgre/pkgre.git"
+    },
+    {
+      "https_read_probe": {
+        "git": {
+          "argv": [
+            "git",
+            "-c",
+            "protocol.allow=never",
+            "-c",
+            "protocol.https.allow=always",
+            "-c",
+            "http.sslVerify=true",
+            "-c",
+            "http.followRedirects=false",
+            "ls-remote",
+            "--exit-code",
+            "--refs",
+            "https://github.com/pkgre/rust.git",
+            "refs/heads/main"
+          ],
+          "cwd": null,
+          "exit": 0,
+          "stderr": "",
+          "stdout": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b\trefs/heads/main\n"
+        },
+        "observed_ref_name": "refs/heads/main",
+        "observed_ref_oid": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+        "smart_http": {
+          "argv": [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--output",
+            "/dev/null",
+            "--dump-header",
+            "-",
+            "--proto",
+            "=https",
+            "--tlsv1.2",
+            "--max-redirs",
+            "0",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "60",
+            "--write-out",
+            "\nCURL_EFFECTIVE=%{url_effective}\nCURL_REDIRECT=%{redirect_url}\nCURL_HTTP=%{http_code}\nCURL_SSL_VERIFY=%{ssl_verify_result}\nCURL_VERSION=%{http_version}\n",
+            "https://github.com/pkgre/rust.git/info/refs?service=git-upload-pack"
+          ],
+          "cwd": null,
+          "exit": 0,
+          "stderr": "",
+          "stdout": "HTTP/2 200 \r\nserver: GitHub-Babel/3.0\r\ncontent-type: application/x-git-upload-pack-advertisement\r\ncontent-security-policy: default-src 'none'; sandbox\r\nexpires: Fri, 01 Jan 1980 00:00:00 GMT\r\npragma: no-cache\r\ncache-control: no-cache, max-age=0, must-revalidate\r\nvary: Accept-Encoding\r\nstrict-transport-security: max-age=31536000\r\ndate: Wed, 26 Aug 2026 12:13:45 GMT\r\nx-frame-options: DENY\r\nx-github-request-id: E584:B1614:34E16FE:2B54DAD:6A8ED879\r\nx-github-edge-region: fra\r\n\r\n\nCURL_EFFECTIVE=https://github.com/pkgre/rust.git/info/refs?service=git-upload-pack\nCURL_REDIRECT=\nCURL_HTTP=200\nCURL_SSL_VERIFY=0\nCURL_VERSION=2\n"
+        },
+        "strict_no_redirect_pass": true,
+        "tls": {
+          "cipher": [
+            "TLS_AES_128_GCM_SHA256",
+            "TLSv1.3",
+            128
+          ],
+          "host": "github.com",
+          "leaf_der_sha256": "17f8fd2e3fd2c113fcb9772d8a4babb8522dd06dd0794915a4ff98b1b6863a00",
+          "leaf_issuer": [
+            [
+              [
+                "countryName",
+                "GB"
+              ]
+            ],
+            [
+              [
+                "organizationName",
+                "Sectigo Limited"
+              ]
+            ],
+            [
+              [
+                "commonName",
+                "Sectigo Public Server Authentication CA DV E36"
+              ]
+            ]
+          ],
+          "leaf_not_after": "Sep 30 23:59:59 2026 GMT",
+          "leaf_not_before": "Jul  3 00:00:00 2026 GMT",
+          "leaf_subject": [
+            [
+              [
+                "commonName",
+                "github.com"
+              ]
+            ]
+          ],
+          "peer_ip": "140.82.121.3",
+          "port": 443,
+          "subject_alt_name": [
+            [
+              "DNS",
+              "github.com"
+            ],
+            [
+              "DNS",
+              "www.github.com"
+            ]
+          ],
+          "tls_version": "TLSv1.3",
+          "verified_default_CA_and_hostname": true
+        }
+      },
+      "local_origin_bytes_utf8": "git@github.com:pkgre/rust.git",
+      "local_origin_hex": "676974406769746875622e636f6d3a706b6772652f727573742e676974",
+      "local_transport": "ssh-scp-like",
+      "repo": "pkgre-rust",
+      "runtime_full_ref": "refs/heads/main",
+      "runtime_origin_candidate": "https://github.com/pkgre/rust.git"
+    },
+    {
+      "https_read_probe": {
+        "git": {
+          "argv": [
+            "git",
+            "-c",
+            "protocol.allow=never",
+            "-c",
+            "protocol.https.allow=always",
+            "-c",
+            "http.sslVerify=true",
+            "-c",
+            "http.followRedirects=false",
+            "ls-remote",
+            "--exit-code",
+            "--refs",
+            "https://github.com/pkgre/js.git",
+            "refs/heads/main"
+          ],
+          "cwd": null,
+          "exit": 0,
+          "stderr": "",
+          "stdout": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17\trefs/heads/main\n"
+        },
+        "observed_ref_name": "refs/heads/main",
+        "observed_ref_oid": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+        "smart_http": {
+          "argv": [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--output",
+            "/dev/null",
+            "--dump-header",
+            "-",
+            "--proto",
+            "=https",
+            "--tlsv1.2",
+            "--max-redirs",
+            "0",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "60",
+            "--write-out",
+            "\nCURL_EFFECTIVE=%{url_effective}\nCURL_REDIRECT=%{redirect_url}\nCURL_HTTP=%{http_code}\nCURL_SSL_VERIFY=%{ssl_verify_result}\nCURL_VERSION=%{http_version}\n",
+            "https://github.com/pkgre/js.git/info/refs?service=git-upload-pack"
+          ],
+          "cwd": null,
+          "exit": 0,
+          "stderr": "",
+          "stdout": "HTTP/2 200 \r\nserver: GitHub-Babel/3.0\r\ncontent-type: application/x-git-upload-pack-advertisement\r\ncontent-security-policy: default-src 'none'; sandbox\r\nexpires: Fri, 01 Jan 1980 00:00:00 GMT\r\npragma: no-cache\r\ncache-control: no-cache, max-age=0, must-revalidate\r\nvary: Accept-Encoding\r\nstrict-transport-security: max-age=31536000\r\ndate: Wed, 26 Aug 2026 12:13:46 GMT\r\nx-frame-options: DENY\r\nx-github-request-id: E5A0:BC3F6:333D200:2A12D1E:6A8ED87A\r\nx-github-edge-region: fra\r\n\r\n\nCURL_EFFECTIVE=https://github.com/pkgre/js.git/info/refs?service=git-upload-pack\nCURL_REDIRECT=\nCURL_HTTP=200\nCURL_SSL_VERIFY=0\nCURL_VERSION=2\n"
+        },
+        "strict_no_redirect_pass": true,
+        "tls": {
+          "cipher": [
+            "TLS_AES_128_GCM_SHA256",
+            "TLSv1.3",
+            128
+          ],
+          "host": "github.com",
+          "leaf_der_sha256": "17f8fd2e3fd2c113fcb9772d8a4babb8522dd06dd0794915a4ff98b1b6863a00",
+          "leaf_issuer": [
+            [
+              [
+                "countryName",
+                "GB"
+              ]
+            ],
+            [
+              [
+                "organizationName",
+                "Sectigo Limited"
+              ]
+            ],
+            [
+              [
+                "commonName",
+                "Sectigo Public Server Authentication CA DV E36"
+              ]
+            ]
+          ],
+          "leaf_not_after": "Sep 30 23:59:59 2026 GMT",
+          "leaf_not_before": "Jul  3 00:00:00 2026 GMT",
+          "leaf_subject": [
+            [
+              [
+                "commonName",
+                "github.com"
+              ]
+            ]
+          ],
+          "peer_ip": "140.82.121.3",
+          "port": 443,
+          "subject_alt_name": [
+            [
+              "DNS",
+              "github.com"
+            ],
+            [
+              "DNS",
+              "www.github.com"
+            ]
+          ],
+          "tls_version": "TLSv1.3",
+          "verified_default_CA_and_hostname": true
+        }
+      },
+      "local_origin_bytes_utf8": "git@github.com:pkgre/js.git",
+      "local_origin_hex": "676974406769746875622e636f6d3a706b6772652f6a732e676974",
+      "local_transport": "ssh-scp-like",
+      "repo": "pkgre-js",
+      "runtime_full_ref": "refs/heads/main",
+      "runtime_origin_candidate": "https://github.com/pkgre/js.git"
+    },
+    {
+      "local_origin_bytes_utf8": "git@gitlab.pacna.net:infra/infra.git",
+      "local_origin_hex": "676974406769746c61622e7061636e612e6e65743a696e6672612f696e6672612e676974",
+      "local_transport": "ssh-scp-like",
+      "repo": "infra",
+      "runtime_full_ref": null,
+      "runtime_origin_candidate": null
+    }
+  ],
+  "schema": "pkgre-d0-git-storage-inventory-v1",
+  "ssh_trust": {
+    "github.com": {
+      "effective": {
+        "globalknownhostsfile": "/etc/ssh/ssh_known_hosts",
+        "hostkeyalgorithms": "ssh-ed25519-cert-v01@openssh.com,ecdsa-sha2-nistp256-cert-v01@openssh.com,ecdsa-sha2-nistp384-cert-v01@openssh.com,ecdsa-sha2-nistp521-cert-v01@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com,sk-ecdsa-sha2-nistp256-cert-v01@openssh.com,webauthn-sk-ecdsa-sha2-nistp256-cert-v01@openssh.com,rsa-sha2-512-cert-v01@openssh.com,rsa-sha2-256-cert-v01@openssh.com,ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,sk-ssh-ed25519@openssh.com,sk-ecdsa-sha2-nistp256@openssh.com,webauthn-sk-ecdsa-sha2-nistp256@openssh.com,rsa-sha2-512,rsa-sha2-256",
+        "hostname": "github.com",
+        "identitiesonly": "no",
+        "port": "22",
+        "stricthostkeychecking": "ask",
+        "user": "dev0",
+        "userknownhostsfile": "/home/dev0/.ssh/known_hosts /home/dev0/.ssh/known_hosts2"
+      },
+      "known_host_keys": [
+        {
+          "algorithm": "ssh-ed25519",
+          "hosts": "github.com",
+          "key_sha256": "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+        },
+        {
+          "algorithm": "ssh-rsa",
+          "hosts": "github.com",
+          "key_sha256": "SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s"
+        },
+        {
+          "algorithm": "ecdsa-sha2-nistp256",
+          "hosts": "github.com",
+          "key_sha256": "SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM"
+        }
+      ],
+      "lookup_exit": 0
+    },
+    "gitlab.pacna.net": {
+      "effective": {
+        "globalknownhostsfile": "/etc/ssh/ssh_known_hosts",
+        "hostkeyalgorithms": "ssh-ed25519-cert-v01@openssh.com,ecdsa-sha2-nistp256-cert-v01@openssh.com,ecdsa-sha2-nistp384-cert-v01@openssh.com,ecdsa-sha2-nistp521-cert-v01@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com,sk-ecdsa-sha2-nistp256-cert-v01@openssh.com,webauthn-sk-ecdsa-sha2-nistp256-cert-v01@openssh.com,rsa-sha2-512-cert-v01@openssh.com,rsa-sha2-256-cert-v01@openssh.com,ssh-ed25519,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,sk-ssh-ed25519@openssh.com,sk-ecdsa-sha2-nistp256@openssh.com,webauthn-sk-ecdsa-sha2-nistp256@openssh.com,rsa-sha2-512,rsa-sha2-256",
+        "hostname": "gitlab.pacna.net",
+        "identitiesonly": "no",
+        "port": "22",
+        "stricthostkeychecking": "ask",
+        "user": "dev0",
+        "userknownhostsfile": "/home/dev0/.ssh/known_hosts /home/dev0/.ssh/known_hosts2"
+      },
+      "known_host_keys": [
+        {
+          "algorithm": "ssh-ed25519",
+          "hosts": "gitlab.pacna.net",
+          "key_sha256": "SHA256:SVF0mhLBqXeQO9rYpKK0Y4E+BBe1g6DO1xbcAzAj8pU"
+        },
+        {
+          "algorithm": "ssh-rsa",
+          "hosts": "gitlab.pacna.net",
+          "key_sha256": "SHA256:MKlvMvHsX7XfW/wvW/pXtFkeSUkNrqW8vtZ7f9mGxVw"
+        }
+      ],
+      "lookup_exit": 0
+    }
+  }
+}

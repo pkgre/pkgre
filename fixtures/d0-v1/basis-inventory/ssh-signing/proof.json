@@ -1,0 +1,97 @@
+{
+  "artifactDigestScope": "all retained regular files at JSON generation except proof.json and SHA256SUMS; SHA256SUMS covers proof.json",
+  "artifactSha256": {
+    "README.md": "d309e912435319d4df1bd490dbce1dd03fbb2749a3016d11e66b490b8024d8f3",
+    "commands.sh": "2858dd29b01415fa8d9964129cc83327aba6ea5b3576fe1ed26224521e46159e",
+    "evidence/bundle-verify.txt": "f2f0caa19f6e31404e89b632348682bae099b83f2427167b55ea0111ce154176",
+    "evidence/commit-id.txt": "bf2a3e51ec3c237f27b3fb95bf9dcf2d23b1f891f03d3cca6ba313f5194d9cdd",
+    "evidence/commit-metadata.txt": "19c164371a4dd5a5f9acd5d130d9780ae70998d4a3521ec142c1163f917578e8",
+    "evidence/commit-object.txt": "98a6ca9eec56e2cfa9fc6b9e7e3be61f34b5adb18d91db1cbb10db2d6df551f9",
+    "evidence/isolated-git-config.txt": "9245551a8644c573bd1e2ac97e9cfb79cacd1db70af5bfcb61d62e123434c38e",
+    "evidence/public-key-fingerprint.txt": "a704e3fbe83dc0548640dd98d6a8680ec236d62e24c911f884e2eb160e7cf998",
+    "evidence/repository-identity.txt": "3ed7c03d112f59c0b14fbeaea5a2c26924b36f57d8779e45d79b38e460cfba52",
+    "evidence/source-repo-status-after.txt": "5244caf09f942af2d0479eb9e6b2ac61aaf454f7ce9ec4fd40bf3a4a06869baa",
+    "evidence/source-repo-status-before.txt": "5244caf09f942af2d0479eb9e6b2ac61aaf454f7ce9ec4fd40bf3a4a06869baa",
+    "evidence/toolchain.txt": "41d2ab3969560a08fcee00614b1b58212db01b0c0711c40ca8a02f0469ecb084",
+    "evidence/validation.txt": "b54098d8ff8b167931758fc746214327da01e75e9b96ce2c777e3feeced36def",
+    "evidence/verify-commit.txt": "3f54d4cd21b2201e9baa94504697b67b74180c3611d8664bbc39b393efafb9e2",
+    "evidence/verify-from-public-bundle.txt": "3f54d4cd21b2201e9baa94504697b67b74180c3611d8664bbc39b393efafb9e2",
+    "fixtures/allowed_signers": "84cff32e6fe0b5c4474b9182088ad3105edffa258d2848ef88af9c04460fce89",
+    "fixtures/public-key.pub": "194d31c9f6b51fdd8d92af75a743a56c02b3ed6014adf2e879b1e72b8a49aa09",
+    "fixtures/signed-commit.bundle": "d7702374b7c1eb1a8d66b2972cecfb71f8ebd82aa5a7310ce927fbb55ba6d5a4",
+    "fixtures/state-contract-v1.txt": "0091e4b4756e1bb60e9f7ed8c6b42afc0dc2a8f1e19c4e479a3530c3daa6069c"
+  },
+  "generatedAt": "2026-08-26T12:23:35Z",
+  "isolation": {
+    "existingOperatorKeysUsed": false,
+    "globalGitConfig": "/dev/null",
+    "isolatedHome": true,
+    "sshAgentDisabled": true,
+    "systemGitConfigDisabled": true
+  },
+  "privateKey": {
+    "deletedBeforePackaging": true,
+    "generatedInsideProofWorkspace": true,
+    "modeBeforeDeletion": "600",
+    "pathAbsent": true,
+    "printedOrRetained": false,
+    "privateKeyPemMarkerAbsentFromRetainedTree": true
+  },
+  "repository": {
+    "bundleHead": "3bb4f9586f506ce3f7baf37d3a7a016cd9f46157",
+    "bundleObjectFormat": "sha1",
+    "commit": "3bb4f9586f506ce3f7baf37d3a7a016cd9f46157",
+    "objectFormat": "sha1",
+    "parentCount": 0,
+    "tree": "c944e104ba5647c995239e48baded28c5df194e4"
+  },
+  "schemaVersion": "d0-state-contract-v1-ssh-signing-compatibility-proof-v1",
+  "scope": {
+    "nonClaims": [
+      "production signer identity",
+      "key custody",
+      "authorization",
+      "source admission policy",
+      "deployment readiness"
+    ],
+    "productionIdentity": false,
+    "proves": "format/tool compatibility only: flake-resolved Git creates and allowedSigners-verifies an SSH-Ed25519 signed commit in a SHA-1 repository"
+  },
+  "signing": {
+    "fingerprint": "SHA256:+uZsRMJhsMrNNuIpWh9wzwU8B9w5T6TMpEsmT2eBxvA",
+    "fixtureOnly": true,
+    "format": "ssh",
+    "keyType": "ssh-ed25519",
+    "namespace": "git",
+    "principal": "state-contract-v1-compat@example.invalid"
+  },
+  "source": {
+    "flakeUri": "git+file:///home/dev0/repos/pkgre?ref=refs/heads/main&rev=1d44dfeaeafef2b1a5341c13bf73647dcbc925ec",
+    "nixpkgsRevision": "2c423e03bbafcff28bfadc6781a4a8257f205cb5",
+    "noUpdateLockFile": true,
+    "repository": "/home/dev0/repos/pkgre",
+    "revision": "1d44dfeaeafef2b1a5341c13bf73647dcbc925ec",
+    "sourceRevisionUnchanged": true,
+    "sourceStatusUnchanged": true,
+    "system": "x86_64-linux"
+  },
+  "status": "PASS",
+  "toolchain": {
+    "devShellDerivation": "/nix/store/0d7b506d024c2w7pmc0yydvgmm7adn0b-nix-shell.drv",
+    "flakeLockSha256": "5b2fd7290186a8953cab68d670672374831aefe5ff175d9315f5a5e821933887",
+    "gitDerivation": "/nix/store/4rxk6c9ni93s38zv1ydpa5y91vhm0lh8-git-2.55.0.drv",
+    "gitExecutable": "/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0/bin/git",
+    "gitOutPath": "/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0",
+    "gitVersion": "git version 2.55.0",
+    "nixVersion": "nix (Nix) 2.34.8",
+    "openSshDerivation": "/nix/store/6nnj50rwj04w9gdgmzpsglil4b29lhcc-openssh-10.5p1.drv",
+    "openSshOutPath": "/nix/store/aw4kb88y82xv4pl48lb388mhs48iq7iv-openssh-10.5p1",
+    "openSshVersion": "OpenSSH_10.5p1, OpenSSL 3.6.3 9 Jun 2026"
+  },
+  "verification": {
+    "bundleHeadMatchesCommit": true,
+    "initialVerifyCommitExitCode": 0,
+    "pass": true,
+    "publicBundleVerifyAfterPrivateDeletionExitCode": 0
+  }
+}

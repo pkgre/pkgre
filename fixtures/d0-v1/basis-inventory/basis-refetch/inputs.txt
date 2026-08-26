@@ -1,0 +1,4 @@
+pkgre=/home/dev0/repos/pkgre|main|066293df21743cbf41fb571a38f2bb94059e7274
+pkgre-rust=/home/dev0/repos/pkgre-rust|main|f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b
+pkgre-js=/home/dev0/repos/pkgre-js|main|f43bd58bd3d4e36f8b3f4df3c002735c977acd17
+infra=/home/dev0/repos/infra|master|5f68539bd99c6952b6d73fe2596c27ad4a319f57

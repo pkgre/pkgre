@@ -1,0 +1,105 @@
+{
+  "check_runs": {
+    "data": {
+      "check_runs": [
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89133496201,
+          "completed_at": "2026-08-25T21:48:45Z",
+          "conclusion": "success",
+          "head_sha": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+          "id": 97980647830,
+          "name": "deploy",
+          "started_at": "2026-08-25T21:48:35Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89133495705,
+          "completed_at": "2026-08-25T21:46:46Z",
+          "conclusion": "success",
+          "head_sha": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+          "id": 97979970399,
+          "name": "Analyze (actions)",
+          "started_at": "2026-08-25T21:46:01Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89133496201,
+          "completed_at": "2026-08-25T21:48:30Z",
+          "conclusion": "success",
+          "head_sha": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+          "id": 97979967521,
+          "name": "validate",
+          "started_at": "2026-08-25T21:46:01Z",
+          "status": "completed"
+        }
+      ],
+      "total_count": 3
+    },
+    "endpoint": "repos/pkgre/rust/commits/f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b/check-runs?per_page=100",
+    "error": null,
+    "github_request_id": "CD00:3C4426:3068ED6:2EDB6E6:6A8ED9FA",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "combined_status": {
+    "data": {
+      "sha": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "state": "pending",
+      "statuses": [],
+      "total_count": 0
+    },
+    "endpoint": "repos/pkgre/rust/commits/f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b/status?per_page=100",
+    "error": null,
+    "github_request_id": "CD02:F09D3:2C88A47:2B09371:6A8ED9FB",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "commit": {
+    "data": {
+      "author": "sorpaas",
+      "commit_author_name": "Wei Tang",
+      "commit_committer_name": "GitHub",
+      "commit_date": "2026-08-25T21:45:53Z",
+      "committer": "web-flow",
+      "parents": [
+        "0fa205c9ec610cc31b7551f224ab8ff5a90450c3"
+      ],
+      "sha": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "verification": {
+        "payload_sha256": "e8ad71d28547dfac850e3d98edda43c34bfc547661a34b602e396da842fb5423",
+        "reason": "valid",
+        "signature_kind": "pgp",
+        "signature_present": true,
+        "signature_sha256": "1c8b27606a2f0b21067030d9c4ff93547a5a2054aba72c9d260fbe24a8f75ec2",
+        "verified": true,
+        "verified_at": "2026-08-25T21:48:43Z"
+      }
+    },
+    "endpoint": "repos/pkgre/rust/commits/f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+    "error": null,
+    "github_request_id": "CCF0:266F89:2D7AECF:2BF2A31:6A8ED9FA",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "default_branch": "main",
+  "tip_sha": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b"
+}

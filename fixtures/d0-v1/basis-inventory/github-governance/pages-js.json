@@ -1,0 +1,47 @@
+{
+  "builds": {
+    "data": [],
+    "endpoint": "repos/pkgre/js/pages/builds?per_page=30",
+    "error": null,
+    "github_request_id": "BCAC:A62D1:2CFFB8A:2B77854:6A8EDA03",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "latest_build": {
+    "data": null,
+    "endpoint": "repos/pkgre/js/pages/builds/latest",
+    "error": {
+      "documentation_url": "https://docs.github.com/rest/pages/pages#get-latest-pages-build",
+      "message": "Not Found",
+      "status": "404"
+    },
+    "github_request_id": "BCAE:31E15F:2C586FE:2AD06F3:6A8EDA03",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 404
+  },
+  "settings": {
+    "data": {
+      "build_type": "workflow",
+      "cname": "js.pkg.re",
+      "custom_404": false,
+      "https_enforced": false,
+      "pending_domain_unverified_at": null,
+      "protected_domain_state": "verified",
+      "public": true,
+      "source": {
+        "branch": "main",
+        "path": "/"
+      },
+      "status": null
+    },
+    "endpoint": "repos/pkgre/js/pages",
+    "error": null,
+    "github_request_id": "BCAA:3C4426:30711B9:2EE35F6:6A8EDA03",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  }
+}

@@ -1,0 +1,16 @@
+sourceFlake=git+file:///home/dev0/repos/pkgre?ref=refs/heads/main&rev=1d44dfeaeafef2b1a5341c13bf73647dcbc925ec
+sourceRevision=1d44dfeaeafef2b1a5341c13bf73647dcbc925ec
+system=x86_64-linux
+devShellDrv=/nix/store/0d7b506d024c2w7pmc0yydvgmm7adn0b-nix-shell.drv
+nixpkgsRevision=2c423e03bbafcff28bfadc6781a4a8257f205cb5
+flakeLockSha256=5b2fd7290186a8953cab68d670672374831aefe5ff175d9315f5a5e821933887
+nix=nix (Nix) 2.34.8
+gitVersion=git version 2.55.0
+gitExecutable=/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0/bin/git
+gitOutPath=/nix/store/8wxs6573l730vxkqd6wp58kvxa19csll-git-2.55.0
+gitDerivation=/nix/store/4rxk6c9ni93s38zv1ydpa5y91vhm0lh8-git-2.55.0.drv
+openSshOutPath=/nix/store/aw4kb88y82xv4pl48lb388mhs48iq7iv-openssh-10.5p1
+openSshDerivation=/nix/store/6nnj50rwj04w9gdgmzpsglil4b29lhcc-openssh-10.5p1.drv
+openSshVersion=OpenSSH_10.5p1, OpenSSL 3.6.3 9 Jun 2026
+python=Python 3.13.13
+sha256sum=sha256sum (GNU coreutils) 9.11

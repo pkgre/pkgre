@@ -1,0 +1,146 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "index": {
+    "data": {
+      "total_count": 2,
+      "workflows": [
+        {
+          "created_at": "2026-08-22T19:24:15.000+02:00",
+          "id": 340147927,
+          "name": "CI",
+          "node_id": "W_kwDOUAsVFc4URj7X",
+          "path": ".github/workflows/ci.yml",
+          "state": "active",
+          "updated_at": "2026-08-22T19:24:15.000+02:00"
+        },
+        {
+          "created_at": "2026-08-22T20:38:31.000+02:00",
+          "id": 340179776,
+          "name": "CodeQL",
+          "node_id": "W_kwDOUAsVFc4URrtA",
+          "path": "dynamic/github-code-scanning/codeql",
+          "state": "active",
+          "updated_at": "2026-08-22T20:38:31.000+02:00"
+        }
+      ]
+    },
+    "endpoint": "repos/pkgre/pkgre/actions/workflows?per_page=100",
+    "error": null,
+    "github_request_id": "ECB2:E65D4:2C93204:2B104C0:6A8EDA0C",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "workflows": [
+    {
+      "api": {
+        "data": {
+          "created_at": "2026-08-22T19:24:15.000+02:00",
+          "id": 340147927,
+          "name": "CI",
+          "node_id": "W_kwDOUAsVFc4URj7X",
+          "path": ".github/workflows/ci.yml",
+          "state": "active",
+          "updated_at": "2026-08-22T19:24:15.000+02:00"
+        },
+        "endpoint": "repos/pkgre/pkgre/actions/workflows/340147927",
+        "error": null,
+        "github_request_id": "ECB4:1673F9:2F2083A:2D92A49:6A8EDA0C",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      },
+      "source": {
+        "data": {
+          "bytes_sha256": "928a98bdfbbb8fd81f03983514973865d4539ad377a21a797b5b165cd3a92a45",
+          "git_blob_sha": "fc54b978bde4e7925bd1671746c11223ded4f86b",
+          "parsed_summary": {
+            "concurrency": null,
+            "jobs": [
+              {
+                "environment": null,
+                "id": "check-architecture",
+                "if": null,
+                "name": "check (${{ matrix.architecture }})",
+                "needs": null,
+                "permissions": null,
+                "runs-on": "${{ matrix.runner }}",
+                "timeout-minutes": 30,
+                "uses": [
+                  "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24"
+                ]
+              },
+              {
+                "environment": null,
+                "id": "check",
+                "if": "${{ always() }}",
+                "name": null,
+                "needs": "check-architecture",
+                "permissions": null,
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 5,
+                "uses": []
+              }
+            ],
+            "name": "CI",
+            "permissions": {
+              "contents": "read"
+            },
+            "run-name": null,
+            "triggers": {
+              "pull_request": null,
+              "push": {
+                "branches": [
+                  "main"
+                ]
+              }
+            }
+          },
+          "path": ".github/workflows/ci.yml",
+          "ref": "main",
+          "size": 1084,
+          "text": "name: CI\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\njobs:\n  check-architecture:\n    name: check (${{ matrix.architecture }})\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - architecture: x86_64-linux\n            runner: ubuntu-24.04\n          - architecture: aarch64-linux\n            runner: ubuntu-24.04-arm\n    runs-on: ${{ matrix.runner }}\n    timeout-minutes: 30\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n      - name: Install Nix\n        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31\n      - name: Run reproducible checks\n        run: nix flake check --print-build-logs\n  check:\n    needs: check-architecture\n    if: ${{ always() }}\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n      - name: Require every architecture\n        env:\n          RESULT: ${{ needs.check-architecture.result }}\n        run: test \"$RESULT\" = success\n"
+        },
+        "endpoint": "repos/pkgre/pkgre/contents/.github/workflows/ci.yml?ref=main",
+        "error": null,
+        "github_request_id": "ECBE:66A7F:2E281EC:2C98D20:6A8EDA0D",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    },
+    {
+      "api": {
+        "data": {
+          "created_at": "2026-08-22T20:38:31.000+02:00",
+          "id": 340179776,
+          "name": "CodeQL",
+          "node_id": "W_kwDOUAsVFc4URrtA",
+          "path": "dynamic/github-code-scanning/codeql",
+          "state": "active",
+          "updated_at": "2026-08-22T20:38:31.000+02:00"
+        },
+        "endpoint": "repos/pkgre/pkgre/actions/workflows/340179776",
+        "error": null,
+        "github_request_id": "ECC8:31E15F:2C603F3:2AD7ED7:6A8EDA0D",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      },
+      "source": {
+        "data": null,
+        "endpoint": "repos/pkgre/pkgre/contents/dynamic/github-code-scanning/codeql?ref=main",
+        "error": {
+          "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+          "message": "Not Found",
+          "status": "404"
+        },
+        "github_request_id": "ECCE:B14C5:2CD9884:2B52EB0:6A8EDA0D",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 404
+      }
+    }
+  ]
+}

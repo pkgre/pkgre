@@ -1,0 +1,11 @@
+tree c944e104ba5647c995239e48baded28c5df194e4
+author D0 Compatibility Fixture (NOT PRODUCTION) <state-contract-v1-compat@example.invalid> 1767225600 +0000
+committer D0 Compatibility Fixture (NOT PRODUCTION) <state-contract-v1-compat@example.invalid> 1767225600 +0000
+gpgsig -----BEGIN SSH SIGNATURE-----
+ U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgfRtOFmHsH4ym9KRb16y5op6AJ5
+ /FefwRET5oLj/CKvsAAAADZ2l0AAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5
+ AAAAQFime4v4OEqUXw8imY4h0ee/nc9pqiiZn5e1+9kh40WiQap2ip/1WPo3Xd6kHqAQs0
+ 1TKj/ORMar+AR7dB+JuAc=
+ -----END SSH SIGNATURE-----
+
+D0 state-contract-v1 SSH signing compatibility fixture

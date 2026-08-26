@@ -1,0 +1,24 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "configuration": {
+    "data": {
+      "languages": [
+        "actions",
+        "javascript",
+        "javascript-typescript",
+        "typescript"
+      ],
+      "query_suite": "extended",
+      "state": "configured",
+      "threat_model": "remote",
+      "updated_at": "2026-08-25T21:33:48Z"
+    },
+    "endpoint": "repos/pkgre/pkgre/code-scanning/default-setup",
+    "error": null,
+    "github_request_id": "ECD4:66A7F:2E28BAC:2C99692:6A8EDA0D",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "dynamic_workflow_note": "When workflow path is dynamic/github-code-scanning/codeql,GitHub owns generation;repository contents has no file/blob SHA."
+}

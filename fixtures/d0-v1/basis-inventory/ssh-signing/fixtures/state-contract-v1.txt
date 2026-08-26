@@ -1,0 +1,3 @@
+state-contract-v1
+purpose=format/tool compatibility only
+production-identity=false

@@ -1,0 +1,16 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "environments": [],
+  "index": {
+    "data": {
+      "environments": [],
+      "total_count": 0
+    },
+    "endpoint": "repos/pkgre/pkgre/environments?per_page=100",
+    "error": null,
+    "github_request_id": "ECE0:290643:2BD0743:2A4D6E2:6A8EDA0E",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  }
+}

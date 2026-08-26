@@ -1,0 +1,16 @@
+name=pkgre-js
+repo=/home/dev0/repos/pkgre-js
+branch=main
+reviewed=f43bd58bd3d4e36f8b3f4df3c002735c977acd17
+started=2026-08-26T12:50:09Z
+origin=git@github.com:pkgre/js.git
+head=f43bd58bd3d4e36f8b3f4df3c002735c977acd17
+upstream=f43bd58bd3d4e36f8b3f4df3c002735c977acd17
+object_format=sha1
+divergence=0 0
+
+reviewed_is_ancestor=true
+status_begin
+## main...origin/main
+status_end
+completed=2026-08-26T12:50:11Z

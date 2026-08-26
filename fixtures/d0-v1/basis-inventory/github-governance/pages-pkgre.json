@@ -1,0 +1,42 @@
+{
+  "builds": {
+    "data": null,
+    "endpoint": "repos/pkgre/pkgre/pages/builds?per_page=30",
+    "error": {
+      "documentation_url": "https://docs.github.com/rest/pages/pages#list-apiname-pages-builds",
+      "message": "Not Found",
+      "status": "404"
+    },
+    "github_request_id": "ECF6:28335B:2C90CBF:2B13CB2:6A8EDA0E",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 404
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "latest_build": {
+    "data": null,
+    "endpoint": "repos/pkgre/pkgre/pages/builds/latest",
+    "error": {
+      "documentation_url": "https://docs.github.com/rest/pages/pages#get-latest-pages-build",
+      "message": "Not Found",
+      "status": "404"
+    },
+    "github_request_id": "ECFE:F09D3:2C98A53:2B18909:6A8EDA0F",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 404
+  },
+  "settings": {
+    "data": null,
+    "endpoint": "repos/pkgre/pkgre/pages",
+    "error": {
+      "documentation_url": "https://docs.github.com/rest/pages/pages#get-a-apiname-pages-site",
+      "message": "Not Found",
+      "status": "404"
+    },
+    "github_request_id": "ECE8:177E77:2D08352:2B818B2:6A8EDA0E",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 404
+  }
+}

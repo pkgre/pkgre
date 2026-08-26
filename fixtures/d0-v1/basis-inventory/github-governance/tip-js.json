@@ -1,0 +1,90 @@
+{
+  "check_runs": {
+    "data": {
+      "check_runs": [
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89156058184,
+          "completed_at": "2026-08-25T23:37:43Z",
+          "conclusion": "success",
+          "head_sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+          "id": 98006723820,
+          "name": "deploy",
+          "started_at": "2026-08-25T23:37:35Z",
+          "status": "completed"
+        },
+        {
+          "app": {
+            "id": 15368,
+            "name": "GitHub Actions",
+            "slug": "github-actions"
+          },
+          "check_suite_id": 89156058184,
+          "completed_at": "2026-08-25T23:37:31Z",
+          "conclusion": "success",
+          "head_sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+          "id": 98006593389,
+          "name": "validate",
+          "started_at": "2026-08-25T23:36:55Z",
+          "status": "completed"
+        }
+      ],
+      "total_count": 2
+    },
+    "endpoint": "repos/pkgre/js/commits/f43bd58bd3d4e36f8b3f4df3c002735c977acd17/check-runs?per_page=100",
+    "error": null,
+    "github_request_id": "BCF0:2F7D7D:2C4BBE0:2ACEF98:6A8EDA06",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "combined_status": {
+    "data": {
+      "sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "state": "pending",
+      "statuses": [],
+      "total_count": 0
+    },
+    "endpoint": "repos/pkgre/js/commits/f43bd58bd3d4e36f8b3f4df3c002735c977acd17/status?per_page=100",
+    "error": null,
+    "github_request_id": "BCF6:DC54C:2CE3BBE:2B5F6FA:6A8EDA06",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "commit": {
+    "data": {
+      "author": "sorpaas",
+      "commit_author_name": "Wei Tang",
+      "commit_committer_name": "Wei Tang",
+      "commit_date": "2026-08-25T23:36:49Z",
+      "committer": "sorpaas",
+      "parents": [
+        "843d65b668dc6390bd80352d6fd3813381819fc9"
+      ],
+      "sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "verification": {
+        "payload_sha256": null,
+        "reason": "unsigned",
+        "signature_kind": null,
+        "signature_present": false,
+        "signature_sha256": null,
+        "verified": false,
+        "verified_at": null
+      }
+    },
+    "endpoint": "repos/pkgre/js/commits/f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+    "error": null,
+    "github_request_id": "BCE4:A62D1:2D01B49:2B79714:6A8EDA05",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "default_branch": "main",
+  "tip_sha": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17"
+}

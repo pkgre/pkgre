@@ -1,0 +1,12 @@
+result=PASS
+initialVerifyExit=0
+publicBundleVerifyAfterPrivateDeletionExit=0
+bundleHeadMatchesCommit=true
+bundleObjectFormat=sha1
+sourceRevisionUnchanged=true
+sourceStatusUnchanged=true
+privateKeyPathAbsent=true
+privateKeyPemMarkerAbsent=true
+privateKeyModeBeforeDeletion=600
+publicKeyModeBeforeCopy=600
+commitParentCount=0

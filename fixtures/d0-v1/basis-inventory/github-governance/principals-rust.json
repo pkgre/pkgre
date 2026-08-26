@@ -1,0 +1,76 @@
+{
+  "codeowners_locations": [
+    {
+      "data": null,
+      "endpoint": "repos/pkgre/rust/contents/.github/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "CD22:66A7F:2E19D80:2C8B140:6A8ED9FC",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    },
+    {
+      "data": null,
+      "endpoint": "repos/pkgre/rust/contents/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "CD26:3C4426:306AB7A:2EDD2E6:6A8ED9FC",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    },
+    {
+      "data": null,
+      "endpoint": "repos/pkgre/rust/contents/docs/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "BBE8:2F530E:2D57612:2BD6D8A:6A8ED9FC",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    }
+  ],
+  "collaborators": {
+    "data": [
+      {
+        "id": 6277322,
+        "login": "sorpaas",
+        "permissions": {
+          "admin": true,
+          "maintain": true,
+          "pull": true,
+          "push": true,
+          "triage": true
+        },
+        "role_name": "admin",
+        "type": "User"
+      }
+    ],
+    "endpoint": "repos/pkgre/rust/collaborators?affiliation=all&per_page=100",
+    "error": null,
+    "github_request_id": "CD08:BC2BD:2C36033:2AB914D:6A8ED9FB",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "teams": {
+    "data": [],
+    "endpoint": "repos/pkgre/rust/teams?per_page=100",
+    "error": null,
+    "github_request_id": "CD18:B14C5:2CCAAE0:2B4495B:6A8ED9FB",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  }
+}

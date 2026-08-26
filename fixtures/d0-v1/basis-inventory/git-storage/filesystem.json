@@ -1,0 +1,111 @@
+{
+  "observed_at": "2026-08-26T12:13:45.100820Z",
+  "output_mount": {
+    "findmnt": {
+      "filesystems": [
+        {
+          "fsroot": "/machine-states/reposet-dev/home",
+          "fstype": "zfs",
+          "maj:min": "0:40",
+          "options": "rw,relatime,idmapped,xattr,posixacl,casesensitive",
+          "source": "zroot/root/varlib[/machine-states/reposet-dev/home]",
+          "target": "/home"
+        }
+      ]
+    },
+    "name_max": 255,
+    "path_max": 4096,
+    "statvfs": {
+      "block_size": 131072,
+      "blocks": 18580824,
+      "blocks_available": 3686438,
+      "blocks_free": 3686438,
+      "files": 953543765,
+      "files_free": 943728352,
+      "fragment_size": 131072,
+      "name_max": 255
+    }
+  },
+  "repositories_mount": {
+    "findmnt": {
+      "filesystems": [
+        {
+          "fsroot": "/machine-states/reposet-dev/home",
+          "fstype": "zfs",
+          "maj:min": "0:40",
+          "options": "rw,relatime,idmapped,xattr,posixacl,casesensitive",
+          "source": "zroot/root/varlib[/machine-states/reposet-dev/home]",
+          "target": "/home"
+        }
+      ]
+    },
+    "name_max": 255,
+    "path_max": 4096,
+    "statvfs": {
+      "block_size": 131072,
+      "blocks": 18580824,
+      "blocks_available": 3686438,
+      "blocks_free": 3686438,
+      "files": 953543765,
+      "files_free": 943728352,
+      "fragment_size": 131072,
+      "name_max": 255
+    }
+  },
+  "safe_behavior_probe": {
+    "case": {
+      "distinct": true,
+      "names": [
+        "D0Case",
+        "d0case"
+      ]
+    },
+    "invalid_utf8_name_roundtrip": true,
+    "mount": {
+      "findmnt": {
+        "filesystems": [
+          {
+            "fsroot": "/machine-states/reposet-dev/home",
+            "fstype": "zfs",
+            "maj:min": "0:40",
+            "options": "rw,relatime,idmapped,xattr,posixacl,casesensitive",
+            "source": "zroot/root/varlib[/machine-states/reposet-dev/home]",
+            "target": "/home"
+          }
+        ]
+      },
+      "name_max": 255,
+      "path_max": 4096,
+      "statvfs": {
+        "block_size": 131072,
+        "blocks": 18580824,
+        "blocks_available": 3686438,
+        "blocks_free": 3686438,
+        "files": 953543765,
+        "files_free": 943728352,
+        "fragment_size": 131072,
+        "name_max": 255
+      }
+    },
+    "probe_path": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-git-storage-inventory/.filesystem-probe",
+    "rename_same_directory_fsync": {
+      "final_bytes_sha256": "1e9499d56811c083101f89fec10f2bc514dd544338ed70e6da04f470f78f57b6",
+      "final_present": true,
+      "tmp_absent": true
+    },
+    "unicode": {
+      "nfc_hex": "c3a9",
+      "nfc_nfd_distinct": true,
+      "nfd_hex": "65cc81",
+      "roundtrip_names_hex": [
+        "443043617365",
+        "643063617365",
+        "65cc81",
+        "696e76616c69642d757466382dff",
+        "c3a9"
+      ]
+    },
+    "writes_confined_to_output": true
+  },
+  "schema": "pkgre-d0-git-storage-inventory-v1"
+}

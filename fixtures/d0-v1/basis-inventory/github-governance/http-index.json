@@ -1,0 +1,983 @@
+{
+  "calls": [
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions/access",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-the-level-of-access-for-workflows-outside-of-the-repository",
+        "message": "Access policy only applies to internal and private repositories.",
+        "status": "422"
+      },
+      "file": "actions-js.json",
+      "github_request_id": "BC4A:F09D3:2C8C61D:2B0CC9E:6A8ED9FF",
+      "status": 422
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions/artifact-and-log-retention",
+      "error": null,
+      "file": "actions-js.json",
+      "github_request_id": "BC62:312D12:2BADE91:2A314DA:6A8EDA00",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions/workflow",
+      "error": null,
+      "file": "actions-js.json",
+      "github_request_id": "BC36:290643:2BC4173:2A418A6:6A8ED9FF",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions/fork-pr-contributor-approval",
+      "error": null,
+      "file": "actions-js.json",
+      "github_request_id": "BC54:A62D1:2CFCCEA:2B74BE4:6A8ED9FF",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions/fork-pr-workflows-private-repos",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-private-repo-fork-pr-workflow-settings-for-a-repository",
+        "message": "Fork PR workflow settings is not allowed for public repositories.",
+        "status": "422"
+      },
+      "file": "actions-js.json",
+      "github_request_id": "BC5C:A62D1:2CFD0D8:2B74F88:6A8EDA00",
+      "status": 422
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions",
+      "error": null,
+      "file": "actions-js.json",
+      "github_request_id": "BC34:66A7F:2E1C1A0:2C8D42E:6A8ED9FE",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/permissions/selected-actions",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-allowed-actions-and-reusable-workflows-for-a-repository",
+        "message": "Conflict",
+        "status": "409"
+      },
+      "file": "actions-js.json",
+      "github_request_id": "BC40:2F530E:2D598A7:2BD8EB5:6A8ED9FF",
+      "status": 409
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/access",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-the-level-of-access-for-workflows-outside-of-the-repository",
+        "message": "Access policy only applies to internal and private repositories.",
+        "status": "422"
+      },
+      "file": "actions-pkgre.json",
+      "github_request_id": "EC90:28335B:2C8E0E7:2B1124C:6A8EDA0B",
+      "status": 422
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/artifact-and-log-retention",
+      "error": null,
+      "file": "actions-pkgre.json",
+      "github_request_id": "ECA8:31E15F:2C5F619:2AD718D:6A8EDA0C",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/workflow",
+      "error": null,
+      "file": "actions-pkgre.json",
+      "github_request_id": "EC76:266F89:2D89122:2C0047C:6A8EDA0A",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/fork-pr-contributor-approval",
+      "error": null,
+      "file": "actions-pkgre.json",
+      "github_request_id": "EC98:F09D3:2C96020:2B160A5:6A8EDA0B",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/fork-pr-workflows-private-repos",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-private-repo-fork-pr-workflow-settings-for-a-repository",
+        "message": "Fork PR workflow settings is not allowed for public repositories.",
+        "status": "422"
+      },
+      "file": "actions-pkgre.json",
+      "github_request_id": "ECA6:2F530E:2D649D4:2BE39CF:6A8EDA0B",
+      "status": 422
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions",
+      "error": null,
+      "file": "actions-pkgre.json",
+      "github_request_id": "EC6A:31E15F:2C5E07C:2AD5C9A:6A8EDA0A",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/selected-actions",
+      "error": null,
+      "file": "actions-pkgre.json",
+      "github_request_id": "EC84:BC2BD:2C42D01:2AC566F:6A8EDA0B",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions/access",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-the-level-of-access-for-workflows-outside-of-the-repository",
+        "message": "Access policy only applies to internal and private repositories.",
+        "status": "422"
+      },
+      "file": "actions-rust.json",
+      "github_request_id": "9EC4:1673F9:2F07342:2D7A3F3:6A8ED9EF",
+      "status": 422
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions/artifact-and-log-retention",
+      "error": null,
+      "file": "actions-rust.json",
+      "github_request_id": "9EE0:28335B:2C776C7:2AFB549:6A8ED9F0",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions/workflow",
+      "error": null,
+      "file": "actions-rust.json",
+      "github_request_id": "9EBC:177E77:2CECE1D:2B67330:6A8ED9EE",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions/fork-pr-contributor-approval",
+      "error": null,
+      "file": "actions-rust.json",
+      "github_request_id": "9ED2:266F89:2D715BD:2BE964C:6A8ED9EF",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions/fork-pr-workflows-private-repos",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-private-repo-fork-pr-workflow-settings-for-a-repository",
+        "message": "Fork PR workflow settings is not allowed for public repositories.",
+        "status": "422"
+      },
+      "file": "actions-rust.json",
+      "github_request_id": "9ED8:F09D3:2C7F735:2B004E7:6A8ED9F0",
+      "status": 422
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions",
+      "error": null,
+      "file": "actions-rust.json",
+      "github_request_id": "9EAE:266F89:2D7068A:2BE87B9:6A8ED9EE",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/permissions/selected-actions",
+      "error": null,
+      "file": "actions-rust.json",
+      "github_request_id": "9EC2:267F64:D73CC5E:D03E398:6A8ED9EE",
+      "status": 200
+    },
+    {
+      "endpoint": "orgs/pkgre/audit-log?per_page=100&include=all&phrase=repo%3Apkgre%2Fjs",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/orgs/orgs#get-the-audit-log-for-an-organization",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "audit-log.json",
+      "github_request_id": "D1A6:1673F9:2F2530D:2D97268:6A8EDA12",
+      "status": 404
+    },
+    {
+      "endpoint": "orgs/pkgre/audit-log?per_page=100&include=all&phrase=repo%3Apkgre%2Fpkgre",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/orgs/orgs#get-the-audit-log-for-an-organization",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "audit-log.json",
+      "github_request_id": "D1AC:DC54C:2CEDE61:2B69345:6A8EDA12",
+      "status": 404
+    },
+    {
+      "endpoint": "orgs/pkgre/audit-log?per_page=100&include=all&phrase=repo%3Apkgre%2Frust",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/orgs/orgs#get-the-audit-log-for-an-organization",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "audit-log.json",
+      "github_request_id": "D196:F09D3:2C9B384:2B1B08E:6A8EDA12",
+      "status": 404
+    },
+    {
+      "endpoint": "user",
+      "error": null,
+      "file": "auth.json",
+      "github_request_id": "9E7C:267F64:D73A935:D03C216:6A8ED9EC",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/code-scanning/default-setup",
+      "error": null,
+      "file": "codeql-default-setup-js.json",
+      "github_request_id": "BC8E:A62D1:2CFE5D0:2B7635B:6A8EDA01",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/code-scanning/default-setup",
+      "error": null,
+      "file": "codeql-default-setup-pkgre.json",
+      "github_request_id": "ECD4:66A7F:2E28BAC:2C99692:6A8EDA0D",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/code-scanning/default-setup",
+      "error": null,
+      "file": "codeql-default-setup-rust.json",
+      "github_request_id": "9F16:31E15F:2C49EC8:2AC27E7:6A8ED9F2",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/environments/github-pages/deployment-branch-policies?per_page=100",
+      "error": null,
+      "file": "environments-js.json",
+      "github_request_id": "BCA8:BC2BD:2C3BE79:2ABEC1B:6A8EDA02",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/environments/github-pages",
+      "error": null,
+      "file": "environments-js.json",
+      "github_request_id": "BCA6:28335B:2C869CF:2B09FCA:6A8EDA02",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/environments?per_page=100",
+      "error": null,
+      "file": "environments-js.json",
+      "github_request_id": "BC9E:2F530E:2D5BE3A:2BDB300:6A8EDA02",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/environments?per_page=100",
+      "error": null,
+      "file": "environments-pkgre.json",
+      "github_request_id": "ECE0:290643:2BD0743:2A4D6E2:6A8EDA0E",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/environments/github-pages/deployment-branch-policies?per_page=100",
+      "error": null,
+      "file": "environments-rust.json",
+      "github_request_id": "CC22:BC2BD:2C2F060:2AB2570:6A8ED9F3",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/environments/github-pages",
+      "error": null,
+      "file": "environments-rust.json",
+      "github_request_id": "CC14:267F64:D74033D:D0418EF:6A8ED9F2",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/environments?per_page=100",
+      "error": null,
+      "file": "environments-rust.json",
+      "github_request_id": "9F26:E65D4:2C7D12E:2AFB174:6A8ED9F2",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/branches/main/protection",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "message": "Branch not protected",
+        "status": "404"
+      },
+      "file": "governance-js.json",
+      "github_request_id": "BC14:3C4426:306C5FB:2EDEC53:6A8ED9FE",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/js/rules/branches/main?per_page=100",
+      "error": null,
+      "file": "governance-js.json",
+      "github_request_id": "BC24:A62D1:2CFB90E:2B738B1:6A8ED9FE",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/rulesets?includes_parents=true&per_page=100",
+      "error": null,
+      "file": "governance-js.json",
+      "github_request_id": "BC0E:2052E6:2BB849F:2A3D95F:6A8ED9FD",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/branches/main/protection",
+      "error": null,
+      "file": "governance-pkgre.json",
+      "github_request_id": "EC60:BC2BD:2C41C9F:2AC46C5:6A8EDA09",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/rules/branches/main?per_page=100",
+      "error": null,
+      "file": "governance-pkgre.json",
+      "github_request_id": "EC66:267F64:D754FE8:D055A3D:6A8EDA0A",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/rulesets/21205882?includes_parents=true",
+      "error": null,
+      "file": "governance-pkgre.json",
+      "github_request_id": "EC5C:1673F9:2F1DCC7:2D900C9:6A8EDA09",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/rulesets?includes_parents=true&per_page=100",
+      "error": null,
+      "file": "governance-pkgre.json",
+      "github_request_id": "EC50:266F89:2D87B07:2BFEF52:6A8EDA09",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/branches/main/protection",
+      "error": null,
+      "file": "governance-rust.json",
+      "github_request_id": "9E96:3C4426:305D596:2ED03AF:6A8ED9ED",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/rules/branches/main?per_page=100",
+      "error": null,
+      "file": "governance-rust.json",
+      "github_request_id": "9E9E:BC2BD:2C2AE99:2AAE5BD:6A8ED9EE",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/rulesets?includes_parents=true&per_page=100",
+      "error": null,
+      "file": "governance-rust.json",
+      "github_request_id": "9E94:F09D3:2C7D82A:2AFE6C7:6A8ED9ED",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/branches/main",
+      "error": null,
+      "file": "identity-js.json",
+      "github_request_id": "BC00:2052E6:2BB8094:2A3D59B:6A8ED9FD",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js",
+      "error": null,
+      "file": "identity-js.json",
+      "github_request_id": "BBF6:2052E6:2BB7B7A:2A3D0EC:6A8ED9FD",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/branches/main",
+      "error": null,
+      "file": "identity-pkgre.json",
+      "github_request_id": "EC42:177E77:2D0364E:2B7CED3:6A8EDA08",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre",
+      "error": null,
+      "file": "identity-pkgre.json",
+      "github_request_id": "EC34:290643:2BCBB63:2A48EC0:6A8EDA08",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/branches/main",
+      "error": null,
+      "file": "identity-rust.json",
+      "github_request_id": "9E8A:2F530E:2D49E7C:2BC9CD8:6A8ED9ED",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust",
+      "error": null,
+      "file": "identity-rust.json",
+      "github_request_id": "9E84:290643:2BB4AD2:2A32B0C:6A8ED9EC",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/artifacts?per_page=100",
+      "error": null,
+      "file": "operations-js.json",
+      "github_request_id": "BCDA:2052E6:2BBEAA3:2A43BBC:6A8EDA05",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/deployments/6094120375/statuses?per_page=100",
+      "error": null,
+      "file": "operations-js.json",
+      "github_request_id": "BCC0:66A7F:2E20BE9:2C91C18:6A8EDA04",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/deployments/6092137517/statuses?per_page=100",
+      "error": null,
+      "file": "operations-js.json",
+      "github_request_id": "BCC2:290643:2BC8B8E:2A46073:6A8EDA04",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/deployments/6092074505/statuses?per_page=100",
+      "error": null,
+      "file": "operations-js.json",
+      "github_request_id": "BCCA:2F7D7D:2C4AB12:2ACDF85:6A8EDA04",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/deployments/6092056579/statuses?per_page=100",
+      "error": null,
+      "file": "operations-js.json",
+      "github_request_id": "BCD8:3C4426:30732AB:2EE5515:6A8EDA05",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/deployments?per_page=20",
+      "error": null,
+      "file": "operations-js.json",
+      "github_request_id": "BCB2:31E15F:2C58A72:2AD0A4C:6A8EDA03",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/artifacts?per_page=100",
+      "error": null,
+      "file": "operations-pkgre.json",
+      "github_request_id": "ED08:2F7D7D:2C534AE:2AD638C:6A8EDA0F",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/deployments?per_page=20",
+      "error": null,
+      "file": "operations-pkgre.json",
+      "github_request_id": "ED04:E65D4:2C95659:2B12802:6A8EDA0F",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/artifacts?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCEE:A62D1:2CF7DAF:2B6FEEF:6A8ED9F9",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6092749507/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC58:267F64:D741D67:D043213:6A8ED9F4",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6074923227/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC60:BC2BD:2C309A0:2AB3DAA:6A8ED9F5",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6069288671/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC64:2F7D7D:2C3DE50:2AC1A26:6A8ED9F5",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6068833937/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC74:31E15F:2C4CECC:2AC55FA:6A8ED9F5",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6061830814/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC7E:3C4426:3064A23:2ED7428:6A8ED9F6",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6061706548/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC8E:177E77:2CF3843:2B6D9D5:6A8ED9F6",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6055536281/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC9A:1F9348:2AA1E57:292CC2C:6A8ED9F6",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6054482550/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC9E:66A7F:2E15781:2C86E31:6A8ED9F7",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6053902321/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCA8:290643:2BBD9BA:2A3B51E:6A8ED9F7",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6051464232/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCAC:31E15F:2C4E85E:2AC6E76:6A8ED9F7",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6049637548/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCB2:31E15F:2C4ECD3:2AC7296:6A8ED9F8",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6047915295/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCBA:2052E6:2BB3992:2A390FC:6A8ED9F8",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6042211745/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCC4:F09D3:2C86BBD:2B0757F:6A8ED9F8",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6039669881/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCCC:290643:2BBEEFD:2A3C9D9:6A8ED9F9",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6039458365/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCD6:31E15F:2C4FD24:2AC8276:6A8ED9F9",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments/6039426123/statuses?per_page=100",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CCE0:312D12:2BA7FFE:2A2BA0B:6A8ED9F9",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/deployments?per_page=20",
+      "error": null,
+      "file": "operations-rust.json",
+      "github_request_id": "CC48:66A7F:2E13213:2C849A4:6A8ED9F4",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/pages/builds?per_page=30",
+      "error": null,
+      "file": "pages-js.json",
+      "github_request_id": "BCAC:A62D1:2CFFB8A:2B77854:6A8EDA03",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/pages/builds/latest",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/pages/pages#get-latest-pages-build",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "pages-js.json",
+      "github_request_id": "BCAE:31E15F:2C586FE:2AD06F3:6A8EDA03",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/js/pages",
+      "error": null,
+      "file": "pages-js.json",
+      "github_request_id": "BCAA:3C4426:30711B9:2EE35F6:6A8EDA03",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/pages/builds?per_page=30",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/pages/pages#list-apiname-pages-builds",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "pages-pkgre.json",
+      "github_request_id": "ECF6:28335B:2C90CBF:2B13CB2:6A8EDA0E",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/pages/builds/latest",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/pages/pages#get-latest-pages-build",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "pages-pkgre.json",
+      "github_request_id": "ECFE:F09D3:2C98A53:2B18909:6A8EDA0F",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/pages",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/pages/pages#get-a-apiname-pages-site",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "pages-pkgre.json",
+      "github_request_id": "ECE8:177E77:2D08352:2B818B2:6A8EDA0E",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/rust/pages/builds?per_page=30",
+      "error": null,
+      "file": "pages-rust.json",
+      "github_request_id": "CC36:31E15F:2C4B56D:2AC3D9A:6A8ED9F3",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/pages/builds/latest",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/pages/pages#get-latest-pages-build",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "pages-rust.json",
+      "github_request_id": "CC42:312D12:2BA3776:2A273AF:6A8ED9F4",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/rust/pages",
+      "error": null,
+      "file": "pages-rust.json",
+      "github_request_id": "CC32:E65D4:2C7DF72:2AFBEB5:6A8ED9F3",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/contents/.github/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-js.json",
+      "github_request_id": "EC1E:2052E6:2BC062B:2A45669:6A8EDA07",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/js/contents/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-js.json",
+      "github_request_id": "EC2A:290643:2BCB51B:2A48855:6A8EDA07",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/js/contents/docs/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-js.json",
+      "github_request_id": "EC2C:A62D1:2D03959:2B7B3D9:6A8EDA07",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/js/collaborators?affiliation=all&per_page=100",
+      "error": null,
+      "file": "principals-js.json",
+      "github_request_id": "EC10:BC2BD:2C3F591:2AC2147:6A8EDA06",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/teams?per_page=100",
+      "error": null,
+      "file": "principals-js.json",
+      "github_request_id": "EC16:177E77:2D0227A:2B7BBF5:6A8EDA07",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/contents/.github/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-pkgre.json",
+      "github_request_id": "D184:28335B:2C9312D:2B15F91:6A8EDA11",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/contents/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-pkgre.json",
+      "github_request_id": "D192:DC54C:2CED06D:2B68628:6A8EDA11",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/contents/docs/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-pkgre.json",
+      "github_request_id": "D194:290643:2BD39D6:2A507B5:6A8EDA12",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/collaborators?affiliation=all&per_page=100",
+      "error": null,
+      "file": "principals-pkgre.json",
+      "github_request_id": "D16A:290643:2BD2B4A:2A4F9F4:6A8EDA11",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/teams?per_page=100",
+      "error": null,
+      "file": "principals-pkgre.json",
+      "github_request_id": "D174:31E15F:2C63719:2ADAFEF:6A8EDA11",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/contents/.github/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-rust.json",
+      "github_request_id": "CD22:66A7F:2E19D80:2C8B140:6A8ED9FC",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/rust/contents/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-rust.json",
+      "github_request_id": "CD26:3C4426:306AB7A:2EDD2E6:6A8ED9FC",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/rust/contents/docs/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "principals-rust.json",
+      "github_request_id": "BBE8:2F530E:2D57612:2BD6D8A:6A8ED9FC",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/rust/collaborators?affiliation=all&per_page=100",
+      "error": null,
+      "file": "principals-rust.json",
+      "github_request_id": "CD08:BC2BD:2C36033:2AB914D:6A8ED9FB",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/teams?per_page=100",
+      "error": null,
+      "file": "principals-rust.json",
+      "github_request_id": "CD18:B14C5:2CCAAE0:2B4495B:6A8ED9FB",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/commits/f43bd58bd3d4e36f8b3f4df3c002735c977acd17/check-runs?per_page=100",
+      "error": null,
+      "file": "tip-js.json",
+      "github_request_id": "BCF0:2F7D7D:2C4BBE0:2ACEF98:6A8EDA06",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/commits/f43bd58bd3d4e36f8b3f4df3c002735c977acd17/status?per_page=100",
+      "error": null,
+      "file": "tip-js.json",
+      "github_request_id": "BCF6:DC54C:2CE3BBE:2B5F6FA:6A8EDA06",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/commits/f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "error": null,
+      "file": "tip-js.json",
+      "github_request_id": "BCE4:A62D1:2D01B49:2B79714:6A8EDA05",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/commits/066293df21743cbf41fb571a38f2bb94059e7274/check-runs?per_page=100",
+      "error": null,
+      "file": "tip-pkgre.json",
+      "github_request_id": "ED16:266F89:2D8D984:2C049E0:6A8EDA10",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/commits/066293df21743cbf41fb571a38f2bb94059e7274/status?per_page=100",
+      "error": null,
+      "file": "tip-pkgre.json",
+      "github_request_id": "ED1E:28335B:2C92515:2B15412:6A8EDA10",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/commits/066293df21743cbf41fb571a38f2bb94059e7274",
+      "error": null,
+      "file": "tip-pkgre.json",
+      "github_request_id": "ED10:B14C5:2CDB719:2B54C00:6A8EDA0F",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/commits/f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b/check-runs?per_page=100",
+      "error": null,
+      "file": "tip-rust.json",
+      "github_request_id": "CD00:3C4426:3068ED6:2EDB6E6:6A8ED9FA",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/commits/f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b/status?per_page=100",
+      "error": null,
+      "file": "tip-rust.json",
+      "github_request_id": "CD02:F09D3:2C88A47:2B09371:6A8ED9FB",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/commits/f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "error": null,
+      "file": "tip-rust.json",
+      "github_request_id": "CCF0:266F89:2D7AECF:2BF2A31:6A8ED9FA",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/workflows?per_page=100",
+      "error": null,
+      "file": "workflows-js.json",
+      "github_request_id": "BC72:312D12:2BAE3E7:2A31A3F:6A8EDA00",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/actions/workflows/342430387",
+      "error": null,
+      "file": "workflows-js.json",
+      "github_request_id": "BC80:266F89:2D80FF1:2BF8833:6A8EDA01",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/js/contents/.github/workflows/pages.yml?ref=main",
+      "error": null,
+      "file": "workflows-js.json",
+      "github_request_id": "BC8C:1F9348:2AAB1A7:2935A1A:6A8EDA01",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/workflows?per_page=100",
+      "error": null,
+      "file": "workflows-pkgre.json",
+      "github_request_id": "ECB2:E65D4:2C93204:2B104C0:6A8EDA0C",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/workflows/340147927",
+      "error": null,
+      "file": "workflows-pkgre.json",
+      "github_request_id": "ECB4:1673F9:2F2083A:2D92A49:6A8EDA0C",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/contents/.github/workflows/ci.yml?ref=main",
+      "error": null,
+      "file": "workflows-pkgre.json",
+      "github_request_id": "ECBE:66A7F:2E281EC:2C98D20:6A8EDA0D",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/actions/workflows/340179776",
+      "error": null,
+      "file": "workflows-pkgre.json",
+      "github_request_id": "ECC8:31E15F:2C603F3:2AD7ED7:6A8EDA0D",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/pkgre/contents/dynamic/github-code-scanning/codeql?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "workflows-pkgre.json",
+      "github_request_id": "ECCE:B14C5:2CD9884:2B52EB0:6A8EDA0D",
+      "status": 404
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/workflows?per_page=100",
+      "error": null,
+      "file": "workflows-rust.json",
+      "github_request_id": "9EEC:31E15F:2C48876:2AC120B:6A8ED9F0",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/workflows/340152007",
+      "error": null,
+      "file": "workflows-rust.json",
+      "github_request_id": "9EF0:177E77:2CEEB51:2B68F3A:6A8ED9F0",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/contents/.github/workflows/pages.yml?ref=main",
+      "error": null,
+      "file": "workflows-rust.json",
+      "github_request_id": "9F00:2F7D7D:2C3A6D9:2ABE4BD:6A8ED9F1",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/actions/workflows/340179788",
+      "error": null,
+      "file": "workflows-rust.json",
+      "github_request_id": "9F08:290643:2BB89B5:2A3682F:6A8ED9F1",
+      "status": 200
+    },
+    {
+      "endpoint": "repos/pkgre/rust/contents/dynamic/github-code-scanning/codeql?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "file": "workflows-rust.json",
+      "github_request_id": "9F0C:312D12:2BA1908:2A25693:6A8ED9F1",
+      "status": 404
+    }
+  ],
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "counts": {
+    "by_status": {
+      "200": 96,
+      "404": 20,
+      "409": 1,
+      "422": 6
+    },
+    "total": 123
+  }
+}

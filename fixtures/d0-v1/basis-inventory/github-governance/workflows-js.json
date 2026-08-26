@@ -1,0 +1,120 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "index": {
+    "data": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "created_at": "2026-08-25T22:58:39.000+02:00",
+          "id": 342430387,
+          "name": "Validate and deploy default Pages origin",
+          "node_id": "W_kwDOUDSxec4UaRKz",
+          "path": ".github/workflows/pages.yml",
+          "state": "active",
+          "updated_at": "2026-08-25T22:58:39.000+02:00"
+        }
+      ]
+    },
+    "endpoint": "repos/pkgre/js/actions/workflows?per_page=100",
+    "error": null,
+    "github_request_id": "BC72:312D12:2BAE3E7:2A31A3F:6A8EDA00",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "workflows": [
+    {
+      "api": {
+        "data": {
+          "created_at": "2026-08-25T22:58:39.000+02:00",
+          "id": 342430387,
+          "name": "Validate and deploy default Pages origin",
+          "node_id": "W_kwDOUDSxec4UaRKz",
+          "path": ".github/workflows/pages.yml",
+          "state": "active",
+          "updated_at": "2026-08-25T22:58:39.000+02:00"
+        },
+        "endpoint": "repos/pkgre/js/actions/workflows/342430387",
+        "error": null,
+        "github_request_id": "BC80:266F89:2D80FF1:2BF8833:6A8EDA01",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      },
+      "source": {
+        "data": {
+          "bytes_sha256": "4c6aaf4fff2ee0a2f2d1f433d01d1e6f7d62f069b21b7017488539d48660f7e8",
+          "git_blob_sha": "dd19b88fa455c48eb2a3a817072c8b954e8c65f3",
+          "parsed_summary": {
+            "concurrency": {
+              "cancel-in-progress": true,
+              "group": "pages-${{ github.workflow }}-${{ github.ref }}"
+            },
+            "jobs": [
+              {
+                "environment": null,
+                "id": "validate",
+                "if": null,
+                "name": null,
+                "needs": null,
+                "permissions": null,
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 30,
+                "uses": [
+                  "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24",
+                  "actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b",
+                  "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+                ]
+              },
+              {
+                "environment": {
+                  "name": "github-pages",
+                  "url": "${{ steps.deployment.outputs.page_url }}"
+                },
+                "id": "deploy",
+                "if": "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                "name": null,
+                "needs": "validate",
+                "permissions": {
+                  "id-token": "write",
+                  "pages": "write"
+                },
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 10,
+                "uses": [
+                  "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"
+                ]
+              }
+            ],
+            "name": "Validate and deploy default Pages origin",
+            "permissions": {
+              "contents": "read"
+            },
+            "run-name": null,
+            "triggers": {
+              "pull_request": null,
+              "push": {
+                "branches": [
+                  "main"
+                ]
+              },
+              "workflow_dispatch": null
+            }
+          },
+          "path": ".github/workflows/pages.yml",
+          "ref": "main",
+          "size": 2496,
+          "text": "name: Validate and deploy default Pages origin\n\non:\n  pull_request:\n  push:\n    branches: [main]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n\nconcurrency:\n  group: pages-${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n\njobs:\n  validate:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    steps:\n      - name: Check out repository\n        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          persist-credentials: false\n      - name: Check out pinned indexer source\n        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4\n        with:\n          repository: pkgre/pkgre\n          ref: 066293df21743cbf41fb571a38f2bb94059e7274\n          fetch-depth: 0\n          path: .verification/pkgre\n          persist-credentials: false\n      - name: Install Nix\n        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31\n      - name: Build and validate inert site\n        run: ./scripts/test-site.sh\n      - name: Validate dormant bootstrap\n        run: ./scripts/check-bootstrap.sh \"$GITHUB_WORKSPACE/.verification/pkgre\"\n      - name: Require source tree stability\n        run: git diff --exit-code\n      - name: Configure GitHub Pages\n        if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5\n      - name: Archive Pages artifact\n        if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n        run: |\n          tar \\\n            --dereference --hard-dereference \\\n            --directory _site \\\n            -cvf \"$RUNNER_TEMP/artifact.tar\" \\\n            .\n      - name: Upload Pages artifact\n        if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2\n        with:\n          name: github-pages\n          path: ${{ runner.temp }}/artifact.tar\n          retention-days: 1\n          if-no-files-found: error\n\n  deploy:\n    if: github.event_name == 'push' && github.ref == 'refs/heads/main'\n    needs: validate\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    permissions:\n      pages: write\n      id-token: write\n    environment:\n      name: github-pages\n      url: ${{ steps.deployment.outputs.page_url }}\n    steps:\n      - name: Deploy to GitHub Pages\n        id: deployment\n        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4\n"
+        },
+        "endpoint": "repos/pkgre/js/contents/.github/workflows/pages.yml?ref=main",
+        "error": null,
+        "github_request_id": "BC8C:1F9348:2AAB1A7:2935A1A:6A8EDA01",
+        "method": "GET",
+        "retrieved_at": "2026-08-26T12:19:56.329913Z",
+        "status": 200
+      }
+    }
+  ]
+}

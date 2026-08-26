@@ -1,0 +1,64 @@
+{
+  "artifacts": {
+    "data": {
+      "artifacts": [
+        {
+          "created_at": "2026-08-25T21:33:19Z",
+          "digest": "sha256:2861b1b7a4b92908096defcb6dd721957b211bdd13fa0b506bb2eee5dccefe33",
+          "expired": false,
+          "expires_at": "2026-11-23T21:32:23Z",
+          "id": 9583272155,
+          "name": "sarif-artifact-javascript-typescript",
+          "node_id": "MDg6QXJ0aWZhY3Q5NTgzMjcyMTU1",
+          "size_in_bytes": 83388,
+          "updated_at": "2026-08-25T21:33:19Z",
+          "workflow_run": {
+            "head_branch": "main",
+            "head_repository_id": 1342903573,
+            "head_sha": "768265251c021a3cea3c59cd0d49f342c7076d38",
+            "id": 32901536984,
+            "repository_id": 1342903573
+          }
+        },
+        {
+          "created_at": "2026-08-25T21:33:00Z",
+          "digest": "sha256:112983acc3ff6701ae1d7796ca6c35d4d48eba3dae9ab5e5ee5ec044bfb6c264",
+          "expired": false,
+          "expires_at": "2026-11-23T21:32:23Z",
+          "id": 9583260869,
+          "name": "sarif-artifact-actions",
+          "node_id": "MDg6QXJ0aWZhY3Q5NTgzMjYwODY5",
+          "size_in_bytes": 20014,
+          "updated_at": "2026-08-25T21:33:00Z",
+          "workflow_run": {
+            "head_branch": "main",
+            "head_repository_id": 1342903573,
+            "head_sha": "768265251c021a3cea3c59cd0d49f342c7076d38",
+            "id": 32901536984,
+            "repository_id": 1342903573
+          }
+        }
+      ],
+      "total_count": 2
+    },
+    "endpoint": "repos/pkgre/pkgre/actions/artifacts?per_page=100",
+    "error": null,
+    "github_request_id": "ED08:2F7D7D:2C534AE:2AD638C:6A8EDA0F",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "artifacts_limit": 100,
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "deployments": [],
+  "deployments_index": {
+    "data": [],
+    "endpoint": "repos/pkgre/pkgre/deployments?per_page=20",
+    "error": null,
+    "github_request_id": "ED04:E65D4:2C95659:2B12802:6A8EDA0F",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "deployments_limit": 20
+}

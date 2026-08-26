@@ -1,0 +1,7 @@
+commit 3bb4f9586f506ce3f7baf37d3a7a016cd9f46157
+Author:     D0 Compatibility Fixture (NOT PRODUCTION) <state-contract-v1-compat@example.invalid>
+AuthorDate: Thu Jan 1 00:00:00 2026 +0000
+Commit:     D0 Compatibility Fixture (NOT PRODUCTION) <state-contract-v1-compat@example.invalid>
+CommitDate: Thu Jan 1 00:00:00 2026 +0000
+
+    D0 state-contract-v1 SSH signing compatibility fixture

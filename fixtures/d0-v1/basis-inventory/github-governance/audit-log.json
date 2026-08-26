@@ -1,0 +1,53 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "limits": {
+    "per_query": 100,
+    "queries": [
+      "rust",
+      "js",
+      "pkgre"
+    ]
+  },
+  "privacy_sanitization": "actor_ip,user_agent,hashed_token and unlisted fields omitted",
+  "queries": {
+    "js": {
+      "data": null,
+      "endpoint": "orgs/pkgre/audit-log?per_page=100&include=all&phrase=repo%3Apkgre%2Fjs",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/orgs/orgs#get-the-audit-log-for-an-organization",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "D1A6:1673F9:2F2530D:2D97268:6A8EDA12",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    },
+    "pkgre": {
+      "data": null,
+      "endpoint": "orgs/pkgre/audit-log?per_page=100&include=all&phrase=repo%3Apkgre%2Fpkgre",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/orgs/orgs#get-the-audit-log-for-an-organization",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "D1AC:DC54C:2CEDE61:2B69345:6A8EDA12",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    },
+    "rust": {
+      "data": null,
+      "endpoint": "orgs/pkgre/audit-log?per_page=100&include=all&phrase=repo%3Apkgre%2Frust",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/orgs/orgs#get-the-audit-log-for-an-organization",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "D196:F09D3:2C9B384:2B1B08E:6A8EDA12",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    }
+  }
+}

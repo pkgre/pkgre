@@ -1,0 +1,5 @@
+The bundle contains this ref:
+3bb4f9586f506ce3f7baf37d3a7a016cd9f46157 refs/heads/main
+The bundle records a complete history.
+The bundle uses this hash algorithm: sha1
+<PROOF_ROOT>/fixtures/signed-commit.bundle is okay

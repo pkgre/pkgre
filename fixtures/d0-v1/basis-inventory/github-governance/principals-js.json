@@ -1,0 +1,76 @@
+{
+  "codeowners_locations": [
+    {
+      "data": null,
+      "endpoint": "repos/pkgre/js/contents/.github/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "EC1E:2052E6:2BC062B:2A45669:6A8EDA07",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    },
+    {
+      "data": null,
+      "endpoint": "repos/pkgre/js/contents/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "EC2A:290643:2BCB51B:2A48855:6A8EDA07",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    },
+    {
+      "data": null,
+      "endpoint": "repos/pkgre/js/contents/docs/CODEOWNERS?ref=main",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/repos/contents#get-repository-content",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "github_request_id": "EC2C:A62D1:2D03959:2B7B3D9:6A8EDA07",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 404
+    }
+  ],
+  "collaborators": {
+    "data": [
+      {
+        "id": 6277322,
+        "login": "sorpaas",
+        "permissions": {
+          "admin": true,
+          "maintain": true,
+          "pull": true,
+          "push": true,
+          "triage": true
+        },
+        "role_name": "admin",
+        "type": "User"
+      }
+    ],
+    "endpoint": "repos/pkgre/js/collaborators?affiliation=all&per_page=100",
+    "error": null,
+    "github_request_id": "EC10:BC2BD:2C3F591:2AC2147:6A8EDA06",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  },
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "teams": {
+    "data": [],
+    "endpoint": "repos/pkgre/js/teams?per_page=100",
+    "error": null,
+    "github_request_id": "EC16:177E77:2D0227A:2B7BBF5:6A8EDA07",
+    "method": "GET",
+    "retrieved_at": "2026-08-26T12:19:56.329913Z",
+    "status": 200
+  }
+}

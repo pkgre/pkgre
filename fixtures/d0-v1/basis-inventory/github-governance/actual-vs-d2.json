@@ -1,0 +1,59 @@
+{
+  "basis": {
+    "collected_at": "2026-08-26T12:19:56.329913Z",
+    "intended_contract_source": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/plans/pkgre-dynamic-registry-rollout.md sections 3.1,11,13",
+    "comparison_scope": ["pkgre/rust", "pkgre/js"],
+    "implementation_repo_relevance": "pkgre/pkgre is pinned by both catalog workflows"
+  },
+  "intended_d2_contract": {
+    "source_ref": "refs/heads/main",
+    "normal_writer": "distinct protected release-workflow identity after operator protected-environment approval",
+    "admission": ["required pinned CI on exact candidate SHA", "fast-forward only", "v1 SSH-Ed25519 trusted commit signature", "branch/ruleset audit evidence"],
+    "workflow_and_environment": ["reviewed repository workflow change", "CODEOWNERS/ruleset review", "pinned actions and least permissions", "operator reviewer approval without workflow self-approval", "PR code cannot obtain release secret or ref-write permission"],
+    "forbidden_normal_paths": ["contributor direct push", "admin direct push/bypass", "force push", "unsigned tip", "workflow self-approval"],
+    "pages_rollback": "retain Pages source workflows/artifacts on frozen rollback refs/artifacts through D14",
+    "exact_values_not_yet_frozen_by_plan": ["release workflow path/name/blob SHA/check context", "protected release environment name/reviewers", "release writer identity", "SSH signer principal/public fingerprint", "trusted/revoked key-set digest"],
+    "consequence": "D2 operator handoff cannot be issued until every non-provider-assigned value above is frozen exactly"
+  },
+  "actual": {
+    "pkgre/rust": {
+      "repo_id": 1342904147,
+      "default_ref": "refs/heads/main",
+      "tip": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "tip_signature": {"github_verified": true, "kind": "pgp", "meets_v1_ssh_ed25519": false},
+      "branch_rulesets": [],
+      "legacy_branch_protection": {"present": true, "required_check": {"context": "validate", "app_id": 15368, "strict": true}, "enforce_admins": true, "required_linear_history": true, "allow_force_pushes": false, "allow_deletions": false, "required_pull_request_reviews_enabled": true, "required_approving_review_count": 0, "dismiss_stale_reviews": true, "require_code_owner_reviews": false, "require_last_push_approval": false, "required_conversation_resolution": true, "required_signatures": false},
+      "actions": {"enabled": true, "allowed_actions": "selected", "sha_pinning_required": true, "selected_policy": {"github_owned_allowed": true, "verified_allowed": false, "patterns_allowed": ["cachix/install-nix-action@*"]}, "default_workflow_permissions": "read", "can_approve_pull_request_reviews": false},
+      "workflow": {"id": 340152007, "path": ".github/workflows/pages.yml", "blob_sha": "0799e0070b7500dea5aa688c1898a92c2a907f93", "check_context": "validate", "purpose": "Pages validation/deployment;not D2 signed release writer"},
+      "environments": [{"name": "github-pages", "id": 20395247571, "reviewers": [], "can_admins_bypass": true, "allowed_branch": "main"}],
+      "codeowners": "absent at all supported locations",
+      "collaborators": [{"login": "sorpaas", "role": "admin"}],
+      "teams": [],
+      "d2_result": "not conforming: no branch ruleset/CODEOWNERS/protected release environment/distinct release writer;zero approving reviews;no code-owner or last-push approval;required SSH signatures disabled;tip is PGP rather than v1 SSH"
+    },
+    "pkgre/js": {
+      "repo_id": 1345630585,
+      "default_ref": "refs/heads/main",
+      "tip": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "tip_signature": {"github_verified": false, "reason": "unsigned", "meets_v1_ssh_ed25519": false},
+      "branch_rulesets": [],
+      "legacy_branch_protection": {"present": false, "http_status": 404, "message": "Branch not protected"},
+      "actions": {"enabled": true, "allowed_actions": "all", "sha_pinning_required": false, "selected_policy": "not applicable;endpoint returned HTTP 409 Conflict", "default_workflow_permissions": "read", "can_approve_pull_request_reviews": false},
+      "workflow": {"id": 342430387, "path": ".github/workflows/pages.yml", "blob_sha": "dd19b88fa455c48eb2a3a817072c8b954e8c65f3", "check_context_observed": "validate", "required_check": "absent", "purpose": "Pages validation/deployment;not D2 signed release writer"},
+      "environments": [{"name": "github-pages", "id": 20594913798, "reviewers": [], "can_admins_bypass": true, "allowed_branch": "main"}],
+      "codeowners": "absent at all supported locations",
+      "collaborators": [{"login": "sorpaas", "role": "admin"}],
+      "teams": [],
+      "d2_result": "not conforming: main is wholly unprotected;Actions allow all and do not require SHA pinning;no ruleset/CODEOWNERS/protected release environment/distinct release writer;tip unsigned"
+    }
+  },
+  "provider_assigned_returned_evidence_after_operator_action": [
+    {"field": "repository ruleset ID/node ID and timestamps", "reason": "assigned only when operator creates each intended ruleset", "must_be_keyed_to": "frozen ruleset name,target,conditions,bypass actors,enforcement,rules"},
+    {"field": "release environment ID/node ID,protection-rule IDs,and deployment-branch-policy IDs", "reason": "assigned only when operator creates/configures the protected release environment", "must_be_keyed_to": "frozen environment name,reviewers,admin-bypass setting,and branch/tag policy"},
+    {"field": "release workflow provider ID/node ID", "reason": "assigned only after the reviewed workflow exists at the provider", "must_be_keyed_to": "frozen workflow path,Git blob SHA,workflow name,triggers,and permissions"},
+    {"field": "required-check provider app/integration ID if not existing GitHub Actions app 15368", "reason": "provider identity depends on the selected check producer", "must_be_keyed_to": "frozen exact check context and producer"},
+    {"field": "deployment/workflow-run/check-suite/check-run IDs for first signed bootstrap", "reason": "assigned only when operator approves/runs publication", "must_be_keyed_to": "exact candidate SHA,workflow blob SHA,environment,and result"}
+  ],
+  "not_provider_assigned_and_must_be_frozen_before_handoff": ["release workflow path/name/content/blob SHA", "exact required-check context", "environment name and human reviewers", "release writer identity and token permissions", "SSH-Ed25519 principal and public fingerprint", "trusted/revoked key-set digest", "rollback commands/order"],
+  "audit_log": {"capability_result": "unavailable", "http_status": 404, "queries": 3, "interpretation": "authenticated user/token or organization plan does not expose organization audit log;D2 requires operator-returned audit evidence"}
+}

@@ -1,0 +1,94 @@
+{
+  "collected_at": "2026-08-26T12:19:56.329913Z",
+  "settings": {
+    "access": {
+      "data": null,
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/access",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-the-level-of-access-for-workflows-outside-of-the-repository",
+        "message": "Access policy only applies to internal and private repositories.",
+        "status": "422"
+      },
+      "github_request_id": "EC90:28335B:2C8E0E7:2B1124C:6A8EDA0B",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 422
+    },
+    "artifact_and_log_retention": {
+      "data": {
+        "days": 90,
+        "maximum_allowed_days": 90
+      },
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/artifact-and-log-retention",
+      "error": null,
+      "github_request_id": "ECA8:31E15F:2C5F619:2AD718D:6A8EDA0C",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 200
+    },
+    "default_workflow_permissions": {
+      "data": {
+        "can_approve_pull_request_reviews": false,
+        "default_workflow_permissions": "read"
+      },
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/workflow",
+      "error": null,
+      "github_request_id": "EC76:266F89:2D89122:2C0047C:6A8EDA0A",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 200
+    },
+    "fork_pr_contributor_approval": {
+      "data": {
+        "approval_policy": "first_time_contributors"
+      },
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/fork-pr-contributor-approval",
+      "error": null,
+      "github_request_id": "EC98:F09D3:2C96020:2B160A5:6A8EDA0B",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 200
+    },
+    "fork_pr_workflows_private_repos": {
+      "data": null,
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/fork-pr-workflows-private-repos",
+      "error": {
+        "documentation_url": "https://docs.github.com/rest/actions/permissions#get-private-repo-fork-pr-workflow-settings-for-a-repository",
+        "message": "Fork PR workflow settings is not allowed for public repositories.",
+        "status": "422"
+      },
+      "github_request_id": "ECA6:2F530E:2D649D4:2BE39CF:6A8EDA0B",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 422
+    },
+    "permissions": {
+      "data": {
+        "allowed_actions": "selected",
+        "enabled": true,
+        "sha_pinning_required": true
+      },
+      "endpoint": "repos/pkgre/pkgre/actions/permissions",
+      "error": null,
+      "github_request_id": "EC6A:31E15F:2C5E07C:2AD5C9A:6A8EDA0A",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 200
+    },
+    "selected_actions": {
+      "data": {
+        "github_owned_allowed": true,
+        "patterns_allowed": [
+          "cachix/install-nix-action@*"
+        ],
+        "verified_allowed": false
+      },
+      "endpoint": "repos/pkgre/pkgre/actions/permissions/selected-actions",
+      "error": null,
+      "github_request_id": "EC84:BC2BD:2C42D01:2AC566F:6A8EDA0B",
+      "method": "GET",
+      "retrieved_at": "2026-08-26T12:19:56.329913Z",
+      "status": 200
+    }
+  }
+}
