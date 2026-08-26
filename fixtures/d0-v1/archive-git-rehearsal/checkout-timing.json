@@ -1,0 +1,13 @@
+{
+  "clone_no_checkout_seconds": 0.5237919259816408,
+  "explicit_checkout_seconds": 0.15189507696777582,
+  "head": "c5399880f786e5e29f499dc9f82eb823ec164388",
+  "post_checkout_total_allocated_bytes": 261058560,
+  "post_checkout_total_apparent_bytes": 259463968,
+  "pre_checkout_total_allocated_bytes": 129449984,
+  "pre_checkout_total_apparent_bytes": 129368002,
+  "repo_allocated_bytes": 129560576,
+  "repo_apparent_bytes": 129475911,
+  "tree_allocated_bytes": 131497984,
+  "tree_apparent_bytes": 129988057
+}

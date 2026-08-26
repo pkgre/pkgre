@@ -1,0 +1,28 @@
+{
+  "attempts": 3,
+  "catalog_commit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+  "catalog_repo": "/home/dev0/repos/pkgre-rust",
+  "concurrency": 8,
+  "download_seconds": 19.133080821018666,
+  "ended_utc": "2026-08-26T11:51:53.970789+00:00",
+  "failed_route_count": 0,
+  "failed_unique_count": 0,
+  "largest_archive_bytes": 9679450,
+  "largest_archive_sha256": "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483",
+  "logical_route_bytes": 129833713,
+  "manifest_bytes": 154344,
+  "manifest_path": "registry/downloads.json",
+  "manifest_sha256": "9c0cb103f61caeb95a52f76fc3cd479d94c261aef86a7b5d96711e902e26fe94",
+  "max_archive_bytes": 134217728,
+  "raw_unique_bytes": 129833713,
+  "route_count": 747,
+  "source_route_counts": {
+    "crates-io": 744,
+    "git-tag": 3
+  },
+  "started_utc": "2026-08-26T11:51:34.837624+00:00",
+  "timeout_seconds": 120,
+  "unique_hash_count": 747,
+  "verified_route_count": 747,
+  "verified_unique_count": 747
+}
