@@ -15,7 +15,7 @@ Observed:values in `inventory.json` derive from the pre-existing D0 artifact tre
 
 ## Toolchain+wrappers
 
-`inventory.json.tools[]` is authoritative machine detail:role,exact version,Nix attr/context,`.drv`,output,source URL+SRI SHA-256 where pinned directly,flake supply when indirect,uncaptured source fields where evidence does not exist,and wrapper/config paths. Headline versions:Nix 2.34.8;host Git 2.54.0;flake Git 2.55.0;rustc/Cargo 1.95.0;indexer Node/npm 24.19.0/11.17.0;compat Node/npm minimum 24.15.0/12.0.2,current 26.7.0/12.0.2;Bun minimum/current 1.3.14/1.4.0;Deno 2.9.5;`pkgre-rust` 0.5.0;`pkgre-proxy` 0.2.0;`pkgre-js` 0.1.0. Explicit Deno limitation:`denoCurrent = denoMinimum`;both attrs resolve to identical drv `/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv` and output `/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5`;“current” is an alias,not independently newer coverage.
+`inventory.json.tools[]` is authoritative machine detail:role,exact version,Nix attr/context,`.drv`,output,direct source URL+SRI SHA-256 only where captured,explicitly absent direct-source fields where evidence does not exist,and wrapper/config paths. Headline versions:Nix 2.34.8;host Git 2.54.0;flake Git 2.55.0;rustc/Cargo 1.95.0;indexer Node/npm 24.19.0/11.17.0;compat Node/npm minimum 24.15.0/12.0.2,current 26.7.0/12.0.2;Bun minimum/current 1.3.14/1.4.0;Deno 2.9.5;`pkgre-rust` 0.5.0;`pkgre-proxy` 0.2.0;`pkgre-js` 0.1.0. Effective minimum executables=`/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2/bin/{node,npm}`;effective current executables=`/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2/bin/{node,npm}`. Explicit Deno limitation:`denoCurrent = denoMinimum`;both attrs resolve to identical drv `/nix/store/2dg3w9blih7bhjlqrhnqi7k2h0ss3pmh-pkgre-js-compat-deno-2.9.5.drv` and output `/nix/store/fiysiphwgvj51dbanh0b9wlczidx4j10-pkgre-js-compat-deno-2.9.5`;“current” is an alias,not independently newer coverage.
 
 ## Exact feature-selected Cargo closure
 
@@ -65,5 +65,6 @@ Rendered trees omitted;exact inventories retained and independently checked for 
 2. No native aarch64 execution.
 3. No export timing because subcommands absent.
 4. Source-repository cleanliness/upstream divergence+performance input identities remain collection-record claims;not independently re-queried.
-5. This is bounded toolchain/build/closure/performance D0 evidence,not complete rollout D0;network/deployment/TLS/ruleset/signing/raw-nginx/archive-import/quota/time/lifecycle gates remain separate.
-6. Harness issues:none observed.
+5. Direct upstream archive URL/hash is absent for host Nix/Git and flake-supplied Git/Rust/Node/devShell rows;flake pins+derivation/output identities do not substitute for the required per-tool direct source provenance.
+6. This is bounded toolchain/build/closure/performance D0 evidence,not complete rollout D0;network/deployment/TLS/ruleset/signing/raw-nginx/archive-import/quota/time/lifecycle gates remain separate.
+7. Harness issues:none observed.

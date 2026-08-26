@@ -21,6 +21,11 @@
       "scope": "this evidence"
     },
     {
+      "detail": "direct upstream archive URL/hash is absent for host Nix/Git and for flake-supplied Git/Rust/Node/devShell rows;flake pins plus derivation/output identities are captured but do not substitute for per-tool direct source provenance",
+      "id": "direct-source-provenance",
+      "scope": "required D0 toolchain table"
+    },
+    {
       "detail": "network/deployment/TLS/ruleset/signing/raw-nginx/archive-import/quota/time/lifecycle evidence remains separate and was intentionally not collected here",
       "id": "remaining-d0",
       "scope": "canonical rollout"
@@ -455,6 +460,10 @@
         "config/package.json"
       ],
       "drv_path": "/nix/store/99x4lfl8mr0d44k1w7hhkcj97jpkmgpq-pkgre-js-compat-node-npm-24.15.0-12.0.2.drv",
+      "effective_executables": {
+        "node": "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2/bin/node",
+        "npm": "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2/bin/npm"
+      },
       "id": "node-minimum",
       "nix_attribute_or_context": "packages.x86_64-linux.js-client-node-minimum",
       "output_path": "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2",
@@ -485,6 +494,10 @@
         "config/package.json"
       ],
       "drv_path": "/nix/store/k275mh0nrpwd36q1nk926bmpz6lxx8ch-pkgre-js-compat-node-npm-26.7.0-12.0.2.drv",
+      "effective_executables": {
+        "node": "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2/bin/node",
+        "npm": "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2/bin/npm"
+      },
       "id": "node-current",
       "nix_attribute_or_context": "packages.x86_64-linux.js-client-node-current",
       "output_path": "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2",

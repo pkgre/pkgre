@@ -61,6 +61,8 @@ for t in inv["tools"]:
    else:raise AssertionError(f"unknown fixed source URL:{url}")
    require(source["hash_sri_sha256"] in compat,f"source hash absent from config:{t['id']}");fixed_sources.append((source["url"],source["hash_sri_sha256"]))
 dmin=tool_by_id["deno-minimum"];dcur=tool_by_id["deno-current"]
+for tid in ("node-minimum","node-current"):
+ t=tool_by_id[tid];out=t["output_path"];require(t["effective_executables"]=={"node":f"{out}/bin/node","npm":f"{out}/bin/npm"},f"effective Node/npm executables:{tid}")
 require(dmin["drv_path"]==dcur["drv_path"] and dmin["output_path"]==dcur["output_path"],"Deno path alias");require(dmin["aliasing"]["minimum_equals_current"] and dcur["aliasing"]["minimum_equals_current"],"Deno alias flag");require("denoCurrent = denoMinimum;" in compat,"Deno source alias")
 ok("tool_paths_sources_wrappers_and_deno_alias",{"tool_count":len(inv["tools"]),"fixed_source_rows":len(fixed_sources),"unique_fixed_sources":len(set(fixed_sources))})
 # Complete Cargo closure reproduced from metadata resolve graph and matched against summary+lock.
@@ -117,7 +119,7 @@ for p in fixed_files():
  for pattern in secret_patterns:
   if pattern.search(data):findings.append({"path":p.relative_to(ROOT).as_posix(),"pattern":pattern.pattern.decode(errors="replace")})
 require(not findings,f"potential secrets:{findings}");ok("secret_scan",{"files_scanned":len(fixed_files()),"findings":0,"pattern_classes":len(secret_patterns)})
-require(commit in (ROOT/"REPORT.md").read_text() and EXPECTED_SOURCE in (ROOT/"REPORT.md").read_text(),"report basis")
+report=(ROOT/"REPORT.md").read_text();require(commit in report and EXPECTED_SOURCE in report,"report basis");require("Direct upstream archive URL/hash is absent" in report,"report direct source absence");require(any(row["id"]=="direct-source-provenance" for row in inv["blockers"]),"inventory direct source blocker")
 ok("report_basis_consistency")
 # Deterministic validation output,then complete checksum manifest excluding only itself (self-hashing is impossible).
 validation={"schema":"pkgre-d0-validation-v1","status":"pass","check_count":len(checks),"checks":checks,"notes":["stdlib-only;no network or subprocess","SHA256SUMS covers every regular file except SHA256SUMS itself","rendered trees and source archive are referenced rather than copied;their original verification is provenance-log evidence"]}
