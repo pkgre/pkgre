@@ -1,0 +1,456 @@
+{
+  "artifactRows": {
+    "admissions.jsonl": 3,
+    "catalog-homes.jsonl": 911,
+    "rendered-routes.jsonl": 563,
+    "versions-downloads.jsonl": 747
+  },
+  "basis": {
+    "archiveRehearsalAuthority": {
+      "catalogCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "committedAtPkgreTip": "1d44dfeaeafef2b1a5341c13bf73647dcbc925ec",
+      "downloadResultsSha256": "76c01873b2c30caf7c631acf6fd7f16da0336172cc5ebaca5a21fd408939b72b",
+      "downloadSummarySha256": "53e1a700d3c7ca0d9314bf2364e0387477388c25a6bcce386af28c602a63c68c",
+      "gitMetricsSha256": "a79b6d9f617e6a4b45727205b104f29b33c7bca009513f15c8f00e67f4804e00",
+      "sha256sumsVerified": true,
+      "tree": "fixtures/d0-v1/archive-git-rehearsal"
+    },
+    "catalog": {
+      "commit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "fullRef": "refs/heads/main",
+      "localCurrentAndClean": true,
+      "repository": "pkgre-rust"
+    },
+    "implementationRender": {
+      "commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+      "repository": "pkgre",
+      "reviewedUpstreamBasis": true,
+      "sourceCaptureSha256": "33526e0f3276a5dd79f2f7d8d54580547957bcb21a3a8941c7ba7b6153d30b26"
+    },
+    "rendererEquivalence": {
+      "deployedWorkflowPin": "ae1dfbfd4e965dffb538e356f005e4fbb32fdb77",
+      "fileCount": 563,
+      "inventorySha256": "74fca0feee12753226ba8c5cebeb272cf8863b157879dcccfdc0a52650018f8e",
+      "result": "byte-identical-to-reviewed-renderer"
+    }
+  },
+  "blockers": [
+    {
+      "fact": "This Rust catalog/render inventory is not the complete cross-domain D0 gate;deployment/network/TLS/governance/signing/raw-target rows remain separate.",
+      "id": "D0-SCOPE"
+    },
+    {
+      "fact": "No fetch was run in this reconstruction; D0 requires immediate fetch/prune/upstream verification before first edit.",
+      "id": "FRESH-REFETCH"
+    },
+    {
+      "fact": "Schema 4 has no audience field; public classifications here are provisional migration classifications.",
+      "id": "AUDIENCE-SCHEMA"
+    },
+    {
+      "fact": "Catalog basis contains 3/747 archive bodies; 744 verified bodies remain to be imported by an authorized future migration.",
+      "id": "BODY-IN-SOURCE"
+    },
+    {
+      "fact": "Rehearsal proves current closure on one tmpfs host only; append-only history growth, provider ceiling, production quota, and backup/restore remain unproved.",
+      "id": "ARCHIVE-CAPACITY"
+    },
+    {
+      "fact": "Exact protected writer/check/environment rows and v1 SSH-Ed25519 allowedSigners production authority remain separate blockers.",
+      "id": "SIGNATURE-AUTHORITY"
+    },
+    {
+      "fact": "Current sparse Content-Type is application/octet-stream while plan requires text/plain; deterministic validators/owned headers require D1 fixtures.",
+      "id": "HEADER-FREEZE"
+    },
+    {
+      "fact": "Known 747 legacy redirects were observed, but malformed/raw-target/alias/nginx H1/H2 behavior is a separate D0 proof.",
+      "id": "DOWNLOAD-RAW-EDGE"
+    },
+    {
+      "fact": "Curated source closure is proven, but .cargo/config.toml lacks mandatory [net] offline=true.",
+      "id": "CARGO-OFFLINE"
+    },
+    {
+      "fact": "Exact current proxy/indexer feature closures are frozen; proposed post-reqwest lock/feature delta does not exist until an authorized change.",
+      "id": "REQWEST-DELTA"
+    },
+    {
+      "fact": "No pkgre-rust-serve package/Nix attribute or live two-snapshot resource measurement exists at the fixed implementation basis.",
+      "id": "DYNAMIC-SERVER"
+    }
+  ],
+  "classification": {
+    "observed": "Values under observedFacts and generated JSONL are measurements of fixed artifacts or cited point-in-time evidence.",
+    "planRequirements": "Normative target values copied from the canonical plan,not observations.",
+    "proposals": "No proposal value is promoted to observed fact in this inventory."
+  },
+  "observedFacts": {
+    "archiveRehearsal": {
+      "archiveCount": 747,
+      "downloadSeconds": 19.133080821018666,
+      "failedCount": 0,
+      "git": {
+        "bareCloneSeconds": 0.5166731509380043,
+        "bareRepoAllocatedBytes": 129429504,
+        "bareRepoApparentBytes": 129367206,
+        "checkoutCloneSeconds": 0.6751068672165275,
+        "checkoutRehash": "pass",
+        "fixedRefFetchSeconds": 0.5220722937956452,
+        "importSeconds": 1.2614009929820895,
+        "looseRepoApparentBytes": 136370257,
+        "objectFormat": "sha1",
+        "packSeconds": 2.3470200742594898,
+        "packedRepoAllocatedBytes": 129585152,
+        "packedRepoApparentBytes": 129497688,
+        "repoPlusCheckoutPeakAllocatedBytes": 261058560,
+        "repoPlusCheckoutPeakApparentBytes": 259463809,
+        "strictFsck": "pass"
+      },
+      "largestArchiveBytes": 9679450,
+      "largestArchiveSha256": "f09fae7be8bb3174e05c6afdb34199e6dc0c7c04ba9fa237b1967adfbde27483",
+      "logicalRouteBytes": 129833713,
+      "rawUniqueBytes": 129833713,
+      "scope": "one-host tmpfs ordinary-Git feasibility; not production/history/quota proof",
+      "staleClaimRejected": "Any 1.6GB raw-archive claim is false for this fixed closure; authority is 129833713 raw unique bytes."
+    },
+    "cargo": {
+      "cargoConfig": {
+        "cratesIoReplacedWith": "disabled-crates-io",
+        "defaultRegistry": "pkgre",
+        "offlineExplicit": false,
+        "pkgreIndex": "sparse+https://rust.pkg.re/"
+      },
+      "closureFixtureSha256": "ddb5948e57f0873bc915b496af125435c985bca00d6393e10a806f6185837421",
+      "externalPackageCount": 172,
+      "externalSource": "sparse+https://rust.pkg.re/",
+      "lockPackageCount": 174,
+      "lockSha256": "c570ebeb47fa360f060d282286d4759836c6fde3af1f0b7f35e1ecf7dde0d124",
+      "lockVersion": 4,
+      "roots": {
+        "pkgre-proxy": {
+          "packagesIncludingRoot": 155,
+          "selectedPackageFeaturePairs": 305,
+          "thirdPartyPackages": 154
+        },
+        "pkgre-rust": {
+          "packagesIncludingRoot": 55,
+          "selectedPackageFeaturePairs": 113,
+          "thirdPartyPackages": 54
+        },
+        "workspaceUnion": {
+          "packagesIncludingRoots": 174,
+          "selectedPackageFeaturePairs": 347,
+          "thirdPartyPackages": 172
+        }
+      },
+      "workspaceRoots": [
+        "pkgre-rust 0.5.0",
+        "pkgre-proxy 0.2.0"
+      ]
+    },
+    "catalog": {
+      "activeVersionCount": 747,
+      "admissionBatchCount": 1,
+      "admittedIdentityCount": 3,
+      "categories": [
+        {
+          "category": "acp",
+          "homeCount": 3,
+          "mayDependOn": [
+            "main/acp",
+            "main/general"
+          ],
+          "mirrorHomeCount": 3,
+          "mirrorVersionCount": 3,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        },
+        {
+          "category": "filesystem",
+          "homeCount": 2,
+          "mayDependOn": [
+            "main/filesystem",
+            "main/general"
+          ],
+          "mirrorHomeCount": 2,
+          "mirrorVersionCount": 2,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        },
+        {
+          "category": "general",
+          "homeCount": 864,
+          "mayDependOn": [
+            "main/general"
+          ],
+          "mirrorHomeCount": 864,
+          "mirrorVersionCount": 707,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/categories/main/general.toml"
+        },
+        {
+          "category": "matrix",
+          "homeCount": 33,
+          "mayDependOn": [
+            "main/general",
+            "main/matrix"
+          ],
+          "mirrorHomeCount": 33,
+          "mirrorVersionCount": 21,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/categories/main/matrix.toml"
+        },
+        {
+          "category": "mcp",
+          "homeCount": 2,
+          "mayDependOn": [
+            "main/general",
+            "main/mcp",
+            "main/sse"
+          ],
+          "mirrorHomeCount": 2,
+          "mirrorVersionCount": 4,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        },
+        {
+          "category": "pkgre",
+          "homeCount": 1,
+          "mayDependOn": [
+            "main/general",
+            "main/pkgre"
+          ],
+          "mirrorHomeCount": 0,
+          "mirrorVersionCount": 0,
+          "publishHomeCount": 1,
+          "publishTagCount": 3,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        },
+        {
+          "category": "sse",
+          "homeCount": 2,
+          "mayDependOn": [
+            "main/general",
+            "main/sse"
+          ],
+          "mirrorHomeCount": 2,
+          "mirrorVersionCount": 3,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        },
+        {
+          "category": "terminal",
+          "homeCount": 2,
+          "mayDependOn": [
+            "main/general",
+            "main/terminal"
+          ],
+          "mirrorHomeCount": 2,
+          "mirrorVersionCount": 2,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        },
+        {
+          "category": "yaml",
+          "homeCount": 2,
+          "mayDependOn": [
+            "main/general",
+            "main/yaml"
+          ],
+          "mirrorHomeCount": 2,
+          "mirrorVersionCount": 2,
+          "publishHomeCount": 0,
+          "publishTagCount": 0,
+          "registry": "main",
+          "sourceFile": "registry/main.toml"
+        }
+      ],
+      "categoryCount": 9,
+      "dependencyEdgeCount": 5518,
+      "fileHashes": {
+        "registry/downloads.json": {
+          "bytes": 154344,
+          "sha256": "9c0cb103f61caeb95a52f76fc3cd479d94c261aef86a7b5d96711e902e26fe94"
+        },
+        "registry/main.lock": {
+          "bytes": 320545,
+          "sha256": "075a97b50ca504492fa3c133987b9e61f8c270b95a36819e2b56835c9837cd54"
+        },
+        "registry/main.toml": {
+          "bytes": 1475,
+          "sha256": "cf9f836d2e0656da7da9cc899427c499bab54e78d05b20a8f8184507ff22630b"
+        }
+      },
+      "lockedVersionCount": 747,
+      "namesWithVersions": 555,
+      "permanentHomeCount": 911,
+      "pubtime": {
+        "count": 744,
+        "earliest": "2016-05-15T12:20:41Z",
+        "latest": "2026-08-09T23:14:46Z"
+      },
+      "registry": {
+        "cargo-version": "1.95.0",
+        "download": "https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}",
+        "index": "sparse+https://rust.pkg.re/",
+        "name": "main"
+      },
+      "registryCount": 1,
+      "reservedHomesWithoutVersions": 356,
+      "schema": 4,
+      "sourceKinds": {
+        "crates-io": 744,
+        "git-tag": 3
+      },
+      "sourceRowObjects": {
+        "bytes": 1199549,
+        "count": 747,
+        "largestBytes": 53873,
+        "largestPath": "registry/objects/rows/3c50bc80756af60a2a280fb6a7335ff8eeaf61ed36d522b4f6db3e8032995115.json"
+      },
+      "sourceUrls": [
+        "https://github.com/pkgre/pkgre"
+      ]
+    },
+    "currentCatalogArchives": {
+      "bytes": 229784,
+      "count": 3,
+      "declaredRoutes": 747,
+      "missingBodies": 744
+    },
+    "currentPublicRoutes": {
+      "allRustInventoryRows": 2062,
+      "canonicalSameHostDownload404": 747,
+      "extraPublished200": 3,
+      "fixedRenderer200": 563,
+      "legacyDownload307": 747,
+      "legacyPublicAdmin200": 2,
+      "legacyRedirectBodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "legacyRedirectCacheControl": "no-store",
+      "targetDynamicDescriptors": 2055
+    },
+    "gitStorage": {
+      "basisInventoryObservedAt": "2026-08-26T12:13:46.356064Z",
+      "canonicalTreeSha256": "ebb632e21d7553d46da4b3db0c4dac5be1cdd6ec2b51a1c21a3c59e511492355",
+      "complete": true,
+      "developmentCheckout": true,
+      "fsckFullStrict": "pass",
+      "gitObjectFormat": "sha1",
+      "hashHexLength": 40,
+      "localOrigin": "git@github.com:pkgre/rust.git",
+      "nonShallow": true,
+      "productionLayoutProved": false,
+      "treeEntries": 773,
+      "unexpectedTreeGitlinks": 0,
+      "unexpectedTreeSymlinks": 0,
+      "uniqueBlobBytes": 1958607,
+      "uniqueBlobCount": 763
+    },
+    "render": {
+      "bytes": 2129784,
+      "canonicalFileInventorySha256": "74fca0feee12753226ba8c5cebeb272cf8863b157879dcccfdc0a52650018f8e",
+      "checkElapsedSeconds": 0.0255,
+      "checkPeakRssKiB": 11592,
+      "config": {
+        "bytes": 76,
+        "sha256": "9a591cbdb924a588f69f88170e52be8d52b0d08e2261dc1b1b0732171e35ebcc"
+      },
+      "downloads": {
+        "bytes": 154344,
+        "sha256": "9c0cb103f61caeb95a52f76fc3cd479d94c261aef86a7b5d96711e902e26fe94"
+      },
+      "fileCount": 563,
+      "largestSparseRowBytes": 107745,
+      "largestSparseRowPath": "/we/b-/web-sys",
+      "providerAdapterFiles": 2,
+      "release": {
+        "bytes": 459017,
+        "sha256": "2be183106bc9e055a7a1167edad498dae92adbe09c752d9b7927c9ee90542354"
+      },
+      "renderElapsedSeconds": 1.4841489950194955,
+      "renderPeakRssKiB": 11560,
+      "retainedCrateRoutes": 3,
+      "routePathListSha256": "3a6b331778b51b4540ce0bd5d6448c6642808977e1dedd1d0648bea62c7cbdea",
+      "sparseJsonRecords": 747,
+      "sparseRows": 555
+    },
+    "toolchainAndTests": {
+      "cargo": "1.95.0 (f2d3ce0bd)",
+      "flakeInputs": {
+        "nixpkgs": {
+          "narHash": "sha256-dt4WdcvsA8/RCe+VZZwqU0X+XMM3wBbGCWA0/sFWzGo=",
+          "rev": "2c423e03bbafcff28bfadc6781a4a8257f205cb5"
+        },
+        "rust-overlay": {
+          "narHash": "sha256-YT4Fs2k7bi+7YzuLt93EtIRgjpwHK5ZfsQEIh5dEQSk=",
+          "rev": "fd2ebb9cc4323d0c5a1336138dab5c3c5a5d8bd9"
+        }
+      },
+      "missingNixAttr": ".#rust-serve",
+      "nixAttrs": [
+        ".#rust",
+        ".#indexer",
+        ".#proxy",
+        ".#download-serve"
+      ],
+      "nixPackageChecks": [
+        "cargo test --package <name> --frozen",
+        "cargo clippy --package <name> --all-targets --frozen -- -D warnings"
+      ],
+      "proxyNixDrv": "/nix/store/a0950b3qzcanrcalvwlp1b45nrya39xn-pkgre-proxy-0.2.0.drv",
+      "proxyNixOutput": "/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0",
+      "rustNixDrv": "/nix/store/6c2aa3pzzdm5k5nalk1crdcinynwwvzj-pkgre-rust-0.5.0.drv",
+      "rustNixOutput": "/nix/store/bqiaxi9lhg0a8mva3qwmnys70mhnx1wk-pkgre-rust-0.5.0",
+      "rustToolchain": "1.95.0",
+      "rustc": "1.95.0 (59807616e)",
+      "workspaceRustVersion": "1.85",
+      "workspaceTest": {
+        "command": "nix develop <fixed-source-snapshot> -c cargo test --workspace --locked",
+        "elapsedSeconds": 15.915,
+        "failed": 0,
+        "passed": 173
+      }
+    }
+  },
+  "planRequirements": {
+    "bodyMode": "verified archive bytes at same /v1 identity; /crates remains retained body",
+    "canonicalRoutes": [
+      "/config.json",
+      "/<Cargo lowercase sparse-row path>",
+      "/r/<registry>/config.json (only additional explicit registry)",
+      "/r/<registry>/<sparse-row path> (only additional explicit registry)",
+      "/release.json",
+      "/downloads.json",
+      "/v1/<registry>/<crate>/<version>/<sha256>",
+      "/crates/<sha256>.crate"
+    ],
+    "compatibility": "typed closed 307 to catalog-locked destination; zero body",
+    "contentTypes": {
+      "archive": "application/octet-stream",
+      "json": "application/json; charset=utf-8",
+      "sparse": "text/plain; charset=utf-8"
+    },
+    "dynamicConfig": {
+      "redirectMarkerSchema": null,
+      "stateContract": "state-contract-v1"
+    },
+    "rootMainAllowedBecauseObservedRegistryCount": 1
+  },
+  "schema": "pkgre-d0-rust-inventory-v1"
+}

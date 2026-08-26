@@ -1,0 +1,80 @@
+{
+  "checks": [
+    {
+      "detail": null,
+      "name": "json:inventory.json",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "json:cargo-closure.json",
+      "pass": true
+    },
+    {
+      "detail": {
+        "actual": 911,
+        "expected": 911
+      },
+      "name": "jsonl:catalog-homes.jsonl",
+      "pass": true
+    },
+    {
+      "detail": {
+        "actual": 3,
+        "expected": 3
+      },
+      "name": "jsonl:admissions.jsonl",
+      "pass": true
+    },
+    {
+      "detail": {
+        "actual": 747,
+        "expected": 747
+      },
+      "name": "jsonl:versions-downloads.jsonl",
+      "pass": true
+    },
+    {
+      "detail": {
+        "actual": 563,
+        "expected": 563
+      },
+      "name": "jsonl:rendered-routes.jsonl",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "archive-authority",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "render-count-bytes",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "catalog-counts",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "catalog-repo-clean",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "implementation-repo-clean",
+      "pass": true
+    }
+  ],
+  "projectRepositoriesModified": false,
+  "result": "PASS",
+  "rowCounts": {
+    "admissions.jsonl": 3,
+    "catalog-homes.jsonl": 911,
+    "rendered-routes.jsonl": 563,
+    "versions-downloads.jsonl": 747
+  },
+  "schema": "pkgre-d0-rust-inventory-validation-v1"
+}
