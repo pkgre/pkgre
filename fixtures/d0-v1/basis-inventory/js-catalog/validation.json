@@ -1,0 +1,67 @@
+{
+  "checks": {
+    "allArchiveMembersValidatedAgainstImplementationBasis": true,
+    "allRenderedStageFilesInventoriedAndHashed": true,
+    "archiveCopiesAndUniqueBytesValidated": true,
+    "archiveSha1Sha256SriLengthValidated": true,
+    "audienceAbsenceAndD0PublicMappingSeparated": true,
+    "basisCommitsAndTreesExact": true,
+    "catalogCanonicalBytes": true,
+    "catalogRepositorySHA256SUMS22EntriesValidated": true,
+    "catalogSchemaAndExactKeysValidated": true,
+    "dependencyClosureValidated": true,
+    "futureRequirementsSeparatedFromObservedFacts": true,
+    "implementationBytesReadAtExplicitBasis": true,
+    "jsonlRowsParseAndCountsValidated": true,
+    "live502And503EvidenceSeparatedFromRepositoryBytes": true,
+    "markerBytesRouteAndDestinationValidated": true,
+    "minimumAgeInputsValidated": true,
+    "noNetwork": true,
+    "noSecretOrCredentialInspection": true,
+    "packageVersionDistTagCountsValidated": true,
+    "packumentBytesAndShapeValidated": true,
+    "repositoriesCleanBeforeAndAfter": true,
+    "repositoryStatesUnchanged": true,
+    "sourceKindsValidated": true
+  },
+  "counts": {
+    "archiveMemberRows": 11,
+    "archiveRows": 1,
+    "catalogPackageRows": 1,
+    "dependencyEdges": 0,
+    "distTags": 1,
+    "liveJsRouteEvidenceRecords": 10,
+    "packages": 1,
+    "renderedRouteRows": 19,
+    "versions": 1
+  },
+  "harnessIssues": [],
+  "inputHashes": {
+    "catalogJsonSha256": "b92834fb5571e00c01c389f776ba1e4749ab11be8b64f7ee5beaa8a34507fafc",
+    "priorAnalysisSha256": "cb158b3e3b2c763e8720ae176d6ac8a574ec5cb1b0eae2fdfebd7eeb1b1e5ca5",
+    "routeEvidenceSha256": "5ea936ccf5de7861564728e738912a2e646ba0c87c73afa2a7d05f3d0b2b5801"
+  },
+  "repositoryStateAfter": {
+    "pkgre": {
+      "branchLine": "## main...origin/main [ahead 4]",
+      "clean": true,
+      "head": "5a67e8d76ec8a8dd85ff9167455e58b45e9994c6",
+      "headTree": "44c5ef52da9234abd261fdd651398053a6f0991d",
+      "objectFormat": "sha1",
+      "porcelain": [],
+      "shallow": false
+    },
+    "pkgreJs": {
+      "branchLine": "## main...origin/main",
+      "clean": true,
+      "head": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "headTree": "b8c0d5dae071cad4416795e5612c1ddb234bd104",
+      "objectFormat": "sha1",
+      "porcelain": [],
+      "shallow": false
+    }
+  },
+  "result": "PASS",
+  "schema": "pkgre-d0-js-validation-v1",
+  "scope": "fixed-basis catalog/bootstrap inventory;broader D0 blockers do not fail this bounded inventory"
+}

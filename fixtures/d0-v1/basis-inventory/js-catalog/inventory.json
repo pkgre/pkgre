@@ -1,0 +1,1242 @@
+{
+  "blockersAndUnknowns": [
+    {
+      "detail": "point-in-time public evidence is 502 for nine ordinary routes and 503 for the marker route;no fixed repository bytes are claimed live",
+      "id": "live-js-origin",
+      "scope": "broader rollout"
+    },
+    {
+      "detail": "audience,append-only retention,terminal state,and accepted generation contracts are absent from current bootstrap",
+      "id": "dynamic-schema",
+      "scope": "D2+"
+    },
+    {
+      "detail": "no fetch performed under read-only/no-repository-modification constraint;current cached refs are not freshness proof",
+      "id": "fresh-upstream",
+      "scope": "broader D0"
+    },
+    {
+      "detail": "required SSH-Ed25519 allowedSigners runtime admission is not established by this inventory",
+      "id": "signing-admission",
+      "scope": "broader D0"
+    },
+    {
+      "detail": "current bytes measured;history-growth,pack/fetch/clone,quota,backup/restore,and Rain ceiling rehearsal remain outside this fixed catalog inventory",
+      "id": "archive-capacity",
+      "scope": "broader D0"
+    },
+    {
+      "detail": "public classification comes from D0 route mapping;current catalog has no audience field",
+      "id": "audience-source-field",
+      "scope": "D2+"
+    },
+    {
+      "detail": "catalog contains zero scoped packages,so no production /@scope%2fname packument is rendered",
+      "id": "scoped-route",
+      "scope": "current fixture"
+    },
+    {
+      "detail": "this fixed public catalog inventory neither selects a LAN instance nor substitutes for the reviewed D13 selection/no-selection record",
+      "id": "lan-selection",
+      "scope": "D13"
+    }
+  ],
+  "inputs": {
+    "catalog": {
+      "basisCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "basisTree": "b8c0d5dae071cad4416795e5612c1ddb234bd104",
+      "path": "/home/dev0/repos/pkgre-js"
+    },
+    "implementation": {
+      "basisCommit": "066293df21743cbf41fb571a38f2bb94059e7274",
+      "basisTree": "0326ff44970839b753dca8b1f9bbd649b54c004d",
+      "bytesAccess": "git cat-file at explicit basis;current worktree bytes not substituted",
+      "path": "/home/dev0/repos/pkgre"
+    },
+    "priorAnalysis": {
+      "path": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-js-child-report.md",
+      "sha256": "cb158b3e3b2c763e8720ae176d6ac8a574ec5cb1b0eae2fdfebd7eeb1b1e5ca5"
+    },
+    "publicRouteEvidence": {
+      "captureUtcRange": [
+        "2026-08-26T12:15:10.868211+00:00",
+        "2026-08-26T12:15:11.513541+00:00"
+      ],
+      "path": "/home/dev0/.talent/agents/01a0368b-4cd1-7930-b789-daf0a9a11164/workspace/d0-route-inventory/routes.json",
+      "sha256": "5ea936ccf5de7861564728e738912a2e646ba0c87c73afa2a7d05f3d0b2b5801"
+    }
+  },
+  "inventoryArtifactModelProposal": {
+    "classification": "D0 evidence representation only;not an implementation/catalog schema change",
+    "jsonlKeys": {
+      "archives.jsonl": "one row/unique archive with hashes,lengths,copies,Git storage,members+provenance",
+      "catalog-packages.jsonl": "one row/package with all versions,dist-tags,dependency closure,source+minimum-age inputs",
+      "rendered-routes.jsonl": "one row/(stage,file) with exact body identity,audience mapping+historical live observation when path matched"
+    }
+  },
+  "observedFacts": {
+    "archives": {
+      "basisTreeCopies": 3,
+      "basisTreeLogicalBytes": 50151,
+      "members": 11,
+      "uniqueArchives": 1,
+      "uniqueContentBytes": 16717
+    },
+    "catalog": {
+      "bytes": 1650,
+      "counts": {
+        "dependencyEdges": 0,
+        "distTags": 1,
+        "packages": 1,
+        "scopedPackages": 0,
+        "sourceKinds": {
+          "first-party": 1,
+          "npmjs": 0
+        },
+        "versions": 1
+      },
+      "evaluationTime": "2026-08-25T23:27:24.000Z",
+      "file": "bootstrap/js-v0.1.0/catalog.json",
+      "minimumAgeSeconds": 2592000,
+      "registry": "main",
+      "sha256": "b92834fb5571e00c01c389f776ba1e4749ab11be8b64f7ee5beaa8a34507fafc"
+    },
+    "implementationPackage": {
+      "dependencyFree": true,
+      "lockPackageKeys": [
+        ""
+      ],
+      "lockfileVersion": 3,
+      "packageJson": {
+        "bin": {
+          "pkgre-js": "src/main.js"
+        },
+        "description": "Deterministic indexer for the curated js.pkg.re registry",
+        "engines": {
+          "node": ">=24.15.0",
+          "npm": ">=12.0.2"
+        },
+        "files": [
+          "src"
+        ],
+        "license": "Apache-2.0",
+        "name": "pkgre-js",
+        "os": [
+          "linux"
+        ],
+        "packageManager": "npm@12.0.2",
+        "repository": {
+          "directory": "js",
+          "type": "git",
+          "url": "git+https://github.com/pkgre/pkgre.git"
+        },
+        "scripts": {
+          "test": "node --test"
+        },
+        "type": "module",
+        "version": "0.1.0"
+      },
+      "packageJsonBytes": 536,
+      "packageJsonSha256": "19174d2553a3c6603dea9ae7abf516c936c81e925ab5d51fbdd7a2a3d99ffce7"
+    },
+    "livePublicRouteEvidence": {
+      "classification": "historical point-in-time evidence;fixed bytes were not live-served",
+      "markerRoute": "503 response is outage/non-readiness evidence,not the rendered marker or planned typed redirect",
+      "ordinaryRoutes": "502 responses are outage evidence,not repository-body service",
+      "records": [
+        {
+          "audience": "public",
+          "class": "landing-page-alias",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "currently 502;source-rendered control route intentionally becomes 404",
+            "Pages index alias"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:10.890310+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/",
+          "repositoryRepresentation": {
+            "bodyLength": 420,
+            "bodySha256": "e35b5813fb2d003b254b28257182f16321015ebdcd21afd08931af54eb0c17ac",
+            "contentType": "text/html; charset=utf-8",
+            "kind": "landing-page",
+            "sourceFile": "index.html"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/index.html",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/"
+          },
+          "url": "https://js.pkg.re/"
+        },
+        {
+          "audience": "public",
+          "class": "provider-control",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "currently 502;source-rendered control route intentionally becomes 404"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:10.868211+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/.nojekyll",
+          "repositoryRepresentation": {
+            "bodyLength": 0,
+            "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "contentType": "application/octet-stream",
+            "kind": "provider-control",
+            "sourceFile": ".nojekyll"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/.nojekyll",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/.nojekyll"
+          },
+          "url": "https://js.pkg.re/.nojekyll"
+        },
+        {
+          "audience": "public",
+          "class": "generated-site-inventory",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "rendered control inventory intentionally becomes 404"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:10.906878+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/.pkgre-js-site.json",
+          "repositoryRepresentation": {
+            "bodyLength": 727,
+            "bodySha256": "8211eb72308b7d5cf1fcd7dcfd54792bc80e97857234f0af26ba341cfc5d18f5",
+            "contentType": "application/json; charset=utf-8",
+            "kind": "generated-site-inventory",
+            "sourceFile": ".pkgre-js-site.json"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/.pkgre-js-site.json",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/.pkgre-js-site.json"
+          },
+          "url": "https://js.pkg.re/.pkgre-js-site.json"
+        },
+        {
+          "audience": "public",
+          "class": "landing-page",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "currently 502;source-rendered control route intentionally becomes 404"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:10 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:10.978095+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/index.html",
+          "repositoryRepresentation": {
+            "bodyLength": 420,
+            "bodySha256": "e35b5813fb2d003b254b28257182f16321015ebdcd21afd08931af54eb0c17ac",
+            "contentType": "text/html; charset=utf-8",
+            "kind": "landing-page",
+            "sourceFile": "index.html"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/index.html",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/index.html"
+          },
+          "url": "https://js.pkg.re/index.html"
+        },
+        {
+          "audience": "public",
+          "class": "nonproduction-fixture-alias",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "currently 502;source-rendered control route intentionally becomes 404",
+            "Pages directory index alias"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:11.068454+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/nonproduction/redirect-marker-fixture-v0/",
+          "repositoryRepresentation": {
+            "bodyLength": 345,
+            "bodySha256": "a2dfb4b714477498d37f29c55e1c3f75bfc91e5a90e2420ef80a77d549f234ed",
+            "contentType": "text/html; charset=utf-8",
+            "kind": "nonproduction-fixture",
+            "sourceFile": "nonproduction/redirect-marker-fixture-v0/index.html"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/nonproduction/redirect-marker-fixture-v0/index.html",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/nonproduction/redirect-marker-fixture-v0/"
+          },
+          "url": "https://js.pkg.re/nonproduction/redirect-marker-fixture-v0/"
+        },
+        {
+          "audience": "public",
+          "class": "nonproduction-fixture",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "currently 502;source-rendered control route intentionally becomes 404"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:11.153196+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/nonproduction/redirect-marker-fixture-v0/index.html",
+          "repositoryRepresentation": {
+            "bodyLength": 345,
+            "bodySha256": "a2dfb4b714477498d37f29c55e1c3f75bfc91e5a90e2420ef80a77d549f234ed",
+            "contentType": "text/html; charset=utf-8",
+            "kind": "nonproduction-fixture",
+            "sourceFile": "nonproduction/redirect-marker-fixture-v0/index.html"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/nonproduction/redirect-marker-fixture-v0/index.html",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/nonproduction/redirect-marker-fixture-v0/index.html"
+          },
+          "url": "https://js.pkg.re/nonproduction/redirect-marker-fixture-v0/index.html"
+        },
+        {
+          "audience": "public",
+          "class": "legacy-origin-canary",
+          "d8ToD14Behavior": "D11 excluded from protocol projection;static rollback retained through D14",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": null,
+            "contentType": null,
+            "handler": "fixed-not-found",
+            "status": 404
+          },
+          "intentionalChanges": [
+            "currently 502;source-rendered control route intentionally becomes 404"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:11.238199+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/origin-health/v1.txt",
+          "repositoryRepresentation": {
+            "bodyLength": 19,
+            "bodySha256": "710495b7b96406b8dc1cdddb93623614adcf7536634140f643b270fb6f5cc0ee",
+            "contentType": "text/plain; charset=utf-8",
+            "kind": "legacy-origin-canary",
+            "sourceFile": "origin-health/v1.txt"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/site-final/origin-health/v1.txt",
+            "recordType": "static-or-generated-adapter",
+            "repository": "https://github.com/pkgre/pkgre-js"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/origin-health/v1.txt"
+          },
+          "url": "https://js.pkg.re/origin-health/v1.txt"
+        },
+        {
+          "audience": "public",
+          "class": "js-package-object",
+          "d8ToD14Behavior": "D11-D14 exact retained body",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "bodySha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+            "contentLength": 16717,
+            "contentType": "application/octet-stream",
+            "handler": "js-object",
+            "status": 200
+          },
+          "intentionalChanges": [
+            "rendered but not currently live:edge returns 502"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:11.279857+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+          "repositoryRepresentation": {
+            "bodyLength": 16717,
+            "bodySha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+            "contentType": "application/octet-stream",
+            "kind": "js-package-object",
+            "sourceFile": "packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/catalog.json",
+            "name": "pkgre-js",
+            "recordType": "catalog-package-version",
+            "registry": "main",
+            "repository": "https://github.com/pkgre/pkgre-js",
+            "source": {
+              "bytes": 16717,
+              "commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+              "integrity": "sha512-bRuXdwAzbk7TSAcL11WeveyAnUf+VKQdmtkq60GnF83Ofc3piXia7ALSTWQX5+DSMBmKILghh3B2pd1hWNjkjg==",
+              "kind": "first-party",
+              "repository": "https://github.com/pkgre/pkgre",
+              "sha1": "003edfeff6cd091e308cba2daaf737ad843cf073",
+              "sha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+              "tag": "js/v0.1.0",
+              "tagObject": "ba2ace0c3efd55160b79a620f3ec548305fa7b34",
+              "url": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+            },
+            "version": "0.1.0"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+          },
+          "url": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+        },
+        {
+          "audience": "public",
+          "class": "js-packument",
+          "d8ToD14Behavior": "D11 exact dynamic bytes;D12-D14 retained",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "bodySha256": "6cd8e81ee6efebfbed3f8df101ef9fc174672e7855933c6ec4d989697f06722d",
+            "contentLength": 996,
+            "contentType": "application/json; charset=utf-8",
+            "handler": "js-metadata",
+            "status": 200
+          },
+          "intentionalChanges": [
+            "rendered but not currently live:edge returns 502"
+          ],
+          "observed": {
+            "bodyLength": 150,
+            "bodySha256": "61b30d408583991fd69f3dec694e154cb652471e663328ad9c8482c9021ab5db",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "content-length": [
+                "150"
+              ],
+              "content-type": [
+                "text/html"
+              ]
+            },
+            "status": 502,
+            "timestampUtc": "2026-08-26T12:15:11.380349+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/pkgre-js",
+          "repositoryRepresentation": {
+            "bodyLength": 996,
+            "bodySha256": "6cd8e81ee6efebfbed3f8df101ef9fc174672e7855933c6ec4d989697f06722d",
+            "contentType": "application/json; charset=utf-8",
+            "kind": "js-packument",
+            "sourceFile": "pkgre-js"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/catalog.json",
+            "name": "pkgre-js",
+            "recordType": "catalog-package-version",
+            "registry": "main",
+            "repository": "https://github.com/pkgre/pkgre-js",
+            "source": {
+              "bytes": 16717,
+              "commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+              "integrity": "sha512-bRuXdwAzbk7TSAcL11WeveyAnUf+VKQdmtkq60GnF83Ofc3piXia7ALSTWQX5+DSMBmKILghh3B2pd1hWNjkjg==",
+              "kind": "first-party",
+              "repository": "https://github.com/pkgre/pkgre",
+              "sha1": "003edfeff6cd091e308cba2daaf737ad843cf073",
+              "sha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+              "tag": "js/v0.1.0",
+              "tagObject": "ba2ace0c3efd55160b79a620f3ec548305fa7b34",
+              "url": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+            },
+            "version": "0.1.0"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/pkgre-js"
+          },
+          "url": "https://js.pkg.re/pkgre-js"
+        },
+        {
+          "audience": "public",
+          "class": "js-download-marker",
+          "d8ToD14Behavior": "D11 marker HTML replaced by direct typed 307;D12 200 exact archive body;D14 legacy adapter removed",
+          "ecosystem": "js",
+          "host": "js.pkg.re",
+          "intended": {
+            "contentLength": 0,
+            "contentType": null,
+            "handler": "js-compatibility-redirect",
+            "location": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+            "status": 307
+          },
+          "intentionalChanges": [
+            "repository HTML marker becomes zero-body typed 307",
+            "currently 503 because JS origin not ready"
+          ],
+          "observed": {
+            "bodyLength": 0,
+            "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "edgeOwnedHeaders": {
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "error": null,
+            "headers": {
+              "cache-control": [
+                "no-store"
+              ],
+              "connection": [
+                "close"
+              ],
+              "content-length": [
+                "0"
+              ],
+              "date": [
+                "Wed, 26 Aug 2026 12:15:11 GMT"
+              ],
+              "server": [
+                "nginx"
+              ]
+            },
+            "semanticHeaders": {
+              "cache-control": [
+                "no-store"
+              ],
+              "content-length": [
+                "0"
+              ]
+            },
+            "status": 503,
+            "timestampUtc": "2026-08-26T12:15:11.513541+00:00",
+            "unclassifiedHeaders": {
+              "connection": [
+                "close"
+              ]
+            }
+          },
+          "origin": "https://js.pkg.re",
+          "rawPath": "/v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+          "repositoryRepresentation": {
+            "bodyLength": 561,
+            "bodySha256": "86a9005390094d14eb9411bfb1351b349b5dd94486b5dee541b6f6bd7a802e7c",
+            "contentType": "text/html; charset=utf-8",
+            "kind": "js-download-marker",
+            "sourceFile": "v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3"
+          },
+          "sourceCatalogRecord": {
+            "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+            "file": "bootstrap/js-v0.1.0/catalog.json",
+            "name": "pkgre-js",
+            "recordType": "catalog-package-version",
+            "registry": "main",
+            "repository": "https://github.com/pkgre/pkgre-js",
+            "source": {
+              "bytes": 16717,
+              "commit": "066293df21743cbf41fb571a38f2bb94059e7274",
+              "integrity": "sha512-bRuXdwAzbk7TSAcL11WeveyAnUf+VKQdmtkq60GnF83Ofc3piXia7ALSTWQX5+DSMBmKILghh3B2pd1hWNjkjg==",
+              "kind": "first-party",
+              "repository": "https://github.com/pkgre/pkgre",
+              "sha1": "003edfeff6cd091e308cba2daaf737ad843cf073",
+              "sha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+              "tag": "js/v0.1.0",
+              "tagObject": "ba2ace0c3efd55160b79a620f3ec548305fa7b34",
+              "url": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz"
+            },
+            "version": "0.1.0"
+          },
+          "targetCanonical": {
+            "origin": "https://js.pkg.re",
+            "rawPath": "/v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3"
+          },
+          "url": "https://js.pkg.re/v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3"
+        }
+      ],
+      "statusCounts": {
+        "502": 9,
+        "503": 1
+      }
+    },
+    "rendered": {
+      "byStage": {
+        "site-final": 8,
+        "site-previous": 4,
+        "site-routes": 7
+      },
+      "legacyMarker": {
+        "bytes": 561,
+        "destination": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+        "rawPath": "/v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+        "schema": "redirect-marker-v1",
+        "sha256": "86a9005390094d14eb9411bfb1351b349b5dd94486b5dee541b6f6bd7a802e7c"
+      },
+      "packument": {
+        "bytes": 996,
+        "rawPath": "/pkgre-js",
+        "sha256": "6cd8e81ee6efebfbed3f8df101ef9fc174672e7855933c6ec4d989697f06722d",
+        "topLevelKeys": [
+          "_id",
+          "dist-tags",
+          "name",
+          "time",
+          "versions"
+        ]
+      },
+      "records": 19
+    },
+    "schema": {
+      "catalog": {
+        "dependencyFields": [
+          "dependencies",
+          "optionalDependencies",
+          "peerDependencies"
+        ],
+        "dependencyValuePolicy": "one exact canonical version;URL,Git,file,directory,workspace,alias,and range sources forbidden",
+        "distTagsExactKeys": [
+          "latest"
+        ],
+        "exactKeys": [
+          "evaluationTime",
+          "minimumAgeSeconds",
+          "packages",
+          "registry",
+          "schema"
+        ],
+        "firstPartyAdditionalExactKeys": [
+          "commit",
+          "repository",
+          "tag",
+          "tagObject"
+        ],
+        "manifestAllowedKeys": [
+          "bin",
+          "cpu",
+          "dependencies",
+          "deprecated",
+          "description",
+          "engines",
+          "exports",
+          "imports",
+          "libc",
+          "license",
+          "main",
+          "module",
+          "name",
+          "optionalDependencies",
+          "os",
+          "peerDependencies",
+          "peerDependenciesMeta",
+          "type",
+          "types",
+          "typings",
+          "version"
+        ],
+        "npmjsAdditionalExactKeys": [
+          "fetchedAt",
+          "metadataSha256"
+        ],
+        "packageExactKeys": [
+          "distTags",
+          "name",
+          "versions"
+        ],
+        "schemaEnum": "pkgre-js-catalog-v1",
+        "sourceCommonExactKeys": [
+          "bytes",
+          "integrity",
+          "kind",
+          "sha1",
+          "sha256",
+          "url"
+        ],
+        "sourceKinds": [
+          "first-party",
+          "npmjs"
+        ],
+        "versionExactKeys": [
+          "admittedAt",
+          "manifest",
+          "publishedAt",
+          "source",
+          "version"
+        ]
+      },
+      "site": {
+        "exactKeys": [
+          "catalogSha256",
+          "metadata",
+          "objects",
+          "routes",
+          "schema",
+          "stage"
+        ],
+        "metadataExactKeys": [
+          "name",
+          "path",
+          "sha256"
+        ],
+        "objectAndRouteExactKeys": [
+          "path",
+          "sha256"
+        ],
+        "schemaEnum": "pkgre-js-site-v1",
+        "stages": [
+          "routes",
+          "final"
+        ]
+      }
+    }
+  },
+  "planRequirements": {
+    "audienceValues": [
+      "public",
+      "lan-public",
+      "control-only"
+    ],
+    "dynamicMarkerDistinction": {
+      "legacyAdapterMarkerSchema": "redirect-marker-v1",
+      "redirectMarkerSchema": null,
+      "stateContract": "state-contract-v1"
+    },
+    "futureFieldsDeliberatelyAbsentFromCurrentBootstrap": [
+      {
+        "currentLocation": "catalog package/version/source",
+        "field": "audience",
+        "observed": "absent",
+        "requirement": "every source record has explicit public|lan-public|control-only audience;project independently per instance"
+      },
+      {
+        "currentLocation": "catalog",
+        "field": "retainedRoutes",
+        "observed": "absent",
+        "requirement": "append-only route inventory independent of active packuments/dist-tags"
+      },
+      {
+        "currentLocation": "catalog",
+        "field": "retainedArchives",
+        "observed": "absent",
+        "requirement": "append-only .tgz body inventory retained after removal/approval expiry"
+      },
+      {
+        "currentLocation": "version/archive/route semantics",
+        "field": "terminalState",
+        "observed": "absent",
+        "requirement": "typed terminal state participates in accepted-to-candidate validation"
+      },
+      {
+        "currentLocation": "dynamic instance config",
+        "field": "stateContract",
+        "observed": "not represented by dormant static bootstrap",
+        "requirement": "literal state-contract-v1"
+      },
+      {
+        "currentLocation": "dynamic instance config",
+        "field": "redirectMarkerSchema",
+        "observed": "not represented;repository uses independent legacy redirect-marker-v1 HTML",
+        "requirement": "literal null for dynamic instance;legacy adapter remains independent"
+      },
+      {
+        "currentLocation": "runtime durable state",
+        "field": "acceptedGeneration",
+        "observed": "absent/not applicable to static bootstrap",
+        "requirement": "canonical accepted manifest is sole acceptance linearization authority"
+      },
+      {
+        "currentLocation": "runtime durable state",
+        "field": "generationRecordAndPredecessor",
+        "observed": "absent/not applicable to static bootstrap",
+        "requirement": "immutable predecessor-linked generation record"
+      }
+    ],
+    "minimumAge": "third-party versions require 2592000 seconds;pkgre-js is sole intended first-party age exclusion;additional exclusions require schema+operator-policy change",
+    "retention": "JS append-only retained routes+.tgz bodies independent of active packuments/dist-tags",
+    "source": "plans/pkgre-dynamic-registry-rollout.md accepted architecture"
+  },
+  "repositoryStateBefore": {
+    "pkgre": {
+      "branchLine": "## main...origin/main [ahead 4]",
+      "clean": true,
+      "head": "5a67e8d76ec8a8dd85ff9167455e58b45e9994c6",
+      "headTree": "44c5ef52da9234abd261fdd651398053a6f0991d",
+      "objectFormat": "sha1",
+      "porcelain": [],
+      "shallow": false
+    },
+    "pkgreJs": {
+      "branchLine": "## main...origin/main",
+      "clean": true,
+      "head": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "headTree": "b8c0d5dae071cad4416795e5612c1ddb234bd104",
+      "objectFormat": "sha1",
+      "porcelain": [],
+      "shallow": false
+    }
+  },
+  "schema": "pkgre-d0-js-inventory-v1",
+  "scope": {
+    "broaderD0Gate": "BLOCKED-BY-RECORDED-EXTERNAL-AND-FUTURE-CONTRACT-GAPS",
+    "description": "complete fixed-basis JavaScript catalog/bootstrap inventory",
+    "notAClaimOfLiveServing": true,
+    "result": "PASS"
+  },
+  "secretHandling": {
+    "credentialFilesInspected": false,
+    "networkUsed": false,
+    "secretValuesRead": false,
+    "secretValuesRecorded": false
+  }
+}
