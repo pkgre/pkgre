@@ -23,7 +23,7 @@ All substantive machine evidence is under `fixtures/d0-v1/basis-inventory/`;each
 | `fixtures/d0-v1/basis-inventory/js-client-policy/` | OBSERVED+BLOCKED | npm/Bun/Deno policy profiles,precedence,loopback matrix,historical public-contact incident |
 | `fixtures/d0-v1/basis-inventory/live-deployment-network/` | OBSERVED+ABSENT+BLOCKED | live Rain/container/nginx/ACME/DNS/TLS/HTTP/listener/firewall/time/credential metadata |
 | `fixtures/d0-v1/basis-inventory/nginx-raw-target/` | OBSERVED+BLOCKED | isolated nginx raw-target/private-field transport primitive;production policy/integration gap |
-| `fixtures/d0-v1/basis-inventory/public-routes/` | OBSERVED+BLOCKED | all current public URL keys,bytes,headers,redirects,audience,source,and intended D8–D14 mapping |
+| `fixtures/d0-v1/basis-inventory/public-routes/` | OBSERVED+BLOCKED | source-derived current public URL universe,bytes,headers,redirects,audience,source,and intended D8–D14 mapping;access-log-only alias completeness unproved |
 | `fixtures/d0-v1/basis-inventory/rain-identity-design/` | PROPOSED+ABSENT+BLOCKED | future compatibility/rollback identities,ports,state datasets,permissions,quotas,limits;not deployed |
 | `fixtures/d0-v1/basis-inventory/resource-time-lifecycle/` | OBSERVED+PROPOSED+BLOCKED | exact current sizes+samples,review-candidate maxima/time/lifecycle vectors,missing native proofs |
 | `fixtures/d0-v1/basis-inventory/rust-catalog/` | OBSERVED+ABSENT+BLOCKED | complete fixed-basis Rust catalog/render/archive/Cargo closure |
@@ -68,11 +68,13 @@ Reconciliation:the older `fixtures/d0-v1/basis-inventory/git-storage/source-netw
 | ABSENT | scoped-package production fixture;audience,append-only retained-route,terminal-state,and dynamic-state fields |
 | BLOCKED | live public origin captured 9 ordinary `502` responses+one marker `503`;repository bytes remain authority but are not live-continuity evidence |
 
-### 4.3 Complete old→intended public URL map
+### 4.3 Enumerated source-derived old→intended public URL map
 
-OBSERVED:`2072` unique `(origin,rawPath)` keys;duplicate mappings=`0`;probe transport errors=`0`;every key has one audience,source,external observation,and D8–D14 descriptor. Rust:566 repository-backed `rust.pkg.re` routes=`200`;747 canonical same-host `/v1/...`=`404`;747 `dl.rust.pkg.re` aliases=`307` with zero body and catalog-derived closed `Location`;2 legacy public admin routes=`200`. JS:9 ordinary routes=`502`;one marker route=`503`. Rust workflow pin `ae1dfbfd4e965dffb538e356f005e4fbb32fdb77` and reviewed renderer `066293df21743cbf41fb571a38f2bb94059e7274` produced byte-identical 563-file output. Source-of-truth route data:`fixtures/d0-v1/basis-inventory/public-routes/routes.json`;compact transition map:`fixtures/d0-v1/basis-inventory/public-routes/old-to-intended.jsonl`.
+OBSERVED within the enumerated source-derived universe:`2072` unique `(origin,rawPath)` keys;duplicate mappings=`0`;probe transport errors=`0`;every enumerated key has one audience,source,external observation,and D8–D14 descriptor. Rust:566 repository-backed `rust.pkg.re` routes=`200`;747 canonical same-host `/v1/...`=`404`;747 `dl.rust.pkg.re` aliases=`307` with zero body and catalog-derived closed `Location`;2 legacy public admin routes=`200`. JS:9 ordinary routes=`502`;one marker route=`503`. Rust workflow pin `ae1dfbfd4e965dffb538e356f005e4fbb32fdb77` and reviewed renderer `066293df21743cbf41fb571a38f2bb94059e7274` produced byte-identical 563-file output. Source-of-truth route data:`fixtures/d0-v1/basis-inventory/public-routes/routes.json`;compact transition map:`fixtures/d0-v1/basis-inventory/public-routes/old-to-intended.jsonl`.
 
-PROPOSED intentional changes:D8 Rust same-host `/v1` `404→307`;D9/D10 `307→body`;D11 JS packument/object activation and HTML marker→typed `307`;D12 JS `307→body`;D14 provider/control/admin/legacy paths retire only after independent operator gates. No old key is unclassified or silently omitted.
+BLOCKED universal/access-log completeness:the enumerated universe covers fixed source-publication routes,known GitHub Pages `index.html` aliases,current nginx host routing,and catalog-derived identities only. Complete access logs were not captured;access-log-only unknown aliases and otherwise unenumerated deployed paths remain unproved and cannot be claimed absent.
+
+PROPOSED intentional changes:D8 Rust same-host `/v1` `404→307`;D9/D10 `307→body`;D11 JS packument/object activation and HTML marker→typed `307`;D12 JS `307→body`;D14 provider/control/admin/legacy paths retire only after independent operator gates. No enumerated old key is unclassified or silently omitted.
 
 ## 5. Toolchain+provenance+locked closure
 
@@ -179,7 +181,7 @@ BLOCKED edge identity:required exact SNI/vhost/authority agreement and literal b
 
 | Repo | Pages/source/environment/deploy identity | Retained commit+latest artifact | Direct/custom result | Rollback classification |
 |---|---|---|---|---|
-| Rust | workflow build;`main:/`;workflow `.github/workflows/pages.yml` ID `340152007`;`github-pages` env ID `20395247571`;job has `pages:write,id-token:write`;custom=`rust.pkg.re`;HTTPS enforced | `f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b`;deployment `6092749507`;artifact `9583758375`;digest=`sha256:2510e9d77f459d066261a88efe9005d5358c8a9a401aba7042d45fe6f1c2448c`;551,735 B;expired `2026-08-26T21:48:27Z` | custom config/sparse=`200`;strict TLS valid | OBSERVED continuity now;BLOCKED durable bundle,independent custody/readback/restore rehearsal,owner+horizon |
+| Rust | workflow build;`main:/`;workflow `.github/workflows/pages.yml` ID `340152007`;`github-pages` env ID `20395247571`;job has `pages:write,id-token:write`;custom=`rust.pkg.re`;HTTPS enforced | `f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b`;deployment `6092749507`;artifact `9583758375`;digest=`sha256:2510e9d77f459d066261a88efe9005d5358c8a9a401aba7042d45fe6f1c2448c`;551,735 B;expired `2026-08-26T21:48:27Z` | custom config/sparse=`200`;strict TLS valid;direct `https://pkgre.github.io/rust/origin-health/v1.txt`=`HTTP/2 301`→`https://rust.pkg.re/origin-health/v1.txt`;162 B;SHA-256=`9e17cb15dd75bbbd5dbb984eda674863c3b10ab72613cf8a39a00c3e11a8492a`;curl success | OBSERVED continuity now;BLOCKED durable bundle,independent custody/readback/restore rehearsal,owner+horizon |
 | JS | workflow build;`main:/`;workflow ID `342430387`;`github-pages` env ID `20594913798`;custom=`js.pkg.re`;HTTPS not enforced;Pages certificate absent | `f43bd58bd3d4e36f8b3f4df3c002735c977acd17`;deployment `6094120375`;artifact `9586702051`;digest=`sha256:ba7bb13b843d585898552ecd68d2e9caee55ee27644f3721b48b63d29a5e32c5`;791 B;expired `2026-08-26T23:37:29Z` | default origin redirects to insecure custom origin;custom Rain=`502` | containment-only;never continuity;BLOCKED hash-pinned default-origin publication,legacy-static profile,and `JS-INITIAL-ANCHOR` |
 
 OBSERVED legacy binaries/closures:`pkgre-download-serve 0.1.0` store `/nix/store/wjrvwfxnxzwjvkvcl3j53wkbrgvbkznf-pkgre-download-serve-0.1.0`,closure 6,178,808 B;`pkgre-proxy 0.2.0` store `/nix/store/1a25f3q7qvdxgcbcjs267h395xzy4016-pkgre-proxy-0.2.0`,closure 5,613,352 B. BLOCKED rollback authority:provider artifacts expired same day;mutable refs/artifacts are not mirrored to operator-controlled immutable custody;no hash/readback/isolated restore;restore command order,retention owner,expiry gate,and exact deployed infra source generation mapping are absent.
@@ -188,7 +190,7 @@ OBSERVED legacy binaries/closures:`pkgre-download-serve 0.1.0` store `/nix/store
 
 OBSERVED primitive PASS:nginx 1.30.4 isolated TLS harness forwarded 174/174 exchanges with exact private raw target+request-form fields;H1 observe/policy=`55/55`,`36/36`;H2=`47/47`,`36/36`;95 captures differed from normalized `$uri`;caller private headers were stripped/overwritten;backend AF_UNIX socket=`0600`;1,725 validator checks,0 errors,174 captures. HTTP/2 proof concerns submitted `:path` semantics,not HPACK bytes.
 
-BLOCKED production admission:the proof policy deliberately forwarded duplicate slash,backslash,dot/encoded/double-encoded separators,raw fragment marker,invalid UTF-8,and scoped npm variants;it also forwarded an H2 pseudoheader-after-regular case. It proves transport only,not the byte-level canonical allowlist. Production Unix/private boundary,missing/duplicate field rejection,exact SNI/Host/authority matching,413/414/431,body/framing/header ownership,compression/range/error behavior,and real Rain H1/H2 ingress→backend proof remain absent. No normalized-path fallback is allowed.
+BLOCKED production admission:the proof policy deliberately forwarded duplicate slash,backslash,dot/encoded/double-encoded separators,raw fragment marker,invalid UTF-8,and scoped npm variants;it also forwarded an H2 pseudoheader-after-regular case. It proves transport only,not the byte-level canonical allowlist. Production Unix/private boundary,missing/duplicate field rejection,exact SNI/Host/authority matching,413/414/431,body/framing/header ownership,compression/range/error behavior,and real Rain H1/H2 ingress→backend proof remain absent. ABSENT/BLOCKED interim/early-hints `1xx`:not tested or observed;D1 must freeze explicit no-`1xx` fixtures and later production-equivalent/real-edge proof must demonstrate the contract before deployment/cutover. No normalized-path fallback is allowed.
 
 ## 12. Resources+time+lifecycle
 
@@ -252,8 +254,10 @@ ABSENT:no LAN-public instance,hostname,origin,vhost,listener,address,range,firew
 | D0-B17 | BLOCKED | Deno “current” is an alias of minimum 2.9.5,not independently newer coverage;scoped npm production fixture absent | `fixtures/d0-v1/basis-inventory/toolchain-closure/`;`fixtures/d0-v1/basis-inventory/js-catalog/` |
 | D0-B18 | BLOCKED historical constraint | one superseded Bun command contacted npmjs metadata;later loopback proof cannot erase incident | `fixtures/d0-v1/basis-inventory/js-client-policy/` |
 | D0-B19 | ABSENT deferred | no LAN instance selected;must re-enter full D13 gate before any LAN edit | `fixtures/d0-v1/basis-inventory/live-deployment-network/`;`fixtures/d0-v1/basis-inventory/rain-identity-design/` |
+| D0-B20 | BLOCKED | enumerated route uniqueness+mapping covers only the source-derived current public URL universe;complete access logs were not captured,so access-log-only aliases and universal deployed-path completeness remain unproved | `fixtures/d0-v1/basis-inventory/public-routes/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
+| D0-B21 | ABSENT/BLOCKED | interim/early-hints `1xx` behavior was neither tested nor observed;D1 fixtures+later production-equivalent/real-edge proof must demonstrate the explicit no-`1xx` contract | `fixtures/d0-v1/basis-inventory/nginx-raw-target/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
 
-Closed bounded findings:fixed-basis refetch;route uniqueness/completeness;current Rust+JS catalog closures;current Rust archive byte total;Cargo selected closure;isolated SSH signing compatibility;isolated nginx raw-field transport primitive;JS loopback client-policy subrun. None closes the blocking register above.
+Closed bounded findings:fixed-basis refetch;route uniqueness+one-to-one mapping within the enumerated source-derived universe;current Rust+JS catalog closures;current Rust archive byte total;Cargo selected closure;isolated SSH signing compatibility;isolated nginx raw-field transport primitive;JS loopback client-policy subrun. Universal/access-log route completeness and `1xx` behavior remain blocked. None closes the blocking register above.
 
 ## 16. OPERATOR-HANDOFF D0
 
@@ -265,7 +269,7 @@ Catalog commits:`pkgre/rust=f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b`;`pkgre/js=
 
 Infra commit:`5f68539bd99c6952b6d73fe2596c27ad4a319f57` matching declaration only;return exact deployed-source provenance separately.
 
-Validated:all 13 packet manifests+strict JSON/JSONL semantics via `python3 scripts/verify-d0-evidence.py`;route rows=`2072`;Rust archives=`747/129833713 B`;Cargo=`174/172 curated`;JS policy=`66` cases;nginx=`174` captures/`1725` checks;expected aggregate result is verifier PASS with `gate=BLOCKED;D1Authorized=false`.
+Validated:all 13 packet manifests+strict JSON/JSONL semantics via `python3 scripts/verify-d0-evidence.py`;enumerated source-derived route rows=`2072` while universal/access-log completeness remains BLOCKED;Rust archives=`747/129833713 B`;Cargo=`174/172 curated`;JS policy=`66` cases;nginx=`174` captures/`1725` checks;interim/early-hints `1xx` remains ABSENT/BLOCKED;expected aggregate result is verifier PASS with `gate=BLOCKED;D1Authorized=false`.
 
 State+limits:no dynamic active manifest,instance digest,quota,MemoryHigh,or MemoryMax is deployed. Proposal only:Rust quota/MemoryHigh/Max=`4GiB/384MiB/512MiB`;JS=`2GiB/512MiB/768MiB`;TasksMax/NOFILE=`64/2048`;do not treat these as approved production facts.
 
