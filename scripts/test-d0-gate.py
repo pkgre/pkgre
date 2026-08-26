@@ -286,6 +286,37 @@ class GateCoreTests(unittest.TestCase):
         state = fixture.commit("state")
         return evidence, state
 
+    def test_strict_semantic_primitives(self) -> None:
+        self.assertTrue(GATE.strict_bool(True, "bool"))
+        self.assertRejected(lambda: GATE.strict_bool(1, "bool"), "expected boolean")
+        self.assertEqual(GATE.bounded_integer(GATE.MAX_SEMANTIC_INTEGER, "integer"), GATE.MAX_SEMANTIC_INTEGER)
+        self.assertRejected(lambda: GATE.bounded_integer(True, "integer"), "expected integer")
+        self.assertRejected(lambda: GATE.bounded_integer(-1, "integer"), "expected integer")
+        self.assertEqual(GATE.checked_add([GATE.MAX_SEMANTIC_INTEGER - 1, 1], "sum"), GATE.MAX_SEMANTIC_INTEGER)
+        self.assertRejected(lambda: GATE.checked_add([GATE.MAX_SEMANTIC_INTEGER, 1], "sum"), "addition exceeds")
+        self.assertEqual(GATE.checked_multiply([3, 7], "product"), 21)
+        self.assertRejected(lambda: GATE.checked_multiply([GATE.MAX_SEMANTIC_INTEGER, 2], "product"), "multiplication exceeds")
+        self.assertEqual(GATE.semver("2.9.5", "version"), "2.9.5")
+        self.assertRejected(lambda: GATE.semver("02.9.5", "version"), "canonical semantic version")
+        fingerprint = "SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI"
+        self.assertEqual(GATE.ssh_sha256_fingerprint(fingerprint, "fingerprint"), fingerprint)
+        self.assertRejected(lambda: GATE.ssh_sha256_fingerprint(fingerprint + "=", "fingerprint"), "invalid SSH")
+        self.assertEqual(GATE.absolute_path("/var/lib/pkgre/state", "path"), "/var/lib/pkgre/state")
+        self.assertRejected(lambda: GATE.absolute_path("/var/lib/../secret", "path"), "noncanonical")
+        self.assertRejected(lambda: GATE.absolute_path("/", "path"), "non-root canonical")
+        self.assertRejected(lambda: GATE.utc_text("2026-02-30T00:00:00Z", "utc"), "invalid UTC calendar")
+        self.assertEqual(GATE.dns_name("rain.pacna.org", "host"), "rain.pacna.org")
+        self.assertRejected(lambda: GATE.dns_name("Rain.pacna.org", "host"), "lower-case")
+        self.assertEqual(GATE.ip_address("10.131.7.4", "address"), "10.131.7.4")
+        self.assertEqual(GATE.ip_network("10.131.7.1/32", "network"), "10.131.7.1/32")
+        self.assertRejected(lambda: GATE.ip_network("10.131.7.1/24", "network"), "invalid canonical")
+        self.assertEqual(GATE.tcp_port(9010, "port"), 9010)
+        self.assertRejected(lambda: GATE.tcp_port(0, "port"), "expected integer")
+        self.assertEqual(GATE.unix_mode("0640", "mode"), "0640")
+        self.assertRejected(lambda: GATE.unix_mode("640", "mode"), "four-digit octal")
+        self.assertEqual(GATE.unique_strings(["a", "b"], "strings", canonical_order=True), ["a", "b"])
+        self.assertRejected(lambda: GATE.unique_strings(["a", "a"], "strings"), "duplicate string")
+
     def test_strict_json_and_paths(self) -> None:
         self.assertRejected(lambda: GATE.parse_json(b'{"x":1,"x":2}\n', "duplicate"), "duplicate JSON object key")
         self.assertRejected(lambda: GATE.parse_json(b'{"x":"\\ud800"}\n', "surrogate"), "invalid Unicode scalar value")

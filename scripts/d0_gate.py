@@ -8,6 +8,7 @@ import base64
 import binascii
 import copy
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -33,6 +34,11 @@ IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._@+=,-]+$")
 REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+SEMVER_RE = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$")
+SSH_SHA256_FINGERPRINT_RE = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
+UNIX_MODE_RE = re.compile(r"^0[0-7]{3}$")
+DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+MAX_SEMANTIC_INTEGER = 2**63 - 1
 NIX_STORE_HASH_PATTERN = r"[0-9abcdfghijklmnpqrsvwxyz]{32}"
 NIX_STORE_NAME_PATTERN = r"(?!(?:\.{1,2})(?:-|$))[A-Za-z0-9+._?=-]{1,211}"
 NIX_DRV_NAME_PATTERN = r"(?!(?:\.{1,2})(?:-|$))[A-Za-z0-9+._?=-]{1,207}\.drv"
@@ -336,6 +342,136 @@ def nonempty(value: Any, label: str) -> str:
     return value
 
 
+def strict_bool(value: Any, label: str) -> bool:
+    require(type(value) is bool, f"{label}: expected boolean")
+    return value
+
+
+def bounded_integer(value: Any, label: str, minimum: int = 0, maximum: int = MAX_SEMANTIC_INTEGER) -> int:
+    require(type(minimum) is int and type(maximum) is int and 0 <= minimum <= maximum <= MAX_SEMANTIC_INTEGER, f"{label}: invalid verifier integer bounds")
+    require(type(value) is int and minimum <= value <= maximum, f"{label}: expected integer in [{minimum},{maximum}]")
+    return value
+
+
+def checked_add(values: Sequence[int], label: str, maximum: int = MAX_SEMANTIC_INTEGER) -> int:
+    bounded_integer(maximum, f"{label} maximum")
+    total = 0
+    require(len(values) > 0, f"{label}: expected at least one addend")
+    for index, value in enumerate(values):
+        addend = bounded_integer(value, f"{label}[{index}]")
+        require(addend <= maximum - total, f"{label}: integer addition exceeds {maximum}")
+        total += addend
+    return total
+
+
+def checked_multiply(values: Sequence[int], label: str, maximum: int = MAX_SEMANTIC_INTEGER) -> int:
+    bounded_integer(maximum, f"{label} maximum")
+    product = 1
+    require(len(values) > 0, f"{label}: expected at least one factor")
+    for index, value in enumerate(values):
+        factor = bounded_integer(value, f"{label}[{index}]")
+        require(product == 0 or factor <= maximum // product, f"{label}: integer multiplication exceeds {maximum}")
+        product *= factor
+    return product
+
+
+def semantic_identifier(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    require(IDENTIFIER_RE.fullmatch(text) is not None, f"{label}: invalid identifier")
+    return text
+
+
+def hex_digest(value: Any, label: str, algorithm: str = "sha256") -> str:
+    text = nonempty(value, label)
+    pattern = HEX40_RE if algorithm == "sha1" else HEX64_RE if algorithm == "sha256" else None
+    require(pattern is not None, f"{label}: unsupported digest algorithm {algorithm!r}")
+    require(pattern.fullmatch(text) is not None, f"{label}: invalid {algorithm.upper()} digest")
+    return text
+
+
+def utc_text(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    parse_utc(text, label)
+    return text
+
+
+def semver(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    require(SEMVER_RE.fullmatch(text) is not None, f"{label}: expected canonical semantic version")
+    return text
+
+
+def ssh_sha256_fingerprint(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    require(SSH_SHA256_FINGERPRINT_RE.fullmatch(text) is not None, f"{label}: invalid SSH SHA-256 fingerprint")
+    try:
+        decoded = base64.b64decode(text.removeprefix("SHA256:") + "=", validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise GateVerificationError(f"{label}: invalid SSH SHA-256 fingerprint: {error}") from error
+    require(len(decoded) == 32 and base64.b64encode(decoded).decode("ascii").rstrip("=") == text.removeprefix("SHA256:"), f"{label}: noncanonical SSH SHA-256 fingerprint")
+    return text
+
+
+def absolute_path(value: Any, label: str) -> str:
+    path = nonempty(value, label)
+    require(path.startswith("/") and path != "/" and not path.endswith("/"), f"{label}: expected non-root canonical absolute path")
+    require("\\" not in path and "\x00" not in path and "//" not in path, f"{label}: unsafe absolute path")
+    parts = path.split("/")[1:]
+    require(all(part not in {"", ".", ".."} for part in parts), f"{label}: noncanonical absolute path")
+    for part in parts:
+        require(len(part.encode("utf-8")) <= MAX_PATH_COMPONENT_BYTES and PATH_COMPONENT_RE.fullmatch(part) is not None, f"{label}: unsupported absolute-path component {part!r}")
+    require(len(path.encode("utf-8")) <= MAX_PATH_BYTES, f"{label}: path exceeds {MAX_PATH_BYTES} UTF-8 bytes")
+    return path
+
+
+def dns_name(value: Any, label: str) -> str:
+    name = nonempty(value, label)
+    require(len(name) <= 253 and name == name.lower() and not name.endswith("."), f"{label}: expected canonical lower-case DNS name")
+    labels = name.split(".")
+    require(len(labels) >= 2 and all(DNS_LABEL_RE.fullmatch(part) is not None for part in labels), f"{label}: invalid DNS name")
+    return name
+
+
+def ip_address(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    try:
+        parsed = ipaddress.ip_address(text)
+    except ValueError as error:
+        raise GateVerificationError(f"{label}: invalid IP address") from error
+    require(str(parsed) == text, f"{label}: noncanonical IP address")
+    return text
+
+
+def ip_network(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    try:
+        parsed = ipaddress.ip_network(text, strict=True)
+    except ValueError as error:
+        raise GateVerificationError(f"{label}: invalid canonical IP network") from error
+    require(str(parsed) == text, f"{label}: noncanonical IP network")
+    return text
+
+
+def tcp_port(value: Any, label: str) -> int:
+    return bounded_integer(value, label, 1, 65535)
+
+
+def unix_mode(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    require(UNIX_MODE_RE.fullmatch(text) is not None, f"{label}: expected four-digit octal Unix mode")
+    return text
+
+
+def unique_strings(value: Any, label: str, *, minimum: int = 1, canonical_order: bool = False) -> list[str]:
+    rows = arr(value, label)
+    require(len(rows) >= minimum, f"{label}: expected at least {minimum} entries")
+    strings = [nonempty(row, f"{label}[{index}]") for index, row in enumerate(rows)]
+    require(len(strings) == len(set(strings)), f"{label}: duplicate string")
+    if canonical_order:
+        require(strings == sorted(strings), f"{label}: strings are not in canonical order")
+    return strings
+
+
 def nonnegative_integer(value: Any, label: str) -> int:
     require(type(value) is int and value >= 0, f"{label}: expected nonnegative integer")
     return value
@@ -411,7 +547,10 @@ def safe_path(value: Any, label: str, prefix: str | None = None) -> str:
 def parse_utc(value: Any, label: str) -> datetime:
     text = nonempty(value, label)
     require(UTC_RE.fullmatch(text) is not None, f"{label}: expected second-precision UTC timestamp")
-    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    try:
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as error:
+        raise GateVerificationError(f"{label}: invalid UTC calendar timestamp") from error
 
 
 def indexed(rows: list[Any], key: str, label: str) -> dict[str, dict[str, Any]]:
