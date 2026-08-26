@@ -58,9 +58,13 @@ def no_duplicate_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def reject_json_constant(value: str) -> None:
+    raise VerificationError(f"non-finite JSON constant is forbidden: {value}")
+
+
 def parse_json_text(text: str, label: str) -> Any:
     try:
-        return json.loads(text, object_pairs_hook=no_duplicate_object)
+        return json.loads(text, object_pairs_hook=no_duplicate_object, parse_constant=reject_json_constant)
     except (json.JSONDecodeError, VerificationError) as error:
         raise VerificationError(f"invalid JSON in {label}: {error}") from error
 
