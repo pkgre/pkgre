@@ -152,7 +152,7 @@ blockers=[
  {'id':'SIGNATURE-AUTHORITY','fact':'Exact protected writer/check/environment rows and v1 SSH-Ed25519 allowedSigners production authority remain separate blockers.'},
  {'id':'HEADER-FREEZE','fact':'Current sparse Content-Type is application/octet-stream while plan requires text/plain; deterministic validators/owned headers require D1 fixtures.'},
  {'id':'DOWNLOAD-RAW-EDGE','fact':'Known 747 legacy redirects were observed, but malformed/raw-target/alias/nginx H1/H2 behavior is a separate D0 proof.'},
- {'id':'CARGO-OFFLINE','fact':'Curated source closure is proven, but .cargo/config.toml lacks mandatory [net] offline=true.'},
+ {'id':'CARGO-OFFLINE-PRE-D5','fact':'Current .cargo/config.toml has offlineExplicit=false;the operator-approved plan amendment makes [net] offline=true plus its self-host/cold-replay proof a mandatory pre-D5 gate,not a D0 mutation or blocker.'},
  {'id':'REQWEST-DELTA','fact':'Exact current proxy/indexer feature closures are frozen; proposed post-reqwest lock/feature delta does not exist until an authorized change.'},
  {'id':'DYNAMIC-SERVER','fact':'No pkgre-rust-serve package/Nix attribute or live two-snapshot resource measurement exists at the fixed implementation basis.'}
 ]
@@ -223,7 +223,7 @@ Ordinary-Git tmpfs measurement:loose repo apparent=136,370,257B;packed repo appa
 
 Catalog basis is clean/current locally;Git object format=SHA-1/40-hex;773 tree entries;763 unique blobs/1,958,607B;canonical tree SHA-256=`ebb632e21d7553d46da4b3db0c4dac5be1cdd6ec2b51a1c21a3c59e511492355`;strict full fsck/connectivity passed in cited D0 storage evidence;no shallow/alternates/grafts/promisor/replace/gitlinks/LFS/filter/tree-symlink finding. This is a non-bare development checkout with SSH origin and does not prove production bare mirror ownership/quota/layout.
 
-Current exact Cargo closure is frozen in `cargo-closure.json`;all 172 third-party nodes use curated `rust.pkg.re`. Current `.cargo/config.toml` replaces crates.io but lacks mandatory `[net] offline=true`. The planned server should reuse admitted Axum/Tokio/tracing/anyhow utilities and remove `reqwest`/TLS/client closure;the exact future lock diff is not an observed fact and remains blocked until authorized implementation.
+Current exact Cargo closure is frozen in `cargo-closure.json`;all 172 third-party nodes use curated `rust.pkg.re`. Current `.cargo/config.toml` replaces crates.io and has `offlineExplicit=false`;the operator-approved plan amendment makes `[net] offline=true` plus its self-host/cold-replay proof a mandatory pre-D5 gate,not a D0 mutation or blocker. The planned server should reuse admitted Axum/Tokio/tracing/anyhow utilities and remove `reqwest`/TLS/client closure;the exact future lock diff is not an observed fact and remains blocked until authorized implementation.
 
 ## Blocking unknowns
 

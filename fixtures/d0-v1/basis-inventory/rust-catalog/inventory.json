@@ -68,8 +68,8 @@
       "id": "DOWNLOAD-RAW-EDGE"
     },
     {
-      "fact": "Curated source closure is proven, but .cargo/config.toml lacks mandatory [net] offline=true.",
-      "id": "CARGO-OFFLINE"
+      "fact": "Current .cargo/config.toml has offlineExplicit=false;the operator-approved plan amendment makes [net] offline=true plus its self-host/cold-replay proof a mandatory pre-D5 gate,not a D0 mutation or blocker.",
+      "id": "CARGO-OFFLINE-PRE-D5"
     },
     {
       "fact": "Exact current proxy/indexer feature closures are frozen; proposed post-reqwest lock/feature delta does not exist until an authorized change.",
