@@ -33,7 +33,13 @@ IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._@+=,-]+$")
 REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
-NIX_DRV_RE = re.compile(r"^/nix/store/[0-9a-z]{32}-[^/]+\.drv$")
+NIX_STORE_HASH_PATTERN = r"[0-9abcdfghijklmnpqrsvwxyz]{32}"
+NIX_STORE_NAME_PATTERN = r"(?!(?:\.{1,2})(?:-|$))[A-Za-z0-9+._?=-]{1,211}"
+NIX_DRV_NAME_PATTERN = r"(?!(?:\.{1,2})(?:-|$))[A-Za-z0-9+._?=-]{1,207}\.drv"
+NIX_STORE_PATH_RE = re.compile(rf"^/nix/store/(?P<hash>{NIX_STORE_HASH_PATTERN})-(?P<name>{NIX_STORE_NAME_PATTERN})$")
+NIX_DRV_RE = re.compile(rf"^/nix/store/{NIX_STORE_HASH_PATTERN}-{NIX_DRV_NAME_PATTERN}$")
+RFC3986_PCHAR_RE = re.compile(r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-F]{2})+$")
+STRUCTURED_SOURCE_ENV_KEYS = frozenset({"hash", "outputHash", "outputHashMode", "src", "srcs", "urls"})
 SRI_SHA256_RE = re.compile(r"^sha256-[A-Za-z0-9+/]{43}=$")
 MAX_JSON_BYTES = 1024 * 1024
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
@@ -146,8 +152,31 @@ REPHASE_TARGETS = {
 }
 ORIGINAL_PACKAGE_DRVS = {"git-host": "/nix/store/bny4hxrsvnaj060b6rbd68233x4fw32h-git-2.54.0.drv", "nix-host": "/nix/store/iza23qnw05vpa85g804b841rd4yqr1z5-nix-2.34.8.drv"}
 OBSERVED_OUTPUTS = {"git-host": "/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0", "nix-host": "/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8"}
-SURROGATE_DRVS = {"/nix/store/214n5nb1k4qzynzgw7xpsp4fp19vni8i-git-2.54.0.drv", "/nix/store/y9rx70ykgm2hqniaw2qrqp6kqc5n6xbf-nix-2.34.8.drv", "/nix/store/cgrzc3wys8sljv5k23xfmmlzx0s21vjv-git-2.54.0.tar.xz.drv", "/nix/store/1gys5xmkzxr4qbycxl7ilkb15d35z1g2-source.drv"}
-D0_ALLOWED_PATHS = {AGGREGATE_PATH, GATE_STATE_PATH, "scripts/verify-d0-evidence.py", "scripts/test-verify-d0-evidence.py", "scripts/d0_gate.py", "scripts/test-d0-gate.py"}
+KNOWN_SURROGATE_DRV_SHA256S = {
+    "/nix/store/214n5nb1k4qzynzgw7xpsp4fp19vni8i-git-2.54.0.drv": "90f842d2f6793d3871d983cc3eb6863b54258cf02f2ff6db477349ddee885a89",
+    "/nix/store/y9rx70ykgm2hqniaw2qrqp6kqc5n6xbf-nix-2.34.8.drv": "db0c02ca5edc3fc59bacca226fa77078e98ea2857c1059fce711ebdf75c78b0a",
+    "/nix/store/cgrzc3wys8sljv5k23xfmmlzx0s21vjv-git-2.54.0.tar.xz.drv": "37085e2de8bfd72045da2e2da33bda0e93ec6cd47c91ab7219d4bdbc4d1bc9b3",
+    "/nix/store/1gys5xmkzxr4qbycxl7ilkb15d35z1g2-source.drv": "9669d6daf85d974b7a7d71f591a557454a8abd0141553baad71e6ea3382b8e6d",
+}
+SURROGATE_PACKAGE_DRVS = {
+    "/nix/store/214n5nb1k4qzynzgw7xpsp4fp19vni8i-git-2.54.0.drv",
+    "/nix/store/y9rx70ykgm2hqniaw2qrqp6kqc5n6xbf-nix-2.34.8.drv",
+}
+SURROGATE_PACKAGE_DRV_SHA256S = {KNOWN_SURROGATE_DRV_SHA256S[path] for path in SURROGATE_PACKAGE_DRVS}
+D0_ALLOWED_PATHS = {
+    AGGREGATE_PATH,
+    GATE_STATE_PATH,
+    "fixtures/d0-v1/nix-derivation-vectors/README.md",
+    "fixtures/d0-v1/nix-derivation-vectors/SHA256SUMS",
+    "fixtures/d0-v1/nix-derivation-vectors/drvs/1gys5xmkzxr4qbycxl7ilkb15d35z1g2-source.drv",
+    "fixtures/d0-v1/nix-derivation-vectors/drvs/cgrzc3wys8sljv5k23xfmmlzx0s21vjv-git-2.54.0.tar.xz.drv",
+    "fixtures/d0-v1/nix-derivation-vectors/drvs/ji4chnn38m9yjm5fq9w624w63vwf456s-source.drv",
+    "fixtures/d0-v1/nix-derivation-vectors/vectors.json",
+    "scripts/d0_gate.py",
+    "scripts/test-d0-gate.py",
+    "scripts/test-verify-d0-evidence.py",
+    "scripts/verify-d0-evidence.py",
+}
 D0_ALLOWED_PREFIXES = ("evidence/d0-closure/", "fixtures/d0-v1/basis-inventory/", "fixtures/d0-v1/archive-git-rehearsal/", "fixtures/d0-v1/d0-time-resource-proposal/")
 GATE_SENSITIVE_PREFIXES = (b"evidence/", b"fixtures/d0-v1/", b"scripts/d0_gate.py", b"scripts/test-d0-gate.py", b"scripts/verify-d0-evidence.py", b"scripts/test-verify-d0-evidence.py")
 FORBIDDEN_GIT_ENV = (
@@ -322,7 +351,11 @@ def parse_json(raw: bytes, label: str, canonical: bool = True) -> Any:
     except (UnicodeDecodeError, json.JSONDecodeError, GateVerificationError) as error:
         raise GateVerificationError(f"invalid strict JSON in {label}: {error}") from error
     if canonical:
-        require(raw == canonical_json(value), f"{label}: JSON is not canonical")
+        try:
+            normalized = canonical_json(value)
+        except (UnicodeEncodeError, ValueError) as error:
+            raise GateVerificationError(f"invalid Unicode scalar value in {label}: {error}") from error
+        require(raw == normalized, f"{label}: JSON is not canonical")
     return value
 
 
@@ -756,15 +789,245 @@ def validate_b19(disposition: str, mode: str, results: list[dict[str, Any]]) -> 
         require_claim_ref_ids(result, claims["reentryContractRefIds"], "d13-reentry-contract", "D0-B19 reentry")
 
 
-def decode_bounded_base64(value: Any, label: str) -> bytes:
+def decode_bounded_base64(value: Any, label: str, max_decoded: int = 1024 * 1024) -> bytes:
     text = nonempty(value, label)
-    require(len(text) <= 2 * 1024 * 1024, f"{label}: base64 text is too large")
+    require(len(text) <= ((max_decoded + 2) // 3) * 4, f"{label}: base64 text is too large")
     try:
         raw = base64.b64decode(text, validate=True)
     except (binascii.Error, ValueError) as error:
         raise GateVerificationError(f"{label}: invalid base64: {error}") from error
-    require(len(raw) <= 1024 * 1024, f"{label}: decoded capture is too large")
+    require(len(raw) <= max_decoded, f"{label}: decoded content exceeds {max_decoded} bytes")
+    require(base64.b64encode(raw).decode("ascii") == text, f"{label}: base64 is not canonical")
     return raw
+
+
+@dataclass(frozen=True)
+class ATermConstructor:
+    name: str
+    arguments: tuple[Any, ...]
+
+
+class ATermParser:
+    def __init__(self, raw: bytes, label: str) -> None:
+        require(len(raw) <= MAX_DRV_BYTES, f"{label}: derivation exceeds {MAX_DRV_BYTES} bytes")
+        self.raw = raw
+        self.label = label
+        self.offset = 0
+        self.items = 0
+        self.string_bytes = 0
+
+    def fail(self, message: str) -> None:
+        raise GateVerificationError(f"{self.label}: ATerm byte {self.offset}: {message}")
+
+    def consume_item(self, depth: int) -> None:
+        if depth > MAX_DRV_DEPTH:
+            self.fail(f"nesting exceeds {MAX_DRV_DEPTH}")
+        self.items += 1
+        if self.items > MAX_DRV_ITEMS:
+            self.fail(f"item count exceeds {MAX_DRV_ITEMS}")
+
+    def parse(self) -> ATermConstructor:
+        require(self.raw, f"{self.label}: empty derivation")
+        value = self.value(0)
+        require(self.offset == len(self.raw), f"{self.label}: trailing ATerm bytes at offset {self.offset}")
+        require(isinstance(value, ATermConstructor), f"{self.label}: top-level ATerm value must be a constructor")
+        return value
+
+    def value(self, depth: int) -> Any:
+        self.consume_item(depth)
+        if self.offset >= len(self.raw):
+            self.fail("unexpected end of input")
+        byte = self.raw[self.offset]
+        if byte == ord('"'):
+            return self.string()
+        if byte == ord('['):
+            return self.sequence(ord('['), ord(']'), depth)
+        if byte == ord('('):
+            return tuple(self.sequence(ord('('), ord(')'), depth))
+        if 65 <= byte <= 90 or 97 <= byte <= 122:
+            return self.constructor(depth)
+        self.fail(f"unexpected byte 0x{byte:02x}")
+
+    def constructor(self, depth: int) -> ATermConstructor:
+        start = self.offset
+        while self.offset < len(self.raw) and (self.raw[self.offset:self.offset + 1].isalnum() or self.raw[self.offset] in b"_-"):
+            self.offset += 1
+        try:
+            name = self.raw[start:self.offset].decode("ascii", errors="strict")
+        except UnicodeDecodeError as error:
+            raise GateVerificationError(f"{self.label}: non-ASCII ATerm constructor") from error
+        require(name != "", f"{self.label}: empty ATerm constructor")
+        arguments = tuple(self.sequence(ord('('), ord(')'), depth))
+        return ATermConstructor(name, arguments)
+
+    def sequence(self, opener: int, closer: int, depth: int) -> list[Any]:
+        if self.offset >= len(self.raw) or self.raw[self.offset] != opener:
+            self.fail(f"expected {chr(opener)!r}")
+        self.offset += 1
+        result: list[Any] = []
+        if self.offset < len(self.raw) and self.raw[self.offset] == closer:
+            self.offset += 1
+            return result
+        while True:
+            result.append(self.value(depth + 1))
+            if self.offset >= len(self.raw):
+                self.fail(f"unterminated {chr(opener)!r}")
+            delimiter = self.raw[self.offset]
+            self.offset += 1
+            if delimiter == closer:
+                return result
+            if delimiter != ord(','):
+                self.fail(f"expected ',' or {chr(closer)!r}")
+
+    def string(self) -> str:
+        self.offset += 1
+        decoded = bytearray()
+        escapes = {ord('"'): ord('"'), ord('\\'): ord('\\'), ord('n'): 10, ord('r'): 13, ord('t'): 9}
+        while self.offset < len(self.raw):
+            byte = self.raw[self.offset]
+            self.offset += 1
+            if byte == ord('"'):
+                self.string_bytes += len(decoded)
+                if self.string_bytes > MAX_DRV_STRING_BYTES:
+                    self.fail(f"decoded string bytes exceed {MAX_DRV_STRING_BYTES}")
+                try:
+                    return decoded.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as error:
+                    raise GateVerificationError(f"{self.label}: ATerm string is not valid UTF-8: {error}") from error
+            if byte == ord('\\'):
+                if self.offset >= len(self.raw):
+                    self.fail("trailing string escape")
+                escaped = self.raw[self.offset]
+                self.offset += 1
+                if escaped in escapes:
+                    decoded.append(escapes[escaped])
+                else:
+                    self.fail(f"unsupported string escape 0x{escaped:02x}")
+            else:
+                if byte < 0x20 or byte == 0x7F:
+                    self.fail(f"noncanonical literal control byte 0x{byte:02x}")
+                decoded.append(byte)
+        self.fail("unterminated string")
+
+
+def parse_derivation(raw: bytes, label: str) -> dict[str, Any]:
+    term = ATermParser(raw, label).parse()
+    require(term.name == "Derive" and len(term.arguments) == 7, f"{label}: expected exact Derive/7 constructor")
+    outputs_raw, inputs_raw, sources_raw, platform, builder, arguments_raw, environment_raw = term.arguments
+    require(isinstance(outputs_raw, list) and isinstance(inputs_raw, list) and isinstance(sources_raw, list) and isinstance(arguments_raw, list) and isinstance(environment_raw, list), f"{label}: malformed Derive collection fields")
+    require(all(isinstance(value, str) for value in (platform, builder)), f"{label}: malformed Derive platform/builder")
+    require(all(isinstance(value, str) for value in sources_raw) and all(isinstance(value, str) for value in arguments_raw), f"{label}: malformed Derive source/argument rows")
+    outputs: dict[str, dict[str, str]] = {}
+    for index, row in enumerate(outputs_raw):
+        require(isinstance(row, tuple) and len(row) == 4 and all(isinstance(value, str) for value in row), f"{label}: malformed output tuple {index}")
+        name, path, algorithm, digest = row
+        require(name != "" and name not in outputs, f"{label}: empty or duplicate output name {name!r}")
+        require(NIX_STORE_PATH_RE.fullmatch(path) is not None, f"{label}: invalid output store path for {name!r}")
+        require((algorithm == "" and digest == "") or (algorithm in {"sha256", "r:sha256"} and HEX64_RE.fullmatch(digest) is not None), f"{label}: invalid output hash tuple for {name!r}")
+        outputs[name] = {"path": path, "hashAlgorithm": algorithm, "hash": digest}
+    require(outputs and list(outputs) == sorted(outputs), f"{label}: outputs are empty or not in canonical order")
+    inputs: dict[str, list[str]] = {}
+    for index, row in enumerate(inputs_raw):
+        require(isinstance(row, tuple) and len(row) == 2 and isinstance(row[0], str) and isinstance(row[1], list) and all(isinstance(value, str) for value in row[1]), f"{label}: malformed input-derivation tuple {index}")
+        path, output_names = row
+        require(NIX_DRV_RE.fullmatch(path) is not None and path not in inputs and output_names and all(output_names) and len(output_names) == len(set(output_names)), f"{label}: invalid or duplicate input derivation {path!r}")
+        require(output_names == sorted(output_names), f"{label}: input derivation outputs are not in canonical order for {path!r}")
+        inputs[path] = output_names
+    require(list(inputs) == sorted(inputs), f"{label}: input derivations are not in canonical order")
+    require(list(sources_raw) == sorted(sources_raw) and len(sources_raw) == len(set(sources_raw)) and all(NIX_STORE_PATH_RE.fullmatch(value) is not None for value in sources_raw), f"{label}: input sources are invalid,duplicate,or not in canonical order")
+    environment: dict[str, str] = {}
+    for index, row in enumerate(environment_raw):
+        require(isinstance(row, tuple) and len(row) == 2 and all(isinstance(value, str) for value in row), f"{label}: malformed environment tuple {index}")
+        key, value = row
+        require(key != "" and key not in environment, f"{label}: empty or duplicate environment key {key!r}")
+        environment[key] = value
+    require(list(environment) == sorted(environment), f"{label}: environment is not in canonical order")
+    for output_name, output in outputs.items():
+        require(environment.get(output_name) == output["path"], f"{label}: output environment binding mismatch for {output_name!r}")
+    json_environment = None
+    if "__json" in environment:
+        overlaps = sorted(STRUCTURED_SOURCE_ENV_KEYS.intersection(environment))
+        require(not overlaps, f"{label}: structured __json conflicts with ordinary source environment bindings {overlaps}")
+        try:
+            json_raw = environment["__json"].encode("utf-8", errors="strict")
+        except UnicodeEncodeError as error:
+            raise GateVerificationError(f"{label}: __json environment is not valid UTF-8") from error
+        json_environment = obj(parse_json(json_raw, f"{label} __json", canonical=False), f"{label} __json")
+        try:
+            canonical_json_raw = canonical_json(json_environment).removesuffix(b"\n")
+        except UnicodeEncodeError as error:
+            raise GateVerificationError(f"{label}: __json environment contains a non-Unicode scalar value") from error
+        require(json_raw == canonical_json_raw, f"{label}: __json environment is not canonical")
+    return {"outputs": outputs, "inputDerivations": inputs, "inputSources": list(sources_raw), "platform": platform, "builder": builder, "arguments": list(arguments_raw), "environment": environment, "jsonEnvironment": json_environment}
+
+
+def nix32(raw: bytes) -> str:
+    alphabet = "0123456789abcdfghijklmnpqrsvwxyz"
+    if not raw:
+        return ""
+    length = (len(raw) * 8 - 1) // 5 + 1
+    result: list[str] = []
+    for index in range(length - 1, -1, -1):
+        bit = index * 5
+        byte_index, shift = divmod(bit, 8)
+        value = raw[byte_index] >> shift
+        if byte_index < len(raw) - 1:
+            value |= raw[byte_index + 1] << (8 - shift)
+        result.append(alphabet[value & 0x1F])
+    return "".join(result)
+
+
+def nix_store_path(path_type: str, hash_hex: str, name: str, label: str) -> str:
+    require(path_type != "" and HEX64_RE.fullmatch(hash_hex) is not None and re.fullmatch(NIX_STORE_NAME_PATTERN, name) is not None, f"{label}: invalid Nix store-path inputs")
+    fingerprint = f"{path_type}:sha256:{hash_hex}:/nix/store:{name}".encode("ascii")
+    full_hash = hashlib.sha256(fingerprint).digest()
+    compressed = bytearray(20)
+    for index, value in enumerate(full_hash):
+        compressed[index % len(compressed)] ^= value
+    return f"/nix/store/{nix32(bytes(compressed))}-{name}"
+
+
+def derivation_store_path(raw: bytes, derivation: dict[str, Any], expected_path: str, label: str) -> str:
+    match = NIX_STORE_PATH_RE.fullmatch(expected_path)
+    require(match is not None and match.group("name").endswith(".drv"), f"{label}: invalid derivation store path")
+    references = sorted(set(derivation["inputDerivations"]) | set(derivation["inputSources"]))
+    path_type = "text" + "".join(f":{reference}" for reference in references)
+    return nix_store_path(path_type, sha256(raw), match.group("name"), label)
+
+
+def fixed_output_store_path(hash_hex: str, semantics: str, expected_path: str, label: str) -> str:
+    match = NIX_STORE_PATH_RE.fullmatch(expected_path)
+    require(match is not None, f"{label}: invalid fixed-output store path")
+    if semantics == "recursive":
+        return nix_store_path("source", hash_hex, match.group("name"), label)
+    require(semantics == "flat", f"{label}: unsupported fixed-output hash semantics")
+    fixed_fingerprint = f"fixed:out:sha256:{hash_hex}:".encode("ascii")
+    fixed_digest = hashlib.sha256(fixed_fingerprint).hexdigest()
+    return nix_store_path("output:out", fixed_digest, match.group("name"), label)
+
+
+def parse_drv_record(raw: bytes, label: str, expected_schema: str) -> tuple[dict[str, Any], bytes, dict[str, Any]]:
+    record = obj(parse_json(raw, label), label)
+    exact_keys(record, {"schema", "derivationPath", "derivationSha256", "derivationBase64", "captureTool", "sourceDerivationPaths"}, label)
+    require(record["schema"] == expected_schema, f"{label}: wrong derivation-record schema")
+    derivation_path = nonempty(record["derivationPath"], f"{label}.derivationPath")
+    require(NIX_DRV_RE.fullmatch(derivation_path) is not None, f"{label}: invalid derivation path")
+    digest = nonempty(record["derivationSha256"], f"{label}.derivationSha256")
+    require(HEX64_RE.fullmatch(digest) is not None, f"{label}: invalid derivation SHA-256")
+    nonempty(record["captureTool"], f"{label}.captureTool")
+    source_paths = arr(record["sourceDerivationPaths"], f"{label}.sourceDerivationPaths")
+    require(source_paths and all(isinstance(path, str) and NIX_DRV_RE.fullmatch(path) is not None for path in source_paths) and len(source_paths) == len(set(source_paths)), f"{label}: invalid source-derivation path list")
+    derivation_raw = decode_bounded_base64(record["derivationBase64"], f"{label}.derivationBase64", max_decoded=MAX_DRV_BYTES)
+    require(sha256(derivation_raw) == digest, f"{label}: derivation digest mismatch")
+    require(digest not in SURROGATE_PACKAGE_DRV_SHA256S, f"{label}: known surrogate package derivation bytes are forbidden as original proof")
+    derivation = parse_derivation(derivation_raw, label)
+    require(derivation_store_path(derivation_raw, derivation, derivation_path, label) == derivation_path, f"{label}: derivation bytes do not compute to the claimed Nix store path")
+    return record, derivation_raw, derivation
+
+
+def sri_from_drv_hash(value: str, label: str) -> str:
+    require(HEX64_RE.fullmatch(value) is not None, f"{label}: derivation fixed-output hash must be 32-byte hexadecimal SHA-256")
+    return "sha256-" + base64.b64encode(bytes.fromhex(value)).decode("ascii")
 
 
 def parse_b21_wire_artifact(raw: bytes, expected_ref: str) -> tuple[str, str]:
@@ -825,46 +1088,169 @@ def validate_b21(disposition: str, mode: str, results: list[dict[str, Any]], his
         raise GateVerificationError("D0-B21: only bounded pre-D1 proof or exact D6/D7 rephase is allowed")
 
 
+def validate_https_source_url(value: Any, label: str) -> str:
+    url = nonempty(value, label)
+    try:
+        url.encode("ascii", errors="strict")
+        split = urlsplit(url)
+        hostname = split.hostname
+        port = split.port
+    except (UnicodeError, ValueError) as error:
+        raise GateVerificationError(f"{label}: invalid canonical ASCII URL") from error
+    require(all(0x20 < ord(character) < 0x7F for character in url), f"{label}: URL controls and non-ASCII bytes are forbidden")
+    require(split.scheme == "https" and hostname is not None and split.username is None and split.password is None and port is None and split.fragment == "", f"{label}: exact HTTPS URL without userinfo,port,or fragment required")
+    require(split.netloc == hostname and hostname == hostname.lower() and not hostname.endswith("."), f"{label}: canonical ASCII lowercase authority required")
+    labels = hostname.split(".")
+    require(len(labels) >= 2 and len(hostname) <= 253 and not all(part.isdigit() for part in labels) and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) is not None for part in labels), f"{label}: invalid canonical DNS authority")
+    require(re.match(r"[a-z]", labels[-1]) is not None, f"{label}: DNS authority final label must begin with an ASCII letter")
+    path = split.path
+    require(path.startswith("/") and path != "/" and "\\" not in path and "//" not in path, f"{label}: nonempty canonical absolute URL path required")
+    segments = path[1:].split("/")
+    require(all(segment not in {"", ".", ".."} for segment in segments), f"{label}: empty or dot URL path segment is forbidden")
+    require(all(RFC3986_PCHAR_RE.fullmatch(segment) is not None for segment in segments), f"{label}: URL path contains a byte outside canonical RFC 3986 pchar syntax")
+    for escape in re.finditer(r"%([0-9A-Fa-f]{2})", path):
+        encoded = int(escape.group(1), 16)
+        require(escape.group(1) == escape.group(1).upper(), f"{label}: percent escapes must use uppercase hexadecimal")
+        require(encoded > 0x20 and encoded != 0x7F and encoded not in b"/\\?#", f"{label}: percent-encoded separator or control byte is forbidden")
+        require(not (ord("A") <= encoded <= ord("Z") or ord("a") <= encoded <= ord("z") or ord("0") <= encoded <= ord("9") or encoded in b"-._~"), f"{label}: percent-encoded unreserved byte is noncanonical")
+    require(re.sub(r"%[0-9A-F]{2}", "", path).find("%") == -1, f"{label}: malformed percent escape")
+    require(split.query == "", f"{label}: source URL queries are forbidden")
+    require(split.geturl() == url, f"{label}: URL does not round-trip canonically")
+    return url
+
+
+def validate_b22_source_verification(raw: bytes, source_claim: dict[str, Any], tool_id: str, original_package_drv: str, label: str) -> dict[str, Any]:
+    verification = obj(parse_json(raw, label), label)
+    exact_keys(verification, {"schema", "toolId", "originalPackageDrv", "sourceDrv", "sourceOutput", "urls", "hashAlgorithm", "hashValue", "hashSemantics", "derivationSha256", "derivationBase64", "captureTool", "verificationResult"}, label)
+    require(verification["schema"] == "pkgre-d0-source-verification-v2" and verification["toolId"] == tool_id and verification["originalPackageDrv"] == original_package_drv and verification["verificationResult"] == "PASS", f"{label}: source-verification identity/result mismatch")
+    for key in ("sourceDrv", "sourceOutput", "urls", "hashAlgorithm", "hashValue", "hashSemantics"):
+        require(verification[key] == source_claim[key], f"{label}: source-verification {key} disagrees with operator claim")
+    source_drv = nonempty(verification["sourceDrv"], f"{label}.sourceDrv")
+    require(NIX_DRV_RE.fullmatch(source_drv) is not None and source_drv not in SURROGATE_PACKAGE_DRVS, f"{label}: invalid source derivation path or known package surrogate")
+    source_output = nonempty(verification["sourceOutput"], f"{label}.sourceOutput")
+    require(NIX_STORE_PATH_RE.fullmatch(source_output) is not None, f"{label}: invalid source output path")
+    digest = nonempty(verification["derivationSha256"], f"{label}.derivationSha256")
+    require(HEX64_RE.fullmatch(digest) is not None, f"{label}: invalid source derivation SHA-256")
+    if source_drv in KNOWN_SURROGATE_DRV_SHA256S:
+        require(digest == KNOWN_SURROGATE_DRV_SHA256S[source_drv], f"{label}: known retained derivation path has unexpected bytes")
+    nonempty(verification["captureTool"], f"{label}.captureTool")
+    derivation_raw = decode_bounded_base64(verification["derivationBase64"], f"{label}.derivationBase64", max_decoded=MAX_DRV_BYTES)
+    require(sha256(derivation_raw) == digest, f"{label}: source derivation digest mismatch")
+    derivation = parse_derivation(derivation_raw, label)
+    require(derivation_store_path(derivation_raw, derivation, source_drv, label) == source_drv, f"{label}: source derivation bytes do not compute to the claimed Nix store path")
+    require(set(derivation["outputs"]) == {"out"}, f"{label}: source derivation must have exactly one out output")
+    output = derivation["outputs"]["out"]
+    semantics = nonempty(verification["hashSemantics"], f"{label}.hashSemantics")
+    expected_drv_algorithm = {"flat": "sha256", "recursive": "r:sha256"}.get(semantics)
+    require(expected_drv_algorithm is not None and output["path"] == source_output and output["hashAlgorithm"] == expected_drv_algorithm, f"{label}: source output tuple or hash mode mismatch")
+    require(fixed_output_store_path(output["hash"], semantics, source_output, label) == source_output, f"{label}: fixed-output hash does not compute to the claimed source output path")
+    require(verification["hashAlgorithm"] == "sha256" and SRI_SHA256_RE.fullmatch(nonempty(verification["hashValue"], f"{label}.hashValue")) is not None, f"{label}: exact SRI SHA-256 claim required")
+    require(sri_from_drv_hash(output["hash"], label) == verification["hashValue"], f"{label}: ATerm fixed-output hash disagrees with SRI claim")
+    urls = arr(verification["urls"], f"{label}.urls")
+    require(urls and len(urls) == len(set(urls)), f"{label}: nonempty unique source URL list required")
+    for index, url in enumerate(urls):
+        validate_https_source_url(url, f"{label}.urls[{index}]")
+    json_environment = derivation["jsonEnvironment"]
+    if json_environment is not None:
+        require(json_environment.get("urls") == urls, f"{label}: __json URLs disagree with source claim")
+        require(json_environment.get("outputHash") == verification["hashValue"] and json_environment.get("hash") == verification["hashValue"], f"{label}: __json output/hash fields disagree with source claim")
+        require(json_environment.get("outputHashMode") == semantics, f"{label}: __json outputHashMode disagrees with source claim")
+    else:
+        environment = derivation["environment"]
+        urls_text = nonempty(environment.get("urls"), f"{label}: traditional source derivation urls")
+        derived_urls = urls_text.split(" ")
+        require(" ".join(derived_urls) == urls_text and all(derived_urls), f"{label}: traditional source URLs must be canonical single-space-separated values")
+        require(derived_urls == urls, f"{label}: traditional source URLs disagree with source claim")
+        require(environment.get("outputHash") == verification["hashValue"], f"{label}: traditional source outputHash disagrees with source claim")
+        require(environment.get("outputHashMode") == semantics, f"{label}: traditional source outputHashMode disagrees with source claim")
+    return derivation
+
+
+def package_primary_source_outputs(derivation: dict[str, Any], label: str) -> list[str]:
+    """Return exact src/srcs bindings; patches and other build inputs remain authenticated by the package .drv identity."""
+    json_environment = derivation["jsonEnvironment"]
+    if json_environment is not None:
+        has_src = "src" in json_environment
+        has_srcs = "srcs" in json_environment
+        require(has_src != has_srcs, f"{label}: structured package must declare exactly one of src or srcs")
+        if has_src:
+            values = [json_environment["src"]]
+        else:
+            values = arr(json_environment["srcs"], f"{label}.__json.srcs")
+    else:
+        environment = derivation["environment"]
+        has_src = "src" in environment
+        has_srcs = "srcs" in environment
+        require(has_src != has_srcs, f"{label}: traditional package must declare exactly one of src or srcs")
+        if has_src:
+            values = [environment["src"]]
+        else:
+            srcs = nonempty(environment["srcs"], f"{label}.srcs")
+            values = srcs.split(" ")
+            require(" ".join(values) == srcs and all(values), f"{label}: traditional srcs must be canonical single-space-separated paths")
+    require(values and all(isinstance(value, str) and NIX_STORE_PATH_RE.fullmatch(value) is not None for value in values), f"{label}: invalid package source-output binding")
+    require(len(values) == len(set(values)), f"{label}: duplicate package source-output binding")
+    return values
+
+
 def validate_b22(disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
     if disposition == "SATISFIED":
         require(mode == "ORIGINAL_DERIVATION_PROOF", "D0-B22: wrong original-proof mode")
         for result in results:
+            require(set(result["_evidenceByKind"]) == {"original-derivation-records", "source-verification"}, "D0-B22: original proof requires the exact package/source evidence-kind set")
+            package_evidence_ids = evidence_ids(result, "original-derivation-records")
+            source_evidence_ids = evidence_ids(result, "source-verification")
+            require(set(package_evidence_ids).isdisjoint(source_evidence_ids), "D0-B22: an evidence reference cannot be reused across package/source kinds")
             claims = obj(result["claims"], "D0-B22 original-proof claims")
             exact_keys(claims, {"tools"}, "D0-B22 original-proof claims")
             tools = arr(claims["tools"], "D0-B22 tools")
             require([obj(tool, "D0-B22 tool").get("id") for tool in tools] == ["git-host", "nix-host"], "D0-B22: exact git-host,nix-host rows required")
+            seen_package_refs: set[str] = set()
+            seen_source_refs: set[str] = set()
             for tool in tools:
                 tool_id = tool["id"]
                 exact_keys(tool, {"id", "observedOutput", "originalPackageDrv", "packageRecordRefId", "sourceDerivations"}, f"D0-B22 {tool_id} row")
-                require(tool["observedOutput"] == OBSERVED_OUTPUTS[tool_id] and tool["originalPackageDrv"] == ORIGINAL_PACKAGE_DRVS[tool_id] and tool["originalPackageDrv"] not in SURROGATE_DRVS, f"D0-B22 {tool_id}: original output/package derivation chain mismatch")
-                require(tool["packageRecordRefId"] in evidence_ids(result, "original-derivation-records"), f"D0-B22 {tool_id}: package record is not bound to original-derivation evidence")
+                package_drv = tool["originalPackageDrv"]
+                require(tool["observedOutput"] == OBSERVED_OUTPUTS[tool_id] and package_drv == ORIGINAL_PACKAGE_DRVS[tool_id] and package_drv not in SURROGATE_PACKAGE_DRVS, f"D0-B22 {tool_id}: original output/package derivation chain mismatch")
+                package_ref_id = nonempty(tool["packageRecordRefId"], f"D0-B22 {tool_id} packageRecordRefId")
+                require(package_ref_id in evidence_ids(result, "original-derivation-records") and package_ref_id not in seen_package_refs, f"D0-B22 {tool_id}: package record is missing,wrong-kind,or reused")
+                seen_package_refs.add(package_ref_id)
+                package_record, _package_raw, package_derivation = parse_drv_record(result["_references"][package_ref_id]["raw"], f"D0-B22 {tool_id} package record", "pkgre-d0-original-package-derivation-v2")
+                require(package_record["derivationPath"] == package_drv, f"D0-B22 {tool_id}: package record path mismatch")
+                require("out" in package_derivation["outputs"] and package_derivation["outputs"]["out"] == {"path": tool["observedOutput"], "hashAlgorithm": "", "hash": ""}, f"D0-B22 {tool_id}: package ATerm out tuple mismatch")
                 sources = arr(tool["sourceDerivations"], f"D0-B22 {tool_id} source derivations")
                 require(sources, f"D0-B22 {tool_id}: source derivations are empty")
+                source_outputs = package_primary_source_outputs(package_derivation, f"D0-B22 {tool_id} package")
+                claimed_outputs = [obj(source, f"D0-B22 {tool_id} source[{source_index}]").get("sourceOutput") for source_index, source in enumerate(sources)]
+                require(source_outputs == claimed_outputs, f"D0-B22 {tool_id}: package source-output binding mismatch")
                 seen_drvs: set[str] = set()
-                for source in sources:
-                    source = obj(source, f"D0-B22 {tool_id} source")
-                    exact_keys(source, {"sourceDrv", "urls", "hashAlgorithm", "hashValue", "hashSemantics", "verificationRefId", "verificationResult"}, f"D0-B22 {tool_id} source")
+                for source_index, source_raw in enumerate(sources):
+                    source = obj(source_raw, f"D0-B22 {tool_id} source[{source_index}]")
+                    exact_keys(source, {"sourceDrv", "sourceOutput", "urls", "hashAlgorithm", "hashValue", "hashSemantics", "verificationRefId", "verificationResult"}, f"D0-B22 {tool_id} source")
                     source_drv = nonempty(source["sourceDrv"], f"D0-B22 {tool_id} sourceDrv")
-                    require(NIX_DRV_RE.fullmatch(source_drv) is not None and source_drv not in SURROGATE_DRVS and source_drv not in seen_drvs, f"D0-B22 {tool_id}: invalid,duplicate,or surrogate source derivation")
+                    require(NIX_DRV_RE.fullmatch(source_drv) is not None and source_drv not in SURROGATE_PACKAGE_DRVS and source_drv not in seen_drvs, f"D0-B22 {tool_id}: invalid,duplicate,or package-surrogate source derivation")
                     seen_drvs.add(source_drv)
-                    urls = arr(source["urls"], f"D0-B22 {tool_id} URLs")
-                    require(urls and all(isinstance(url, str) and url.startswith("https://") for url in urls), f"D0-B22 {tool_id}: HTTPS source URLs required")
-                    require(source["hashAlgorithm"] == "sha256" and isinstance(source["hashValue"], str) and (HEX64_RE.fullmatch(source["hashValue"]) or SRI_SHA256_RE.fullmatch(source["hashValue"])), f"D0-B22 {tool_id}: invalid SHA-256")
-                    nonempty(source["hashSemantics"], f"D0-B22 {tool_id} hash semantics")
-                    require(source["verificationResult"] == "PASS" and source["verificationRefId"] in evidence_ids(result, "source-verification"), f"D0-B22 {tool_id}: source verification is not bound or did not pass")
-                    verification = obj(parse_json(result["_references"][source["verificationRefId"]]["raw"], f"D0-B22 {tool_id} source verification"), f"D0-B22 {tool_id} source verification")
-                    exact_keys(verification, {"schema", "toolId", "originalPackageDrv", "sourceDrv", "urls", "hashAlgorithm", "hashValue", "hashSemantics", "verificationResult"}, f"D0-B22 {tool_id} source verification")
-                    expected = {"schema": "pkgre-d0-source-verification-v1", "toolId": tool_id, "originalPackageDrv": tool["originalPackageDrv"], "sourceDrv": source_drv, "urls": urls, "hashAlgorithm": source["hashAlgorithm"], "hashValue": source["hashValue"], "hashSemantics": source["hashSemantics"], "verificationResult": "PASS"}
-                    require(verification == expected, f"D0-B22 {tool_id}: verification artifact does not prove the claimed chain")
+                    require(package_derivation["inputDerivations"].get(source_drv) is not None and "out" in package_derivation["inputDerivations"][source_drv], f"D0-B22 {tool_id}: package ATerm lacks claimed source input edge")
+                    require(source["verificationResult"] == "PASS", f"D0-B22 {tool_id}: source claim did not pass")
+                    verification_ref_id = nonempty(source["verificationRefId"], f"D0-B22 {tool_id} verificationRefId")
+                    require(verification_ref_id in evidence_ids(result, "source-verification") and verification_ref_id not in seen_source_refs, f"D0-B22 {tool_id}: source verification is missing,wrong-kind,or reused")
+                    seen_source_refs.add(verification_ref_id)
+                    validate_b22_source_verification(result["_references"][verification_ref_id]["raw"], source, tool_id, package_drv, f"D0-B22 {tool_id} source verification")
+                require(package_record["sourceDerivationPaths"] == [source["sourceDrv"] for source in sources], f"D0-B22 {tool_id}: package record source-edge list mismatch")
+            require(seen_package_refs == set(evidence_ids(result, "original-derivation-records")), "D0-B22: unused or missing package derivation record")
+            require(seen_source_refs == set(evidence_ids(result, "source-verification")), "D0-B22: unused or missing source verification record")
     elif disposition == "WAIVED_BY_POLICY":
         require(mode == "POLICY_WAIVER", "D0-B22: wrong waiver mode")
         for result in results:
+            require(set(result["_evidenceByKind"]) == {"policy-waiver"}, "D0-B22: waiver requires exactly one policy-waiver evidence kind")
+            waiver_ids = evidence_ids(result, "policy-waiver")
+            require(len(waiver_ids) == 1, "D0-B22: waiver requires exactly one policy-waiver evidence document")
             claims = obj(result["claims"], "D0-B22 waiver claims")
             exact_keys(claims, {"decisionId", "decisionDocument", "scope", "missingEvidence", "acceptedSubstitutes", "rationale", "residualRisks", "approver", "approvedAt", "policyVersion", "independentAcceptance"}, "D0-B22 waiver claims")
             nonempty(claims["decisionId"], "D0-B22 decision ID")
             document = obj(claims["decisionDocument"], "D0-B22 decision document")
             exact_keys(document, {"refId", "sha256"}, "D0-B22 decision document")
-            require(document["refId"] in evidence_ids(result, "policy-waiver"), "D0-B22: decision document is not policy-waiver evidence")
+            require(document["refId"] == waiver_ids[0], "D0-B22: decision document must be the sole policy-waiver evidence")
             reference = result["_references"][document["refId"]]
             require(document["sha256"] == reference["sha256"] and HEX64_RE.fullmatch(document["sha256"]) is not None, "D0-B22: decision-document digest mismatch")
             require(claims["scope"] == ["git-host", "nix-host"], "D0-B22: waiver scope must be exact")
