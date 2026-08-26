@@ -42,7 +42,7 @@ Interpretation:renderer/check RSS+elapsed are offline one-shot samples,not nativ
 | largest archive | 9,679,450B |
 | packed repository apparent bytes | 129,497,688B |
 | bare clone apparent bytes | 129,367,206B |
-| repository+checkout peak apparent/allocated | 259,463,968B/261,058,560B |
+| repository+checkout peak apparent/allocated | 259,463,809B/261,058,560B |
 | download | 19.133080821s@concurrency 8 |
 | bare clone/fixed-ref fetch/explicit checkout | 0.516673151s/0.522072294s/0.151895077s |
 
