@@ -1,0 +1,2343 @@
+{
+  "schema": "pkgre-d0-resource-limit-fixtures-v1",
+  "status": "proposed-contract-vectors-not-executed-proof",
+  "classification": {
+    "observations": "captured bounded inventory/rehearsal facts only;never deployment/resource policy",
+    "proposal": "exact unapproved resource/deployment review candidate;never observed",
+    "unresolved": "native-server stress,quota,HTTP,and lifecycle production-equivalent proof"
+  },
+  "stateContract": "state-contract-v1",
+  "redirectMarkerSchema": null,
+  "acceptedState": {
+    "generation": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ready": true
+  },
+  "observedBaselines": {
+    "rust": {
+      "classification": "observed-bounded-measurement-not-deployment-limit",
+      "basisCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "gitTreeEntries": 773,
+      "gitTreeLogicalBytes": 1958607,
+      "packages": 911,
+      "versions": 747,
+      "dependencyEdges": 5518,
+      "largestInlineResponseBytes": 459017,
+      "archiveCount": 747,
+      "archiveTotalBytes": 129833713,
+      "largestArchiveBytes": 9679450
+    },
+    "js": {
+      "classification": "observed-bounded-measurement-not-deployment-limit",
+      "basisCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "gitTreeEntries": 67,
+      "gitTreeLogicalBytes": 93998,
+      "packages": 1,
+      "versions": 1,
+      "dependencyEdges": 0,
+      "largestInlineResponseBytes": 996,
+      "archiveCount": 1,
+      "archiveTotalBytes": 16717,
+      "largestArchiveBytes": 16717
+    }
+  },
+  "proposal": {
+    "classification": "proposed-unapproved-resource-and-deployment-policy",
+    "inclusiveMaxima": true,
+    "limitPlusOneRejectsBeforeAcceptedMutation": true,
+    "candidateOverLimitBehavior": "reject,serve LKG,no automatic same-hash retry,no active/rollback/leased eviction",
+    "boundedRejectCodes": [
+      "TIME_CLOCK_UNTRUSTED",
+      "FETCH_TIMEOUT",
+      "FETCH_BYTES",
+      "GIT_OBJECT_LIMIT",
+      "TREE_LIMIT",
+      "FILE_LIMIT",
+      "CATALOG_LIMIT",
+      "ARCHIVE_LIMIT",
+      "ROUTE_LIMIT",
+      "SNAPSHOT_LIMIT",
+      "MEMORY_ESTIMATE",
+      "RELOAD_TIMEOUT",
+      "STATE_SPACE",
+      "RESOURCE_FAILURE"
+    ],
+    "instances": {
+      "rust": {
+        "classification": "proposed-unapproved-resource-and-deployment-policy",
+        "stateContract": "state-contract-v1",
+        "redirectMarkerSchema": null,
+        "limits": {
+          "maxArchiveBytes": 134217728,
+          "maxArchiveCount": 4096,
+          "maxArchiveTotalBytes": 402653184,
+          "maxCatalogBytes": 33554432,
+          "maxCategories": 128,
+          "maxConcurrentArchiveStreams": 64,
+          "maxConcurrentRequests": 256,
+          "maxDependencyEdges": 131072,
+          "maxGitFetchNetworkBytes": 536870912,
+          "maxGitFetchPackBytes": 536870912,
+          "maxGitInflatedObjectBytes": 1073741824,
+          "maxGitObjects": 65536,
+          "maxGitTreeLogicalBytes": 536870912,
+          "maxInlineResponseBytes": 1048576,
+          "maxMaterializedCheckoutAllocatedBytes": 536870912,
+          "maxNonArchiveFileBytes": 16777216,
+          "maxPackages": 8192,
+          "maxPackumentBytes": 0,
+          "maxPathComponentBytes": 255,
+          "maxRawPathBytes": 4095,
+          "maxRegistries": 8,
+          "maxRegularFileBytes": 134217728,
+          "maxReloadSeconds": 120,
+          "maxRoutes": 32768,
+          "maxSnapshotBytes": 16777216,
+          "maxSparseRowBytes": 524288,
+          "maxStateBytes": 4294967296,
+          "maxTreeDepth": 16,
+          "maxTreeDirectories": 4096,
+          "maxTreeEntries": 16384,
+          "maxVersions": 16384,
+          "streamBufferBytes": 65536
+        },
+        "systemd": {
+          "LimitNOFILE": 2048,
+          "MemoryHighBytes": 402653184,
+          "MemoryMaxBytes": 536870912,
+          "TasksMax": 64
+        },
+        "zfs": {
+          "datasetPerInstance": true,
+          "property": "quota",
+          "quotaBytes": 4294967296
+        },
+        "calculatedAtMaxima": {
+          "admissionCeilingBytes": 469762048,
+          "processCandidatePeakEstimateBytes": 397541376,
+          "requestAndStreamBuffersBytes": 12582912,
+          "singleSnapshotResidentEstimateBytes": 61210624
+        }
+      },
+      "js": {
+        "classification": "proposed-unapproved-resource-and-deployment-policy",
+        "stateContract": "state-contract-v1",
+        "redirectMarkerSchema": null,
+        "limits": {
+          "maxArchiveBytes": 134217728,
+          "maxArchiveCount": 32768,
+          "maxArchiveTotalBytes": 201326592,
+          "maxCatalogBytes": 67108864,
+          "maxCategories": 128,
+          "maxConcurrentArchiveStreams": 64,
+          "maxConcurrentRequests": 256,
+          "maxDependencyEdges": 262144,
+          "maxGitFetchNetworkBytes": 268435456,
+          "maxGitFetchPackBytes": 268435456,
+          "maxGitInflatedObjectBytes": 536870912,
+          "maxGitObjects": 65536,
+          "maxGitTreeLogicalBytes": 268435456,
+          "maxInlineResponseBytes": 4194304,
+          "maxMaterializedCheckoutAllocatedBytes": 268435456,
+          "maxNonArchiveFileBytes": 16777216,
+          "maxPackages": 4096,
+          "maxPackumentBytes": 4194304,
+          "maxPathComponentBytes": 255,
+          "maxRawPathBytes": 4095,
+          "maxRegistries": 8,
+          "maxRegularFileBytes": 134217728,
+          "maxReloadSeconds": 120,
+          "maxRoutes": 65536,
+          "maxSnapshotBytes": 33554432,
+          "maxSparseRowBytes": 0,
+          "maxStateBytes": 2147483648,
+          "maxTreeDepth": 16,
+          "maxTreeDirectories": 4096,
+          "maxTreeEntries": 16384,
+          "maxVersions": 32768,
+          "streamBufferBytes": 65536
+        },
+        "systemd": {
+          "LimitNOFILE": 2048,
+          "MemoryHighBytes": 536870912,
+          "MemoryMaxBytes": 805306368,
+          "TasksMax": 64
+        },
+        "zfs": {
+          "datasetPerInstance": true,
+          "property": "quota",
+          "quotaBytes": 2147483648
+        },
+        "calculatedAtMaxima": {
+          "admissionCeilingBytes": 738197504,
+          "processCandidatePeakEstimateBytes": 606076928,
+          "requestAndStreamBuffersBytes": 12582912,
+          "singleSnapshotResidentEstimateBytes": 119537664
+        }
+      }
+    },
+    "sharedHttp": {
+      "headerTimeoutStatus": 408,
+      "maxConcurrentArchiveStreams": 64,
+      "maxConcurrentRequests": 256,
+      "maxConditionalEtags": 16,
+      "maxConditionalHeaderBytes": 4096,
+      "maxHeaderCount": 64,
+      "maxRawTargetBytes": 4096,
+      "maxRequestBodyBytes": 0,
+      "maxSingleHeaderFieldBytes": 8192,
+      "maxTotalHeaderBytes": 32768,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "nonzeroBodyOrFramingStatus": 413,
+      "overHeaderStatus": 431,
+      "overTargetStatus": 414,
+      "requestBufferBytes": 32768,
+      "requestSaturation": {
+        "Retry-After": "1",
+        "bodyBytes": 0,
+        "status": 503
+      },
+      "streamBufferBytes": 65536
+    }
+  },
+  "cases": [
+    {
+      "id": "rust-maxArchiveBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveBytes": 134217728
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxArchiveBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveBytes": 134217729
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ARCHIVE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxArchiveCount-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveCount": 4096
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxArchiveCount-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveCount": 4097
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ARCHIVE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxArchiveTotalBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveTotalBytes": 402653184
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxArchiveTotalBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveTotalBytes": 402653185
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ARCHIVE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxCatalogBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCatalogBytes": 33554432
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxCatalogBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCatalogBytes": 33554433
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxCategories-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCategories": 128
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxCategories-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCategories": 129
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxDependencyEdges-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxDependencyEdges": 131072
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxDependencyEdges-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxDependencyEdges": 131073
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxGitFetchNetworkBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchNetworkBytes": 536870912
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxGitFetchNetworkBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchNetworkBytes": 536870913
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FETCH_BYTES",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxGitFetchPackBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchPackBytes": 536870912
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxGitFetchPackBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchPackBytes": 536870913
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FETCH_BYTES",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxGitInflatedObjectBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitInflatedObjectBytes": 1073741824
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxGitInflatedObjectBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitInflatedObjectBytes": 1073741825
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "GIT_OBJECT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxGitObjects-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitObjects": 65536
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxGitObjects-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitObjects": 65537
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "GIT_OBJECT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxGitTreeLogicalBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitTreeLogicalBytes": 536870912
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxGitTreeLogicalBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitTreeLogicalBytes": 536870913
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxInlineResponseBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxInlineResponseBytes": 1048576
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxInlineResponseBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxInlineResponseBytes": 1048577
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxMaterializedCheckoutAllocatedBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxMaterializedCheckoutAllocatedBytes": 536870912
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxMaterializedCheckoutAllocatedBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxMaterializedCheckoutAllocatedBytes": 536870913
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxNonArchiveFileBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxNonArchiveFileBytes": 16777216
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxNonArchiveFileBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxNonArchiveFileBytes": 16777217
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FILE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxPackages-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackages": 8192
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxPackages-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackages": 8193
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxPackumentBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackumentBytes": 0
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxPackumentBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackumentBytes": 1
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxPathComponentBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPathComponentBytes": 255
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxPathComponentBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPathComponentBytes": 256
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxRawPathBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRawPathBytes": 4095
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxRawPathBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRawPathBytes": 4096
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxRegistries-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegistries": 8
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxRegistries-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegistries": 9
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxRegularFileBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegularFileBytes": 134217728
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxRegularFileBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegularFileBytes": 134217729
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FILE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxReloadSeconds-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxReloadSeconds": 120
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxReloadSeconds-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxReloadSeconds": 121
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "RELOAD_TIMEOUT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxRoutes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRoutes": 32768
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxRoutes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRoutes": 32769
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ROUTE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxSnapshotBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSnapshotBytes": 16777216
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxSnapshotBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSnapshotBytes": 16777217
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxSparseRowBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSparseRowBytes": 524288
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxSparseRowBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSparseRowBytes": 524289
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxStateBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxStateBytes": 4294967296
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxStateBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxStateBytes": 4294967297
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxTreeDepth-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDepth": 16
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxTreeDepth-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDepth": 17
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxTreeDirectories-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDirectories": 4096
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxTreeDirectories-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDirectories": 4097
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxTreeEntries-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeEntries": 16384
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxTreeEntries-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeEntries": 16385
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-maxVersions-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxVersions": 16384
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-maxVersions-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxVersions": 16385
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxArchiveBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveBytes": 134217728
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxArchiveBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveBytes": 134217729
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ARCHIVE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxArchiveCount-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveCount": 32768
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxArchiveCount-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveCount": 32769
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ARCHIVE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxArchiveTotalBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveTotalBytes": 201326592
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxArchiveTotalBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxArchiveTotalBytes": 201326593
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ARCHIVE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxCatalogBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCatalogBytes": 67108864
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxCatalogBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCatalogBytes": 67108865
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxCategories-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCategories": 128
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxCategories-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxCategories": 129
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxDependencyEdges-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxDependencyEdges": 262144
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxDependencyEdges-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxDependencyEdges": 262145
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxGitFetchNetworkBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchNetworkBytes": 268435456
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxGitFetchNetworkBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchNetworkBytes": 268435457
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FETCH_BYTES",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxGitFetchPackBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchPackBytes": 268435456
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxGitFetchPackBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitFetchPackBytes": 268435457
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FETCH_BYTES",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxGitInflatedObjectBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitInflatedObjectBytes": 536870912
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxGitInflatedObjectBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitInflatedObjectBytes": 536870913
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "GIT_OBJECT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxGitObjects-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitObjects": 65536
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxGitObjects-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitObjects": 65537
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "GIT_OBJECT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxGitTreeLogicalBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitTreeLogicalBytes": 268435456
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxGitTreeLogicalBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxGitTreeLogicalBytes": 268435457
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxInlineResponseBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxInlineResponseBytes": 4194304
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxInlineResponseBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxInlineResponseBytes": 4194305
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxMaterializedCheckoutAllocatedBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxMaterializedCheckoutAllocatedBytes": 268435456
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxMaterializedCheckoutAllocatedBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxMaterializedCheckoutAllocatedBytes": 268435457
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxNonArchiveFileBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxNonArchiveFileBytes": 16777216
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxNonArchiveFileBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxNonArchiveFileBytes": 16777217
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FILE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxPackages-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackages": 4096
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxPackages-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackages": 4097
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxPackumentBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackumentBytes": 4194304
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxPackumentBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPackumentBytes": 4194305
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxPathComponentBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPathComponentBytes": 255
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxPathComponentBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxPathComponentBytes": 256
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxRawPathBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRawPathBytes": 4095
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxRawPathBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRawPathBytes": 4096
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxRegistries-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegistries": 8
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxRegistries-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegistries": 9
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxRegularFileBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegularFileBytes": 134217728
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxRegularFileBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRegularFileBytes": 134217729
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "FILE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxReloadSeconds-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxReloadSeconds": 120
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxReloadSeconds-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxReloadSeconds": 121
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "RELOAD_TIMEOUT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxRoutes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRoutes": 65536
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxRoutes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxRoutes": 65537
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "ROUTE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxSnapshotBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSnapshotBytes": 33554432
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxSnapshotBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSnapshotBytes": 33554433
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxSparseRowBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSparseRowBytes": 0
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxSparseRowBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxSparseRowBytes": 1
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "SNAPSHOT_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxStateBytes-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxStateBytes": 2147483648
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxStateBytes-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxStateBytes": 2147483649
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxTreeDepth-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDepth": 16
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxTreeDepth-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDepth": 17
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxTreeDirectories-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDirectories": 4096
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxTreeDirectories-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeDirectories": 4097
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxTreeEntries-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeEntries": 16384
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxTreeEntries-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxTreeEntries": 16385
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TREE_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "js-maxVersions-inclusive-boundary",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxVersions": 32768
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-maxVersions-one-over",
+      "kind": "candidate-limit",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "maxVersions": 32769
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "CATALOG_LIMIT",
+        "acceptedMutation": false,
+        "lkgReady": true,
+        "automaticSameHashRetry": false
+      }
+    },
+    {
+      "id": "rust-memory-estimate-at-admission-ceiling",
+      "kind": "memory-admission",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "estimatedCandidatePeakBytes": 469762048,
+        "MemoryMaxBytes": 536870912,
+        "reserveBytes": 67108864
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-memory-estimate-one-over-admission-ceiling",
+      "kind": "memory-admission",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "estimatedCandidatePeakBytes": 469762049,
+        "MemoryMaxBytes": 536870912,
+        "reserveBytes": 67108864
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "MEMORY_ESTIMATE",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-state-preflight-at-inclusive-boundary",
+      "kind": "state-preflight",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "usedBytes": 2576980377,
+        "twiceMaxCheckoutAllocatedBytes": 1073741824,
+        "filesystemFreeBytes": 3650722201,
+        "quota85PercentFloorBytes": 3650722201
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "sumBytes": 3650722201,
+        "acceptedMutation": false,
+        "eviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-state-preflight-one-byte-over",
+      "kind": "state-preflight",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "usedBytes": 2576980378,
+        "twiceMaxCheckoutAllocatedBytes": 1073741824,
+        "filesystemFreeBytes": 3650722202,
+        "quota85PercentFloorBytes": 3650722201
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "sumBytes": 3650722202,
+        "acceptedMutation": false,
+        "eviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-state-preflight-free-space-one-byte-short",
+      "kind": "state-preflight",
+      "ecosystem": "rust",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "usedBytes": 2576980377,
+        "twiceMaxCheckoutAllocatedBytes": 1073741824,
+        "filesystemFreeBytes": 3650722200,
+        "quota85PercentFloorBytes": 3650722201
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "sumBytes": 3650722201,
+        "acceptedMutation": false,
+        "eviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-memory-estimate-at-admission-ceiling",
+      "kind": "memory-admission",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "estimatedCandidatePeakBytes": 738197504,
+        "MemoryMaxBytes": 805306368,
+        "reserveBytes": 67108864
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-memory-estimate-one-over-admission-ceiling",
+      "kind": "memory-admission",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "estimatedCandidatePeakBytes": 738197505,
+        "MemoryMaxBytes": 805306368,
+        "reserveBytes": 67108864
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "MEMORY_ESTIMATE",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-state-preflight-at-inclusive-boundary",
+      "kind": "state-preflight",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "usedBytes": 1288490188,
+        "twiceMaxCheckoutAllocatedBytes": 536870912,
+        "filesystemFreeBytes": 1825361100,
+        "quota85PercentFloorBytes": 1825361100
+      },
+      "expected": {
+        "result": "accept-limit-check",
+        "sumBytes": 1825361100,
+        "acceptedMutation": false,
+        "eviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-state-preflight-one-byte-over",
+      "kind": "state-preflight",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "usedBytes": 1288490189,
+        "twiceMaxCheckoutAllocatedBytes": 536870912,
+        "filesystemFreeBytes": 1825361101,
+        "quota85PercentFloorBytes": 1825361100
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "sumBytes": 1825361101,
+        "acceptedMutation": false,
+        "eviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-state-preflight-free-space-one-byte-short",
+      "kind": "state-preflight",
+      "ecosystem": "js",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "usedBytes": 1288490188,
+        "twiceMaxCheckoutAllocatedBytes": 536870912,
+        "filesystemFreeBytes": 1825361099,
+        "quota85PercentFloorBytes": 1825361100
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "STATE_SPACE",
+        "sumBytes": 1825361100,
+        "acceptedMutation": false,
+        "eviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "http-raw-target-at-inclusive-boundary",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "rawTargetBytes": 4096
+      },
+      "expected": {
+        "result": "accept-request",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-raw-target-one-over",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "rawTargetBytes": 4097
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 414,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-header-count-at-inclusive-boundary",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "headerCount": 64
+      },
+      "expected": {
+        "result": "accept-request",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-header-count-one-over",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "headerCount": 65
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 431,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-total-headers-at-inclusive-boundary",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "totalHeaderBytes": 32768
+      },
+      "expected": {
+        "result": "accept-request",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-total-headers-one-over",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "totalHeaderBytes": 32769
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 431,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-single-header-at-inclusive-boundary",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "singleHeaderFieldBytes": 8192
+      },
+      "expected": {
+        "result": "accept-request",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-single-header-one-over",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "singleHeaderFieldBytes": 8193
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 431,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-empty-unframed-body",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "requestBodyBytes": 0,
+        "bodyFramed": false
+      },
+      "expected": {
+        "result": "accept-request",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-nonzero-body",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "requestBodyBytes": 1,
+        "bodyFramed": false
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 413,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-framed-zero-body",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "requestBodyBytes": 0,
+        "bodyFramed": true
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 413,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-request-concurrency-at-inclusive-boundary",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "activeRequests": 256
+      },
+      "expected": {
+        "result": "accept-existing-set",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-request-concurrency-next-rejected",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "activeRequests": 256,
+        "newRequests": 1
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 503,
+        "Retry-After": "1",
+        "bodyBytes": 0,
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-archive-concurrency-at-inclusive-boundary",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "activeArchiveStreams": 64
+      },
+      "expected": {
+        "result": "accept-existing-set",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "http-archive-concurrency-next-rejected",
+      "kind": "http-limit",
+      "ecosystem": "shared",
+      "classification": "proposed-contract-vector-unexecuted",
+      "input": {
+        "activeArchiveStreams": 64,
+        "newArchiveStreams": 1
+      },
+      "expected": {
+        "result": "reject-request",
+        "httpStatus": 503,
+        "Retry-After": "1",
+        "bodyBytes": 0,
+        "acceptedMutation": false
+      }
+    }
+  ]
+}

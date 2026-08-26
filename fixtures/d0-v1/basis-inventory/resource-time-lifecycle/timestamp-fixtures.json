@@ -1,0 +1,453 @@
+{
+  "schema": "pkgre-d0-timestamp-fixtures-v1",
+  "status": "proposed-contract-vectors-not-executed-proof",
+  "classification": {
+    "observations": "captured current source/catalog facts",
+    "proposal": "exact unapproved D0 review candidate",
+    "unresolved": "syntax/order reject-code mapping and production clock proof"
+  },
+  "stateContract": "state-contract-v1",
+  "redirectMarkerSchema": null,
+  "acceptedState": {
+    "generation": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ready": true
+  },
+  "observations": {
+    "rust": {
+      "basisCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+      "catalogSchema": "current-rust-admission-lock",
+      "admittedAt": "2026-08-24T02:39:41Z",
+      "evaluatedAt": "2026-08-24T02:39:41Z",
+      "timestampSource": "SystemTime-truncated-to-whole-seconds",
+      "upstreamPackageTimestampField": "pubtime",
+      "spelling": "YYYY-MM-DDTHH:MM:SSZ",
+      "asciiBytes": 20,
+      "minimumYear": 1970,
+      "maximumYear": 9999
+    },
+    "js": {
+      "basisCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+      "catalogSchema": "pkgre-js-catalog-v1",
+      "evaluationTime": "2026-08-25T23:27:24.000Z",
+      "publishedAt": "2026-08-25T23:27:24.000Z",
+      "admittedAt": "2026-08-25T23:27:24.000Z",
+      "firstPartyOrder": [
+        "publishedAt",
+        "admittedAt",
+        "evaluationTime"
+      ],
+      "thirdPartyOrder": [
+        "publishedAt",
+        "fetchedAt",
+        "admittedAt",
+        "evaluationTime"
+      ],
+      "spelling": "YYYY-MM-DDTHH:MM:SS.000Z",
+      "asciiBytes": 24
+    }
+  },
+  "proposal": {
+    "maxFutureSkewSeconds": 300,
+    "clockSamples": [
+      "candidate-start",
+      "pre-linearization"
+    ],
+    "trustedSyncStableSeconds": 600,
+    "kernelSynchronizedRequired": true,
+    "maxReportedOffsetSeconds": 1,
+    "maxBackwardRealtimeMovementSeconds": 5,
+    "maxRealtimeVsMonotonicDeviationSeconds": 2,
+    "clockTrustRejectCode": "TIME_CLOCK_UNTRUSTED",
+    "clockRejectKeepsLkgReady": true,
+    "startupReevaluatesAcceptedAgainstCurrentClock": false,
+    "syntaxAndEvidenceOrderRuntimeCode": "UNRESOLVED_IMPLEMENTATION_VALUE"
+  },
+  "cases": [
+    {
+      "id": "rust-canonical-whole-second",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "2026-08-24T02:39:41Z",
+      "expected": {
+        "result": "accept",
+        "instantUnixSeconds": 1787539181,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-fraction-zero-rejected",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "2026-08-24T02:39:41.000Z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "noncanonical-fraction",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-lowercase-separators-rejected",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "2026-08-24t02:39:41z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "noncanonical-case",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-offset-rejected",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "2026-08-24T02:39:41+00:00",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "offset-forbidden",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-leap-second-rejected",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "2026-12-31T23:59:60Z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "leap-second-forbidden",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-invalid-civil-date-rejected",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "2026-02-29T00:00:00Z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "invalid-civil-date",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "rust-pre-epoch-rejected",
+      "kind": "syntax",
+      "ecosystem": "rust",
+      "schema": "current-rust-admission-lock",
+      "input": "1969-12-31T23:59:59Z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "year-below-1970",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-canonical-millisecond-zero",
+      "kind": "syntax",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": "2026-08-25T23:27:24.000Z",
+      "expected": {
+        "result": "accept",
+        "instantUnixMilliseconds": 1787700444000,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-rust-spelling-rejected",
+      "kind": "syntax",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": "2026-08-25T23:27:24Z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "schema-specific-zero-millisecond-required",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "js-nonzero-fraction-rejected",
+      "kind": "syntax",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": "2026-08-25T23:27:24.001Z",
+      "expected": {
+        "result": "reject",
+        "reasonClass": "nonzero-subsecond-forbidden",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "third-party-evidence-order-equal-boundaries",
+      "kind": "evidence-order",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": {
+        "publishedAt": "2026-07-01T00:00:00.000Z",
+        "fetchedAt": "2026-08-25T23:00:00.000Z",
+        "admittedAt": "2026-08-25T23:27:24.000Z",
+        "evaluationTime": "2026-08-25T23:27:24.000Z",
+        "sourceKind": "third-party"
+      },
+      "expected": {
+        "result": "accept",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "third-party-fetch-before-publication-rejected",
+      "kind": "evidence-order",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": {
+        "publishedAt": "2026-07-01T00:00:01.000Z",
+        "fetchedAt": "2026-07-01T00:00:00.000Z",
+        "admittedAt": "2026-08-25T23:27:24.000Z",
+        "evaluationTime": "2026-08-25T23:27:24.000Z",
+        "sourceKind": "third-party"
+      },
+      "expected": {
+        "result": "reject",
+        "reasonClass": "publishedAt-after-fetchedAt",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "first-party-equal-evidence-instants",
+      "kind": "evidence-order",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": {
+        "publishedAt": "2026-08-25T23:27:24.000Z",
+        "admittedAt": "2026-08-25T23:27:24.000Z",
+        "evaluationTime": "2026-08-25T23:27:24.000Z",
+        "sourceKind": "first-party"
+      },
+      "expected": {
+        "result": "accept",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "first-party-admission-after-evaluation-rejected",
+      "kind": "evidence-order",
+      "ecosystem": "js",
+      "schema": "pkgre-js-catalog-v1-migration",
+      "input": {
+        "publishedAt": "2026-08-25T23:27:24.000Z",
+        "admittedAt": "2026-08-25T23:27:25.000Z",
+        "evaluationTime": "2026-08-25T23:27:24.000Z",
+        "sourceKind": "first-party"
+      },
+      "expected": {
+        "result": "reject",
+        "reasonClass": "admittedAt-after-evaluationTime",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "future-skew-at-inclusive-boundary",
+      "kind": "future-skew",
+      "ecosystem": "rust",
+      "schema": "dynamic-rust-catalog-v1",
+      "input": {
+        "evaluationTime": "2026-08-26T00:05:00Z",
+        "observedNow": "2026-08-26T00:00:00Z",
+        "differenceSeconds": 300
+      },
+      "expected": {
+        "result": "accept",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "future-skew-one-second-over-rejected",
+      "kind": "future-skew",
+      "ecosystem": "rust",
+      "schema": "dynamic-rust-catalog-v1",
+      "input": {
+        "evaluationTime": "2026-08-26T00:05:01Z",
+        "observedNow": "2026-08-26T00:00:00Z",
+        "differenceSeconds": 301
+      },
+      "expected": {
+        "result": "reject",
+        "reasonClass": "evaluation-time-future-skew",
+        "runtimeCodeResolved": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "trusted-sync-at-inclusive-boundaries",
+      "kind": "clock-trust",
+      "ecosystem": "shared",
+      "input": {
+        "stableSeconds": 600,
+        "kernelSynchronized": true,
+        "reportedOffsetSeconds": 1
+      },
+      "expected": {
+        "result": "accept-clock-prerequisite",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "trusted-sync-duration-one-second-short",
+      "kind": "clock-trust",
+      "ecosystem": "shared",
+      "input": {
+        "stableSeconds": 599,
+        "kernelSynchronized": true,
+        "reportedOffsetSeconds": 1
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TIME_CLOCK_UNTRUSTED",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "reported-offset-over-limit",
+      "kind": "clock-trust",
+      "ecosystem": "shared",
+      "input": {
+        "stableSeconds": 600,
+        "kernelSynchronized": true,
+        "reportedOffsetSeconds": 1.001
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TIME_CLOCK_UNTRUSTED",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "kernel-unsynchronized",
+      "kind": "clock-trust",
+      "ecosystem": "shared",
+      "input": {
+        "stableSeconds": 600,
+        "kernelSynchronized": false,
+        "reportedOffsetSeconds": 0.125
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TIME_CLOCK_UNTRUSTED",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "dual-clock-deviation-at-inclusive-boundary",
+      "kind": "within-boot-dual-clock",
+      "ecosystem": "shared",
+      "input": {
+        "startRealtimeUnixSeconds": 1787702400,
+        "startMonotonicSeconds": 1000,
+        "preLinearizationRealtimeUnixSeconds": 1787702458,
+        "preLinearizationMonotonicSeconds": 1060,
+        "deltaRealtimeSeconds": 58,
+        "deltaMonotonicSeconds": 60,
+        "absoluteDeviationSeconds": 2
+      },
+      "expected": {
+        "result": "accept-clock-check",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "dual-clock-deviation-one-second-over",
+      "kind": "within-boot-dual-clock",
+      "ecosystem": "shared",
+      "input": {
+        "startRealtimeUnixSeconds": 1787702400,
+        "startMonotonicSeconds": 1000,
+        "preLinearizationRealtimeUnixSeconds": 1787702457,
+        "preLinearizationMonotonicSeconds": 1060,
+        "deltaRealtimeSeconds": 57,
+        "deltaMonotonicSeconds": 60,
+        "absoluteDeviationSeconds": 3
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TIME_CLOCK_UNTRUSTED",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "realtime-backward-over-limit",
+      "kind": "within-boot-dual-clock",
+      "ecosystem": "shared",
+      "input": {
+        "startRealtimeUnixSeconds": 1787702400,
+        "startMonotonicSeconds": 1000,
+        "preLinearizationRealtimeUnixSeconds": 1787702394,
+        "preLinearizationMonotonicSeconds": 1060,
+        "deltaRealtimeSeconds": -6,
+        "deltaMonotonicSeconds": 60,
+        "absoluteDeviationSeconds": 66
+      },
+      "expected": {
+        "result": "reject",
+        "rejectCode": "TIME_CLOCK_UNTRUSTED",
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "startup-does-not-reevaluate-accepted-future-time",
+      "kind": "startup",
+      "ecosystem": "shared",
+      "input": {
+        "persistedEvaluationTime": "2026-08-26T00:00:00Z",
+        "restartObservedNow": "2026-08-25T23:00:00Z",
+        "persistedSourceOrderingValid": true,
+        "persistedGenerationRecordValid": true
+      },
+      "expected": {
+        "result": "serve-persisted-accepted",
+        "acceptedGeneration": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reevaluateAgainstRestartClock": false,
+        "acceptedMutation": false,
+        "lkgReady": true
+      }
+    }
+  ]
+}

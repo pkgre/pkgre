@@ -1,0 +1,343 @@
+{
+  "schema": "pkgre-d0-shutdown-drain-fixtures-v1",
+  "status": "proposed-contract-vectors-not-executed-proof",
+  "classification": {
+    "observations": "dynamic native-server shutdown/drain observations are absent",
+    "proposal": "exact unapproved D0 review candidate",
+    "unresolved": "Rust+JS fault-injection,drain,FD,lease,and filesystem power-loss proof"
+  },
+  "stateContract": "state-contract-v1",
+  "redirectMarkerSchema": null,
+  "generations": {
+    "oldAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "newCandidate": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "rejectedCandidate": "3333333333333333333333333333333333333333-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "observedProof": {
+    "nativeRustSigtermDrainMeasured": false,
+    "nativeJsSigtermDrainMeasured": false,
+    "nativeSigkillRestartMeasured": false,
+    "oldSnapshotFdLeaseMeasured": false,
+    "hundredReloadCyclesMeasured": false
+  },
+  "proposal": {
+    "httpDrainDeadlineSeconds": 30,
+    "systemdTimeoutStopSeconds": 35,
+    "sigkillMarginSeconds": 5,
+    "requestHeaderReadTimeoutSeconds": 10,
+    "requestIdleTimeoutSeconds": 15,
+    "requestTotalLeaseSeconds": 120,
+    "archiveStreamLeaseSeconds": 120,
+    "oldGenerationLeaseSeconds": 120,
+    "shutdownLeaseOverrideSeconds": 30,
+    "onlineGcAllowed": false,
+    "automaticPruningAllowed": false,
+    "restartOverlapGuard": "lifetime-exclusive-state-lock",
+    "signalMayRewriteAccepted": false
+  },
+  "cases": [
+    {
+      "id": "sigterm-during-fetch-before-linearization",
+      "signal": "SIGTERM",
+      "cutPoint": "fetch-running-before-candidate-ref-and-accepted-linearization",
+      "input": {
+        "signalAtSeconds": 0,
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "candidate": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "existingHttpRequests": 3,
+        "existingArchiveStreams": 1
+      },
+      "expected": {
+        "watcherStopped": true,
+        "fetchProcessGroupTerminated": true,
+        "candidateOutcome": "abandoned-not-accepted",
+        "cleanupScope": "recognized-staging-temp-only",
+        "newPublicAccepts": false,
+        "existingHttpDrainDeadlineSeconds": 30,
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptedMutationBySignal": false,
+        "lkgReadyUntilProcessExit": true
+      }
+    },
+    {
+      "id": "sigterm-during-materialization-before-linearization",
+      "signal": "SIGTERM",
+      "cutPoint": "complete-candidate-checkout-exists-but-accepted-not-renamed",
+      "input": {
+        "signalAtSeconds": 0,
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "candidateCheckoutComplete": true,
+        "candidateRecordPrelinearization": true
+      },
+      "expected": {
+        "watcherStopped": true,
+        "candidateOutcome": "orphan-abandoned-not-accepted",
+        "candidateRecordClass": "prelinearization-orphan",
+        "candidateCheckoutMayRemainFor-offlineReferenceAwareGc": true,
+        "newPublicAccepts": false,
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "acceptedMutationBySignal": false,
+        "onlineUnlink": false,
+        "lkgReadyUntilProcessExit": true
+      }
+    },
+    {
+      "id": "sigkill-before-accepted-rename",
+      "signal": "SIGKILL",
+      "cutPoint": "immediately-before-atomic-accepted-rename",
+      "input": {
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "candidateRecordFsynced": true,
+        "candidateCheckoutFsynced": true,
+        "acceptedRenameCompleted": false
+      },
+      "expected": {
+        "processExit": "immediate",
+        "restartAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "candidateRecordClass": "prelinearization-orphan",
+        "promoteNewestCandidateOrPredecessor": false,
+        "remoteRequiredForRestart": false,
+        "lkgReadyAfterRestart": true
+      }
+    },
+    {
+      "id": "power-loss-after-rename-before-directory-fsync",
+      "signal": "POWER_LOSS",
+      "cutPoint": "accepted-renamed-but-state-directory-not-fsynced",
+      "input": {
+        "oldAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "newAccepted": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "acceptedRenameCompleted": true,
+        "stateDirectoryFsyncCompleted": false
+      },
+      "expected": {
+        "allowedRestartAccepted": [
+          "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "tornOrMissingAcceptedAllowed": false,
+        "filesystemProofStatus": "UNRESOLVED",
+        "activationAllowedBeforeProof": false
+      }
+    },
+    {
+      "id": "sigterm-after-durable-linearization-before-pointer-publication",
+      "signal": "SIGTERM",
+      "cutPoint": "accepted-rename-and-state-directory-fsync-complete-pointer-not-published",
+      "input": {
+        "signalAtSeconds": 0,
+        "durableAccepted": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "preparedPointerGeneration": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "pointerPublished": false
+      },
+      "expected": {
+        "allowedImmediateAction": [
+          "publish-exact-prepared-pointer",
+          "exit-immediately"
+        ],
+        "continueServingOldAsNewProcessState": false,
+        "restartAccepted": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "acceptedMutationBySignal": false,
+        "remoteRequiredForRestart": false,
+        "lkgReadyAfterPublishOrRestart": true
+      }
+    },
+    {
+      "id": "old-archive-request-held-across-pointer-swap",
+      "signal": "NONE",
+      "cutPoint": "new-pointer-published-old-archive-stream-in-flight",
+      "input": {
+        "swapAtSeconds": 5,
+        "oldRequestStartedAtSeconds": 0,
+        "oldRequestGeneration": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "newAccepted": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "oldArchiveFdOpen": true,
+        "oldGenerationLeaseHeld": true
+      },
+      "expected": {
+        "newRequestAtSeconds": 6,
+        "newRequestGeneration": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "oldRequestGenerationUntilCompletionOrExpiry": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mixedGenerationResponse": false,
+        "oldArchiveFdRemainsOpen": true,
+        "oldGenerationLeaseRemainsHeld": true,
+        "oldCheckoutOnlineUnlink": false
+      }
+    },
+    {
+      "id": "old-archive-request-completes-before-lease-expiry",
+      "signal": "NONE",
+      "cutPoint": "old-stream-normal-completion",
+      "input": {
+        "requestStartedAtSeconds": 0,
+        "requestCompletedAtSeconds": 119,
+        "archiveStreamLeaseSeconds": 120,
+        "generation": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "archiveFdOpenBeforeCompletion": true
+      },
+      "expected": {
+        "connectionCanceled": false,
+        "responseCompletes": true,
+        "archiveFdOpenAfterCompletion": false,
+        "snapshotLeaseHeldAfterCompletion": false,
+        "checkoutLeaseHeldAfterCompletion": false,
+        "onlineUnlink": false
+      }
+    },
+    {
+      "id": "old-archive-request-exceeds-lease",
+      "signal": "NONE",
+      "cutPoint": "archive-stream-lease-expiry",
+      "input": {
+        "requestStartedAtSeconds": 0,
+        "observationAtSeconds": 120,
+        "archiveStreamLeaseSeconds": 120,
+        "generation": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "responseComplete": false,
+        "archiveFdOpen": true
+      },
+      "expected": {
+        "connectionCanceled": true,
+        "responseCompletes": false,
+        "archiveFdOpenAfterExpiry": false,
+        "snapshotLeaseHeldAfterExpiry": false,
+        "checkoutLeaseHeldAfterExpiry": false,
+        "onlineUnlink": false,
+        "gcModeRequired": "offline-quiesced-reference-aware"
+      }
+    },
+    {
+      "id": "sigterm-shutdown-override-expires-before-ordinary-lease",
+      "signal": "SIGTERM",
+      "cutPoint": "http-drain-deadline",
+      "input": {
+        "requestStartedAtSeconds": -10,
+        "signalAtSeconds": 0,
+        "ordinaryLeaseExpirySeconds": 110,
+        "shutdownOverrideExpirySeconds": 30,
+        "responseCompleteAtSeconds": 30,
+        "responseComplete": false,
+        "archiveFdOpen": true
+      },
+      "expected": {
+        "effectiveExpirySeconds": 30,
+        "connectionCanceled": true,
+        "archiveFdOpenAfterExpiry": false,
+        "snapshotLeaseHeldAfterExpiry": false,
+        "checkoutLeaseHeldAfterExpiry": false,
+        "processMayExit": true,
+        "acceptedMutationBySignal": false,
+        "onlineUnlink": false
+      }
+    },
+    {
+      "id": "systemd-sigkill-margin-after-drain",
+      "signal": "SIGTERM_THEN_SIGKILL",
+      "cutPoint": "application-did-not-exit-after-drain",
+      "input": {
+        "sigtermAtSeconds": 0,
+        "applicationDrainDeadlineSeconds": 30,
+        "systemdTimeoutStopSeconds": 35,
+        "sigkillAtSeconds": 35
+      },
+      "expected": {
+        "sigkillMarginSeconds": 5,
+        "newPublicAcceptsAfterSigterm": false,
+        "forcedProcessExitAtSeconds": 35,
+        "acceptedMutationBySignals": false,
+        "restartUsesDurableAcceptedOnly": true
+      }
+    },
+    {
+      "id": "sigkill-during-drain-after-new-generation-durable",
+      "signal": "SIGKILL",
+      "cutPoint": "old-request-draining-new-accepted-durable",
+      "input": {
+        "signalAtSeconds": 12,
+        "durableAccepted": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "oldRequestGeneration": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "oldArchiveFdOpen": true
+      },
+      "expected": {
+        "oldConnectionSurvivesProcessExit": false,
+        "oldArchiveFdSurvivesProcessExit": false,
+        "restartAccepted": "2222222222222222222222222222222222222222-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "promoteNewestCandidateOrPredecessor": false,
+        "remoteRequiredForRestart": false,
+        "lkgReadyAfterRestart": true
+      }
+    },
+    {
+      "id": "overlapping-restart-loses-lifetime-lock",
+      "signal": "NONE",
+      "cutPoint": "second-process-start-while-old-process-alive",
+      "input": {
+        "oldProcessAlive": true,
+        "oldProcessHoldsLifetimeStateLock": true,
+        "secondProcessStarted": true
+      },
+      "expected": {
+        "secondProcessAcquiresLock": false,
+        "secondProcessReadsState": false,
+        "secondProcessServesRequests": false,
+        "secondProcessExit": "fail-before-state-read",
+        "acceptedMutation": false
+      }
+    },
+    {
+      "id": "same-rejected-hash-not-retried-after-restart",
+      "signal": "SIGTERM",
+      "cutPoint": "candidate-already-rejected-before-shutdown",
+      "input": {
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "rejectedCandidate": "3333333333333333333333333333333333333333-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "remoteHashAfterRestart": "3333333333333333333333333333333333333333",
+        "explicitOperatorRetry": false
+      },
+      "expected": {
+        "automaticRetry": false,
+        "suppressionEndsOnHashChange": true,
+        "suppressionEndsOnExplicitOperatorRetry": true,
+        "durableAccepted": "1111111111111111111111111111111111111111-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "activeOrRollbackEviction": false,
+        "lkgReady": true
+      }
+    },
+    {
+      "id": "request-header-timeout",
+      "signal": "NONE",
+      "cutPoint": "public-request-header-read",
+      "input": {
+        "headerReadElapsedSeconds": 10,
+        "headersComplete": false,
+        "requestHeaderReadTimeoutSeconds": 10
+      },
+      "expected": {
+        "httpStatus": 408,
+        "connectionCanceled": true,
+        "acceptedMutation": false,
+        "generationLeaseAcquired": false,
+        "archiveFdOpened": false
+      }
+    },
+    {
+      "id": "request-idle-timeout",
+      "signal": "NONE",
+      "cutPoint": "public-response-idle",
+      "input": {
+        "idleElapsedSeconds": 15,
+        "requestIdleTimeoutSeconds": 15,
+        "generationLeaseHeld": true,
+        "archiveFdOpen": true
+      },
+      "expected": {
+        "connectionCanceled": true,
+        "archiveFdOpenAfterTimeout": false,
+        "generationLeaseHeldAfterTimeout": false,
+        "checkoutLeaseHeldAfterTimeout": false,
+        "acceptedMutation": false,
+        "onlineUnlink": false
+      }
+    }
+  ]
+}

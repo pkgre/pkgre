@@ -1,0 +1,2513 @@
+{
+  "checkCount": 454,
+  "checks": [
+    {
+      "detail": null,
+      "name": "json-document-count",
+      "pass": true
+    },
+    {
+      "detail": "pkgre-d0-timestamp-fixtures-v1",
+      "name": "timestamp-fixtures.json-schema",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vectors-not-executed-proof",
+      "name": "timestamp-fixtures.json-status",
+      "pass": true
+    },
+    {
+      "detail": "state-contract-v1",
+      "name": "timestamp-fixtures.json-state-contract-literal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-redirect-marker-null",
+      "pass": true
+    },
+    {
+      "detail": [
+        24,
+        24
+      ],
+      "name": "timestamp-fixtures.json-case-ids-unique",
+      "pass": true
+    },
+    {
+      "detail": "pkgre-d0-shutdown-drain-fixtures-v1",
+      "name": "shutdown-drain-fixtures.json-schema",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vectors-not-executed-proof",
+      "name": "shutdown-drain-fixtures.json-status",
+      "pass": true
+    },
+    {
+      "detail": "state-contract-v1",
+      "name": "shutdown-drain-fixtures.json-state-contract-literal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "shutdown-drain-fixtures.json-redirect-marker-null",
+      "pass": true
+    },
+    {
+      "detail": [
+        15,
+        15
+      ],
+      "name": "shutdown-drain-fixtures.json-case-ids-unique",
+      "pass": true
+    },
+    {
+      "detail": "pkgre-d0-resource-limit-fixtures-v1",
+      "name": "resource-limit-fixtures.json-schema",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vectors-not-executed-proof",
+      "name": "resource-limit-fixtures.json-status",
+      "pass": true
+    },
+    {
+      "detail": "state-contract-v1",
+      "name": "resource-limit-fixtures.json-state-contract-literal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-redirect-marker-null",
+      "pass": true
+    },
+    {
+      "detail": [
+        141,
+        141
+      ],
+      "name": "resource-limit-fixtures.json-case-ids-unique",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "proposal-schema",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "proposal-status",
+      "pass": true
+    },
+    {
+      "detail": "none intended;read-only status fingerprints recorded in validation report",
+      "name": "proposal-repository-mutation-none",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "reused-proposal-validation-pass",
+      "pass": true
+    },
+    {
+      "detail": [
+        "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d",
+        "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d"
+      ],
+      "name": "reused-proposal-hash-README.md",
+      "pass": true
+    },
+    {
+      "detail": [
+        "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da",
+        "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da"
+      ],
+      "name": "reused-proposal-hash-proposal.json",
+      "pass": true
+    },
+    {
+      "detail": [
+        "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826",
+        "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826"
+      ],
+      "name": "reused-proposal-hash-validate.py",
+      "pass": true
+    },
+    {
+      "detail": 129833713,
+      "name": "resource-observed-rust-archive-bytes-exact",
+      "pass": true
+    },
+    {
+      "detail": 129833713,
+      "name": "proposal-rust-archive-bytes-exact",
+      "pass": true
+    },
+    {
+      "detail": 3.101299151785022,
+      "name": "rust-archive-headroom-factor-formula",
+      "pass": true
+    },
+    {
+      "detail": 2.284394695621295,
+      "name": "rust-inline-headroom-factor-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-rust-archive-bytes-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-rejects-stale-1.6gb",
+      "pass": true
+    },
+    {
+      "detail": "proposed-unapproved-resource-and-deployment-policy",
+      "name": "resource-proposal-classification",
+      "pass": true
+    },
+    {
+      "detail": "proposed-unapproved-resource-and-deployment-policy",
+      "name": "rust-resource-deployment-not-observed-label",
+      "pass": true
+    },
+    {
+      "detail": "proposed-unapproved-resource-and-deployment-policy",
+      "name": "js-resource-deployment-not-observed-label",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxArchiveBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxArchiveBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxArchiveCount-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxArchiveCount-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxArchiveTotalBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxArchiveTotalBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxCatalogBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxCatalogBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxCategories-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxCategories-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxDependencyEdges-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxDependencyEdges-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitFetchNetworkBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitFetchNetworkBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitFetchPackBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitFetchPackBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitInflatedObjectBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitInflatedObjectBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitObjects-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitObjects-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitTreeLogicalBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxGitTreeLogicalBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxInlineResponseBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxInlineResponseBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxMaterializedCheckoutAllocatedBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxMaterializedCheckoutAllocatedBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxNonArchiveFileBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxNonArchiveFileBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxPackages-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxPackages-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxPackumentBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxPackumentBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxPathComponentBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxPathComponentBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRawPathBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRawPathBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRegistries-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRegistries-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRegularFileBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRegularFileBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxReloadSeconds-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxReloadSeconds-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRoutes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxRoutes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxSnapshotBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxSnapshotBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxSparseRowBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxSparseRowBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxStateBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxStateBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxTreeDepth-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxTreeDepth-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxTreeDirectories-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxTreeDirectories-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxTreeEntries-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxTreeEntries-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxVersions-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-maxVersions-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxArchiveBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxArchiveBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxArchiveCount-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxArchiveCount-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxArchiveTotalBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxArchiveTotalBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxCatalogBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxCatalogBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxCategories-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxCategories-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxDependencyEdges-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxDependencyEdges-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitFetchNetworkBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitFetchNetworkBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitFetchPackBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitFetchPackBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitInflatedObjectBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitInflatedObjectBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitObjects-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitObjects-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitTreeLogicalBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxGitTreeLogicalBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxInlineResponseBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxInlineResponseBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxMaterializedCheckoutAllocatedBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxMaterializedCheckoutAllocatedBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxNonArchiveFileBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxNonArchiveFileBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxPackages-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxPackages-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxPackumentBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxPackumentBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxPathComponentBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxPathComponentBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRawPathBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRawPathBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRegistries-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRegistries-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRegularFileBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRegularFileBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxReloadSeconds-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxReloadSeconds-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRoutes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxRoutes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxSnapshotBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxSnapshotBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxSparseRowBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxSparseRowBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxStateBytes-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxStateBytes-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxTreeDepth-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxTreeDepth-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxTreeDirectories-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxTreeDirectories-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxTreeEntries-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxTreeEntries-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxVersions-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-maxVersions-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-memory-estimate-at-admission-ceiling",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-memory-estimate-one-over-admission-ceiling",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-state-preflight-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-state-preflight-one-byte-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-rust-state-preflight-free-space-one-byte-short",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-memory-estimate-at-admission-ceiling",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-memory-estimate-one-over-admission-ceiling",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-state-preflight-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-state-preflight-one-byte-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-js-state-preflight-free-space-one-byte-short",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-raw-target-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-raw-target-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-header-count-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-header-count-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-total-headers-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-total-headers-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-single-header-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-single-header-one-over",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-empty-unframed-body",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-nonzero-body",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-framed-zero-body",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-request-concurrency-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-request-concurrency-next-rejected",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-archive-concurrency-at-inclusive-boundary",
+      "pass": true
+    },
+    {
+      "detail": "proposed-contract-vector-unexecuted",
+      "name": "case-classification-http-archive-concurrency-next-rejected",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-classification-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-state-contract-literal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-bounded-codes-match-proposal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-fixture-limits-equal-proposal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-fixture-systemd-equal-proposal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxArchiveBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxArchiveBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxArchiveCount-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxArchiveCount-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxArchiveTotalBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxArchiveTotalBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxCatalogBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxCatalogBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxCategories-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxCategories-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxDependencyEdges-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxDependencyEdges-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitFetchNetworkBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitFetchNetworkBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitFetchPackBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitFetchPackBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitInflatedObjectBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitInflatedObjectBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitObjects-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitObjects-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitTreeLogicalBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxGitTreeLogicalBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxInlineResponseBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxInlineResponseBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxMaterializedCheckoutAllocatedBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxMaterializedCheckoutAllocatedBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxNonArchiveFileBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxNonArchiveFileBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxPackages-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxPackages-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxPackumentBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxPackumentBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxPathComponentBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxPathComponentBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRawPathBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRawPathBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRegistries-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRegistries-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRegularFileBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRegularFileBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxReloadSeconds-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxReloadSeconds-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRoutes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxRoutes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxSnapshotBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxSnapshotBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxSparseRowBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxSparseRowBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxStateBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxStateBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxTreeDepth-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxTreeDepth-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxTreeDirectories-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxTreeDirectories-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxTreeEntries-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxTreeEntries-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxVersions-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-maxVersions-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": [
+        61210624,
+        61210624
+      ],
+      "name": "rust-single-snapshot-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        12582912,
+        12582912
+      ],
+      "name": "rust-request-stream-buffer-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        397541376,
+        397541376
+      ],
+      "name": "rust-candidate-peak-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-admission-ceiling-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-memory-invariants",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-fd-task-invariants",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-quota-equals-state-limit",
+      "pass": true
+    },
+    {
+      "detail": 3650722201,
+      "name": "rust-quota-floor",
+      "pass": true
+    },
+    {
+      "detail": [
+        2576980377,
+        1073741824,
+        3650722201
+      ],
+      "name": "rust-quota-boundary-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-quota-over-reject",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-quota-free-short-reject",
+      "pass": true
+    },
+    {
+      "detail": [
+        [
+          "archiveCount",
+          "archiveTotalBytes",
+          "dependencyEdges",
+          "gitTreeLogical",
+          "largestArchive",
+          "largestInlineResponse",
+          "largestSparseRow",
+          "packages",
+          "rehearsedRepoPlusCheckoutPeakToQuota",
+          "routes",
+          "treeEntries",
+          "versions"
+        ],
+        [
+          "archiveCount",
+          "archiveTotalBytes",
+          "dependencyEdges",
+          "gitTreeLogical",
+          "largestArchive",
+          "largestInlineResponse",
+          "largestSparseRow",
+          "packages",
+          "rehearsedRepoPlusCheckoutPeakToQuota",
+          "routes",
+          "treeEntries",
+          "versions"
+        ]
+      ],
+      "name": "rust-headroom-ratio-keys",
+      "pass": true
+    },
+    {
+      "detail": [
+        5.483266398929049,
+        5.48
+      ],
+      "name": "rust-headroom-ratio-archiveCount",
+      "pass": true
+    },
+    {
+      "detail": [
+        3.101299151785022,
+        3.1
+      ],
+      "name": "rust-headroom-ratio-archiveTotalBytes",
+      "pass": true
+    },
+    {
+      "detail": [
+        13.866255624028225,
+        13.87
+      ],
+      "name": "rust-headroom-ratio-largestArchive",
+      "pass": true
+    },
+    {
+      "detail": [
+        274.10854346992534,
+        274.11
+      ],
+      "name": "rust-headroom-ratio-gitTreeLogical",
+      "pass": true
+    },
+    {
+      "detail": [
+        2.284394695621295,
+        2.28
+      ],
+      "name": "rust-headroom-ratio-largestInlineResponse",
+      "pass": true
+    },
+    {
+      "detail": [
+        8.99231613611416,
+        8.99
+      ],
+      "name": "rust-headroom-ratio-packages",
+      "pass": true
+    },
+    {
+      "detail": [
+        15.891367604267701,
+        15.89
+      ],
+      "name": "rust-headroom-ratio-routes",
+      "pass": true
+    },
+    {
+      "detail": [
+        21.195342820181114,
+        21.2
+      ],
+      "name": "rust-headroom-ratio-treeEntries",
+      "pass": true
+    },
+    {
+      "detail": [
+        21.933065595716197,
+        21.93
+      ],
+      "name": "rust-headroom-ratio-versions",
+      "pass": true
+    },
+    {
+      "detail": [
+        23.75353388909025,
+        23.75
+      ],
+      "name": "rust-headroom-ratio-dependencyEdges",
+      "pass": true
+    },
+    {
+      "detail": [
+        4.866007703373707,
+        4.87
+      ],
+      "name": "rust-headroom-ratio-largestSparseRow",
+      "pass": true
+    },
+    {
+      "detail": [
+        16.452122067937555,
+        16.45
+      ],
+      "name": "rust-headroom-ratio-rehearsedRepoPlusCheckoutPeakToQuota",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-fixture-limits-equal-proposal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-fixture-systemd-equal-proposal",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxArchiveBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxArchiveBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxArchiveCount-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxArchiveCount-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxArchiveTotalBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxArchiveTotalBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxCatalogBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxCatalogBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxCategories-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxCategories-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxDependencyEdges-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxDependencyEdges-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitFetchNetworkBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitFetchNetworkBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitFetchPackBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitFetchPackBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitInflatedObjectBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitInflatedObjectBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitObjects-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitObjects-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitTreeLogicalBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxGitTreeLogicalBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxInlineResponseBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxInlineResponseBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxMaterializedCheckoutAllocatedBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxMaterializedCheckoutAllocatedBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxNonArchiveFileBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxNonArchiveFileBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxPackages-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxPackages-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxPackumentBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxPackumentBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxPathComponentBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxPathComponentBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRawPathBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRawPathBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRegistries-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRegistries-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRegularFileBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRegularFileBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxReloadSeconds-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxReloadSeconds-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRoutes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxRoutes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxSnapshotBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxSnapshotBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxSparseRowBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxSparseRowBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxStateBytes-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxStateBytes-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxTreeDepth-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxTreeDepth-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxTreeDirectories-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxTreeDirectories-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxTreeEntries-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxTreeEntries-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxVersions-boundary",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-maxVersions-limit-plus-one",
+      "pass": true
+    },
+    {
+      "detail": [
+        119537664,
+        119537664
+      ],
+      "name": "js-single-snapshot-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        12582912,
+        12582912
+      ],
+      "name": "js-request-stream-buffer-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        606076928,
+        606076928
+      ],
+      "name": "js-candidate-peak-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-admission-ceiling-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-memory-invariants",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-fd-task-invariants",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-quota-equals-state-limit",
+      "pass": true
+    },
+    {
+      "detail": 1825361100,
+      "name": "js-quota-floor",
+      "pass": true
+    },
+    {
+      "detail": [
+        1288490188,
+        536870912,
+        1825361100
+      ],
+      "name": "js-quota-boundary-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-quota-over-reject",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-quota-free-short-reject",
+      "pass": true
+    },
+    {
+      "detail": [
+        [
+          "archiveCount",
+          "archiveTotalBytes",
+          "currentCheckoutToQuota",
+          "gitTreeLogical",
+          "largestArchive",
+          "largestInlineResponse",
+          "packages",
+          "routes",
+          "treeEntries",
+          "versions"
+        ],
+        [
+          "archiveCount",
+          "archiveTotalBytes",
+          "currentCheckoutToQuota",
+          "gitTreeLogical",
+          "largestArchive",
+          "largestInlineResponse",
+          "packages",
+          "routes",
+          "treeEntries",
+          "versions"
+        ]
+      ],
+      "name": "js-headroom-ratio-keys",
+      "pass": true
+    },
+    {
+      "detail": [
+        32768.0,
+        32768.0
+      ],
+      "name": "js-headroom-ratio-archiveCount",
+      "pass": true
+    },
+    {
+      "detail": [
+        12043.224980558713,
+        12043.22
+      ],
+      "name": "js-headroom-ratio-archiveTotalBytes",
+      "pass": true
+    },
+    {
+      "detail": [
+        8028.816653705809,
+        8028.82
+      ],
+      "name": "js-headroom-ratio-largestArchive",
+      "pass": true
+    },
+    {
+      "detail": [
+        2855.7571012149197,
+        2855.76
+      ],
+      "name": "js-headroom-ratio-gitTreeLogical",
+      "pass": true
+    },
+    {
+      "detail": [
+        4211.14859437751,
+        4211.15
+      ],
+      "name": "js-headroom-ratio-largestInlineResponse",
+      "pass": true
+    },
+    {
+      "detail": [
+        4096.0,
+        4096.0
+      ],
+      "name": "js-headroom-ratio-packages",
+      "pass": true
+    },
+    {
+      "detail": [
+        6553.6,
+        6553.6
+      ],
+      "name": "js-headroom-ratio-routes",
+      "pass": true
+    },
+    {
+      "detail": [
+        244.53731343283582,
+        244.54
+      ],
+      "name": "js-headroom-ratio-treeEntries",
+      "pass": true
+    },
+    {
+      "detail": [
+        32768.0,
+        32768.0
+      ],
+      "name": "js-headroom-ratio-versions",
+      "pass": true
+    },
+    {
+      "detail": [
+        10711.549847119208,
+        10711.55
+      ],
+      "name": "js-headroom-ratio-currentCheckoutToQuota",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "rust-state-budget-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-state-budget-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        4096,
+        4096
+      ],
+      "name": "http-raw-target-at-inclusive-boundary-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        4097,
+        4097
+      ],
+      "name": "http-raw-target-one-over-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        64,
+        64
+      ],
+      "name": "http-header-count-at-inclusive-boundary-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        65,
+        65
+      ],
+      "name": "http-header-count-one-over-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        32768,
+        32768
+      ],
+      "name": "http-total-headers-at-inclusive-boundary-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        32769,
+        32769
+      ],
+      "name": "http-total-headers-one-over-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        8192,
+        8192
+      ],
+      "name": "http-single-header-at-inclusive-boundary-value",
+      "pass": true
+    },
+    {
+      "detail": [
+        8193,
+        8193
+      ],
+      "name": "http-single-header-one-over-value",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "http-body-vectors",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "http-request-concurrency-next-rejected-fixed-503",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "http-archive-concurrency-next-rejected-fixed-503",
+      "pass": true
+    },
+    {
+      "detail": [
+        30,
+        30
+      ],
+      "name": "lifecycle-httpDrainDeadlineSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        35,
+        35
+      ],
+      "name": "lifecycle-systemdTimeoutStopSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        10,
+        10
+      ],
+      "name": "lifecycle-requestHeaderReadTimeoutSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        15,
+        15
+      ],
+      "name": "lifecycle-requestIdleTimeoutSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        120,
+        120
+      ],
+      "name": "lifecycle-requestTotalLeaseSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        120,
+        120
+      ],
+      "name": "lifecycle-archiveStreamLeaseSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        120,
+        120
+      ],
+      "name": "lifecycle-oldGenerationLeaseSeconds",
+      "pass": true
+    },
+    {
+      "detail": [
+        30,
+        30
+      ],
+      "name": "lifecycle-shutdownLeaseOverrideSeconds",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "lifecycle-sigkill-margin",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-future-skew",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-trusted-sync",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-dual-clock",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-rust-fraction-zero-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-rust-lowercase-separators-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-rust-offset-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-rust-leap-second-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-rust-invalid-civil-date-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-rust-pre-epoch-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-js-rust-spelling-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-js-nonzero-fraction-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-third-party-fetch-before-publication-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-first-party-admission-after-evaluation-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-future-skew-one-second-over-rejected-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-trusted-sync-duration-one-second-short-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-reported-offset-over-limit-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-kernel-unsynchronized-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-dual-clock-deviation-one-second-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "timestamp-fixtures.json-realtime-backward-over-limit-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxArchiveBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxArchiveCount-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxArchiveTotalBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxCatalogBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxCategories-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxDependencyEdges-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxGitFetchNetworkBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxGitFetchPackBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxGitInflatedObjectBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxGitObjects-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxGitTreeLogicalBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxInlineResponseBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxMaterializedCheckoutAllocatedBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxNonArchiveFileBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxPackages-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxPackumentBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxPathComponentBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxRawPathBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxRegistries-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxRegularFileBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxReloadSeconds-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxRoutes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxSnapshotBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxSparseRowBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxStateBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxTreeDepth-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxTreeDirectories-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxTreeEntries-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-maxVersions-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxArchiveBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxArchiveCount-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxArchiveTotalBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxCatalogBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxCategories-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxDependencyEdges-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxGitFetchNetworkBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxGitFetchPackBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxGitInflatedObjectBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxGitObjects-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxGitTreeLogicalBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxInlineResponseBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxMaterializedCheckoutAllocatedBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxNonArchiveFileBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxPackages-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxPackumentBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxPathComponentBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxRawPathBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxRegistries-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxRegularFileBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxReloadSeconds-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxRoutes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxSnapshotBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxSparseRowBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxStateBytes-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxTreeDepth-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxTreeDirectories-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxTreeEntries-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-maxVersions-one-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-memory-estimate-one-over-admission-ceiling-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-state-preflight-one-byte-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-rust-state-preflight-free-space-one-byte-short-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-memory-estimate-one-over-admission-ceiling-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-state-preflight-one-byte-over-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "resource-limit-fixtures.json-js-state-preflight-free-space-one-byte-short-reject-no-accepted-mutation",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-reference-timestamp-fixtures.json",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-reference-shutdown-drain-fixtures.json",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-reference-resource-limit-fixtures.json",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-reference-validate.py",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-reference-validation.json",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "report-reference-SHA256SUMS",
+      "pass": true
+    },
+    {
+      "detail": [],
+      "name": "secret-scan-no-pattern-matches",
+      "pass": true
+    }
+  ],
+  "repositoryMutation": "none;validation is artifact-only and does not invoke source builds/probes",
+  "result": "PASS",
+  "schema": "pkgre-d0-resource-time-lifecycle-validation-v1",
+  "secretScan": {
+    "filesScanned": 9,
+    "matches": 0,
+    "patterns": [
+      "aws-access-key",
+      "generic-secret-assignment",
+      "github-token",
+      "private-key",
+      "slack-token"
+    ],
+    "result": "PASS"
+  },
+  "validatedFiles": {
+    "basis-inventory/resource-time-lifecycle/REPORT.md": "e41836ee1eefda6ddd48317c1eb3e51ba58447851d285c29c2e638028272a215",
+    "basis-inventory/resource-time-lifecycle/resource-limit-fixtures.json": "b737291d22d3f610324716de6208bbac6279c229d524f731e2f3ac7b9b09b845",
+    "basis-inventory/resource-time-lifecycle/shutdown-drain-fixtures.json": "3d0f1fba1dcb5818bce42ba764adf395bc3df9897f0db141c8629a1cb4d15c9b",
+    "basis-inventory/resource-time-lifecycle/timestamp-fixtures.json": "292193f1c51a8a262d4da3e3ddf27871472e2b54e7a7f999acfe9238e0147a01",
+    "basis-inventory/resource-time-lifecycle/validate.py": "02cdc5a394b455f568d29eabb89049390bb999c6d8c93af683d546adac002fe1",
+    "d0-time-resource-proposal/README.md": "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d",
+    "d0-time-resource-proposal/proposal.json": "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da",
+    "d0-time-resource-proposal/validate.py": "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826",
+    "d0-time-resource-proposal/validation.json": "4c57f8e19c33a587d06c18fb1e49092a6623f4065677fab83ecc1c5374189259"
+  }
+}
