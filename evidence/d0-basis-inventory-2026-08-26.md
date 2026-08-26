@@ -267,51 +267,57 @@ Closed bounded findings:fixed-basis refetch;route uniqueness+one-to-one mapping 
 
 ## 16. OPERATOR-HANDOFF D0
 
-Phase:D0
+Phase:D0 | purpose=return operator-owned authority decisions+non-secret metadata only | agent-owned proof work is not assigned to the operator | later phase gates do not authorize immediate mutation
 
-Source commits:`pkgre/pkgre=066293df21743cbf41fb571a38f2bb94059e7274` fixed renderer basis;this aggregate+verifier will be an evidence-only descendant.
+Source commits:`pkgre/pkgre=066293df21743cbf41fb571a38f2bb94059e7274` fixed renderer basis;this aggregate+verifier are evidence-only descendants. Catalog commits:`pkgre/rust=f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b`;`pkgre/js=f43bd58bd3d4e36f8b3f4df3c002735c977acd17`. Infra commit:`5f68539bd99c6952b6d73fe2596c27ad4a319f57` is a matching declaration only;exact deployed-source provenance remains blocked.
 
-Catalog commits:`pkgre/rust=f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b`;`pkgre/js=f43bd58bd3d4e36f8b3f4df3c002735c977acd17`.
+Validated:all 13 packet manifests+strict JSON/JSONL semantics via `python3 scripts/verify-d0-evidence.py`;enumerated source-derived route rows=`2072` while universal/access-log completeness remains BLOCKED;Rust archives=`747/129833713 B`;Cargo=`174/172 curated`;JS policy=`66` cases;nginx=`174` captures/`1725` checks;interim/early-hints `1xx` remains untested/unobserved and BLOCKED;expected verifier result=`PASS;gate=BLOCKED;D1Authorized=false`.
 
-Infra commit:`5f68539bd99c6952b6d73fe2596c27ad4a319f57` matching declaration only;return exact deployed-source provenance separately.
-
-Validated:all 13 packet manifests+strict JSON/JSONL semantics via `python3 scripts/verify-d0-evidence.py`;enumerated source-derived route rows=`2072` while universal/access-log completeness remains BLOCKED;Rust archives=`747/129833713 B`;Cargo=`174/172 curated`;JS policy=`66` cases;nginx=`174` captures/`1725` checks;interim/early-hints `1xx` remains ABSENT/BLOCKED;expected aggregate result is verifier PASS with `gate=BLOCKED;D1Authorized=false`.
-
-State+limits:no dynamic active manifest,instance digest,quota,MemoryHigh,or MemoryMax is deployed. Proposal only:Rust quota/MemoryHigh/Max=`4GiB/384MiB/512MiB`;JS=`2GiB/512MiB/768MiB`;TasksMax/NOFILE=`64/2048`;do not treat these as approved production facts.
+State+limits:no dynamic active manifest,instance digest,quota,MemoryHigh,or MemoryMax is deployed. Proposal only:Rust quota/MemoryHigh/Max=`4GiB/384MiB/512MiB`;JS=`2GiB/512MiB/768MiB`;TasksMax/NOFILE=`64/2048`;none is approved production fact.
 
 Secrets/files:`/var/lib/keys/pkgre-js-gandiv5-token=root:root 0644`,ACL group/other read,purpose=shared Gandi DNS-01 source;critical. Never return the token value. Current unprivileged collection could not traverse ACME certificate/key leaves;only bounded same-generation historical metadata reported `/var/lib/acme/{rust.pkg.re,js.pkg.re,dl.rust.pkg.re}/{fullchain.pem,key.pem}=acme:nginx 0640` and 227-B TLS keys. ACME account-key metadata+lifecycle are absent;no private value was read.
 
-Deploy:none. Do not deploy Rain,change DNS,change GitHub settings,install/rotate signer material,advance catalog refs,or start D1 from this record.
-
 Current generation+rollback anchor:Rain=`/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a`;container=`/nix/store/jai70s8kdn3jc71qvsn9l20zma9aam4g-nixos-system-pkgre-26.11.20260818.9588f1a`;dynamic accepted/generation IDs=ABSENT;Rust Pages is current continuity but not durable custody;JS Pages is containment-only;`JS-INITIAL-ANCHOR`=ABSENT.
 
-DNS before:`rust.pkg.re CNAME pkgre.github.io. TTL 300`;`js.pkg.re CNAME rain.pacna.org. TTL 300`;`dl.rust.pkg.re CNAME rain.pacna.org. TTL 10800`.
+DNS before=`rust.pkg.re CNAME pkgre.github.io. TTL 300`;`js.pkg.re CNAME rain.pacna.org. TTL 300`;`dl.rust.pkg.re CNAME rain.pacna.org. TTL 10800`. DNS after=no change requested;permanent JS CNAME topology remains accepted.
 
-DNS after:no change requested;permanent JS CNAME topology remains accepted.
+Deploy:none. D0 does not authorize Rain deployment,DNS or GitHub-setting changes,signer installation,catalog-ref advance,body import,Cargo-config edit,or D1 implementation.
 
-GitHub settings:do not mutate during D0. Return exact intended D2 non-provider-assigned values first;agent will prepare the separate `OPERATOR-HANDOFF D2-SIGNING` before any settings action.
+### 16.1 Operator-owned decisions+metadata to return
 
-### Operator actions+required returned metadata
+1. **Critical Gandi credential containment+TLS-key lifecycle:**operator repairs declarative+live metadata so the Gandi credential has no unauthorized group/other read,rotates/revokes the exposed PAT,checks provider scope+audit,and defines compromise response+recovery. Return only:path,owner,group,mode,ACL,size,purpose,authorized reader mechanism;old/new provider ID or safe suffix,revocation/activation UTC+result,zone scope+expiry;bounded audit IDs/timestamps/actors/results;response/recovery owner+steps+test date. Also return current metadata-only certificate/key rows for all three ACME names and ACME account-key path/owner/group/mode/ACL/readers/provider identity+lifecycle. Never return token bytes,secret hashes,private-key bytes,or private-key hashes.
+2. **Rain SSH attestation+lifecycle:**out-of-band verify `rain.pacna.org` SSH-Ed25519 fingerprint `SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI`. Return authoritative source/method,operator,UTC,algorithm,fingerprint,match;rotation overlap,revocation/client remediation,compromise response,recovery procedure+test metadata;no private key.
+3. **Exact deployed provenance:**return the infra full SHA+build/deploy record producing both live NixOS generations,or state irrecoverable. Include generation symlink/store paths,deployment UTC+actor,and source SHA→derivation→generation linkage.
+4. **Production signing authority design—no secret installation:**choose per catalog SSH-Ed25519 principal+public SHA-256 fingerprint,root-owned `allowedSigners` path+file SHA-256,revocation path+file SHA-256,release identity,private-key custodian,rotation overlap,break-glass/recovery,and compromise procedure. Confirm the fixture identity is forbidden. Return public data+metadata only.
+5. **D2 GitHub target design—no settings action:**return exact release workflow path/name/content commit+blob/check context;protected environment name+human reviewers+admin-bypass policy;distinct writer identity+minimal token permissions;ruleset name/target/bypass actors/reviews/CODEOWNERS/signature/FF/force/delete/admin rules;rollback order. Provider-assigned IDs remain returned evidence after the later `OPERATOR-HANDOFF D2-SIGNING` action.
+6. **Deployment identity decision or explicit phase-plan amendment:**approve/replace proposed static UIDs/GIDs `1976..1980`,ports `9010..9013`+`9110..9113`,state roots,datasets,quotas,ACL model,backup reader,and conservative limits;return decision+collision evidence. Because literal §11 compatibility/body/rollback rows cannot all be observed before implementation,choose either supply every missing value now or approve moving complete compatibility+rollback identity freeze to pre-D7 and complete body identity freeze to pre-D9/pre-D12,always with distinct roots+instance digests and no silent inheritance.
+7. **Proof-order amendment decisions:**for each item approve the proposed later closure or require D0 closure now:(a) native RSS/FD/reload/drain/resource measurements→D4 before D7;(b) 24-hour dual-clock+fault proof→D4 before D7;(c) production-equivalent edge proof→D6 and real-Rain integration→D7 before public cutover;(d) immutable rollback bundle+restore rehearsal→D7 before the first frontend change;(e) source-derived route universe as D1 input,with complete authorized access-log discovery before D8/D11,or instead provide/authorize complete bounded access-log evidence now. These are ordering decisions;the operator is not asked to implement agent-owned proofs.
+8. **Storage policy inputs:**return operator-selected append-only planning horizon,growth assumption,Rain quota/reserve/free-space floor,backup destination capacity+reader+retention,and any nonpublic provider/account ceiling. Public provider limits and scratch clone/fetch/checkout/backup/restore/power-loss measurements are agent-owned follow-up;ordinary Git failure against any reviewed ceiling stops before D2.
+9. **Client coverage timing:**approve `Deno current=minimum 2.9.5` for this dated D0 with an independently newer current pin required before D6,or select another exact version;choose scoped npm production fixture deadline no later than D6.
+10. **LAN deferral:**confirm `no LAN instance selected` for this rollout stage. This authorizes no LAN source,configuration,credential,DNS,TLS,or deployment action.
 
-1. **Critical credential containment+complete TLS-key lifecycle:**(a) repair the declarative source and live metadata so the Gandi credential has no unauthorized group/other read and only the required system credential loader can access it;rotate/revoke the exposed PAT;inspect provider scope+audit;define compromise response+recovery. Return:path,owner,group,mode,ACL,size,purpose,authorized reader mechanism;old credential provider ID or safe suffix only,revocation timestamp/result;new credential provider ID or safe suffix only,creation/activation timestamp,scope/zone permissions,expiry;bounded audit-event IDs/timestamps/actors/results;compromise-response+recovery owner/steps/test date. (b) Return current metadata-only certificate/key rows for all three ACME names and the ACME account-key path/owner/group/mode/ACL/readers/provider identity plus rotation,revocation,compromise-response,recovery procedure/test metadata. Never return token bytes,hashes of secret/private material,or private material.
-2. **Rain SSH attestation+lifecycle:**out-of-band verify `rain.pacna.org` SSH-Ed25519 fingerprint `SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI`. Return:authoritative source/method,operator,UTC timestamp,algorithm,fingerprint,match result;host-key rotation overlap,revocation/client-remediation,compromise response,recovery procedure+test metadata;no private host key.
-3. **Exact deployed provenance:**return the infra repository full SHA and build/deploy record that produced both live NixOS generations,or explicitly state it is irrecoverable. Include generation symlink/store paths,deployment timestamp/actor,and evidence linking source SHA→derivation→generation.
-4. **Freeze production signing authority without installing secrets:**choose per catalog the SSH-Ed25519 principal+public SHA-256 fingerprint,root-owned `allowedSigners` path+file SHA-256,revocation path+file SHA-256,release identity,private-key custodian,rotation overlap,break-glass/recovery,and compromise procedure. Return public data+metadata only;never private key. Confirm fixture principal/fingerprint will not be reused.
-5. **Freeze D2 GitHub target values without applying them:**return exact release workflow path/name/content commit/blob/check context;protected environment name+human reviewers+admin-bypass policy;distinct writer identity+minimal token permissions;ruleset name/target/bypass actors/review counts/CODEOWNERS/signature/FF/force/delete/admin rules;rollback order. Provider IDs remain future returned evidence after the separately gated operator action.
-6. **Approve deployment identities or amend D0:**review proposed static UIDs/GIDs `1976..1980`,ports `9010..9013`+`9110..9113`,state roots,datasets,quotas,ACLs,backup reader,and limits. Return approval/replacements plus fresh collision evidence. Supply complete body-mode rows,or approve an explicit plan amendment moving body identity freeze to the pre-D9/D12 gate while preserving distinct roots/digests. No infra edit yet.
-7. **Resolve empirical-proof phase ordering:**either return D0-native server RSS/FD/reload/drain measurements and approve every exact resource/time integer,or approve a written plan amendment that classifies current values as conservative D1 design ceilings and moves implementation-dependent measurement closure to D4 before D7. Do the same for production edge integration proof if it cannot exist before D7;the isolated transport primitive alone is insufficient.
-8. **Storage+archive capacity:**return GitHub/provider repository/object/transfer ceilings;Rain dataset quota/reserve/free-space policy;append-only growth model+horizon;backup destination capacity/reader/retention;measured clone/fetch/checkout/backup/empty-root restore time;power-loss/rename/fsync result. If ordinary Git fails a reviewed ceiling,stop and request architecture review before D2.
-9. **Rollback custody:**create or authorize immutable Rust+JS static source/workflow/artifact/proxy/download/infra/DNS/TLS bundles in operator-controlled storage;return bundle inventory SHA-256,storage owner,readback,isolated restore transcript,retention owner+horizon. For JS return strict default-origin publication+legacy-static profile proof or preserve classification=containment-only;`JS-INITIAL-ANCHOR` remains a later dynamic gate.
-10. **Clock policy:**approve/revise max future skew,dual-clock tolerances,synchronization source/config,and horizons;return 24-hour Rain clock capture+forward/backward/lost-sync fault evidence or approve a phase amendment moving empirical capture to D4 before D7.
-11. **Client coverage:**provide an independently pinned current Deno version when newer than the minimum is selected,or explicitly approve that current=minimum for this dated D0 while requiring an independent pin before D6;confirm scoped npm fixture timing.
-12. **LAN deferral:**confirm `no LAN instance selected` for this rollout stage. This requests no LAN source/configuration/credential/DNS/TLS/deployment action and authorizes none.
+### 16.2 Agent-owned follow-up—not requested from operator
 
-Returned evidence:the metadata-only results for items 1–12,each keyed to this aggregate commit and UTC timestamp. Agent will verify them,commit supplements separately,and request a new independent review. Partial results leave the corresponding blocker open.
+After the corresponding decisions/amendments are returned and independently reviewed,the agent owns:authorized access-log collection+route reconciliation if selected;public provider-limit research;storage/clone/fetch/checkout/backup/restore rehearsals;D1 explicit no-`1xx`+route/protocol fixtures;D4 native resource,time,clock,lifecycle,and crash measurements;D6 production-equivalent edge proof;D7 real-Rain edge proof+immutable rollback bundle/rehearsal. None may be represented as already complete,and no D1 work starts while `D1 authorized=false`.
 
-Observe:none requested for public traffic;monitoring redesign remains deferred and non-gating.
+### 16.3 Later gates—not D0 mutations
 
-Rollback trigger:any unexpected operator-side service,DNS,GitHub,credential,or catalog mutation while answering D0.
+| Gate | Required later closure |
+|---|---|
+| pre-D3 | admit exact `pkgre-rust-serve` lock+feature closure before server implementation |
+| pre-D5 | set/prove `[net] offline=true` in Rust self-host+cold-replay fixtures;D0 does not edit `.cargo/config.toml` |
+| pre-D6 | independent current Deno pin+scoped npm fixture;complete client matrix |
+| D4-before-D7 if amendment approved | native resource/time/clock/crash proofs+reviewed hard maxima |
+| D7-before-frontend-change | complete compatibility+rollback deployment rows,immutable rollback bundle,and restore rehearsal |
+| pre-D9 | import+verify complete Rust archive bodies and freeze distinct Rust body identity |
+| pre-D11 | build+reconstruct+prove `JS-INITIAL-ANCHOR` |
+| pre-D12 | import+verify complete JS archive bodies and freeze distinct JS body identity |
+| D13 | optional LAN selection re-enters complete identity gate;monitoring redesign remains non-gating long-term work |
 
-Rollback:no public change is authorized;restore any accidentally changed setting through operator procedure and report before/after+audit evidence.
+Returned evidence:items 1–10 keyed to the aggregate-containing commit+UTC. Agent verifies and commits supplements separately,then requests another independent D0 review. Partial answers leave corresponding blockers open.
 
-STOP:no dependent phase until evidence is reviewed. D1 authorized=false remains true after this aggregate commit;this file records a blocked gate,not permission to implement.
+Observe:none requested for public traffic unless item 7 explicitly authorizes bounded access-log collection;monitoring redesign remains deferred+non-gating.
+
+Rollback trigger:any unexpected operator-side service,DNS,GitHub,credential,or catalog mutation outside item 1 credential containment. Rollback:restore accidental changes through the operator procedure and return before/after+audit evidence.
+
+STOP:no dependent phase until returned evidence+approved amendments are committed and independently reviewed. D1 authorized=false;this file is a blocked-gate record,not implementation permission.
