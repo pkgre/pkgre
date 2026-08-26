@@ -121,6 +121,8 @@ OBSERVED all four bases:Git 2.54.0 local inventory;SHA-1/40-hex;strict full fsck
 
 BLOCKED production layout:local repos are non-bare development worktrees with broad SSH origins/refspecs and developer-owned readable storage;production exact-ref bare mirrors,ownership,modes,quotas,disablement policy,crash semantics,and backup/restore do not exist. Public exact-ref anonymous HTTPS probes passed without redirect for Rust+JS;canonical runtime origins are frozen below. Archive rehearsal proves current Rust closure on tmpfs only;append-only history model,provider quota,Rain quota,reserve,production clone/fetch/checkout amplification,backup/restore capacity+time remain absent. No LFS,submodule,request-time fetch,shared CAS,or external mutable object store is authorized as an implicit workaround.
 
+Archive-body phase boundary:D0 proves current archive identity/byte closure,provenance,and ordinary-Git scratch feasibility;it does not mutate a protected catalog to import bodies. D2 may import the complete body sets or explicitly record later blocking migration commits. Complete Rust body import is mandatory before D9;complete JS body import is mandatory before D12. The missing Rust tree bodies therefore are a later cutover gate,while the still-missing production storage ceilings remain the independent D0 blocker above.
+
 ## 8. Source/admission authority+signing/governance
 
 ### 8.1 Public catalog authority table
@@ -252,7 +254,7 @@ ABSENT:no LAN-public instance,hostname,origin,vhost,listener,address,range,firew
 | D0-B11 | BLOCKED | append-only archive growth,provider/Rain ceilings,production quota/failure recovery,and backup/restore capacity+time absent | `fixtures/d0-v1/basis-inventory/rust-catalog/`;`fixtures/d0-v1/basis-inventory/resource-time-lifecycle/` |
 | D0-B12 | BLOCKED | acceptance clock policy unapproved;actual source/config and 24-hour Rain dual-clock/fault proof absent | `fixtures/d0-v1/basis-inventory/resource-time-lifecycle/`;`fixtures/d0-v1/basis-inventory/live-deployment-network/` |
 | D0-B13 | BLOCKED | protocol/header/config enums,complete hard maxima,trust digests,and compatibility/body/rollback instance digests remain absent/null | `fixtures/d0-v1/basis-inventory/rain-identity-design/`;`fixtures/d0-v1/basis-inventory/resource-time-lifecycle/` |
-| D0-B14 | BLOCKED | Rust catalog has only 3/747 bodies;authorized append-only import has not occurred;schema lacks audience;body mode cannot start | `fixtures/d0-v1/basis-inventory/rust-catalog/` |
+| D0-B14 | LATER GATE(pre-D9/pre-D12) | D0 must not import bodies:Rust catalog currently has only 3/747 bodies;D2 may import or explicitly defer the blocking migration,with complete Rust/JS body closure mandatory before D9/D12 respectively | `fixtures/d0-v1/basis-inventory/rust-catalog/`;`fixtures/d0-v1/basis-inventory/js-catalog/` |
 | D0-B15 | BLOCKED | Cargo curated closure passes but mandatory `[net] offline=true` and future server lock/feature delta are absent | `fixtures/d0-v1/basis-inventory/rust-catalog/`;`fixtures/d0-v1/basis-inventory/toolchain-closure/` |
 | D0-B16 | BLOCKED | JS live origin is unavailable and strict static rollback continuity/initial anchor is absent | `fixtures/d0-v1/basis-inventory/js-catalog/`;`fixtures/d0-v1/basis-inventory/public-routes/`;`fixtures/d0-v1/basis-inventory/git-storage/` |
 | D0-B17 | BLOCKED | Deno “current” is an alias of minimum 2.9.5,not independently newer coverage;scoped npm production fixture absent | `fixtures/d0-v1/basis-inventory/toolchain-closure/`;`fixtures/d0-v1/basis-inventory/js-catalog/` |
