@@ -31,6 +31,8 @@ MANIFEST_RE = re.compile(r"^([0-9a-f]{64}) ([ *])(.+)$")
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 ALLOWED_CLASSIFICATIONS = {"observed", "proposed", "absent", "blocked"}
 CURATED_CARGO_SOURCE = "sparse+https://rust.pkg.re/"
+NPM_MINIMUM = "/nix/store/m204igzgcqxgs4glkqjhdk8fyw8gs7id-pkgre-js-compat-node-npm-24.15.0-12.0.2/bin/npm"
+NPM_CURRENT = "/nix/store/q72ykn5nq6f88dxvika5vpzj003p2wcz-pkgre-js-compat-node-npm-26.7.0-12.0.2/bin/npm"
 
 
 class VerificationError(RuntimeError):
@@ -173,6 +175,17 @@ def assert_equal(actual: Any, expected: Any, label: str) -> None:
     require(actual == expected, f"{label}: expected {expected!r},got {actual!r}")
 
 
+def section_until_level_two(text: str, marker: str, label: str) -> str:
+    require(marker.startswith("## ") or marker.startswith("### "), f"invalid section marker for {label}")
+    token = f"{marker}\n"
+    require(text.count(token) == 1, f"{label}: expected exactly one section marker {marker!r}")
+    remainder = text.split(token, 1)[1]
+    next_section = remainder.find("\n## ")
+    if next_section != -1:
+        remainder = remainder[:next_section]
+    return remainder
+
+
 def verify_semantics(root: Path, aggregate: Path) -> None:
     routes = load_json(root / "public-routes" / "validation.json")
     assert_equal(routes["result"], "PASS", "route validation result")
@@ -180,6 +193,10 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     assert_equal(routes["counts"]["probeErrors"], 0, "route probe errors")
     assert_equal(routes["checks"]["noDuplicateMappings"], True, "route duplicate check")
     assert_equal(routes["checks"]["uniqueHostRawPath"], True, "route host/raw-path uniqueness")
+    route_report = read_utf8(root / "public-routes" / "REPORT.md")
+    require("fixed source-publication routes" in route_report, "route report lacks source-derived scope boundary")
+    require("access-log-only unknown aliases" in route_report, "route report lacks access-log-only alias blocker")
+    require("none were guessed" in route_report, "route report lacks unknown-route no-invention boundary")
 
     rust_validation = load_json(root / "rust-catalog" / "validation.json")
     assert_equal(rust_validation["result"], "PASS", "Rust validation result")
@@ -201,6 +218,10 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     assert_equal(rust["archiveRehearsal"]["failedCount"], 0, "Rust archive failures")
     assert_equal(rust["archiveRehearsal"]["rawUniqueBytes"], 129833713, "Rust archive bytes")
     assert_equal(rust["archiveRehearsal"]["logicalRouteBytes"], 129833713, "Rust archive route bytes")
+    assert_equal(rust["currentCatalogArchives"]["count"], 3, "Rust current catalog body count")
+    assert_equal(rust["currentCatalogArchives"]["declaredRoutes"], 747, "Rust declared archive routes")
+    assert_equal(rust["currentCatalogArchives"]["missingBodies"], 744, "Rust missing catalog bodies")
+    assert_equal(rust["cargo"]["cargoConfig"]["offlineExplicit"], False, "Cargo explicit offline posture")
 
     js_validation = load_json(root / "js-catalog" / "validation.json")
     assert_equal(js_validation["result"], "PASS", "JS validation result")
@@ -232,6 +253,30 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     assert_equal(len(third_party), 172, "Cargo third-party rows")
     require(all(package["source"] == CURATED_CARGO_SOURCE for package in third_party), "Cargo closure contains a non-curated third-party source")
 
+    toolchain = load_json(root / "toolchain-closure" / "inventory.json")
+    tool_rows: dict[str, dict[str, Any]] = {}
+    for tool in toolchain["tools"]:
+        require(tool["id"] not in tool_rows, f"duplicate toolchain row ID: {tool['id']!r}")
+        tool_rows[tool["id"]] = tool
+    for tool_id in ("nix-host", "git-host"):
+        source = tool_rows[tool_id]["source"]
+        assert_equal(source["url"], None, f"{tool_id} direct source URL absence")
+        assert_equal(source["hash"], None, f"{tool_id} direct source hash absence")
+    for tool_id in ("git-flake", "rust-toolchain", "node-indexer", "dev-shell"):
+        source = tool_rows[tool_id]["source"]
+        assert_equal(source["direct_archive_url"], None, f"{tool_id} direct archive URL absence")
+        assert_equal(source["direct_archive_hash"], None, f"{tool_id} direct archive hash absence")
+    provenance_blockers = {blocker["id"]: blocker for blocker in toolchain["blockers"]}
+    require("direct-source-provenance" in provenance_blockers, "toolchain direct-source-provenance blocker missing")
+    require("do not substitute" in provenance_blockers["direct-source-provenance"]["detail"], "toolchain provenance blocker does not reject substitute identities")
+    assert_equal(tool_rows["node-minimum"]["effective_executables"]["npm"], NPM_MINIMUM, "minimum npm executable")
+    assert_equal(tool_rows["node-current"]["effective_executables"]["npm"], NPM_CURRENT, "current npm executable")
+    for profile_name, expected_registry in (("loopback", "http://127.0.0.1:48730/"), ("production", "https://js.pkg.re/")):
+        profile = load_json(root / "js-client-policy" / "configs" / profile_name / "profile.json")
+        assert_equal(profile["registry"], expected_registry, f"{profile_name} JS registry")
+        assert_equal(profile["clients"]["npm-minimum"]["binary"], NPM_MINIMUM, f"{profile_name} minimum npm binary")
+        assert_equal(profile["clients"]["npm-current"]["binary"], NPM_CURRENT, f"{profile_name} current npm binary")
+
     signing = load_json(root / "ssh-signing" / "proof.json")
     assert_equal(signing["status"], "PASS", "SSH signing fixture status")
     assert_equal(signing["signing"]["fixtureOnly"], True, "SSH signing fixture-only classification")
@@ -261,12 +306,29 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     assert_equal(live["d1Authorized"], False, "live deployment D1 authorization")
     assert_equal(live["classificationCounts"], {"absent": 5, "blocked": 13, "observed": 24, "proposed": 0}, "live claim classification counts")
     computed_classes = {classification: 0 for classification in ALLOWED_CLASSIFICATIONS}
+    live_claims: dict[str, dict[str, Any]] = {}
     for claim in live["claims"]:
         classification = claim["classification"]
         require(classification in ALLOWED_CLASSIFICATIONS, f"invalid live claim classification: {classification!r}")
+        require(claim["id"] not in live_claims, f"duplicate live claim ID: {claim['id']!r}")
+        live_claims[claim["id"]] = claim
         computed_classes[classification] += 1
     assert_equal(computed_classes, live["classificationCounts"], "computed live claim classifications")
     assert_equal(live["operations"]["secretsRead"], False, "live evidence secret-read boundary")
+    retention = live_claims.get("pages-artifact-retention")
+    require(retention is not None, "Pages artifact-retention claim missing")
+    assert_equal(retention["classification"], "blocked", "Pages artifact-retention classification")
+    assert_equal(retention["values"]["durableRollbackBundle"], False, "Pages durable rollback bundle status")
+    require("one-day retention" in retention["summary"] and "do not constitute durable D7 rollback bundles" in retention["summary"], "Pages retention claim lost one-day/non-durable boundary")
+
+    live_http = read_utf8(root / "live-deployment-network" / "raw" / "public-dns-tls-http-live.txt")
+    rust_default_pages = section_until_level_two(live_http, "## http rust_default_pages", "direct Rust default Pages observation")
+    require("status=301\n" in rust_default_pages, "direct Rust default Pages status is not 301")
+    require("http_version=2\n" in rust_default_pages, "direct Rust default Pages HTTP version is not 2")
+    require("HTTP/2 301 " in rust_default_pages, "direct Rust default Pages wire status is not HTTP/2 301")
+    require("redirect_url=https://rust.pkg.re/origin-health/v1.txt\n" in rust_default_pages, "direct Rust default Pages redirect URL changed")
+    require("location: https://rust.pkg.re/origin-health/v1.txt\n" in rust_default_pages, "direct Rust default Pages Location changed")
+    require("status=200\n" not in rust_default_pages and "HTTP/2 200" not in rust_default_pages, "direct Rust default Pages observation was conflated with a 200 health response")
 
     git_validation = load_json(root / "git-storage" / "validation.json")
     assert_equal(git_validation["status"], "blocked", "Git/storage D0 status")
@@ -296,6 +358,24 @@ def verify_semantics(root: Path, aggregate: Path) -> None:
     require("D1 authorized=false" in aggregate_text, "aggregate lacks explicit D1 authorized=false")
     require("OPERATOR-HANDOFF D0" in aggregate_text, "aggregate lacks OPERATOR-HANDOFF D0")
     require("No secret, credential, or private-key value was read or recorded" in aggregate_text, "aggregate lacks secret/private-key boundary")
+    require("OBSERVED within the enumerated source-derived universe:`2072` unique" in aggregate_text, "aggregate overstates or omits the bounded source-derived route universe")
+    require("BLOCKED universal/access-log completeness:" in aggregate_text, "aggregate lacks universal/access-log blocker")
+    require("Complete access logs were not captured;access-log-only unknown aliases" in aggregate_text, "aggregate lacks uncaptured access-log-only alias boundary")
+    require("universal deployed-path completeness remain unproved" in aggregate_text, "aggregate lacks universal deployed-path blocker")
+    require("ABSENT/BLOCKED interim/early-hints `1xx`:not tested or observed" in aggregate_text, "aggregate overstates interim/early-hints 1xx evidence")
+    require("interim/early-hints `1xx` behavior was neither tested nor observed" in aggregate_text, "aggregate gate register lacks explicit no-1xx blocker")
+    require("direct `https://pkgre.github.io/rust/origin-health/v1.txt`=`HTTP/2 301`" in aggregate_text, "aggregate misstates direct Rust default Pages result")
+    require("provider artifacts expired same day" in aggregate_text and "not mirrored to operator-controlled immutable custody" in aggregate_text, "aggregate lacks non-durable Pages rollback boundary")
+    require("ABSENT direct upstream archive provenance:" in aggregate_text and "do not substitute for uncaptured direct archive URL+hash rows" in aggregate_text, "aggregate lacks direct toolchain provenance gap")
+    require(f"npm={NPM_MINIMUM}" in aggregate_text, "aggregate lacks exact minimum npm executable")
+    require(f"npm={NPM_CURRENT}" in aggregate_text, "aggregate lacks exact current npm executable")
+    require("it does not mutate a protected catalog to import bodies" in aggregate_text, "aggregate implies D0 archive-body import")
+    require("Complete Rust body import is mandatory before D9" in aggregate_text, "aggregate changed Rust body-import phase")
+    require("complete JS body import is mandatory before D12" in aggregate_text, "aggregate changed JS body-import phase")
+    require("D0 inventories this posture and does not edit config" in aggregate_text, "aggregate implies D0 Cargo-config mutation")
+    require("future `pkgre-rust-serve` feature/lock closure and removal of proxy-only `reqwest` closure must be admitted before server implementation" in aggregate_text, "aggregate changed pre-D3 Rust server-closure gate")
+    require("`[net] offline=true` is mandatory for self-host/cold-replay fixtures" in aggregate_text, "aggregate changed pre-D5 Cargo offline gate")
+    require("D0 does not authorize Rain deployment,DNS or GitHub-setting changes,signer installation,catalog-ref advance,body import,Cargo-config edit,or D1 implementation" in aggregate_text, "aggregate lost D0 mutation/phase stop")
     for classification in ("OBSERVED", "PROPOSED", "ABSENT", "BLOCKED"):
         require(classification in aggregate_text, f"aggregate lacks {classification} classification")
     for packet in sorted(EXPECTED_PACKETS):
