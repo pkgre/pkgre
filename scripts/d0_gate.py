@@ -32,6 +32,7 @@ HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 CLOSURE_SET_RE = re.compile(r"^d0-closure-[0-9a-f]{16,64}$")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+PROCEDURAL_PRINCIPAL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._:@-]{0,126}[a-z0-9])?$")
 PATH_COMPONENT_RE = re.compile(r"^[A-Za-z0-9._@+=,-]+$")
 REMOTE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 UTC_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
@@ -49,6 +50,7 @@ RFC3986_PCHAR_RE = re.compile(r"^(?:[A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-F]{2})+$
 STRUCTURED_SOURCE_ENV_KEYS = frozenset({"hash", "outputHash", "outputHashMode", "src", "srcs", "urls"})
 SRI_SHA256_RE = re.compile(r"^sha256-[A-Za-z0-9+/]{43}=$")
 MAX_JSON_BYTES = 1024 * 1024
+MAX_PROCEDURAL_AUTHORITY_BYTES = 256 * 1024
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024
 MAX_PATH_BYTES = 1024
@@ -235,6 +237,9 @@ LATER_GATES = [
 MUTATION_POLICY = {"id": "D0-MUTATION-POLICY-v1", "operatorEmergencyExceptions": [{"id": "GANDI_CREDENTIAL_CONTAINMENT", "scope": "credential-containment-only", "returnedEvidence": "metadata-only", "forbidden": ["token-bytes", "token-hash", "private-key-bytes", "private-key-hash"]}]}
 AGENT_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "credentialValueRead", "credentialMutation", "privateKeyValueRead", "lanSourceEdit", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
 OPERATOR_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "lanSourceEdit", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
+PROCEDURAL_AUTHORITY_SCHEMA = "pkgre-d0-procedural-authority-v1"
+PROCEDURAL_AUTHORITY_ASSURANCE = {"artifactAuthorshipProven": False, "cryptographicIdentityAuthentication": False, "roleAssignmentAuthority": "CALLER_OUT_OF_BAND_PROCEDURE", "verifierAssurance": "CONTENT_BINDING_ORDERING_AND_CONSISTENCY_WITH_EXTERNAL_ASSIGNMENT_ONLY"}
+PROCEDURAL_ROLES = {"operatorReturn": "PROCEDURAL_OPERATOR_RETURNER", "agentVerification": "PROCEDURAL_AGENT_VERIFIER", "proceduralReview": "PROCEDURAL_REVIEWER"}
 SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-semantic-evidence-v1"
 PHASE_AMENDMENT_SCHEMA = "pkgre-d0-phase-amendment-v1"
 SAT_EVIDENCE_BY_HANDOFF = {
@@ -473,6 +478,12 @@ def semantic_identifier(value: Any, label: str) -> str:
     return text
 
 
+def procedural_principal(value: Any, label: str) -> str:
+    text = nonempty(value, label)
+    require(PROCEDURAL_PRINCIPAL_RE.fullmatch(text) is not None, f"{label}: expected canonical lower-case ASCII procedural principal label")
+    return text
+
+
 def hex_digest(value: Any, label: str, algorithm: str = "sha256") -> str:
     text = nonempty(value, label)
     pattern = HEX40_RE if algorithm == "sha1" else HEX64_RE if algorithm == "sha256" else None
@@ -619,6 +630,78 @@ def load_regular(path: Path, label: str, max_bytes: int) -> bytes:
     raw = path.read_bytes()
     require(len(raw) == metadata.st_size, f"{label}: file length changed while reading")
     return raw
+
+
+def load_external_gate_file(ops: GitOps, repo_root: Path, path: Path, label: str, max_bytes: int) -> bytes:
+    repo = repo_root.resolve()
+    direct_git = repo / ".git"
+    gate_dir = direct_git / "pkgre-gates"
+    try:
+        git_metadata = direct_git.lstat()
+        gate_metadata = gate_dir.lstat()
+    except OSError as error:
+        raise GateVerificationError(f"{label}: external gate directory is unavailable: {error}") from error
+    require(stat.S_ISDIR(git_metadata.st_mode) and not stat.S_ISLNK(git_metadata.st_mode), f"{label}: .git must be a direct non-symlink directory")
+    require(stat.S_ISDIR(gate_metadata.st_mode) and not stat.S_ISLNK(gate_metadata.st_mode), f"{label}: external gate directory must be a direct non-symlink directory")
+    current_uid = os.geteuid()
+    for metadata, metadata_label in ((git_metadata, ".git directory"), (gate_metadata, "external gate directory")):
+        require(metadata.st_uid == current_uid, f"{label}: {metadata_label} must be owned by the verifier user")
+        require(metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0, f"{label}: {metadata_label} must not be group- or world-writable")
+    git_dir = Path(ops.text(repo, "rev-parse", "--absolute-git-dir"))
+    require(git_dir.resolve() == direct_git.resolve(), f"{label}: linked or indirect Git directory is forbidden")
+    candidate = path if path.is_absolute() else Path.cwd() / path
+    candidate = Path(os.path.abspath(candidate))
+    require(candidate.parent == gate_dir, f"{label}: file must be directly under the external .git/pkgre-gates directory")
+    name = safe_path(candidate.name, f"{label} file name")
+    require("/" not in name, f"{label}: file name must be a single path component")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    git_fd = -1
+    gate_fd = -1
+    file_fd = -1
+    try:
+        git_fd = os.open(direct_git, directory_flags)
+        opened_git = os.fstat(git_fd)
+        require((opened_git.st_dev, opened_git.st_ino) == (git_metadata.st_dev, git_metadata.st_ino), f"{label}: .git directory changed before opening")
+        gate_fd = os.open("pkgre-gates", directory_flags, dir_fd=git_fd)
+        opened_gate = os.fstat(gate_fd)
+        require((opened_gate.st_dev, opened_gate.st_ino) == (gate_metadata.st_dev, gate_metadata.st_ino), f"{label}: external gate directory changed before opening")
+        file_fd = os.open(name, file_flags, dir_fd=gate_fd)
+        before = os.fstat(file_fd)
+        require(stat.S_ISREG(before.st_mode), f"{label}: expected regular non-symlink file")
+        require(before.st_uid == current_uid, f"{label}: file must be owned by the verifier user")
+        require(before.st_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0, f"{label}: file must not be group- or world-writable")
+        require(before.st_nlink == 1, f"{label}: hard-linked external gate file is forbidden")
+        require(before.st_size <= max_bytes, f"{label}: file exceeds {max_bytes} bytes")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(file_fd, min(remaining, 64 * 1024))
+            require(chunk != b"", f"{label}: file length changed while reading")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        require(os.read(file_fd, 1) == b"", f"{label}: file grew while reading")
+        after = os.fstat(file_fd)
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid", "st_size", "st_mtime_ns", "st_ctime_ns")
+        require(all(getattr(before, field) == getattr(after, field) for field in stable_fields), f"{label}: file metadata changed while reading")
+        named_after = os.stat(name, dir_fd=gate_fd, follow_symlinks=False)
+        require((named_after.st_dev, named_after.st_ino) == (after.st_dev, after.st_ino), f"{label}: external gate file name changed while reading")
+        gate_after = os.stat("pkgre-gates", dir_fd=git_fd, follow_symlinks=False)
+        git_after = direct_git.lstat()
+        require((gate_after.st_dev, gate_after.st_ino) == (opened_gate.st_dev, opened_gate.st_ino), f"{label}: external gate directory name changed while reading")
+        require((git_after.st_dev, git_after.st_ino) == (opened_git.st_dev, opened_git.st_ino), f"{label}: .git directory name changed while reading")
+        raw = b"".join(chunks)
+        require(len(raw) == before.st_size, f"{label}: file length changed while reading")
+        return raw
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot safely open external gate file: {error}") from error
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if gate_fd >= 0:
+            os.close(gate_fd)
+        if git_fd >= 0:
+            os.close(git_fd)
 
 
 def safe_path(value: Any, label: str, prefix: str | None = None) -> str:
@@ -880,9 +963,71 @@ def validate_content_reference(raw: Any, label: str, prefix: str | None = None) 
 
 
 def validate_attestation_reference_shape(raw: dict[str, Any], label: str) -> None:
-    exact_keys(raw, {"operatorReturn", "agentVerification", "independentReview"}, label)
-    for key in ("operatorReturn", "agentVerification", "independentReview"):
+    exact_keys(raw, {"operatorReturn", "agentVerification", "proceduralReview"}, label)
+    for key in ("operatorReturn", "agentVerification", "proceduralReview"):
         validate_content_reference(raw[key], f"{label}.{key}")
+
+
+def verify_procedural_authority(ops: GitOps, repo: Path, state_raw: bytes, closure: dict[str, Any], items: dict[str, dict[str, Any]], authority_path: Path) -> dict[str, Any]:
+    closure_id = nonempty(closure["id"], "procedural authority closure ID")
+    expected_name = f"d0-procedural-authority-{closure_id}.json"
+    require(authority_path.name == expected_name, f"procedural authority: file name must be {expected_name!r}")
+    raw = load_external_gate_file(ops, repo, authority_path, "procedural authority", MAX_PROCEDURAL_AUTHORITY_BYTES)
+    document = obj(parse_json(raw, str(authority_path)), "procedural authority")
+    exact_keys(document, {"schema", "closureSet", "assurance", "handoffs"}, "procedural authority")
+    require(document["schema"] == PROCEDURAL_AUTHORITY_SCHEMA, "procedural authority: wrong schema")
+    require(document["assurance"] == PROCEDURAL_AUTHORITY_ASSURANCE, "procedural authority: assurance limitations must exactly disclaim identity authentication and artifact authorship")
+    closure_state_commit = ops.text(repo, "rev-parse", "HEAD")
+    expected_closure = {
+        "id": closure_id,
+        "closureEvidenceCommit": closure["closureEvidenceCommit"],
+        "evidenceTreeSha256": closure["evidenceTreeSha256"],
+        "closureStateCommit": closure_state_commit,
+        "gateStateSha256": sha256(state_raw),
+    }
+    closure_binding = obj(document["closureSet"], "procedural authority closure binding")
+    exact_keys(closure_binding, set(expected_closure), "procedural authority closure binding")
+    require(closure_binding == expected_closure, "procedural authority: closure ID, commit, state, or tree binding mismatch")
+    rows = arr(document["handoffs"], "procedural authority handoffs")
+    expected_handoff_ids = [handoff_id for handoff_id in HANDOFFS if items[handoff_id]["evidence"] is not None]
+    require([obj(row, f"procedural authority handoffs[{index}]").get("handoffId") for index, row in enumerate(rows)] == expected_handoff_ids, "procedural authority: handoff rows must exactly cover completed handoffs in canonical order")
+    assignments_by_handoff: dict[str, dict[str, dict[str, str]]] = {}
+    principal_roles: dict[str, str] = {}
+    for index, row_raw in enumerate(rows):
+        row = obj(row_raw, f"procedural authority handoffs[{index}]")
+        exact_keys(row, {"handoffId", "assignments"}, f"procedural authority handoffs[{index}]")
+        handoff_id = row["handoffId"]
+        require(handoff_id in HANDOFFS and handoff_id not in assignments_by_handoff, f"procedural authority: unknown or duplicate handoff {handoff_id!r}")
+        evidence_reference = obj(items[handoff_id]["evidence"], f"{handoff_id} evidence reference")
+        assignments = obj(row["assignments"], f"procedural authority {handoff_id} assignments")
+        exact_keys(assignments, set(PROCEDURAL_ROLES), f"procedural authority {handoff_id} assignments")
+        verified_assignments: dict[str, dict[str, str]] = {}
+        handoff_principals: set[str] = set()
+        for artifact_kind in ("operatorReturn", "agentVerification", "proceduralReview"):
+            label = f"procedural authority {handoff_id}.{artifact_kind}"
+            assignment = obj(assignments[artifact_kind], label)
+            exact_keys(assignment, {"artifact", "principalLabel", "role"}, label)
+            require(assignment["role"] == PROCEDURAL_ROLES[artifact_kind], f"{label}: wrong procedural role")
+            principal = procedural_principal(assignment["principalLabel"], f"{label}.principalLabel")
+            require(principal not in handoff_principals, f"procedural authority {handoff_id}: procedural roles must have pairwise-distinct principal labels")
+            handoff_principals.add(principal)
+            previous_role = principal_roles.setdefault(principal, assignment["role"])
+            require(previous_role == assignment["role"], f"procedural authority: principal label {principal!r} is assigned conflicting roles across handoffs")
+            artifact = validate_content_reference(assignment["artifact"], f"{label}.artifact", f"evidence/d0-closure/{closure_id}/{handoff_id}/")
+            expected_artifact = validate_content_reference(evidence_reference[artifact_kind], f"{handoff_id} evidence reference.{artifact_kind}")
+            require(artifact == expected_artifact, f"{label}: artifact path or digest differs from closure state")
+            verified_assignments[artifact_kind] = {"principalLabel": principal, "role": assignment["role"]}
+        assignments_by_handoff[handoff_id] = verified_assignments
+    return {
+        "assignments": assignments_by_handoff,
+        "report": {
+            **PROCEDURAL_AUTHORITY_ASSURANCE,
+            "externalFile": expected_name,
+            "required": True,
+            "sha256": sha256(raw),
+            "contentBindingVerified": True,
+        },
+    }
 
 
 def verify_reference(ops: GitOps, repo: Path, evidence_commit: str, raw: Any, label: str, prefix: str, max_bytes: int = MAX_ARTIFACT_BYTES) -> tuple[dict[str, str], bytes]:
@@ -937,18 +1082,25 @@ def validate_finding_result(raw: Any, expected_finding: str, references: dict[st
     return result
 
 
-def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closure_id: str, aggregate_sha: str, handoff_id: str, raw_reference: Any, verification_time: datetime) -> dict[str, Any]:
+def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closure_id: str, aggregate_sha: str, handoff_id: str, raw_reference: Any, procedural_assignments: dict[str, dict[str, str]], verification_time: datetime) -> dict[str, Any]:
     evidence_reference = obj(raw_reference, f"{handoff_id} evidence reference")
     validate_attestation_reference_shape(evidence_reference, f"{handoff_id} evidence reference")
     prefix = f"evidence/d0-closure/{closure_id}/{handoff_id}/"
     operator_ref, operator_raw = verify_reference(ops, repo, evidence_commit, evidence_reference["operatorReturn"], f"{handoff_id} operator return", prefix, MAX_JSON_BYTES)
     agent_ref, agent_raw = verify_reference(ops, repo, evidence_commit, evidence_reference["agentVerification"], f"{handoff_id} agent verification", prefix, MAX_JSON_BYTES)
-    review_ref, review_raw = verify_reference(ops, repo, evidence_commit, evidence_reference["independentReview"], f"{handoff_id} independent review", prefix, MAX_JSON_BYTES)
+    review_ref, review_raw = verify_reference(ops, repo, evidence_commit, evidence_reference["proceduralReview"], f"{handoff_id} procedural review", prefix, MAX_JSON_BYTES)
     require(len({operator_ref["path"], agent_ref["path"], review_ref["path"]}) == 3, f"{handoff_id}: attestation paths must be distinct")
+    require(set(procedural_assignments) == set(PROCEDURAL_ROLES), f"{handoff_id}: procedural authority assignment coverage mismatch")
+    for artifact_kind, expected_role in PROCEDURAL_ROLES.items():
+        assignment = obj(procedural_assignments[artifact_kind], f"{handoff_id} procedural assignment.{artifact_kind}")
+        exact_keys(assignment, {"principalLabel", "role"}, f"{handoff_id} procedural assignment.{artifact_kind}")
+        require(assignment["role"] == expected_role, f"{handoff_id}: procedural authority role mismatch for {artifact_kind}")
+        procedural_principal(assignment["principalLabel"], f"{handoff_id} procedural assignment.{artifact_kind}.principalLabel")
     operator = obj(parse_json(operator_raw, operator_ref["path"]), f"{handoff_id} operator return")
     exact_keys(operator, {"schema", "closureSetId", "handoffId", "aggregateSha256", "returnedBy", "returnedAt", "artifactRefs", "decisionRefs", "findingResults"}, f"{handoff_id} operator return")
     require(operator["schema"] == "pkgre-d0-operator-return-v1" and operator["closureSetId"] == closure_id and operator["handoffId"] == handoff_id and operator["aggregateSha256"] == aggregate_sha, f"{handoff_id}: operator-return binding mismatch")
-    nonempty(operator["returnedBy"], f"{handoff_id}.returnedBy")
+    returned_by = procedural_principal(operator["returnedBy"], f"{handoff_id}.returnedBy")
+    require(returned_by == procedural_assignments["operatorReturn"]["principalLabel"], f"{handoff_id}: operator-return label disagrees with external procedural assignment")
     returned_at = parse_utc(operator["returnedAt"], f"{handoff_id}.returnedAt")
     artifact_refs = validate_and_load_refs(ops, repo, evidence_commit, operator["artifactRefs"], f"{handoff_id} artifactRefs", prefix)
     decision_refs = validate_and_load_refs(ops, repo, evidence_commit, operator["decisionRefs"], f"{handoff_id} decisionRefs", prefix)
@@ -974,21 +1126,23 @@ def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closu
     agent = obj(parse_json(agent_raw, agent_ref["path"]), f"{handoff_id} agent verification")
     exact_keys(agent, {"schema", "closureSetId", "handoffId", "aggregateSha256", "operatorReturnSha256", "actor", "completedAt", "result"}, f"{handoff_id} agent verification")
     require(agent == {"schema": "pkgre-d0-agent-verification-v1", "closureSetId": closure_id, "handoffId": handoff_id, "aggregateSha256": aggregate_sha, "operatorReturnSha256": operator_ref["sha256"], "actor": agent.get("actor"), "completedAt": agent.get("completedAt"), "result": "VERIFIED"}, f"{handoff_id}: agent-verification binding/result mismatch")
-    actor = nonempty(agent["actor"], f"{handoff_id} agent actor")
+    actor = procedural_principal(agent["actor"], f"{handoff_id} agent actor")
+    require(actor == procedural_assignments["agentVerification"]["principalLabel"], f"{handoff_id}: agent-verification label disagrees with external procedural assignment")
     completed_at = parse_utc(agent["completedAt"], f"{handoff_id}.completedAt")
-    review = obj(parse_json(review_raw, review_ref["path"]), f"{handoff_id} independent review")
-    exact_keys(review, {"schema", "closureSetId", "handoffId", "aggregateSha256", "operatorReturnSha256", "agentVerificationSha256", "reviewer", "reviewedAt", "result"}, f"{handoff_id} independent review")
-    require(review == {"schema": "pkgre-d0-independent-review-v1", "closureSetId": closure_id, "handoffId": handoff_id, "aggregateSha256": aggregate_sha, "operatorReturnSha256": operator_ref["sha256"], "agentVerificationSha256": agent_ref["sha256"], "reviewer": review.get("reviewer"), "reviewedAt": review.get("reviewedAt"), "result": "ACCEPTED"}, f"{handoff_id}: independent-review binding/result mismatch")
-    reviewer = nonempty(review["reviewer"], f"{handoff_id} reviewer")
+    review = obj(parse_json(review_raw, review_ref["path"]), f"{handoff_id} procedural review")
+    exact_keys(review, {"schema", "closureSetId", "handoffId", "aggregateSha256", "operatorReturnSha256", "agentVerificationSha256", "reviewer", "reviewedAt", "result"}, f"{handoff_id} procedural review")
+    require(review == {"schema": "pkgre-d0-procedural-review-v1", "closureSetId": closure_id, "handoffId": handoff_id, "aggregateSha256": aggregate_sha, "operatorReturnSha256": operator_ref["sha256"], "agentVerificationSha256": agent_ref["sha256"], "reviewer": review.get("reviewer"), "reviewedAt": review.get("reviewedAt"), "result": "ACCEPTED"}, f"{handoff_id}: procedural-review binding/result mismatch")
+    reviewer = procedural_principal(review["reviewer"], f"{handoff_id} procedural reviewer")
+    require(reviewer == procedural_assignments["proceduralReview"]["principalLabel"], f"{handoff_id}: procedural-review label disagrees with external procedural assignment")
     reviewed_at = parse_utc(review["reviewedAt"], f"{handoff_id}.reviewedAt")
-    require(actor != reviewer, f"{handoff_id}: agent and independent reviewer must be distinct")
+    require(len({returned_by, actor, reviewer}) == 3, f"{handoff_id}: externally assigned procedural principals must be pairwise distinct")
     require(returned_at <= completed_at <= reviewed_at, f"{handoff_id}: invalid attestation chronology")
-    for when, name in ((returned_at, "operator return"), (completed_at, "agent verification"), (reviewed_at, "independent review")):
+    for when, name in ((returned_at, "operator return"), (completed_at, "agent verification"), (reviewed_at, "procedural review")):
         require(when <= verification_time + timedelta(seconds=D0_EVIDENCE_FUTURE_SKEW_SECONDS), f"{handoff_id}: {name} timestamp is too far in the future at verification time")
     for result in results.values():
         result["_operatorReturnedBy"] = operator["returnedBy"]
         result["_operatorReturnedAt"] = operator["returnedAt"]
-    return {"reference": copy.deepcopy(evidence_reference), "results": results, "operator": operator, "actor": actor, "reviewer": reviewer}
+    return {"reference": copy.deepcopy(evidence_reference), "results": results, "operator": operator, "proceduralPrincipalLabels": {"operatorReturn": returned_by, "agentVerification": actor, "proceduralReview": reviewer}}
 
 
 def evidence_ids(result: dict[str, Any], kind: str) -> list[str]:
@@ -4255,13 +4409,15 @@ def validate_b22(disposition: str, mode: str, results: list[dict[str, Any]]) -> 
         raise GateVerificationError("D0-B22: only original proof or exact policy waiver is allowed")
 
 
-def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, Any], findings: dict[str, dict[str, Any]], items: dict[str, dict[str, Any]], config: GateConfig, verification_time: datetime) -> dict[str, Any]:
+def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, Any], findings: dict[str, dict[str, Any]], items: dict[str, dict[str, Any]], procedural_authority_path: Path | None, config: GateConfig, verification_time: datetime) -> dict[str, Any]:
     closure = state["closureSet"]
     handoff_evidence: dict[str, dict[str, Any]] = {}
+    procedural_authority_report = {**PROCEDURAL_AUTHORITY_ASSURANCE, "externalFile": None, "required": False, "sha256": None, "contentBindingVerified": False}
     evidence_commit: str | None = None
     closure_id: str | None = None
     history: dict[str, Any] | None = None
     if closure is None:
+        require(procedural_authority_path is None, "procedural authority input is forbidden without a closure set")
         require(all(item["evidence"] is None for item in items.values()), "gate state: handoff evidence requires a closure set")
     else:
         closure = obj(closure, "closure set")
@@ -4276,9 +4432,12 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         computed_tree_sha, _tree_entries = committed_evidence_tree(ops, repo, evidence_commit)
         require(evidence_tree_sha == computed_tree_sha, "closure set: committed evidence-tree SHA-256 mismatch")
         require(ops.blob(repo, current_head, GATE_STATE_PATH, "closure gate state", MAX_JSON_BYTES) == state_raw, "working gate state is not the exact closure-state commit blob")
+        require(procedural_authority_path is not None, "closure evidence requires an external procedural-authority assertion")
+        procedural_authority = verify_procedural_authority(ops, repo, state_raw, closure, items, procedural_authority_path)
+        procedural_authority_report = procedural_authority["report"]
         for handoff_id, item in items.items():
             if item["evidence"] is not None:
-                verified = verify_handoff_evidence(ops, repo, evidence_commit, closure_id, config.historical_aggregate_sha256, handoff_id, item["evidence"], verification_time)
+                verified = verify_handoff_evidence(ops, repo, evidence_commit, closure_id, config.historical_aggregate_sha256, handoff_id, item["evidence"], procedural_authority["assignments"][handoff_id], verification_time)
                 for result in verified["results"].values():
                     result["_closureSetId"] = closure_id
                 handoff_evidence[handoff_id] = verified
@@ -4337,7 +4496,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
     complete_handoffs = sorted(handoff_evidence)
     handoff_complete = set(complete_handoffs) == set(HANDOFFS)
     d0_pass = not open_findings and handoff_complete
-    return {"d0Pass": d0_pass, "openFindings": sorted(open_findings), "completeHandoffs": complete_handoffs, "handoffComplete": handoff_complete, "waivedFindings": sorted(waived_findings)}
+    return {"d0Pass": d0_pass, "openFindings": sorted(open_findings), "completeHandoffs": complete_handoffs, "handoffComplete": handoff_complete, "waivedFindings": sorted(waived_findings), "proceduralAuthority": procedural_authority_report}
 
 
 def verify_repository_anchor(ops: GitOps, repo: Path, aggregate_path: Path, state_path: Path, config: GateConfig) -> tuple[bytes, bytes, dict[str, Any]]:
@@ -4637,13 +4796,13 @@ def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closur
     require(ops.blob(repo_root, closure_commit, GATE_STATE_PATH, "PRE_D1 closure state", MAX_JSON_BYTES) == state_raw, "PRE_D1 closure commit does not contain the verified gate state")
 
 
-def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt_path: Path | None = None, now: datetime | None = None, config: GateConfig = PRODUCTION_CONFIG, git_runner: GitRunner = default_git_runner, environment: Mapping[str, str] | None = None) -> dict[str, Any]:
+def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt_path: Path | None = None, now: datetime | None = None, config: GateConfig = PRODUCTION_CONFIG, git_runner: GitRunner = default_git_runner, environment: Mapping[str, str] | None = None, procedural_authority_path: Path | None = None) -> dict[str, Any]:
     repo = repo_root.resolve()
     current_time = normalize_verification_time(now)
     ops = GitOps(git_runner, environment)
     aggregate_raw, state_raw, state = verify_repository_anchor(ops, repo, aggregate_path, state_path, config)
     findings, items = validate_state_shape(state, aggregate_raw, config)
-    closure_result = verify_closure(ops, repo, state_raw, state, findings, items, config, current_time)
+    closure_result = verify_closure(ops, repo, state_raw, state, findings, items, procedural_authority_path, config, current_time)
     d0_pass = closure_result["d0Pass"]
     pre_d1_pass = False
     if receipt_path is not None:
@@ -4666,6 +4825,7 @@ def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt
         "handoffComplete": closure_result["handoffComplete"],
         "completeHandoffs": closure_result["completeHandoffs"],
         "waivedFindings": closure_result["waivedFindings"],
+        "proceduralAuthority": closure_result["proceduralAuthority"],
         "mutationAuthority": {"agent": agent_mutation, "operatorRollout": operator_mutation, "operatorEmergencyExceptions": MUTATION_POLICY["operatorEmergencyExceptions"]},
         "laterGateMutationAuthority": later_authority,
     }

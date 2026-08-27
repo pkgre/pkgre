@@ -720,12 +720,333 @@ class GateCoreTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-gate-test-")
         return temporary, RepositoryFixture(Path(temporary.name))
 
+    def proceduralClosureFixture(self, repository_labels: dict[str, str] | None = None, authority_labels: dict[str, str] | None = None) -> tuple[tempfile.TemporaryDirectory[str], RepositoryFixture, dict[str, object]]:
+        temporary, fixture = self.temporary_fixture()
+        repository_labels = repository_labels or {"operatorReturn": "operator.primary", "agentVerification": "agent.verifier", "proceduralReview": "reviewer.external"}
+        authority_labels = authority_labels or dict(repository_labels)
+        closure_id = "d0-closure-0123456789abcdef"
+        handoff_id = "OP-D0-01"
+        prefix = f"evidence/d0-closure/{closure_id}/{handoff_id}"
+        proof_ref = write_canonical_json(fixture.repository, f"{prefix}/credential-policy.json", {"fixture": "procedural-authority"})
+        operator = {
+            "schema": "pkgre-d0-operator-return-v1",
+            "closureSetId": closure_id,
+            "handoffId": handoff_id,
+            "aggregateSha256": "a" * 64,
+            "returnedBy": repository_labels["operatorReturn"],
+            "returnedAt": "2026-08-26T00:10:00Z",
+            "artifactRefs": [{"id": "credential-policy", **proof_ref}],
+            "decisionRefs": [],
+            "findingResults": [{"findingId": "D0-B01", "policyId": "D0-B01-v1", "disposition": "OPEN", "mode": "CONTRIBUTION_ONLY", "evidence": [{"kind": "credential-policy", "refId": "credential-policy"}], "claims": {}}],
+        }
+        operator_ref = write_canonical_json(fixture.repository, f"{prefix}/operator-return.json", operator)
+        agent = {"schema": "pkgre-d0-agent-verification-v1", "closureSetId": closure_id, "handoffId": handoff_id, "aggregateSha256": "a" * 64, "operatorReturnSha256": operator_ref["sha256"], "actor": repository_labels["agentVerification"], "completedAt": "2026-08-26T00:20:00Z", "result": "VERIFIED"}
+        agent_ref = write_canonical_json(fixture.repository, f"{prefix}/agent-verification.json", agent)
+        review = {"schema": "pkgre-d0-procedural-review-v1", "closureSetId": closure_id, "handoffId": handoff_id, "aggregateSha256": "a" * 64, "operatorReturnSha256": operator_ref["sha256"], "agentVerificationSha256": agent_ref["sha256"], "reviewer": repository_labels["proceduralReview"], "reviewedAt": "2026-08-26T00:30:00Z", "result": "ACCEPTED"}
+        review_ref = write_canonical_json(fixture.repository, f"{prefix}/procedural-review.json", review)
+        evidence_commit = fixture.commit("procedural evidence")
+        evidence_tree_sha256, _entries = GATE.committed_evidence_tree(fixture.ops, fixture.repository, evidence_commit)
+        config = GATE.GateConfig(historical_aggregate_commit=fixture.base, historical_aggregate_sha256="a" * 64, repositories=(fixture.expected,))
+        state = GATE.initial_gate_state(config)
+        closure = {"id": closure_id, "closureEvidenceCommit": evidence_commit, "evidenceTreeSha256": evidence_tree_sha256}
+        state["closureSet"] = closure
+        reference = {"operatorReturn": operator_ref, "agentVerification": agent_ref, "proceduralReview": review_ref}
+        for item in state["handoff"]["items"]:
+            if item["id"] == handoff_id:
+                item["evidence"] = copy.deepcopy(reference)
+        state_raw = GATE.canonical_json(state)
+        write(fixture.repository, GATE.GATE_STATE_PATH, state_raw)
+        closure_state_commit = fixture.commit("procedural closure state")
+        findings = GATE.indexed(state["findings"], "id", "fixture findings")
+        items = GATE.indexed(state["handoff"]["items"], "id", "fixture handoffs")
+        authority = {
+            "schema": GATE.PROCEDURAL_AUTHORITY_SCHEMA,
+            "closureSet": {"id": closure_id, "closureEvidenceCommit": evidence_commit, "evidenceTreeSha256": evidence_tree_sha256, "closureStateCommit": closure_state_commit, "gateStateSha256": GATE.sha256(state_raw)},
+            "assurance": copy.deepcopy(GATE.PROCEDURAL_AUTHORITY_ASSURANCE),
+            "handoffs": [{"handoffId": handoff_id, "assignments": {kind: {"artifact": copy.deepcopy(reference[kind]), "principalLabel": authority_labels[kind], "role": GATE.PROCEDURAL_ROLES[kind]} for kind in ("operatorReturn", "agentVerification", "proceduralReview")}}],
+        }
+        gate_dir = fixture.repository / ".git" / "pkgre-gates"
+        gate_dir.mkdir(mode=0o700)
+        authority_path = gate_dir / f"d0-procedural-authority-{closure_id}.json"
+        authority_path.write_bytes(GATE.canonical_json(authority))
+        return temporary, fixture, {"authority": authority, "authorityPath": authority_path, "closure": closure, "config": config, "evidenceCommit": evidence_commit, "findings": findings, "items": items, "reference": reference, "state": state, "stateRaw": state_raw, "verificationTime": GATE.parse_utc("2026-08-26T00:31:00Z", "fixture verification time")}
+
+    def writeProceduralAuthority(self, data: dict[str, object], document: object) -> None:
+        data["authorityPath"].write_bytes(GATE.canonical_json(document))
+
+    def verifyProceduralAuthority(self, fixture: RepositoryFixture, data: dict[str, object], *, path: Path | None = None, items: dict[str, dict[str, object]] | None = None) -> dict[str, object]:
+        return GATE.verify_procedural_authority(fixture.ops, fixture.repository, data["stateRaw"], data["closure"], data["items"] if items is None else items, data["authorityPath"] if path is None else path)
+
+    def verifyProceduralHandoff(self, fixture: RepositoryFixture, data: dict[str, object], authority: dict[str, object]) -> dict[str, object]:
+        return GATE.verify_handoff_evidence(fixture.ops, fixture.repository, data["evidenceCommit"], data["closure"]["id"], "a" * 64, "OP-D0-01", data["items"]["OP-D0-01"]["evidence"], authority["assignments"]["OP-D0-01"], data["verificationTime"])
+
+    def secondProceduralHandoff(self, data: dict[str, object]) -> tuple[dict[str, dict[str, object]], dict[str, object]]:
+        items = copy.deepcopy(data["items"])
+        authority = copy.deepcopy(data["authority"])
+        reference = {
+            kind: {"path": value["path"].replace("/OP-D0-01/", "/OP-D0-02/"), "sha256": value["sha256"]}
+            for kind, value in data["reference"].items()
+        }
+        items["OP-D0-02"]["evidence"] = reference
+        assignments = copy.deepcopy(authority["handoffs"][0]["assignments"])
+        for kind in assignments:
+            assignments[kind]["artifact"] = copy.deepcopy(reference[kind])
+        authority["handoffs"].append({"handoffId": "OP-D0-02", "assignments": assignments})
+        return items, authority
+
     def finish_linear_history(self, fixture: RepositoryFixture) -> tuple[str, str]:
         write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
         evidence = fixture.commit("evidence")
         write(fixture.repository, GATE.GATE_STATE_PATH, b"{}\n")
         state = fixture.commit("state")
         return evidence, state
+
+    def test_procedural_authority_accepts_exact_external_binding_and_repository_labels(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            authority = self.verifyProceduralAuthority(fixture, data)
+            self.assertEqual(authority["report"], {
+                "artifactAuthorshipProven": False,
+                "contentBindingVerified": True,
+                "cryptographicIdentityAuthentication": False,
+                "externalFile": data["authorityPath"].name,
+                "required": True,
+                "roleAssignmentAuthority": "CALLER_OUT_OF_BAND_PROCEDURE",
+                "sha256": GATE.sha256(data["authorityPath"].read_bytes()),
+                "verifierAssurance": "CONTENT_BINDING_ORDERING_AND_CONSISTENCY_WITH_EXTERNAL_ASSIGNMENT_ONLY",
+            })
+            handoff = self.verifyProceduralHandoff(fixture, data, authority)
+            self.assertEqual(handoff["proceduralPrincipalLabels"], {"operatorReturn": "operator.primary", "agentVerification": "agent.verifier", "proceduralReview": "reviewer.external"})
+            closure = GATE.verify_closure(fixture.ops, fixture.repository, data["stateRaw"], data["state"], data["findings"], data["items"], data["authorityPath"], data["config"], data["verificationTime"])
+            self.assertEqual(closure["completeHandoffs"], ["OP-D0-01"])
+            self.assertFalse(closure["d0Pass"])
+            self.assertEqual(closure["proceduralAuthority"], authority["report"])
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_is_required_exactly_when_closure_exists(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            self.assertRejected(lambda: GATE.verify_closure(fixture.ops, fixture.repository, data["stateRaw"], data["state"], data["findings"], data["items"], None, data["config"], data["verificationTime"]), "requires an external procedural-authority assertion")
+            initial = GATE.initial_gate_state(data["config"])
+            initial_findings = GATE.indexed(initial["findings"], "id", "initial findings")
+            initial_items = GATE.indexed(initial["handoff"]["items"], "id", "initial handoffs")
+            initial_raw = GATE.canonical_json(initial)
+            result = GATE.verify_closure(fixture.ops, fixture.repository, initial_raw, initial, initial_findings, initial_items, None, data["config"], data["verificationTime"])
+            self.assertEqual(result["proceduralAuthority"], {**GATE.PROCEDURAL_AUTHORITY_ASSURANCE, "contentBindingVerified": False, "externalFile": None, "required": False, "sha256": None})
+            self.assertRejected(lambda: GATE.verify_closure(fixture.ops, fixture.repository, initial_raw, initial, initial_findings, initial_items, data["authorityPath"], data["config"], data["verificationTime"]), "forbidden without a closure set")
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_rejects_every_stale_closure_binding(self) -> None:
+        cases = (
+            ("closure-id", "id", "d0-closure-ffffffffffffffff"),
+            ("evidence-commit", "closureEvidenceCommit", "0" * 40),
+            ("evidence-tree", "evidenceTreeSha256", "0" * 64),
+            ("closure-state-commit", "closureStateCommit", "0" * 40),
+            ("gate-state", "gateStateSha256", "0" * 64),
+        )
+        for name, field, value in cases:
+            with self.subTest(name=name):
+                temporary, fixture, data = self.proceduralClosureFixture()
+                try:
+                    authority = copy.deepcopy(data["authority"])
+                    authority["closureSet"][field] = value
+                    self.writeProceduralAuthority(data, authority)
+                    self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), "closure ID, commit, state, or tree binding mismatch")
+                finally:
+                    temporary.cleanup()
+
+    def test_procedural_authority_rejects_artifact_or_assignment_substitution(self) -> None:
+        mutations = []
+        for field, value in (("path", "evidence/d0-closure/d0-closure-0123456789abcdef/OP-D0-01/operator-return-copy.json"), ("sha256", "0" * 64)):
+            mutations.append((f"artifact-{field}", lambda authority, field=field, value=value: authority["handoffs"][0]["assignments"]["operatorReturn"]["artifact"].__setitem__(field, value), "artifact path or digest differs"))
+        mutations.extend((
+            ("missing-assignment", lambda authority: authority["handoffs"][0]["assignments"].pop("proceduralReview"), "object-key mismatch"),
+            ("extra-assignment", lambda authority: authority["handoffs"][0]["assignments"].__setitem__("unexpected", {}), "object-key mismatch"),
+            ("missing-assignment-field", lambda authority: authority["handoffs"][0]["assignments"]["agentVerification"].pop("role"), "object-key mismatch"),
+            ("extra-assignment-field", lambda authority: authority["handoffs"][0]["assignments"]["agentVerification"].__setitem__("authenticated", True), "object-key mismatch"),
+            ("wrong-role", lambda authority: authority["handoffs"][0]["assignments"]["agentVerification"].__setitem__("role", "PROCEDURAL_OPERATOR_RETURNER"), "wrong procedural role"),
+        ))
+        for name, mutate, expected in mutations:
+            with self.subTest(name=name):
+                temporary, fixture, data = self.proceduralClosureFixture()
+                try:
+                    authority = copy.deepcopy(data["authority"])
+                    mutate(authority)
+                    self.writeProceduralAuthority(data, authority)
+                    self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), expected)
+                finally:
+                    temporary.cleanup()
+        old_reference = {"operatorReturn": {"path": "a", "sha256": "0" * 64}, "agentVerification": {"path": "b", "sha256": "0" * 64}, "independentReview": {"path": "c", "sha256": "0" * 64}}
+        self.assertRejected(lambda: GATE.validate_attestation_reference_shape(old_reference, "old reference"), "object-key mismatch")
+
+    def test_procedural_authority_rejects_noncanonical_or_confusable_principal_labels(self) -> None:
+        for location in ("authority", "repository"):
+            for label in ("Operator.primary", "operator.prіmary"):
+                with self.subTest(location=location, label=label):
+                    defaults = {"operatorReturn": "operator.primary", "agentVerification": "agent.verifier", "proceduralReview": "reviewer.external"}
+                    repository_labels = dict(defaults)
+                    authority_labels = dict(defaults)
+                    (authority_labels if location == "authority" else repository_labels)["operatorReturn"] = label
+                    temporary, fixture, data = self.proceduralClosureFixture(repository_labels, authority_labels)
+                    try:
+                        if location == "authority":
+                            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), "canonical lower-case ASCII procedural principal label")
+                        else:
+                            authority = self.verifyProceduralAuthority(fixture, data)
+                            self.assertRejected(lambda: self.verifyProceduralHandoff(fixture, data, authority), "canonical lower-case ASCII procedural principal label")
+                    finally:
+                        temporary.cleanup()
+
+    def test_procedural_authority_rejects_repository_label_disagreement_and_role_reuse(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture(authority_labels={"operatorReturn": "operator.other", "agentVerification": "agent.verifier", "proceduralReview": "reviewer.external"})
+        try:
+            authority = self.verifyProceduralAuthority(fixture, data)
+            self.assertRejected(lambda: self.verifyProceduralHandoff(fixture, data, authority), "operator-return label disagrees with external procedural assignment")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture(authority_labels={"operatorReturn": "same.principal", "agentVerification": "same.principal", "proceduralReview": "reviewer.external"})
+        try:
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), "pairwise-distinct principal labels")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            items, authority = self.secondProceduralHandoff(data)
+            authority["handoffs"][1]["assignments"]["operatorReturn"]["principalLabel"] = "operator.secondary"
+            authority["handoffs"][1]["assignments"]["agentVerification"]["principalLabel"] = "operator.primary"
+            authority["handoffs"][1]["assignments"]["proceduralReview"]["principalLabel"] = "reviewer.secondary"
+            self.writeProceduralAuthority(data, authority)
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data, items=items), "assigned conflicting roles across handoffs")
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_accepts_canonical_multi_handoff_coverage(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            items, authority = self.secondProceduralHandoff(data)
+            self.writeProceduralAuthority(data, authority)
+            verified = self.verifyProceduralAuthority(fixture, data, items=items)
+            self.assertEqual(list(verified["assignments"]), ["OP-D0-01", "OP-D0-02"])
+            self.assertEqual(verified["assignments"]["OP-D0-01"], verified["assignments"]["OP-D0-02"])
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_requires_exact_handoff_coverage_and_order(self) -> None:
+        for mutation in ("missing", "extra", "reordered"):
+            with self.subTest(mutation=mutation):
+                temporary, fixture, data = self.proceduralClosureFixture()
+                try:
+                    items, authority = self.secondProceduralHandoff(data)
+                    if mutation == "missing":
+                        authority["handoffs"] = authority["handoffs"][:1]
+                    elif mutation == "extra":
+                        authority["handoffs"].append(copy.deepcopy(authority["handoffs"][-1]))
+                    else:
+                        authority["handoffs"].reverse()
+                    self.writeProceduralAuthority(data, authority)
+                    self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data, items=items), "handoff rows must exactly cover completed handoffs in canonical order")
+                finally:
+                    temporary.cleanup()
+
+    def test_procedural_authority_requires_exact_schema_and_assurance_disclaimer(self) -> None:
+        cases = (
+            ("schema", lambda authority: authority.__setitem__("schema", "pkgre-d0-procedural-authority-v2"), "wrong schema"),
+            ("authorship", lambda authority: authority["assurance"].__setitem__("artifactAuthorshipProven", True), "assurance limitations"),
+            ("identity", lambda authority: authority["assurance"].__setitem__("cryptographicIdentityAuthentication", True), "assurance limitations"),
+            ("authority", lambda authority: authority["assurance"].__setitem__("roleAssignmentAuthority", "VERIFIER"), "assurance limitations"),
+            ("extra-top-level", lambda authority: authority.__setitem__("authenticated", True), "object-key mismatch"),
+            ("extra-assurance", lambda authority: authority["assurance"].__setitem__("authenticated", True), "assurance limitations"),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                temporary, fixture, data = self.proceduralClosureFixture()
+                try:
+                    authority = copy.deepcopy(data["authority"])
+                    mutate(authority)
+                    self.writeProceduralAuthority(data, authority)
+                    self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), expected)
+                finally:
+                    temporary.cleanup()
+
+    def test_procedural_authority_rejects_untrusted_path_forms_and_permissions(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            inside = fixture.repository / data["authorityPath"].name
+            inside.write_bytes(data["authorityPath"].read_bytes())
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data, path=inside), "directly under the external .git/pkgre-gates directory")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            alias = fixture.repository / "gate-alias"
+            alias.symlink_to(Path(".git") / "pkgre-gates", target_is_directory=True)
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data, path=alias / data["authorityPath"].name), "directly under the external .git/pkgre-gates directory")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            wrong = data["authorityPath"].with_name("authority.json")
+            data["authorityPath"].rename(wrong)
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data, path=wrong), "file name must be")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            target = data["authorityPath"].with_name("authority-target.json")
+            data["authorityPath"].rename(target)
+            data["authorityPath"].symlink_to(target.name)
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), "cannot safely open external gate file")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            gate_dir = data["authorityPath"].parent
+            real_dir = gate_dir.with_name("pkgre-gates-real")
+            gate_dir.rename(real_dir)
+            gate_dir.symlink_to(real_dir.name, target_is_directory=True)
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), "external gate directory must be a direct non-symlink directory")
+        finally:
+            temporary.cleanup()
+
+        for target, mode, expected in (("directory", 0o770, "external gate directory must not be group- or world-writable"), ("file", 0o660, "file must not be group- or world-writable")):
+            with self.subTest(target=target):
+                temporary, fixture, data = self.proceduralClosureFixture()
+                try:
+                    os.chmod(data["authorityPath"].parent if target == "directory" else data["authorityPath"], mode)
+                    self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), expected)
+                finally:
+                    temporary.cleanup()
+
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            os.link(data["authorityPath"], data["authorityPath"].with_name("authority-hard-link.json"))
+            self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), "hard-linked external gate file is forbidden")
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_rejects_malformed_noncanonical_duplicate_or_oversized_json(self) -> None:
+        writers = (
+            ("malformed", lambda data: b"{", "invalid strict JSON"),
+            ("noncanonical", lambda data: json.dumps(data["authority"], indent=2).encode() + b"\n", "JSON is not canonical"),
+            ("duplicate", lambda data: b'{"schema":"duplicate",' + GATE.canonical_json(data["authority"])[1:], "duplicate JSON object key"),
+            ("oversized", lambda data: b"x" * (GATE.MAX_PROCEDURAL_AUTHORITY_BYTES + 1), "file exceeds"),
+        )
+        for name, content, expected in writers:
+            with self.subTest(name=name):
+                temporary, fixture, data = self.proceduralClosureFixture()
+                try:
+                    data["authorityPath"].write_bytes(content(data))
+                    self.assertRejected(lambda: self.verifyProceduralAuthority(fixture, data), expected)
+                finally:
+                    temporary.cleanup()
 
     def test_github_openapi_fixture_passes_with_explicit_runtime_only_classification(self) -> None:
         document, catalogs = github_openapi_fixture()
