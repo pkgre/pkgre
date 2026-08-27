@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import importlib.util
 import json
 import os
@@ -51,6 +52,12 @@ def write(repository: Path, relative: str, content: bytes) -> None:
     path = repository / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
+
+
+def write_canonical_json(repository: Path, relative: str, value: object) -> dict[str, str]:
+    raw = GATE.canonical_json(value)
+    write(repository, relative, raw)
+    return {"path": relative, "sha256": GATE.sha256(raw)}
 
 
 def commit(repository: Path, message: str) -> str:
@@ -262,6 +269,255 @@ def b22_waiver_result() -> dict[str, object]:
     return {"_evidenceByKind": {"policy-waiver": ["waiver-1"]}, "_references": {"waiver-1": {"raw": raw, "sha256": digest}}, "claims": claims}
 
 
+SEMANTIC_SOURCE_GENERATION = f"/nix/store/{'a' * 32}-nixos-system-rain-test"
+SEMANTIC_ALT_GENERATION = f"/nix/store/{'b' * 32}-nixos-system-rain-other"
+SEMANTIC_OBSERVED_AT = "2026-08-26T00:06:00Z"
+SEMANTIC_RETURNED_AT = "2026-08-26T00:10:00Z"
+SEMANTIC_OPERATOR = "pkgre-operator"
+SEMANTIC_VERIFICATION_TIME = GATE.parse_utc(SEMANTIC_RETURNED_AT, "semantic verification time")
+ALT_SSH_FINGERPRINT = "SHA256:+uZsRMJhsMrNNuIpWh9wzwU8B9w5T6TMpEsmT2eBxvA"
+
+
+def semantic_file_metadata(
+    path: str,
+    purpose: str,
+    *,
+    owner: str = "root",
+    group: str = "root",
+    mode: str = "0600",
+    size_bytes: int = 64,
+    observed_at: str = SEMANTIC_OBSERVED_AT,
+    source_generation: str = SEMANTIC_SOURCE_GENERATION,
+    named_user_readers: list[str] | None = None,
+) -> dict[str, object]:
+    permissions_by_mode = {
+        "0400": ["r--", "---", "---"],
+        "0440": ["r--", "r--", "---"],
+        "0444": ["r--", "r--", "r--"],
+        "0600": ["rw-", "---", "---"],
+        "0640": ["rw-", "r--", "---"],
+        "0644": ["rw-", "r--", "r--"],
+    }
+    owner_permissions, group_mode_permissions, other_permissions = permissions_by_mode[mode]
+    named_users = sorted(named_user_readers or [])
+    group_permissions = "---" if named_users else group_mode_permissions
+    acl: list[dict[str, object]] = [{"tag": "USER_OBJ", "qualifier": None, "permissions": owner_permissions, "effectivePermissions": owner_permissions}]
+    acl.extend({"tag": "USER", "qualifier": name, "permissions": "r--", "effectivePermissions": "r--"} for name in named_users)
+    acl.append({"tag": "GROUP_OBJ", "qualifier": None, "permissions": group_permissions, "effectivePermissions": group_permissions})
+    if named_users:
+        acl.append({"tag": "MASK", "qualifier": None, "permissions": group_mode_permissions, "effectivePermissions": group_mode_permissions})
+    acl.append({"tag": "OTHER", "qualifier": None, "permissions": other_permissions, "effectivePermissions": other_permissions})
+    readers = [f"user:{owner}"] if "r" in owner_permissions else []
+    readers.extend(f"user:{name}" for name in named_users)
+    if "r" in group_permissions:
+        readers.append(f"group:{group}")
+    if "r" in other_permissions:
+        readers.append("other")
+    metadata: dict[str, object] = {
+        "path": path,
+        "fileType": "REGULAR",
+        "symlinkTarget": None,
+        "owner": owner,
+        "group": group,
+        "mode": mode,
+        "acl": acl,
+        "aclComplete": True,
+        "sizeBytes": size_bytes,
+        "purpose": purpose,
+        "readerMechanism": "POSIX_MODE_AND_ACCESS_ACL",
+        "effectiveReaders": sorted(readers),
+        "observedAt": observed_at,
+        "sourceGeneration": source_generation,
+    }
+    collection_id = "metadata-" + path.strip("/").replace("/", "-").replace(".", "-")
+    metadata["collection"] = {
+        "collectionId": collection_id,
+        "method": "METADATA_SYSCALLS_AND_ACCESS_ACL_ONLY",
+        "collector": SEMANTIC_OPERATOR,
+        "targetPath": path,
+        "observedAt": observed_at,
+        "returnedFields": list(GATE.FILE_METADATA_RETURNED_FIELDS),
+        "contentAccess": {"opened": False, "read": False, "digested": False},
+        "result": "PASS",
+    }
+    return metadata
+
+
+def semantic_file_policy(metadata: dict[str, object], maximum_size_bytes: int = GATE.D0_CREDENTIAL_MAX_BYTES) -> dict[str, object]:
+    return {
+        "path": metadata["path"],
+        "owner": metadata["owner"],
+        "group": metadata["group"],
+        "mode": metadata["mode"],
+        "acl": copy.deepcopy(metadata["acl"]),
+        "aclComplete": metadata["aclComplete"],
+        "purpose": metadata["purpose"],
+        "readerMechanism": metadata["readerMechanism"],
+        "effectiveReaders": copy.deepcopy(metadata["effectiveReaders"]),
+        "maximumSizeBytes": maximum_size_bytes,
+    }
+
+
+def semantic_procedure(identifier: str, operations: list[str], subject: dict[str, object], *, tested_at: str = "2026-08-26T00:05:00Z", mode: str = "TABLETOP") -> dict[str, object]:
+    procedure_id = f"procedure-{identifier}"
+    outcome = "nonproduction fixture matched the documented expected outcome"
+    return {
+        "procedureId": procedure_id,
+        "owner": SEMANTIC_OPERATOR,
+        "subject": copy.deepcopy(subject),
+        "operations": list(operations),
+        "test": {
+            "eventId": f"procedure-test-{identifier}",
+            "procedureId": procedure_id,
+            "subject": copy.deepcopy(subject),
+            "mode": mode,
+            "fixture": {
+                "fixtureId": f"fixture-{identifier}",
+                "productionMaterialUsed": False,
+                "replacementIdentity": {"type": "NONPRODUCTION_FIXTURE_ID", "value": f"replacement-{identifier}"},
+            },
+            "environment": {
+                "kind": "DOCUMENTED_TABLETOP" if mode == "TABLETOP" else "ISOLATED_NONPRODUCTION",
+                "name": "documented nonproduction tabletop" if mode == "TABLETOP" else "isolated nonproduction rehearsal",
+                "productionEndpointUsed": False,
+            },
+            "testCase": {"caseId": f"case-{identifier}", "evidenceRef": f"evidence-{identifier}"},
+            "actor": SEMANTIC_OPERATOR,
+            "testedAt": tested_at,
+            "operations": [{"operation": operation, "expectedOutcome": outcome, "observedOutcome": outcome, "result": "PASS"} for operation in operations],
+            "result": "PASS",
+        },
+    }
+
+
+def credential_subject(handle: dict[str, str]) -> dict[str, object]:
+    return {"type": "CREDENTIAL_HANDLE", "handle": copy.deepcopy(handle)}
+
+
+def valid_b01_payloads() -> dict[str, dict[str, object]]:
+    credential = semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "GANDI_LIVEDNS_DNS01")
+    old_credential = {"kind": "SAFE_SUFFIX", "value": "old1"}
+    active_credential = {"kind": "SAFE_SUFFIX", "value": "new1"}
+    containment: dict[str, object] = {
+        "rotationId": "gandi-rotation-20260826",
+        "credential": credential,
+        "declarativePolicy": {
+            "source": {"repositoryId": GATE.INFRA_REPOSITORY_ID, "commit": "5f68539bd99c6952b6d73fe2596c27ad4a319f57", "path": GATE.RAIN_PKGRE_MODULE_PATH},
+            "deployedGeneration": SEMANTIC_SOURCE_GENERATION,
+            "intendedMetadata": semantic_file_policy(credential),
+        },
+        "provider": {
+            "identity": "GANDI_LIVEDNS",
+            "oldCredential": old_credential,
+            "activeCredential": active_credential,
+            "zoneScopes": ["pkg.re"],
+            "permissions": ["DNS_READ", "DNS_WRITE"],
+            "expiry": "2027-08-26T00:00:00Z",
+        },
+        "events": {
+            "permissionRepair": {"eventId": "gandi-permission-repair", "occurredAt": "2026-08-26T00:00:00Z", "actor": SEMANTIC_OPERATOR, "subject": {"type": "FILE_PATH", "path": credential["path"]}, "result": "PASS"},
+            "newCredentialActivation": {"eventId": "gandi-new-activation", "occurredAt": "2026-08-26T00:01:00Z", "actor": SEMANTIC_OPERATOR, "subject": credential_subject(active_credential), "result": "PASS"},
+            "oldCredentialRevocation": {"eventId": "gandi-old-revocation", "occurredAt": "2026-08-26T00:02:00Z", "actor": SEMANTIC_OPERATOR, "subject": credential_subject(old_credential), "result": "PASS"},
+        },
+        "installation": {
+            "bindingId": "gandi-active-installation",
+            "credentialPath": credential["path"],
+            "sourceGeneration": SEMANTIC_SOURCE_GENERATION,
+            "activeCredential": copy.deepcopy(active_credential),
+            "activationEventId": "gandi-new-activation",
+            "dns01Operation": {
+                "operationId": "gandi-dns01-operation",
+                "providerIdentity": "GANDI_LIVEDNS",
+                "zone": "pkg.re",
+                "certificateName": "js.pkg.re",
+                "operation": "DNS01_CHALLENGE_UPDATE",
+                "occurredAt": "2026-08-26T00:01:30Z",
+                "result": "PASS",
+            },
+            "boundAt": "2026-08-26T00:01:45Z",
+            "result": "PASS",
+        },
+        "audit": [
+            {"auditId": "gandi-audit-scope", "occurredAt": "2026-08-26T00:03:00Z", "actor": SEMANTIC_OPERATOR, "check": "SCOPE", "credential": copy.deepcopy(active_credential), "result": "PASS"},
+            {"auditId": "gandi-audit-activity", "occurredAt": "2026-08-26T00:04:00Z", "actor": SEMANTIC_OPERATOR, "check": "RECENT_ACTIVITY", "credential": copy.deepcopy(active_credential), "result": "PASS"},
+            {"auditId": "gandi-audit-revocation", "occurredAt": "2026-08-26T00:05:00Z", "actor": SEMANTIC_OPERATOR, "check": "REVOCATION", "credential": copy.deepcopy(old_credential), "result": "PASS"},
+        ],
+        "secretMaterial": {"credentialValueRead": False, "credentialDigestRecorded": False},
+    }
+    files: list[dict[str, object]] = []
+    for name in GATE.ACME_NAMES:
+        files.append({"id": f"{name}-certificate", "metadata": semantic_file_metadata(f"/var/lib/acme/{name}/fullchain.pem", "TLS_CERTIFICATE", owner="acme", group="nginx", mode="0644", size_bytes=2048)})
+    for name in GATE.ACME_NAMES:
+        files.append({"id": f"{name}-private-key", "metadata": semantic_file_metadata(f"/var/lib/acme/{name}/key.pem", "TLS_PRIVATE_KEY", owner="acme", group="nginx", mode="0640", size_bytes=227)})
+    files.append({"id": "acme-account-key", "metadata": semantic_file_metadata("/var/lib/acme/account/private-key.pem", "ACME_ACCOUNT_KEY", size_bytes=227)})
+    lifecycle: dict[str, object] = {
+        "rotationId": containment["rotationId"],
+        "providerIdentity": "GANDI_LIVEDNS",
+        "activeCredential": copy.deepcopy(active_credential),
+        "observedAt": SEMANTIC_OBSERVED_AT,
+        "sourceGeneration": SEMANTIC_SOURCE_GENERATION,
+        "files": files,
+        "patProcedures": {key: semantic_procedure(f"pat-{key}", operations, {"type": "PROVIDER_CREDENTIAL", "providerIdentity": "GANDI_LIVEDNS", "credential": active_credential}) for key, operations in GATE.PAT_PROCEDURE_OPERATIONS.items()},
+        "lifecycles": [],
+        "secretMaterial": {"privateKeyValueRead": False, "privateKeyDigestRecorded": False},
+    }
+    for subject in [*GATE.ACME_NAMES, "ACME_ACCOUNT_KEY"]:
+        slug = subject.lower().replace(".", "-").replace("_", "-")
+        if subject == "ACME_ACCOUNT_KEY":
+            procedure_subject = {"type": "ACME_ACCOUNT_KEY", "providerIdentity": "GANDI_LIVEDNS", "path": "/var/lib/acme/account/private-key.pem"}
+        else:
+            procedure_subject = {"type": "ACME_CERTIFICATE_KEY_PAIR", "name": subject, "certificatePath": f"/var/lib/acme/{subject}/fullchain.pem", "privateKeyPath": f"/var/lib/acme/{subject}/key.pem"}
+        lifecycle["lifecycles"].append({
+            "subject": subject,
+            "rotationOverlapSeconds": 300,
+            **{key: semantic_procedure(f"{slug}-{key}", operations, procedure_subject) for key, operations in GATE.KEY_LIFECYCLE_OPERATIONS.items()},
+        })
+    return {"credential-containment": containment, "credential-lifecycle": lifecycle}
+
+
+def valid_b02_payloads() -> dict[str, dict[str, object]]:
+    attestation: dict[str, object] = {
+        "hostname": GATE.RAIN_SSH_HOST,
+        "port": 22,
+        "algorithm": "ssh-ed25519",
+        "fingerprint": GATE.RAIN_SSH_FINGERPRINT,
+        "authoritativeSource": {
+            "type": "PROVIDER_SERIAL_CONSOLE",
+            "sourceId": "rain-provider-serial-console-20260826",
+            "method": "READ_PUBLIC_HOST_KEY_VIA_PROVIDER_SERIAL_CONSOLE",
+            "operator": SEMANTIC_OPERATOR,
+            "observedAt": "2026-08-26T00:04:00Z",
+            "recordKind": "PUBLIC_SSH_HOST_KEY_FINGERPRINT",
+            "hostname": GATE.RAIN_SSH_HOST,
+            "algorithm": "ssh-ed25519",
+            "fingerprint": GATE.RAIN_SSH_FINGERPRINT,
+            "observedSshConnectionUsed": False,
+        },
+        "endpointObservation": {
+            "observationId": "rain-public-keyscan-20260826",
+            "hostname": GATE.RAIN_SSH_HOST,
+            "port": 22,
+            "algorithm": "ssh-ed25519",
+            "fingerprint": GATE.RAIN_SSH_FINGERPRINT,
+            "observedAt": "2026-08-26T00:04:30Z",
+            "method": "PUBLIC_SSH_HOST_KEY_SCAN",
+            "tool": {"name": "ssh-keyscan", "version": "OpenSSH_test", "networkPath": "PUBLIC_NETWORK_ENDPOINT"},
+            "result": "PASS",
+        },
+        "attestation": {"eventId": "rain-ssh-attestation", "operator": SEMANTIC_OPERATOR, "verifiedAt": "2026-08-26T00:05:00Z", "match": True},
+        "secretMaterial": {"privateKeyValueRead": False, "privateKeyDigestRecorded": False},
+    }
+    ssh_subject = {"type": "SSH_HOST_IDENTITY", "hostname": GATE.RAIN_SSH_HOST, "algorithm": "ssh-ed25519", "fingerprint": GATE.RAIN_SSH_FINGERPRINT}
+    lifecycle: dict[str, object] = {
+        "hostname": GATE.RAIN_SSH_HOST,
+        "algorithm": "ssh-ed25519",
+        "currentFingerprint": GATE.RAIN_SSH_FINGERPRINT,
+        "rotationOverlapSeconds": 300,
+        **{key: semantic_procedure(f"rain-ssh-{key}", operations, ssh_subject) for key, operations in GATE.SSH_LIFECYCLE_OPERATIONS.items()},
+    }
+    return {"ssh-attestation": attestation, "ssh-lifecycle": lifecycle}
+
+
 class GateCoreTests(unittest.TestCase):
     def assertRejected(self, callable_object, text: str) -> None:
         with self.assertRaises(GATE.GateVerificationError) as caught:
@@ -271,6 +527,13 @@ class GateCoreTests(unittest.TestCase):
     def validateB22(self, result: dict[str, object], package_paths: dict[str, str]) -> None:
         with mock.patch.object(GATE, "ORIGINAL_PACKAGE_DRVS", package_paths):
             GATE.validate_b22("SATISFIED", "ORIGINAL_DERIVATION_PROOF", [result])
+
+    def validateSemanticPayloads(self, finding_id: str, handoff_id: str, payloads: dict[str, dict[str, object]]) -> None:
+        result = self.semanticResult(finding_id, handoff_id, payloads)
+        GATE.validate_generic_policy(finding_id, "SATISFIED", "EVIDENCE_SATISFIED", [result], SEMANTIC_VERIFICATION_TIME)
+
+    def assertSemanticPayloadsRejected(self, finding_id: str, handoff_id: str, payloads: dict[str, dict[str, object]], text: str) -> None:
+        self.assertRejected(lambda: self.validateSemanticPayloads(finding_id, handoff_id, payloads), text)
 
     def assertB22Rejected(self, result: dict[str, object], package_paths: dict[str, str], text: str) -> None:
         self.assertRejected(lambda: self.validateB22(result, package_paths), text)
@@ -338,15 +601,394 @@ class GateCoreTests(unittest.TestCase):
             raw = GATE.canonical_json({"schema": schema, "findingId": finding_id, "kind": kind, "payload": payload})
             evidence_by_kind[kind] = [ref_id]
             references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
-        return {"_handoffId": handoff_id, "_evidenceByKind": evidence_by_kind, "_references": references, "claims": {"evidenceByKind": evidence_by_kind, "targetGates": [] if target_gates is None else target_gates}}
+        return {"_handoffId": handoff_id, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT, "_evidenceByKind": evidence_by_kind, "_references": references, "claims": {"evidenceByKind": evidence_by_kind, "targetGates": [] if target_gates is None else target_gates}}
+
+    def test_b01_and_b02_accept_exact_semantic_proof(self) -> None:
+        self.validateSemanticPayloads("D0-B01", "OP-D0-01", valid_b01_payloads())
+        self.validateSemanticPayloads("D0-B02", "OP-D0-02", valid_b02_payloads())
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["provider"]["expiry"] = "NO_EXPIRY"
+        self.validateSemanticPayloads("D0-B01", "OP-D0-01", payloads)
+
+    def test_b01_rejects_nonexact_shapes_types_and_unsafe_semantic_text(self) -> None:
+        cases = []
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["unexpected"] = True
+        cases.append(("extra-key", payloads, "object-key mismatch"))
+
+        payloads = valid_b01_payloads()
+        del payloads["credential-containment"]["secretMaterial"]
+        cases.append(("missing-key", payloads, "object-key mismatch"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["secretMaterial"]["credentialValueRead"] = 1
+        cases.append(("integer-boolean", payloads, "expected boolean"))
+
+        for name, actor, expected in (
+            ("empty-text", "", "expected nonempty"),
+            ("newline", "operator\nclaim", "invalid or overlong semantic text"),
+            ("c1-control", "operator\x85claim", "invalid or overlong semantic text"),
+            ("overlong", "x" * 129, "invalid or overlong semantic text"),
+        ):
+            payloads = valid_b01_payloads()
+            payloads["credential-containment"]["events"]["permissionRepair"]["actor"] = actor
+            cases.append((name, payloads, expected))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B01", "OP-D0-01", payloads, expected)
+
+    def test_b01_rejects_incomplete_or_inconsistent_credential_containment(self) -> None:
+        cases = []
+
+        for name, metadata, expected in (
+            ("owner", semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "GANDI_LIVEDNS_DNS01", owner="acme"), "intended credential identity or purpose mismatch"),
+            ("group", semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "GANDI_LIVEDNS_DNS01", group="keys"), "intended credential identity or purpose mismatch"),
+            ("mode", semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "GANDI_LIVEDNS_DNS01", mode="0400"), "live credential mode disagrees with declarative policy"),
+            ("purpose", semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "OTHER"), "intended credential identity or purpose mismatch"),
+            ("readers", semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "GANDI_LIVEDNS_DNS01", mode="0640"), "intended credential must be readable only by root"),
+        ):
+            payloads = valid_b01_payloads()
+            payloads["credential-containment"]["declarativePolicy"]["intendedMetadata"] = semantic_file_policy(metadata)
+            cases.append((f"declarative-{name}", payloads, expected))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["declarativePolicy"]["intendedMetadata"]["maximumSizeBytes"] = 63
+        cases.append(("declarative-size", payloads, "live credential exceeds the declarative maximum size"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["declarativePolicy"]["deployedGeneration"] = SEMANTIC_ALT_GENERATION
+        cases.append(("declarative-source-generation", payloads, "live credential generation disagrees with deployed declarative generation"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["provider"]["expiry"] = SEMANTIC_OBSERVED_AT
+        cases.append(("expired-provider-credential", payloads, "already expired"))
+
+        payloads = valid_b01_payloads()
+        events = payloads["credential-containment"]["events"]
+        events["oldCredentialRevocation"]["eventId"] = events["newCredentialActivation"]["eventId"]
+        cases.append(("duplicate-event-id", payloads, "event IDs must be distinct"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["events"]["newCredentialActivation"]["occurredAt"] = "2026-08-26T00:03:00Z"
+        cases.append(("event-chronology", payloads, "chronology is invalid"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["audit"][2]["check"] = "SCOPE"
+        payloads["credential-containment"]["audit"][2]["credential"] = copy.deepcopy(payloads["credential-containment"]["provider"]["activeCredential"])
+        cases.append(("duplicate-audit-category", payloads, "each required category exactly once"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["audit"].append(copy.deepcopy(payloads["credential-containment"]["audit"][-1]))
+        cases.append(("extra-audit-row", payloads, "exactly three provider audit checks"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["audit"][0]["occurredAt"] = "2026-08-26T00:01:00Z"
+        cases.append(("audit-before-revocation", payloads, "provider audit must follow revocation"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["audit"][2]["occurredAt"] = "2026-08-26T00:07:00Z"
+        cases.append(("audit-after-observation", payloads, "provider audit must follow revocation"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["audit"][1]["auditId"] = payloads["credential-containment"]["events"]["permissionRepair"]["eventId"]
+        cases.append(("audit-event-id-reuse", payloads, "containment,installation,and provider audit IDs must be distinct"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["secretMaterial"]["credentialDigestRecorded"] = True
+        cases.append(("secret-digest", payloads, "credential bytes or digest must not be returned"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["provider"]["activeCredential"] = copy.deepcopy(payloads["credential-containment"]["provider"]["oldCredential"])
+        cases.append(("same-credential-handle", payloads, "comparable and distinct"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["provider"]["activeCredential"] = {"kind": "PROVIDER_ID", "value": "0123456789abcdef0123456789abcdef01234567"}
+        cases.append(("provider-id-could-smuggle-pat", payloads, "only a bounded safe credential suffix"))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B01", "OP-D0-01", payloads, expected)
+
+    def test_b01_rejects_incomplete_or_inconsistent_credential_lifecycle(self) -> None:
+        cases = []
+
+        payloads = valid_b01_payloads()
+        files = payloads["credential-lifecycle"]["files"]
+        files[-1]["metadata"]["path"] = files[0]["metadata"]["path"]
+        files[-1]["metadata"]["collection"]["targetPath"] = files[0]["metadata"]["path"]
+        cases.append(("reused-account-key-path", payloads, "paths must be globally distinct"))
+
+        payloads = valid_b01_payloads()
+        pat = payloads["credential-lifecycle"]["patProcedures"]
+        pat["recovery"]["procedureId"] = pat["routineRotation"]["procedureId"]
+        pat["recovery"]["test"]["procedureId"] = pat["routineRotation"]["procedureId"]
+        cases.append(("duplicate-procedure-id", payloads, "procedure IDs must be globally distinct"))
+
+        payloads = valid_b01_payloads()
+        pat = payloads["credential-lifecycle"]["patProcedures"]
+        pat["recovery"]["test"]["eventId"] = pat["routineRotation"]["test"]["eventId"]
+        cases.append(("duplicate-test-event-id", payloads, "test-event IDs must be globally distinct"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["lifecycles"][0]["rotation"]["test"]["result"] = "FAIL"
+        cases.append(("failed-procedure-test", payloads, "procedure test must PASS"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["secretMaterial"]["privateKeyValueRead"] = True
+        cases.append(("private-key-read", payloads, "private-key material or digest must not be returned"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["rotationId"] = "other-rotation"
+        cases.append(("rotation-mismatch", payloads, "rotation IDs disagree"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["providerIdentity"] = "OTHER_PROVIDER"
+        cases.append(("provider-mismatch", payloads, "ACME provider identity mismatch"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["sourceGeneration"] = SEMANTIC_ALT_GENERATION
+        for row in payloads["credential-lifecycle"]["files"]:
+            row["metadata"]["sourceGeneration"] = SEMANTIC_ALT_GENERATION
+        cases.append(("generation-mismatch", payloads, "source generations disagree"))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B01", "OP-D0-01", payloads, expected)
+
+    def test_b01_rejects_unsafe_file_metadata_size_and_time_attestations(self) -> None:
+        cases = []
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["credential"]["sizeBytes"] = GATE.D0_CREDENTIAL_MAX_BYTES + 1
+        cases.append(("oversize-credential", payloads, f"expected integer in [1,{GATE.D0_CREDENTIAL_MAX_BYTES}]"))
+
+        for name, index, maximum in (
+            ("oversize-certificate", 0, GATE.D0_CERTIFICATE_MAX_BYTES),
+            ("oversize-private-key", len(GATE.ACME_NAMES), GATE.D0_PRIVATE_KEY_MAX_BYTES),
+            ("oversize-account-key", -1, GATE.D0_PRIVATE_KEY_MAX_BYTES),
+        ):
+            payloads = valid_b01_payloads()
+            payloads["credential-lifecycle"]["files"][index]["metadata"]["sizeBytes"] = maximum + 1
+            cases.append((name, payloads, f"expected integer in [1,{maximum}]"))
+
+        payloads = valid_b01_payloads()
+        metadata = semantic_file_metadata("/var/lib/keys/pkgre-js-gandiv5-token", "GANDI_LIVEDNS_DNS01", mode="0640")
+        payloads["credential-containment"]["credential"] = metadata
+        payloads["credential-containment"]["declarativePolicy"]["intendedMetadata"] = semantic_file_policy(metadata)
+        cases.append(("group-readable-credential", payloads, "readable only by root"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["credential"]["aclComplete"] = 1
+        cases.append(("nonboolean-acl-completeness", payloads, "expected boolean"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["credential"]["fileType"] = "SYMLINK"
+        payloads["credential-containment"]["credential"]["symlinkTarget"] = "/run/keys/gandi"
+        cases.append(("symlink-credential", payloads, "non-symlink regular file"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["credential"]["acl"][1], payloads["credential-containment"]["credential"]["acl"][2] = payloads["credential-containment"]["credential"]["acl"][2], payloads["credential-containment"]["credential"]["acl"][1]
+        cases.append(("noncanonical-acl", payloads, "ACL entries are not in canonical order"))
+
+        for name, observed_at, expected in (
+            ("stale-observation", "2026-08-25T00:09:59Z", "evidence is older"),
+            ("future-observation", "2026-08-26T00:10:01Z", "later than its attested upper bound"),
+        ):
+            payloads = valid_b01_payloads()
+            credential = payloads["credential-containment"]["credential"]
+            credential["observedAt"] = observed_at
+            credential["collection"]["observedAt"] = observed_at
+            cases.append((name, payloads, expected))
+
+        payloads = valid_b01_payloads()
+        for index, event_name in enumerate(("permissionRepair", "newCredentialActivation", "oldCredentialRevocation")):
+            payloads["credential-containment"]["events"][event_name]["occurredAt"] = f"2026-08-25T00:0{index}:00Z"
+        for index, audit in enumerate(payloads["credential-containment"]["audit"], 3):
+            audit["occurredAt"] = f"2026-08-25T00:0{index}:00Z"
+        cases.append(("stale-containment-events-and-audits", payloads, "evidence is older"))
+
+        for name, tested_at, expected in (
+            ("stale-procedure-test", "2026-08-25T00:09:59Z", "evidence is older"),
+            ("future-procedure-test", "2026-08-26T00:10:01Z", "later than its attested upper bound"),
+        ):
+            payloads = valid_b01_payloads()
+            payloads["credential-lifecycle"]["patProcedures"]["recovery"]["test"]["testedAt"] = tested_at
+            cases.append((name, payloads, expected))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B01", "OP-D0-01", payloads, expected)
+
+    def test_b01_rejects_unbound_lifecycle_procedures_and_tests(self) -> None:
+        cases = []
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["patProcedures"]["routineRotation"]["subject"]["providerIdentity"] = "OTHER_PROVIDER"
+        cases.append(("pat-procedure-subject", payloads, "procedure is not bound to the required subject"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["patProcedures"]["routineRotation"]["test"]["subject"]["credential"]["value"] = "old1"
+        cases.append(("pat-test-subject", payloads, "test event is not bound to the required subject"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["lifecycles"][0]["rotation"]["subject"]["privateKeyPath"] = "/var/lib/acme/other/key.pem"
+        cases.append(("certificate-procedure-subject", payloads, "procedure is not bound to the required subject"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["lifecycles"][-1]["recovery"]["test"]["subject"]["path"] = "/var/lib/acme/other/key.pem"
+        cases.append(("account-key-test-subject", payloads, "test event is not bound to the required subject"))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B01", "OP-D0-01", payloads, expected)
+
+    def test_b01_rejects_cross_object_identifier_reuse_and_secret_shaped_text(self) -> None:
+        cases = []
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["patProcedures"]["routineRotation"]["test"]["eventId"] = payloads["credential-containment"]["events"]["permissionRepair"]["eventId"]
+        cases.append(("containment-lifecycle-event-reuse", payloads, "containment and lifecycle test-event IDs must be globally distinct"))
+
+        payloads = valid_b01_payloads()
+        pat = payloads["credential-lifecycle"]["patProcedures"]
+        pat["recovery"]["procedureId"] = pat["routineRotation"]["test"]["eventId"]
+        pat["recovery"]["test"]["procedureId"] = pat["recovery"]["procedureId"]
+        cases.append(("procedure-test-event-reuse", payloads, "procedure and test-event IDs must be globally distinct"))
+
+        for name, actor, expected in (
+            ("private-key-shaped-text", "-----BEGIN PRIVATE KEY-----", "private-key-shaped text is forbidden"),
+            ("hex-secret-shaped-text", "0123456789abcdef0123456789abcdef", "secret-shaped hexadecimal text is forbidden"),
+            ("base64-secret-shaped-text", "Z" * 40, "secret-shaped base64 text is forbidden"),
+        ):
+            payloads = valid_b01_payloads()
+            payloads["credential-containment"]["events"]["permissionRepair"]["actor"] = actor
+            cases.append((name, payloads, expected))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B01", "OP-D0-01", payloads, expected)
+
+    def test_b02_rejects_unpinned_tofu_or_inconsistent_ssh_proof(self) -> None:
+        cases = []
+
+        for field, value in (
+            ("hostname", "other.pacna.org"),
+            ("port", 2222),
+            ("algorithm", "ssh-rsa"),
+            ("fingerprint", ALT_SSH_FINGERPRINT),
+        ):
+            payloads = valid_b02_payloads()
+            payloads["ssh-attestation"][field] = value
+            cases.append((f"wrong-{field}", payloads, "Rain SSH"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["authoritativeSource"]["type"] = "TOFU"
+        cases.append(("tofu-source", payloads, "unsupported or mismatched out-of-band authority method"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["authoritativeSource"]["type"] = "SIGNED_OFFLINE_INVENTORY"
+        payloads["ssh-attestation"]["authoritativeSource"]["method"] = "COMPARE_PUBLIC_HOST_KEY_TO_SIGNED_OFFLINE_INVENTORY"
+        cases.append(("unverified-signed-inventory-label", payloads, "unsupported or mismatched out-of-band authority method"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["authoritativeSource"]["observedSshConnectionUsed"] = 1
+        cases.append(("nonboolean-independence", payloads, "expected boolean"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["attestation"]["match"] = False
+        cases.append(("fingerprint-mismatch", payloads, "attestation did not match"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["secretMaterial"]["privateKeyDigestRecorded"] = True
+        cases.append(("private-key-digest", payloads, "private host-key material or digest must not be returned"))
+
+        payloads = valid_b02_payloads()
+        lifecycle = payloads["ssh-lifecycle"]
+        lifecycle["recovery"]["procedureId"] = lifecycle["rotation"]["procedureId"]
+        lifecycle["recovery"]["test"]["procedureId"] = lifecycle["rotation"]["procedureId"]
+        cases.append(("duplicate-procedure-id", payloads, "procedure IDs must be distinct"))
+
+        payloads = valid_b02_payloads()
+        lifecycle = payloads["ssh-lifecycle"]
+        lifecycle["recovery"]["test"]["eventId"] = lifecycle["rotation"]["test"]["eventId"]
+        cases.append(("duplicate-test-event-id", payloads, "test-event IDs must be distinct"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["rotation"]["test"]["eventId"] = payloads["ssh-attestation"]["attestation"]["eventId"]
+        cases.append(("attestation-event-reuse", payloads, "attestation and lifecycle test-event IDs must be distinct"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["currentFingerprint"] = ALT_SSH_FINGERPRINT
+        cases.append(("lifecycle-fingerprint", payloads, "pinned Rain SSH lifecycle identity mismatch"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["recovery"]["test"]["result"] = "FAIL"
+        cases.append(("failed-lifecycle-test", payloads, "procedure test must PASS"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["rotation"]["subject"]["hostname"] = "other.pacna.org"
+        cases.append(("lifecycle-procedure-subject", payloads, "procedure is not bound to the required subject"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["rotation"]["test"]["subject"]["fingerprint"] = ALT_SSH_FINGERPRINT
+        cases.append(("lifecycle-test-subject", payloads, "test event is not bound to the required subject"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["authoritativeSource"]["observedSshConnectionUsed"] = True
+        cases.append(("observed-ssh-used-as-authority", payloads, "depends on the observed SSH connection"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["authoritativeSource"]["operator"] = "different-operator"
+        cases.append(("authority-operator-mismatch", payloads, "operator does not match operator return"))
+
+        for name, observed_at, expected in (
+            ("stale-authoritative-source", "2026-08-25T00:09:59Z", "evidence is older"),
+            ("future-authoritative-source", "2026-08-26T00:10:01Z", "later than its attested upper bound"),
+        ):
+            payloads = valid_b02_payloads()
+            payloads["ssh-attestation"]["authoritativeSource"]["observedAt"] = observed_at
+            cases.append((name, payloads, expected))
+
+        for name, tested_at, expected in (
+            ("stale-lifecycle-test", "2026-08-25T00:09:59Z", "evidence is older"),
+            ("future-lifecycle-test", "2026-08-26T00:10:01Z", "later than its attested upper bound"),
+        ):
+            payloads = valid_b02_payloads()
+            payloads["ssh-lifecycle"]["recovery"]["test"]["testedAt"] = tested_at
+            cases.append((name, payloads, expected))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["authoritativeSource"]["sourceId"] = payloads["ssh-attestation"]["attestation"]["eventId"]
+        cases.append(("source-attestation-id-reuse", payloads, "authority,endpoint,and attestation IDs must be distinct"))
+
+        payloads = valid_b02_payloads()
+        lifecycle = payloads["ssh-lifecycle"]
+        lifecycle["recovery"]["procedureId"] = lifecycle["rotation"]["test"]["eventId"]
+        lifecycle["recovery"]["test"]["procedureId"] = lifecycle["recovery"]["procedureId"]
+        cases.append(("procedure-test-event-reuse", payloads, "procedure and test-event IDs must be distinct"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["secretMaterial"]["privateKeyValueRead"] = True
+        cases.append(("private-key-read", payloads, "private host-key material or digest must not be returned"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-attestation"]["unexpected"] = True
+        cases.append(("extra-key", payloads, "object-key mismatch"))
+
+        for name, payloads, expected in cases:
+            with self.subTest(name=name):
+                self.assertSemanticPayloadsRejected("D0-B02", "OP-D0-02", payloads, expected)
 
     def test_generic_semantic_envelopes_bind_exact_handoff_kinds_and_claims(self) -> None:
         limits = self.semanticResult("D0-B10", "OP-D0-06", {"approved-limits": {"test": True}})
         resources = self.semanticResult("D0-B10", "OP-D0-07", {"native-resource-proof": {"test": True}})
         self.assertEqual(GATE.validate_semantic_documents("D0-B10", "SATISFIED", limits), {"approved-limits": {"test": True}})
         self.assertEqual(GATE.validate_semantic_documents("D0-B10", "SATISFIED", resources), {"native-resource-proof": {"test": True}})
-        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B10", "SATISFIED", "EVIDENCE_SATISFIED", [limits, resources]), "strict semantic payload validation is not installed")
-        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B10", "SATISFIED", "EVIDENCE_SATISFIED", [resources, limits]), "semantic contributions are not in canonical handoff order")
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B10", "SATISFIED", "EVIDENCE_SATISFIED", [limits, resources], SEMANTIC_VERIFICATION_TIME), "strict semantic payload validation is not installed")
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B10", "SATISFIED", "EVIDENCE_SATISFIED", [resources, limits], SEMANTIC_VERIFICATION_TIME), "semantic contributions are not in canonical handoff order")
 
         wrong_owner = self.semanticResult("D0-B10", "OP-D0-06", {"native-resource-proof": {"test": True}})
         self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B10", "SATISFIED", wrong_owner), "evidence-kind set must be exact")

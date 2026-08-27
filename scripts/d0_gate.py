@@ -17,7 +17,7 @@ import stat
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -59,6 +59,11 @@ MAX_DRV_STRING_BYTES = 2 * 1024 * 1024
 RECEIPT_FUTURE_SKEW_SECONDS = 30
 B18_RECEIPT_MAX_AGE_SECONDS = 600
 PRE_D1_RECEIPT_MAX_AGE_SECONDS = 600
+D0_LIVE_EVIDENCE_MAX_AGE_SECONDS = 24 * 60 * 60
+D0_EVIDENCE_FUTURE_SKEW_SECONDS = 30
+D0_CREDENTIAL_MAX_BYTES = 4 * 1024
+D0_PRIVATE_KEY_MAX_BYTES = 64 * 1024
+D0_CERTIFICATE_MAX_BYTES = 1024 * 1024
 EVIDENCE_TREE_DOMAIN = b"pkgre-d0-evidence-tree-v1\0"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 B18_INCIDENT_SHA256 = "9d06853e9fa692c4b6347af8ac4bb85049d76322c41330768b5782e5df888efe"
@@ -97,6 +102,7 @@ PRODUCTION_REPOSITORIES = (
     RepositoryBasis("infra", "infra", "origin", "git@gitlab.pacna.net:infra/infra.git", "refs/heads/master", "origin/master", "5f68539bd99c6952b6d73fe2596c27ad4a319f57"),
 )
 EXPECTED_BASIS = [row.state_row() for row in PRODUCTION_REPOSITORIES]
+INFRA_REVIEWED_COMMIT = next(row.reviewed_commit for row in PRODUCTION_REPOSITORIES if row.id == "infra")
 
 
 @dataclass(frozen=True)
@@ -174,6 +180,12 @@ SAT_EVIDENCE = {finding_id: set().union(*by_handoff.values()) for finding_id, by
 REPHASE_TARGETS = {
     "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
 }
+RAIN_SSH_HOST = "rain.pacna.org"
+RAIN_SSH_FINGERPRINT = "SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI"
+INFRA_REPOSITORY_ID = "infra/infra"
+RAIN_PKGRE_MODULE_PATH = "hosts/rain/containers/pkgre.nix"
+ACME_NAMES = ["rust.pkg.re", "js.pkg.re", "dl.rust.pkg.re"]
+FILE_METADATA_RETURNED_FIELDS = ["path", "fileType", "symlinkTarget", "owner", "group", "mode", "acl", "aclComplete", "sizeBytes", "purpose", "readerMechanism", "effectiveReaders", "observedAt", "sourceGeneration"]
 ORIGINAL_PACKAGE_DRVS = {"git-host": "/nix/store/bny4hxrsvnaj060b6rbd68233x4fw32h-git-2.54.0.drv", "nix-host": "/nix/store/iza23qnw05vpa85g804b841rd4yqr1z5-nix-2.34.8.drv"}
 OBSERVED_OUTPUTS = {"git-host": "/nix/store/k3wl6cg7q50zkx47af3msmg1yrg1f203-git-2.54.0", "nix-host": "/nix/store/kgwqirnzhflf9vmrkzgqz16z2bry397z-nix-2.34.8"}
 KNOWN_SURROGATE_DRV_SHA256S = {
@@ -553,6 +565,12 @@ def parse_utc(value: Any, label: str) -> datetime:
         raise GateVerificationError(f"{label}: invalid UTC calendar timestamp") from error
 
 
+def normalize_verification_time(value: datetime | None) -> datetime:
+    current_time = datetime.now(timezone.utc) if value is None else value
+    require(isinstance(current_time, datetime) and current_time.tzinfo is not None and current_time.utcoffset() == timedelta(0), "verification time must be a timezone-aware UTC datetime")
+    return current_time.astimezone(timezone.utc)
+
+
 def indexed(rows: list[Any], key: str, label: str) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for index, raw in enumerate(rows):
@@ -839,7 +857,7 @@ def validate_finding_result(raw: Any, expected_finding: str, references: dict[st
     return result
 
 
-def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closure_id: str, aggregate_sha: str, handoff_id: str, raw_reference: Any) -> dict[str, Any]:
+def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closure_id: str, aggregate_sha: str, handoff_id: str, raw_reference: Any, verification_time: datetime) -> dict[str, Any]:
     evidence_reference = obj(raw_reference, f"{handoff_id} evidence reference")
     validate_attestation_reference_shape(evidence_reference, f"{handoff_id} evidence reference")
     prefix = f"evidence/d0-closure/{closure_id}/{handoff_id}/"
@@ -885,6 +903,11 @@ def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closu
     reviewed_at = parse_utc(review["reviewedAt"], f"{handoff_id}.reviewedAt")
     require(actor != reviewer, f"{handoff_id}: agent and independent reviewer must be distinct")
     require(returned_at <= completed_at <= reviewed_at, f"{handoff_id}: invalid attestation chronology")
+    for when, name in ((returned_at, "operator return"), (completed_at, "agent verification"), (reviewed_at, "independent review")):
+        require(when <= verification_time + timedelta(seconds=D0_EVIDENCE_FUTURE_SKEW_SECONDS), f"{handoff_id}: {name} timestamp is too far in the future at verification time")
+    for result in results.values():
+        result["_operatorReturnedBy"] = operator["returnedBy"]
+        result["_operatorReturnedAt"] = operator["returnedAt"]
     return {"reference": copy.deepcopy(evidence_reference), "results": results, "operator": operator, "actor": actor, "reviewer": reviewer}
 
 
@@ -934,11 +957,553 @@ def validate_semantic_documents(finding_id: str, disposition: str, result: dict[
     return documents
 
 
-def validate_generic_payloads(finding_id: str, disposition: str, results: list[dict[str, Any]]) -> None:
-    raise GateVerificationError(f"{finding_id}: strict semantic payload validation is not installed")
+def semantic_text(value: Any, label: str, maximum_bytes: int = 512) -> str:
+    text = nonempty(value, label)
+    require(len(text.encode("utf-8")) <= maximum_bytes and all(character.isprintable() for character in text), f"{label}: invalid or overlong semantic text")
+    return text
 
 
-def validate_generic_policy(finding_id: str, disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
+def security_text(value: Any, label: str, maximum_bytes: int = 512) -> str:
+    text = semantic_text(value, label, maximum_bytes)
+    require("PRIVATE KEY" not in text.upper() and "BEGIN OPENSSH" not in text.upper(), f"{label}: private-key-shaped text is forbidden")
+    require(re.search(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}(?![0-9A-Fa-f])", text) is None, f"{label}: secret-shaped hexadecimal text is forbidden")
+    require(re.search(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{40,}={0,2}(?![A-Za-z0-9+/=])", text) is None, f"{label}: secret-shaped base64 text is forbidden")
+    return text
+
+
+def security_identifier(value: Any, label: str) -> str:
+    identifier = semantic_identifier(value, label)
+    security_text(identifier, label, 128)
+    return identifier
+
+
+def operator_return_context(result: dict[str, Any], finding_id: str) -> tuple[str, datetime]:
+    operator = security_text(result.get("_operatorReturnedBy"), f"{finding_id} operator return identity", 128)
+    returned_at = parse_utc(result.get("_operatorReturnedAt"), f"{finding_id} operator return UTC")
+    return operator, returned_at
+
+
+def require_no_later(when: datetime, upper_bound: datetime, label: str) -> None:
+    require(when <= upper_bound, f"{label}: timestamp is later than its attested upper bound")
+
+
+def require_fresh(when: datetime, returned_at: datetime, verification_time: datetime, label: str, maximum_age_seconds: int = D0_LIVE_EVIDENCE_MAX_AGE_SECONDS) -> None:
+    require_no_later(when, returned_at, label)
+    require((returned_at - when).total_seconds() <= maximum_age_seconds, f"{label}: evidence is older than {maximum_age_seconds} seconds at operator return")
+    require(when <= verification_time + timedelta(seconds=D0_EVIDENCE_FUTURE_SKEW_SECONDS), f"{label}: timestamp is too far in the future at verification time")
+    require((verification_time - when).total_seconds() <= maximum_age_seconds, f"{label}: evidence is older than {maximum_age_seconds} seconds at verification time")
+
+
+def validate_credential_handle(raw: Any, label: str) -> dict[str, str]:
+    handle = obj(raw, label)
+    exact_keys(handle, {"kind", "value"}, label)
+    require(handle["kind"] == "SAFE_SUFFIX", f"{label}: only a bounded safe credential suffix may be returned")
+    value = security_text(handle["value"], f"{label}.value", 12)
+    require(re.fullmatch(r"[A-Za-z0-9_.:-]+", value) is not None and 4 <= len(value) <= 12, f"{label}: safe suffix must contain 4..12 identifier characters")
+    return {"kind": handle["kind"], "value": value}
+
+
+def mode_permissions(mode: str) -> list[str]:
+    value = int(mode, 8)
+    return [
+        "".join(letter if value & bit else "-" for letter, bit in (("r", 0o400), ("w", 0o200), ("x", 0o100))),
+        "".join(letter if value & bit else "-" for letter, bit in (("r", 0o040), ("w", 0o020), ("x", 0o010))),
+        "".join(letter if value & bit else "-" for letter, bit in (("r", 0o004), ("w", 0o002), ("x", 0o001))),
+    ]
+
+
+def account_name(value: Any, label: str) -> str:
+    name = semantic_text(value, label, 64)
+    require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}", name) is not None, f"{label}: invalid account or group name")
+    return name
+
+
+def acl_permissions(value: Any, label: str) -> str:
+    permissions = nonempty(value, label)
+    require(re.fullmatch(r"[r-][w-][x-]", permissions) is not None, f"{label}: invalid ACL permissions")
+    return permissions
+
+
+def intersect_permissions(permissions: str, mask: str) -> str:
+    return "".join(letter if permissions[index] == letter and mask[index] == letter else "-" for index, letter in enumerate("rwx"))
+
+
+def validate_access_acl(raw: Any, owner: str, group: str, mode: str, label: str) -> list[str]:
+    rows = arr(raw, label)
+    require(3 <= len(rows) <= 67, f"{label}: invalid access ACL row count")
+    validated: list[dict[str, Any]] = []
+    identities: set[tuple[str, str | None]] = set()
+    for index, raw_row in enumerate(rows):
+        row_label = f"{label}[{index}]"
+        row = obj(raw_row, row_label)
+        exact_keys(row, {"tag", "qualifier", "permissions", "effectivePermissions"}, row_label)
+        tag = nonempty(row["tag"], f"{row_label}.tag")
+        require(tag in {"USER_OBJ", "USER", "GROUP_OBJ", "GROUP", "MASK", "OTHER"}, f"{row_label}: unsupported ACL tag")
+        if tag in {"USER", "GROUP"}:
+            qualifier = account_name(row["qualifier"], f"{row_label}.qualifier")
+        else:
+            require(row["qualifier"] is None, f"{row_label}: base ACL entry must have null qualifier")
+            qualifier = None
+        identity = (tag, qualifier)
+        require(identity not in identities, f"{label}: duplicate ACL entry")
+        identities.add(identity)
+        permissions = acl_permissions(row["permissions"], f"{row_label}.permissions")
+        effective = acl_permissions(row["effectivePermissions"], f"{row_label}.effectivePermissions")
+        validated.append({"tag": tag, "qualifier": qualifier, "permissions": permissions, "effectivePermissions": effective})
+    for required_tag in ("USER_OBJ", "GROUP_OBJ", "OTHER"):
+        require(sum(row["tag"] == required_tag for row in validated) == 1, f"{label}: exactly one {required_tag} ACL entry is required")
+    named = [row for row in validated if row["tag"] in {"USER", "GROUP"}]
+    masks = [row for row in validated if row["tag"] == "MASK"]
+    require((len(masks) == 1) if named else (len(masks) == 0), f"{label}: extended ACLs require exactly one mask and base ACLs forbid a mask")
+    order = {"USER_OBJ": 0, "USER": 1, "GROUP_OBJ": 2, "GROUP": 3, "MASK": 4, "OTHER": 5}
+    require(validated == sorted(validated, key=lambda row: (order[row["tag"]], "" if row["qualifier"] is None else row["qualifier"])), f"{label}: ACL entries are not in canonical order")
+    mask = masks[0]["permissions"] if masks else None
+    for row in validated:
+        expected_effective = row["permissions"]
+        if mask is not None and row["tag"] in {"USER", "GROUP_OBJ", "GROUP"}:
+            expected_effective = intersect_permissions(row["permissions"], mask)
+        require(row["effectivePermissions"] == expected_effective, f"{label}: ACL effective permissions disagree with the mask")
+        if row["tag"] not in {"USER_OBJ", "MASK"}:
+            require("w" not in row["permissions"] and "x" not in row["permissions"], f"{label}: non-owner ACL entry contains write or execute permission")
+    by_tag = {row["tag"]: row for row in validated if row["tag"] not in {"USER", "GROUP"}}
+    group_mode_permissions = masks[0]["permissions"] if masks else by_tag["GROUP_OBJ"]["permissions"]
+    require(mode_permissions(mode) == [by_tag["USER_OBJ"]["permissions"], group_mode_permissions, by_tag["OTHER"]["permissions"]], f"{label}: access ACL disagrees with Unix mode")
+    readers: list[str] = []
+    for row in validated:
+        if "r" not in row["effectivePermissions"] or row["tag"] == "MASK":
+            continue
+        reader = f"user:{owner}" if row["tag"] == "USER_OBJ" else f"user:{row['qualifier']}" if row["tag"] == "USER" else f"group:{group}" if row["tag"] == "GROUP_OBJ" else f"group:{row['qualifier']}" if row["tag"] == "GROUP" else "other"
+        require(reader not in readers, f"{label}: duplicate effective reader principal")
+        readers.append(reader)
+    return sorted(readers)
+
+
+def validate_rain_generation(value: Any, label: str) -> str:
+    path = absolute_path(value, label)
+    match = NIX_STORE_PATH_RE.fullmatch(path)
+    require(match is not None and match.group("name").startswith("nixos-system-rain-"), f"{label}: expected a canonical Rain NixOS system generation")
+    return path
+
+
+def validate_metadata_collection(raw: Any, metadata: dict[str, Any], label: str, expected_collector: str) -> str:
+    collection = obj(raw, label)
+    exact_keys(collection, {"collectionId", "method", "collector", "targetPath", "observedAt", "returnedFields", "contentAccess", "result"}, label)
+    collection_id = security_identifier(collection["collectionId"], f"{label}.collectionId")
+    require(collection["method"] == "METADATA_SYSCALLS_AND_ACCESS_ACL_ONLY", f"{label}: unsupported metadata-only collection method")
+    collector = security_text(collection["collector"], f"{label}.collector", 128)
+    require(collector == expected_collector, f"{label}: collector does not match operator return")
+    require(absolute_path(collection["targetPath"], f"{label}.targetPath") == metadata["path"], f"{label}: target path does not match returned metadata")
+    require(utc_text(collection["observedAt"], f"{label}.observedAt") == metadata["observedAt"], f"{label}: observation time does not match returned metadata")
+    require(arr(collection["returnedFields"], f"{label}.returnedFields") == FILE_METADATA_RETURNED_FIELDS, f"{label}: returned-field declaration must exactly cover the metadata-only schema")
+    content_access = obj(collection["contentAccess"], f"{label}.contentAccess")
+    exact_keys(content_access, {"opened", "read", "digested"}, f"{label}.contentAccess")
+    for field in ("opened", "read", "digested"):
+        require(strict_bool(content_access[field], f"{label}.contentAccess.{field}") is False, f"{label}: file content must not be opened, read, or digested")
+    require(collection["result"] == "PASS", f"{label}: metadata-only collection did not pass")
+    return collection_id
+
+
+def validate_file_metadata(raw: Any, label: str, expected_path: str | None, expected_collector: str, *, private: bool, maximum_bytes: int) -> dict[str, Any]:
+    metadata = obj(raw, label)
+    exact_keys(metadata, {*FILE_METADATA_RETURNED_FIELDS, "collection"}, label)
+    path = absolute_path(metadata["path"], f"{label}.path")
+    if expected_path is not None:
+        require(path == expected_path, f"{label}: unexpected file path")
+    require(metadata["fileType"] == "REGULAR" and metadata["symlinkTarget"] is None, f"{label}: evidence must describe a non-symlink regular file")
+    owner = account_name(metadata["owner"], f"{label}.owner")
+    group = account_name(metadata["group"], f"{label}.group")
+    mode = unix_mode(metadata["mode"], f"{label}.mode")
+    allowed_modes = {"0400", "0440", "0600", "0640"} if private else {"0400", "0440", "0444", "0600", "0640", "0644"}
+    require(mode in allowed_modes, f"{label}: file mode violates the {'private' if private else 'public-certificate'} policy")
+    require(strict_bool(metadata["aclComplete"], f"{label}.aclComplete") is True, f"{label}: complete access ACL attestation is required")
+    require(metadata["readerMechanism"] == "POSIX_MODE_AND_ACCESS_ACL", f"{label}: unsupported authorized-reader mechanism")
+    actual_readers = validate_access_acl(metadata["acl"], owner, group, mode, f"{label}.acl")
+    readers = unique_strings(metadata["effectiveReaders"], f"{label}.effectiveReaders", canonical_order=True)
+    require(readers == actual_readers, f"{label}: declared readers do not equal effective access-ACL readers")
+    if private:
+        require("other" not in readers, f"{label}: private file grants read access to other")
+    bounded_integer(metadata["sizeBytes"], f"{label}.sizeBytes", 1, maximum_bytes)
+    security_identifier(metadata["purpose"], f"{label}.purpose")
+    utc_text(metadata["observedAt"], f"{label}.observedAt")
+    validate_rain_generation(metadata["sourceGeneration"], f"{label}.sourceGeneration")
+    validate_metadata_collection(metadata["collection"], metadata, f"{label}.collection", expected_collector)
+    return metadata
+
+
+def validate_file_policy(raw: Any, label: str, expected_path: str, *, private: bool, maximum_bytes: int) -> dict[str, Any]:
+    policy = obj(raw, label)
+    exact_keys(policy, {"path", "owner", "group", "mode", "acl", "aclComplete", "purpose", "readerMechanism", "effectiveReaders", "maximumSizeBytes"}, label)
+    path = absolute_path(policy["path"], f"{label}.path")
+    require(path == expected_path, f"{label}: unexpected intended file path")
+    owner = account_name(policy["owner"], f"{label}.owner")
+    group = account_name(policy["group"], f"{label}.group")
+    mode = unix_mode(policy["mode"], f"{label}.mode")
+    allowed_modes = {"0400", "0440", "0600", "0640"} if private else {"0400", "0440", "0444", "0600", "0640", "0644"}
+    require(mode in allowed_modes, f"{label}: intended file mode violates the {'private' if private else 'public-certificate'} policy")
+    require(strict_bool(policy["aclComplete"], f"{label}.aclComplete") is True, f"{label}: complete intended access ACL is required")
+    require(policy["readerMechanism"] == "POSIX_MODE_AND_ACCESS_ACL", f"{label}: unsupported intended authorized-reader mechanism")
+    actual_readers = validate_access_acl(policy["acl"], owner, group, mode, f"{label}.acl")
+    readers = unique_strings(policy["effectiveReaders"], f"{label}.effectiveReaders", canonical_order=True)
+    require(readers == actual_readers, f"{label}: intended readers do not equal intended access-ACL readers")
+    if private:
+        require("other" not in readers, f"{label}: intended private file grants read access to other")
+    bounded_integer(policy["maximumSizeBytes"], f"{label}.maximumSizeBytes", 1, maximum_bytes)
+    security_identifier(policy["purpose"], f"{label}.purpose")
+    return copy.deepcopy(policy)
+
+
+def validate_declarative_credential_policy(raw: Any, label: str) -> dict[str, Any]:
+    declaration = obj(raw, label)
+    exact_keys(declaration, {"source", "deployedGeneration", "intendedMetadata"}, label)
+    source = obj(declaration["source"], f"{label}.source")
+    exact_keys(source, {"repositoryId", "commit", "path"}, f"{label}.source")
+    require(source["repositoryId"] == INFRA_REPOSITORY_ID, f"{label}: declarative source repository mismatch")
+    commit = hex_digest(source["commit"], f"{label}.source.commit", "sha1")
+    require(commit == INFRA_REVIEWED_COMMIT, f"{label}: declarative source commit is not the reviewed production infra commit")
+    require(safe_path(source["path"], f"{label}.source.path") == RAIN_PKGRE_MODULE_PATH, f"{label}: declarative source module mismatch")
+    generation = validate_rain_generation(declaration["deployedGeneration"], f"{label}.deployedGeneration")
+    intended = validate_file_policy(declaration["intendedMetadata"], f"{label}.intendedMetadata", "/var/lib/keys/pkgre-js-gandiv5-token", private=True, maximum_bytes=D0_CREDENTIAL_MAX_BYTES)
+    require(intended["owner"] == "root" and intended["group"] == "root" and intended["purpose"] == "GANDI_LIVEDNS_DNS01", f"{label}: intended credential identity or purpose mismatch")
+    require(intended["mode"] in {"0400", "0600"} and intended["effectiveReaders"] == ["user:root"], f"{label}: intended credential must be readable only by root")
+    return {"source": copy.deepcopy(source), "deployedGeneration": generation, "intendedMetadata": intended}
+
+
+def require_file_matches_policy(metadata: dict[str, Any], declaration: dict[str, Any], label: str) -> None:
+    intended = declaration["intendedMetadata"]
+    for field in ("path", "owner", "group", "mode", "acl", "aclComplete", "purpose", "readerMechanism", "effectiveReaders"):
+        require(metadata[field] == intended[field], f"{label}: live credential {field} disagrees with declarative policy")
+    require(metadata["sizeBytes"] <= intended["maximumSizeBytes"], f"{label}: live credential exceeds the declarative maximum size")
+    require(metadata["sourceGeneration"] == declaration["deployedGeneration"], f"{label}: live credential generation disagrees with deployed declarative generation")
+
+
+def validate_event_subject(raw: Any, label: str) -> dict[str, Any]:
+    subject = obj(raw, label)
+    subject_type = nonempty(subject.get("type"), f"{label}.type")
+    if subject_type == "FILE_PATH":
+        exact_keys(subject, {"type", "path"}, label)
+        return {"type": subject_type, "path": absolute_path(subject["path"], f"{label}.path")}
+    if subject_type == "CREDENTIAL_HANDLE":
+        exact_keys(subject, {"type", "handle"}, label)
+        return {"type": subject_type, "handle": validate_credential_handle(subject["handle"], f"{label}.handle")}
+    raise GateVerificationError(f"{label}: unsupported event subject type")
+
+
+def validate_event(raw: Any, label: str, expected_subject: dict[str, Any], expected_actor: str, upper_bound: datetime, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
+    event = obj(raw, label)
+    exact_keys(event, {"eventId", "occurredAt", "actor", "subject", "result"}, label)
+    security_identifier(event["eventId"], f"{label}.eventId")
+    occurred_at = parse_utc(event["occurredAt"], f"{label}.occurredAt")
+    require_fresh(occurred_at, returned_at, verification_time, label)
+    require_no_later(occurred_at, upper_bound, label)
+    actor = security_text(event["actor"], f"{label}.actor", 128)
+    require(actor == expected_actor, f"{label}: actor does not match operator return")
+    require(validate_event_subject(event["subject"], f"{label}.subject") == expected_subject, f"{label}: event subject does not match the required object")
+    require(event["result"] == "PASS", f"{label}: result must be 'PASS'")
+    return event
+
+
+def validate_procedure(raw: Any, label: str, expected_operations: list[str], expected_subject: dict[str, Any], expected_owner: str, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
+    procedure = obj(raw, label)
+    exact_keys(procedure, {"procedureId", "owner", "subject", "operations", "test"}, label)
+    procedure_id = security_identifier(procedure["procedureId"], f"{label}.procedureId")
+    owner = security_text(procedure["owner"], f"{label}.owner", 128)
+    require(owner == expected_owner, f"{label}: owner does not match operator return")
+    require(obj(procedure["subject"], f"{label}.subject") == expected_subject, f"{label}: procedure is not bound to the required subject")
+    require(arr(procedure["operations"], f"{label}.operations") == expected_operations, f"{label}: required procedure operations are absent or out of order")
+    test = obj(procedure["test"], f"{label}.test")
+    exact_keys(test, {"eventId", "procedureId", "subject", "mode", "fixture", "environment", "testCase", "actor", "testedAt", "operations", "result"}, f"{label}.test")
+    security_identifier(test["eventId"], f"{label}.test.eventId")
+    require(test["procedureId"] == procedure_id, f"{label}: test event is not bound to its procedure")
+    require(obj(test["subject"], f"{label}.test.subject") == expected_subject, f"{label}: test event is not bound to the required subject")
+    require(test["mode"] in {"TABLETOP", "ISOLATED_REHEARSAL"}, f"{label}: procedure test mode must be TABLETOP or ISOLATED_REHEARSAL")
+    fixture = obj(test["fixture"], f"{label}.test.fixture")
+    exact_keys(fixture, {"fixtureId", "productionMaterialUsed", "replacementIdentity"}, f"{label}.test.fixture")
+    security_identifier(fixture["fixtureId"], f"{label}.test.fixture.fixtureId")
+    require(strict_bool(fixture["productionMaterialUsed"], f"{label}.test.fixture.productionMaterialUsed") is False, f"{label}: procedure test must not use production secret or private-key material")
+    replacement = obj(fixture["replacementIdentity"], f"{label}.test.fixture.replacementIdentity")
+    exact_keys(replacement, {"type", "value"}, f"{label}.test.fixture.replacementIdentity")
+    require(replacement["type"] == "NONPRODUCTION_FIXTURE_ID", f"{label}: procedure test replacement identity must be explicitly nonproduction")
+    security_identifier(replacement["value"], f"{label}.test.fixture.replacementIdentity.value")
+    environment = obj(test["environment"], f"{label}.test.environment")
+    exact_keys(environment, {"kind", "name", "productionEndpointUsed"}, f"{label}.test.environment")
+    require(environment["kind"] in {"DOCUMENTED_TABLETOP", "ISOLATED_NONPRODUCTION"}, f"{label}: unsupported procedure test environment")
+    require((test["mode"] == "TABLETOP" and environment["kind"] == "DOCUMENTED_TABLETOP") or (test["mode"] == "ISOLATED_REHEARSAL" and environment["kind"] == "ISOLATED_NONPRODUCTION"), f"{label}: procedure test mode and environment disagree")
+    security_text(environment["name"], f"{label}.test.environment.name", 128)
+    require(strict_bool(environment["productionEndpointUsed"], f"{label}.test.environment.productionEndpointUsed") is False, f"{label}: procedure test must not exercise a production endpoint")
+    test_case = obj(test["testCase"], f"{label}.test.testCase")
+    exact_keys(test_case, {"caseId", "evidenceRef"}, f"{label}.test.testCase")
+    security_identifier(test_case["caseId"], f"{label}.test.testCase.caseId")
+    security_identifier(test_case["evidenceRef"], f"{label}.test.testCase.evidenceRef")
+    actor = security_text(test["actor"], f"{label}.test.actor", 128)
+    require(actor == expected_owner, f"{label}: test actor does not match operator return")
+    tested_at = parse_utc(test["testedAt"], f"{label}.test.testedAt")
+    require_fresh(tested_at, returned_at, verification_time, f"{label}.test")
+    test_operations = arr(test["operations"], f"{label}.test.operations")
+    require(len(test_operations) == len(expected_operations), f"{label}: test operation coverage mismatch")
+    for index, expected_operation in enumerate(expected_operations):
+        row = obj(test_operations[index], f"{label}.test.operations[{index}]")
+        exact_keys(row, {"operation", "expectedOutcome", "observedOutcome", "result"}, f"{label}.test.operations[{index}]")
+        require(row["operation"] == expected_operation, f"{label}: procedure test operation coverage or order mismatch")
+        expected_outcome = security_text(row["expectedOutcome"], f"{label}.test.operations[{index}].expectedOutcome", 256)
+        observed_outcome = security_text(row["observedOutcome"], f"{label}.test.operations[{index}].observedOutcome", 256)
+        require(expected_outcome == observed_outcome and row["result"] == "PASS", f"{label}: procedure test operation outcome did not pass exactly")
+    require(test["result"] == "PASS", f"{label}: procedure test must PASS")
+    return procedure
+
+
+PAT_PROCEDURE_OPERATIONS = {
+    "routineRotation": ["ISSUE_SUCCESSOR", "ACTIVATE_SUCCESSOR", "VERIFY_DNS01", "REVOKE_PREDECESSOR", "VERIFY_REVOCATION"],
+    "compromiseResponse": ["CONTAIN_CREDENTIAL", "REVOKE_COMPROMISED", "ISSUE_RECOVERY_CREDENTIAL", "ACTIVATE_RECOVERY_CREDENTIAL", "AUDIT_PROVIDER_ACTIVITY"],
+    "recovery": ["RESTORE_PROVIDER_ACCESS", "ISSUE_RECOVERY_CREDENTIAL", "ACTIVATE_RECOVERY_CREDENTIAL", "VERIFY_DNS01", "REVOKE_SUPERSEDED"],
+}
+KEY_LIFECYCLE_OPERATIONS = {
+    "rotation": ["CREATE_SUCCESSOR", "ACTIVATE_WITH_OVERLAP", "VERIFY_SUCCESSOR", "RETIRE_PREDECESSOR"],
+    "revocation": ["REVOKE_ACTIVE", "REMOVE_ACTIVE", "VERIFY_REJECTED"],
+    "compromiseResponse": ["CONTAIN_COMPROMISE", "REVOKE_COMPROMISED", "ACTIVATE_RECOVERY", "AUDIT_IMPACT"],
+    "recovery": ["RESTORE_AUTHORITY", "CREATE_SUCCESSOR", "ACTIVATE_SUCCESSOR", "VERIFY_SERVICE"],
+}
+SSH_LIFECYCLE_OPERATIONS = {
+    "rotation": ["CREATE_SUCCESSOR", "PUBLISH_SUCCESSOR", "DISTRIBUTE_SUCCESSOR", "ACTIVATE_WITH_OVERLAP", "VERIFY_SUCCESSOR", "RETIRE_PREDECESSOR"],
+    "revocationAndClientRemediation": ["REVOKE_ACTIVE", "DISTRIBUTE_CLIENT_REMEDIATION", "VERIFY_PREDECESSOR_REJECTED", "VERIFY_SUCCESSOR_ACCEPTED"],
+    "compromiseResponse": ["ISOLATE_COMPROMISED_HOST", "REVOKE_COMPROMISED", "ACTIVATE_RECOVERY", "DISTRIBUTE_RECOVERY_TRUST", "AUDIT_IMPACT"],
+    "recovery": ["ESTABLISH_CONSOLE_CONTROL", "CREATE_SUCCESSOR", "ACTIVATE_SUCCESSOR", "DISTRIBUTE_SUCCESSOR", "VERIFY_SERVICE"],
+}
+
+
+def validate_b01_containment(payload: dict[str, Any], label: str, operator: str, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
+    exact_keys(payload, {"rotationId", "credential", "declarativePolicy", "provider", "events", "installation", "audit", "secretMaterial"}, label)
+    security_identifier(payload["rotationId"], f"{label}.rotationId")
+    credential = validate_file_metadata(payload["credential"], f"{label}.credential", "/var/lib/keys/pkgre-js-gandiv5-token", operator, private=True, maximum_bytes=D0_CREDENTIAL_MAX_BYTES)
+    require(credential["owner"] == "root" and credential["group"] == "root" and credential["purpose"] == "GANDI_LIVEDNS_DNS01", f"{label}: credential identity or purpose mismatch")
+    require(credential["mode"] in {"0400", "0600"} and credential["effectiveReaders"] == ["user:root"], f"{label}: credential must be readable only by root")
+    declarative = validate_declarative_credential_policy(payload["declarativePolicy"], f"{label}.declarativePolicy")
+    require_file_matches_policy(credential, declarative, label)
+    observation_time = parse_utc(credential["observedAt"], f"{label}.credential.observedAt")
+    require_fresh(observation_time, returned_at, verification_time, f"{label}.credential observation")
+    provider = obj(payload["provider"], f"{label}.provider")
+    exact_keys(provider, {"identity", "oldCredential", "activeCredential", "zoneScopes", "permissions", "expiry"}, f"{label}.provider")
+    require(provider["identity"] == "GANDI_LIVEDNS", f"{label}: provider identity mismatch")
+    old_handle = validate_credential_handle(provider["oldCredential"], f"{label}.provider.oldCredential")
+    active_handle = validate_credential_handle(provider["activeCredential"], f"{label}.provider.activeCredential")
+    require(old_handle["kind"] == active_handle["kind"] and old_handle["value"] != active_handle["value"], f"{label}: old and active credential handles must be comparable and distinct")
+    require(unique_strings(provider["zoneScopes"], f"{label}.provider.zoneScopes", canonical_order=True) == ["pkg.re"], f"{label}: provider scope must be exactly pkg.re")
+    require(unique_strings(provider["permissions"], f"{label}.provider.permissions", canonical_order=True) == ["DNS_READ", "DNS_WRITE"], f"{label}: exact DNS_READ,DNS_WRITE provider permissions required")
+    if provider["expiry"] != "NO_EXPIRY":
+        require(parse_utc(provider["expiry"], f"{label}.provider.expiry") > returned_at, f"{label}: active provider credential is already expired at operator return")
+    events = obj(payload["events"], f"{label}.events")
+    exact_keys(events, {"permissionRepair", "newCredentialActivation", "oldCredentialRevocation"}, f"{label}.events")
+    repair = validate_event(events["permissionRepair"], f"{label}.events.permissionRepair", {"type": "FILE_PATH", "path": credential["path"]}, operator, observation_time, returned_at, verification_time)
+    activation = validate_event(events["newCredentialActivation"], f"{label}.events.newCredentialActivation", {"type": "CREDENTIAL_HANDLE", "handle": active_handle}, operator, observation_time, returned_at, verification_time)
+    revocation = validate_event(events["oldCredentialRevocation"], f"{label}.events.oldCredentialRevocation", {"type": "CREDENTIAL_HANDLE", "handle": old_handle}, operator, observation_time, returned_at, verification_time)
+    event_ids = [event["eventId"] for event in (repair, activation, revocation)]
+    require(len(event_ids) == len(set(event_ids)), f"{label}: containment event IDs must be distinct")
+    repair_time = parse_utc(repair["occurredAt"], f"{label}.repair time")
+    activation_time = parse_utc(activation["occurredAt"], f"{label}.activation time")
+    revocation_time = parse_utc(revocation["occurredAt"], f"{label}.revocation time")
+    require(repair_time < activation_time < revocation_time <= observation_time, f"{label}: credential containment chronology is invalid")
+    installation = obj(payload["installation"], f"{label}.installation")
+    exact_keys(installation, {"bindingId", "credentialPath", "sourceGeneration", "activeCredential", "activationEventId", "dns01Operation", "boundAt", "result"}, f"{label}.installation")
+    binding_id = security_identifier(installation["bindingId"], f"{label}.installation.bindingId")
+    require(absolute_path(installation["credentialPath"], f"{label}.installation.credentialPath") == credential["path"], f"{label}: installation binding uses the wrong canonical credential path")
+    require(validate_rain_generation(installation["sourceGeneration"], f"{label}.installation.sourceGeneration") == credential["sourceGeneration"], f"{label}: installation binding uses the wrong Rain generation")
+    require(validate_credential_handle(installation["activeCredential"], f"{label}.installation.activeCredential") == active_handle, f"{label}: installed credential does not match the active provider credential")
+    require(installation["activationEventId"] == activation["eventId"], f"{label}: installation binding does not reference the active credential activation event")
+    dns01 = obj(installation["dns01Operation"], f"{label}.installation.dns01Operation")
+    exact_keys(dns01, {"operationId", "providerIdentity", "zone", "certificateName", "operation", "occurredAt", "result"}, f"{label}.installation.dns01Operation")
+    operation_id = security_identifier(dns01["operationId"], f"{label}.installation.dns01Operation.operationId")
+    require(dns01["providerIdentity"] == provider["identity"] and dns01["zone"] == "pkg.re" and dns01["certificateName"] in ACME_NAMES and dns01["operation"] == "DNS01_CHALLENGE_UPDATE" and dns01["result"] == "PASS", f"{label}: installation binding lacks a successful pkg.re provider DNS-01 operation")
+    dns01_time = parse_utc(dns01["occurredAt"], f"{label}.installation.dns01Operation.occurredAt")
+    require_fresh(dns01_time, returned_at, verification_time, f"{label}.installation DNS-01 operation")
+    bound_at = parse_utc(installation["boundAt"], f"{label}.installation.boundAt")
+    require_fresh(bound_at, returned_at, verification_time, f"{label}.installation binding")
+    require(activation_time <= dns01_time <= bound_at <= observation_time, f"{label}: active credential installation/use chronology is invalid")
+    require(installation["result"] == "PASS", f"{label}: active credential installation/use binding did not pass")
+    require(binding_id not in event_ids and operation_id not in {*event_ids, binding_id}, f"{label}: installation/event identifiers must be distinct")
+    audit = arr(payload["audit"], f"{label}.audit")
+    require(len(audit) == 3, f"{label}: expected exactly three provider audit checks")
+    checks_seen: set[str] = set()
+    audit_ids: set[str] = set()
+    ordering: list[tuple[datetime, str]] = []
+    expected_audit_handle = {"SCOPE": active_handle, "RECENT_ACTIVITY": active_handle, "REVOCATION": old_handle}
+    for index, raw_row in enumerate(audit):
+        row_label = f"{label}.audit[{index}]"
+        row = obj(raw_row, row_label)
+        exact_keys(row, {"auditId", "occurredAt", "actor", "check", "credential", "result"}, row_label)
+        audit_id = security_identifier(row["auditId"], f"{row_label}.auditId")
+        require(audit_id not in audit_ids, f"{label}: duplicate provider audit ID")
+        audit_ids.add(audit_id)
+        audit_time = parse_utc(row["occurredAt"], f"{row_label}.occurredAt")
+        require_fresh(audit_time, returned_at, verification_time, row_label)
+        require(revocation_time <= audit_time <= observation_time, f"{label}: provider audit must follow revocation and precede observation")
+        actor = security_text(row["actor"], f"{row_label}.actor", 128)
+        require(actor == operator, f"{row_label}: actor does not match operator return")
+        check = nonempty(row["check"], f"{row_label}.check")
+        require(check in expected_audit_handle and row["result"] == "PASS", f"{label}: invalid or failed provider audit check")
+        require(validate_credential_handle(row["credential"], f"{row_label}.credential") == expected_audit_handle[check], f"{label}: provider audit check is bound to the wrong credential")
+        checks_seen.add(check)
+        ordering.append((audit_time, audit_id))
+    require(ordering == sorted(ordering), f"{label}: provider audit rows are not in canonical chronological order")
+    require(checks_seen == set(expected_audit_handle), f"{label}: provider audit must cover each required category exactly once")
+    require((set(event_ids) | {binding_id, operation_id}).isdisjoint(audit_ids), f"{label}: containment,installation,and provider audit IDs must be distinct")
+    secret = obj(payload["secretMaterial"], f"{label}.secretMaterial")
+    exact_keys(secret, {"credentialValueRead", "credentialDigestRecorded"}, f"{label}.secretMaterial")
+    require(strict_bool(secret["credentialValueRead"], f"{label}.secretMaterial.credentialValueRead") is False and strict_bool(secret["credentialDigestRecorded"], f"{label}.secretMaterial.credentialDigestRecorded") is False, f"{label}: credential bytes or digest must not be returned")
+    return payload
+
+
+def validate_b01_lifecycle(payload: dict[str, Any], label: str, operator: str, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
+    exact_keys(payload, {"rotationId", "providerIdentity", "activeCredential", "observedAt", "sourceGeneration", "files", "patProcedures", "lifecycles", "secretMaterial"}, label)
+    security_identifier(payload["rotationId"], f"{label}.rotationId")
+    require(payload["providerIdentity"] == "GANDI_LIVEDNS", f"{label}: ACME provider identity mismatch")
+    active_handle = validate_credential_handle(payload["activeCredential"], f"{label}.activeCredential")
+    observed_at = parse_utc(payload["observedAt"], f"{label}.observedAt")
+    require_fresh(observed_at, returned_at, verification_time, f"{label} observation")
+    source_generation = validate_rain_generation(payload["sourceGeneration"], f"{label}.sourceGeneration")
+    expected_files = [(f"{name}-certificate", f"/var/lib/acme/{name}/fullchain.pem", "TLS_CERTIFICATE", False, D0_CERTIFICATE_MAX_BYTES) for name in ACME_NAMES] + [(f"{name}-private-key", f"/var/lib/acme/{name}/key.pem", "TLS_PRIVATE_KEY", True, D0_PRIVATE_KEY_MAX_BYTES) for name in ACME_NAMES] + [("acme-account-key", None, "ACME_ACCOUNT_KEY", True, D0_PRIVATE_KEY_MAX_BYTES)]
+    files = arr(payload["files"], f"{label}.files")
+    require(len(files) == len(expected_files), f"{label}: exact ACME certificate,key,and account-key rows required")
+    file_paths: list[str] = []
+    metadata_by_id: dict[str, dict[str, Any]] = {}
+    for index, (expected_id, expected_path, expected_purpose, private, maximum_bytes) in enumerate(expected_files):
+        row_label = f"{label}.files[{index}]"
+        row = obj(files[index], row_label)
+        exact_keys(row, {"id", "metadata"}, row_label)
+        require(row["id"] == expected_id, f"{label}: ACME file row order or identity mismatch")
+        metadata = validate_file_metadata(row["metadata"], f"{row_label}.metadata", expected_path, operator, private=private, maximum_bytes=maximum_bytes)
+        require(metadata["purpose"] == expected_purpose and metadata["sourceGeneration"] == source_generation and metadata["observedAt"] == payload["observedAt"], f"{label}: ACME file purpose,generation,or observation mismatch")
+        if expected_purpose == "TLS_CERTIFICATE":
+            require(metadata["owner"] == "acme" and metadata["group"] == "nginx", f"{label}: TLS certificate owner/group mismatch")
+        elif expected_purpose == "TLS_PRIVATE_KEY":
+            group_reader = metadata["group"] == "nginx" and metadata["effectiveReaders"] == ["group:nginx", "user:acme"]
+            named_reader = metadata["effectiveReaders"] == ["user:acme", "user:nginx"]
+            require(metadata["owner"] == "acme" and (group_reader or named_reader), f"{label}: TLS private key readers must be exactly acme and nginx")
+        else:
+            require(metadata["path"].startswith("/var/lib/acme/") and metadata["owner"] in {"acme", "root"} and metadata["effectiveReaders"] == [f"user:{metadata['owner']}"], f"{label}: ACME account key must be owner-only under /var/lib/acme")
+        file_paths.append(metadata["path"])
+        metadata_by_id[expected_id] = metadata
+    require(len(file_paths) == len(set(file_paths)), f"{label}: ACME certificate,key,and account-key paths must be globally distinct")
+    pat = obj(payload["patProcedures"], f"{label}.patProcedures")
+    exact_keys(pat, set(PAT_PROCEDURE_OPERATIONS), f"{label}.patProcedures")
+    pat_subject = {"type": "PROVIDER_CREDENTIAL", "providerIdentity": payload["providerIdentity"], "credential": active_handle}
+    procedures = [validate_procedure(pat[key], f"{label}.patProcedures.{key}", PAT_PROCEDURE_OPERATIONS[key], pat_subject, operator, returned_at, verification_time) for key in PAT_PROCEDURE_OPERATIONS]
+    expected_subjects = [*ACME_NAMES, "ACME_ACCOUNT_KEY"]
+    lifecycles = arr(payload["lifecycles"], f"{label}.lifecycles")
+    require(len(lifecycles) == len(expected_subjects), f"{label}: exact certificate/account lifecycle coverage required")
+    for index, subject in enumerate(expected_subjects):
+        row_label = f"{label}.lifecycles[{index}]"
+        row = obj(lifecycles[index], row_label)
+        exact_keys(row, {"subject", "rotationOverlapSeconds", *KEY_LIFECYCLE_OPERATIONS}, row_label)
+        require(row["subject"] == subject, f"{label}: lifecycle subject order or coverage mismatch")
+        bounded_integer(row["rotationOverlapSeconds"], f"{row_label}.rotationOverlapSeconds", 1, 2_592_000)
+        if subject == "ACME_ACCOUNT_KEY":
+            procedure_subject = {"type": "ACME_ACCOUNT_KEY", "providerIdentity": payload["providerIdentity"], "path": metadata_by_id["acme-account-key"]["path"]}
+        else:
+            procedure_subject = {"type": "ACME_CERTIFICATE_KEY_PAIR", "name": subject, "certificatePath": metadata_by_id[f"{subject}-certificate"]["path"], "privateKeyPath": metadata_by_id[f"{subject}-private-key"]["path"]}
+        procedures.extend(validate_procedure(row[key], f"{row_label}.{key}", KEY_LIFECYCLE_OPERATIONS[key], procedure_subject, operator, returned_at, verification_time) for key in KEY_LIFECYCLE_OPERATIONS)
+    procedure_ids = [procedure["procedureId"] for procedure in procedures]
+    require(len(procedure_ids) == len(set(procedure_ids)), f"{label}: lifecycle procedure IDs must be globally distinct")
+    test_event_ids = [procedure["test"]["eventId"] for procedure in procedures]
+    require(len(test_event_ids) == len(set(test_event_ids)), f"{label}: lifecycle procedure test-event IDs must be globally distinct")
+    require(set(procedure_ids).isdisjoint(test_event_ids), f"{label}: lifecycle procedure and test-event IDs must be globally distinct")
+    secret = obj(payload["secretMaterial"], f"{label}.secretMaterial")
+    exact_keys(secret, {"privateKeyValueRead", "privateKeyDigestRecorded"}, f"{label}.secretMaterial")
+    require(strict_bool(secret["privateKeyValueRead"], f"{label}.secretMaterial.privateKeyValueRead") is False and strict_bool(secret["privateKeyDigestRecorded"], f"{label}.secretMaterial.privateKeyDigestRecorded") is False, f"{label}: private-key material or digest must not be returned")
+    return payload
+
+
+def validate_b01_payloads(results: list[dict[str, Any]], verification_time: datetime) -> None:
+    require(len(results) == 1, "D0-B01: exact single-handoff contribution required")
+    operator, returned_at = operator_return_context(results[0], "D0-B01")
+    payloads = results[0]["_semanticPayloads"]
+    containment = validate_b01_containment(payloads["credential-containment"], "D0-B01 credential-containment", operator, returned_at, verification_time)
+    lifecycle = validate_b01_lifecycle(payloads["credential-lifecycle"], "D0-B01 credential-lifecycle", operator, returned_at, verification_time)
+    require(containment["rotationId"] == lifecycle["rotationId"], "D0-B01: containment and lifecycle rotation IDs disagree")
+    require(containment["provider"]["identity"] == lifecycle["providerIdentity"], "D0-B01: containment and lifecycle ACME provider identities disagree")
+    require(containment["provider"]["activeCredential"] == lifecycle["activeCredential"], "D0-B01: containment and lifecycle active credential handles disagree")
+    require(containment["credential"]["sourceGeneration"] == lifecycle["sourceGeneration"], "D0-B01: containment and lifecycle source generations disagree")
+    require(containment["credential"]["observedAt"] == lifecycle["observedAt"], "D0-B01: containment and lifecycle observation times disagree")
+    containment_event_ids = {event["eventId"] for event in containment["events"].values()} | {row["auditId"] for row in containment["audit"]}
+    lifecycle_test_event_ids = {procedure["test"]["eventId"] for procedure in lifecycle["patProcedures"].values()} | {procedure["test"]["eventId"] for row in lifecycle["lifecycles"] for key, procedure in row.items() if key in KEY_LIFECYCLE_OPERATIONS}
+    require(containment_event_ids.isdisjoint(lifecycle_test_event_ids), "D0-B01: containment and lifecycle test-event IDs must be globally distinct")
+
+
+def validate_b02_attestation(payload: dict[str, Any], label: str, operator: str, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
+    exact_keys(payload, {"hostname", "port", "algorithm", "fingerprint", "authoritativeSource", "endpointObservation", "attestation", "secretMaterial"}, label)
+    require(payload["hostname"] == RAIN_SSH_HOST and tcp_port(payload["port"], f"{label}.port") == 22, f"{label}: Rain SSH endpoint mismatch")
+    require(payload["algorithm"] == "ssh-ed25519" and ssh_sha256_fingerprint(payload["fingerprint"], f"{label}.fingerprint") == RAIN_SSH_FINGERPRINT, f"{label}: pinned Rain SSH identity mismatch")
+    source = obj(payload["authoritativeSource"], f"{label}.authoritativeSource")
+    exact_keys(source, {"type", "sourceId", "method", "operator", "observedAt", "recordKind", "hostname", "algorithm", "fingerprint", "observedSshConnectionUsed"}, f"{label}.authoritativeSource")
+    methods = {"PROVIDER_SERIAL_CONSOLE": "READ_PUBLIC_HOST_KEY_VIA_PROVIDER_SERIAL_CONSOLE", "PHYSICAL_CONSOLE": "READ_PUBLIC_HOST_KEY_VIA_PHYSICAL_CONSOLE"}
+    require(source["type"] in methods and source["method"] == methods[source["type"]], f"{label}: unsupported or mismatched out-of-band authority method")
+    source_id = security_identifier(source["sourceId"], f"{label}.authoritativeSource.sourceId")
+    require(source["operator"] == operator, f"{label}: authoritative-source operator does not match operator return")
+    source_time = parse_utc(source["observedAt"], f"{label}.authoritativeSource.observedAt")
+    require_fresh(source_time, returned_at, verification_time, f"{label} authoritative source")
+    require(source["recordKind"] == "PUBLIC_SSH_HOST_KEY_FINGERPRINT" and source["hostname"] == RAIN_SSH_HOST and source["algorithm"] == "ssh-ed25519" and ssh_sha256_fingerprint(source["fingerprint"], f"{label}.authoritativeSource.fingerprint") == RAIN_SSH_FINGERPRINT, f"{label}: authoritative source record does not bind the pinned public host key")
+    require(strict_bool(source["observedSshConnectionUsed"], f"{label}.authoritativeSource.observedSshConnectionUsed") is False, f"{label}: authoritative source depends on the observed SSH connection")
+    endpoint = obj(payload["endpointObservation"], f"{label}.endpointObservation")
+    exact_keys(endpoint, {"observationId", "hostname", "port", "algorithm", "fingerprint", "observedAt", "method", "tool", "result"}, f"{label}.endpointObservation")
+    endpoint_id = security_identifier(endpoint["observationId"], f"{label}.endpointObservation.observationId")
+    require(endpoint["hostname"] == RAIN_SSH_HOST and tcp_port(endpoint["port"], f"{label}.endpointObservation.port") == 22, f"{label}: independently observed SSH endpoint mismatch")
+    require(endpoint["algorithm"] == "ssh-ed25519" and ssh_sha256_fingerprint(endpoint["fingerprint"], f"{label}.endpointObservation.fingerprint") == RAIN_SSH_FINGERPRINT, f"{label}: independently observed endpoint does not match the pinned public host key")
+    require(endpoint["method"] == "PUBLIC_SSH_HOST_KEY_SCAN" and endpoint["result"] == "PASS", f"{label}: endpoint observation method or result mismatch")
+    tool = obj(endpoint["tool"], f"{label}.endpointObservation.tool")
+    exact_keys(tool, {"name", "version", "networkPath"}, f"{label}.endpointObservation.tool")
+    require(tool["name"] == "ssh-keyscan" and tool["networkPath"] == "PUBLIC_NETWORK_ENDPOINT", f"{label}: endpoint observation lacks public ssh-keyscan tool metadata")
+    security_text(tool["version"], f"{label}.endpointObservation.tool.version", 128)
+    endpoint_time = parse_utc(endpoint["observedAt"], f"{label}.endpointObservation.observedAt")
+    require_fresh(endpoint_time, returned_at, verification_time, f"{label} endpoint observation")
+    attestation = obj(payload["attestation"], f"{label}.attestation")
+    exact_keys(attestation, {"eventId", "operator", "verifiedAt", "match"}, f"{label}.attestation")
+    attestation_id = security_identifier(attestation["eventId"], f"{label}.attestation.eventId")
+    require(attestation["operator"] == operator, f"{label}: attestation operator does not match operator return")
+    verified_at = parse_utc(attestation["verifiedAt"], f"{label}.attestation.verifiedAt")
+    require(max(source_time, endpoint_time) <= verified_at, f"{label}: authority or endpoint was observed after attestation")
+    require_fresh(verified_at, returned_at, verification_time, f"{label} attestation")
+    require(strict_bool(attestation["match"], f"{label}.attestation.match") is True, f"{label}: operator attestation did not match")
+    require(len({source_id, endpoint_id, attestation_id}) == 3, f"{label}: authority,endpoint,and attestation IDs must be distinct")
+    secret = obj(payload["secretMaterial"], f"{label}.secretMaterial")
+    exact_keys(secret, {"privateKeyValueRead", "privateKeyDigestRecorded"}, f"{label}.secretMaterial")
+    require(strict_bool(secret["privateKeyValueRead"], f"{label}.secretMaterial.privateKeyValueRead") is False and strict_bool(secret["privateKeyDigestRecorded"], f"{label}.secretMaterial.privateKeyDigestRecorded") is False, f"{label}: private host-key material or digest must not be returned")
+    return payload
+
+
+def validate_b02_lifecycle(payload: dict[str, Any], label: str, operator: str, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
+    exact_keys(payload, {"hostname", "algorithm", "currentFingerprint", "rotationOverlapSeconds", *SSH_LIFECYCLE_OPERATIONS}, label)
+    require(payload["hostname"] == RAIN_SSH_HOST and payload["algorithm"] == "ssh-ed25519" and ssh_sha256_fingerprint(payload["currentFingerprint"], f"{label}.currentFingerprint") == RAIN_SSH_FINGERPRINT, f"{label}: pinned Rain SSH lifecycle identity mismatch")
+    bounded_integer(payload["rotationOverlapSeconds"], f"{label}.rotationOverlapSeconds", 1, 2_592_000)
+    procedure_subject = {"type": "SSH_HOST_IDENTITY", "hostname": payload["hostname"], "algorithm": payload["algorithm"], "fingerprint": payload["currentFingerprint"]}
+    procedures = [validate_procedure(payload[key], f"{label}.{key}", SSH_LIFECYCLE_OPERATIONS[key], procedure_subject, operator, returned_at, verification_time) for key in SSH_LIFECYCLE_OPERATIONS]
+    procedure_ids = [procedure["procedureId"] for procedure in procedures]
+    require(len(procedure_ids) == len(set(procedure_ids)), f"{label}: SSH lifecycle procedure IDs must be distinct")
+    test_event_ids = [procedure["test"]["eventId"] for procedure in procedures]
+    require(len(test_event_ids) == len(set(test_event_ids)), f"{label}: SSH lifecycle procedure test-event IDs must be distinct")
+    require(set(procedure_ids).isdisjoint(test_event_ids), f"{label}: SSH lifecycle procedure and test-event IDs must be distinct")
+    return payload
+
+
+def validate_b02_payloads(results: list[dict[str, Any]], verification_time: datetime) -> None:
+    require(len(results) == 1, "D0-B02: exact single-handoff contribution required")
+    operator, returned_at = operator_return_context(results[0], "D0-B02")
+    payloads = results[0]["_semanticPayloads"]
+    attestation = validate_b02_attestation(payloads["ssh-attestation"], "D0-B02 ssh-attestation", operator, returned_at, verification_time)
+    lifecycle = validate_b02_lifecycle(payloads["ssh-lifecycle"], "D0-B02 ssh-lifecycle", operator, returned_at, verification_time)
+    require(attestation["hostname"] == lifecycle["hostname"] and attestation["algorithm"] == lifecycle["algorithm"] and attestation["fingerprint"] == lifecycle["currentFingerprint"], "D0-B02: attestation and lifecycle identities disagree")
+    lifecycle_event_ids = {lifecycle[key]["test"]["eventId"] for key in SSH_LIFECYCLE_OPERATIONS}
+    require(attestation["attestation"]["eventId"] not in lifecycle_event_ids, "D0-B02: attestation and lifecycle test-event IDs must be distinct")
+    require(attestation["authoritativeSource"]["sourceId"] != attestation["attestation"]["eventId"], "D0-B02: authoritative-source and attestation IDs must be distinct")
+
+
+def validate_generic_payloads(finding_id: str, disposition: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
+    if disposition == "SATISFIED" and finding_id == "D0-B01":
+        validate_b01_payloads(results, verification_time)
+    elif disposition == "SATISFIED" and finding_id == "D0-B02":
+        validate_b02_payloads(results, verification_time)
+    else:
+        raise GateVerificationError(f"{finding_id}: strict semantic payload validation is not installed")
+
+
+def validate_generic_policy(finding_id: str, disposition: str, mode: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
     require(finding_id in SAT_EVIDENCE, f"{finding_id}: no generic terminal policy")
     if disposition == "SATISFIED":
         require(mode == "EVIDENCE_SATISFIED", f"{finding_id}: wrong satisfaction mode")
@@ -953,7 +1518,7 @@ def validate_generic_policy(finding_id: str, disposition: str, mode: str, result
     if disposition == "SATISFIED":
         all_kinds = set().union(*(set(result["_semanticPayloads"]) for result in results))
         require(all_kinds == SAT_EVIDENCE[finding_id], f"{finding_id}: satisfaction evidence coverage mismatch")
-    validate_generic_payloads(finding_id, disposition, results)
+    validate_generic_payloads(finding_id, disposition, results, verification_time)
 
 
 def validate_b18(disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
@@ -1464,7 +2029,7 @@ def validate_b22(disposition: str, mode: str, results: list[dict[str, Any]]) -> 
         raise GateVerificationError("D0-B22: only original proof or exact policy waiver is allowed")
 
 
-def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, Any], findings: dict[str, dict[str, Any]], items: dict[str, dict[str, Any]], config: GateConfig) -> dict[str, Any]:
+def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, Any], findings: dict[str, dict[str, Any]], items: dict[str, dict[str, Any]], config: GateConfig, verification_time: datetime) -> dict[str, Any]:
     closure = state["closureSet"]
     handoff_evidence: dict[str, dict[str, Any]] = {}
     evidence_commit: str | None = None
@@ -1487,7 +2052,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         require(ops.blob(repo, current_head, GATE_STATE_PATH, "closure gate state", MAX_JSON_BYTES) == state_raw, "working gate state is not the exact closure-state commit blob")
         for handoff_id, item in items.items():
             if item["evidence"] is not None:
-                verified = verify_handoff_evidence(ops, repo, evidence_commit, closure_id, config.historical_aggregate_sha256, handoff_id, item["evidence"])
+                verified = verify_handoff_evidence(ops, repo, evidence_commit, closure_id, config.historical_aggregate_sha256, handoff_id, item["evidence"], verification_time)
                 for result in verified["results"].values():
                     result["_closureSetId"] = closure_id
                 handoff_evidence[handoff_id] = verified
@@ -1540,7 +2105,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         elif finding_id == "D0-B22":
             validate_b22(disposition, mode, result_rows)
         else:
-            validate_generic_policy(finding_id, disposition, mode, result_rows)
+            validate_generic_policy(finding_id, disposition, mode, result_rows, verification_time)
         if disposition == "WAIVED_BY_POLICY":
             waived_findings.append(finding_id)
     complete_handoffs = sorted(handoff_evidence)
@@ -1811,7 +2376,7 @@ def collect_pre_d1_rows(repo_root: Path, closure_commit: str, config: GateConfig
     return rows
 
 
-def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closure_commit: str, receipt_path: Path, config: GateConfig, now: datetime | None = None) -> None:
+def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closure_commit: str, receipt_path: Path, config: GateConfig, verification_time: datetime) -> None:
     git_dir = Path(ops.text(repo_root, "rev-parse", "--absolute-git-dir")).resolve()
     gate_dir = git_dir / "pkgre-gates"
     try:
@@ -1826,9 +2391,8 @@ def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closur
     exact_keys(receipt, {"schema", "d0ClosureCommit", "createdAt", "immediatelyBeforeD1FirstEdit", "repositories", "transcript"}, "PRE_D1 receipt")
     require(receipt["schema"] == "pkgre-pre-d1-refetch-receipt-v2" and receipt["d0ClosureCommit"] == closure_commit and receipt["immediatelyBeforeD1FirstEdit"] is True, "PRE_D1 receipt binding mismatch")
     created = parse_utc(receipt["createdAt"], "PRE_D1 receipt createdAt")
-    current_time = now or datetime.now(timezone.utc)
-    require((created - current_time).total_seconds() <= 30, "PRE_D1 receipt timestamp is too far in the future")
-    require((current_time - created).total_seconds() <= 600, "PRE_D1 receipt is stale")
+    require((created - verification_time).total_seconds() <= RECEIPT_FUTURE_SKEW_SECONDS, "PRE_D1 receipt timestamp is too far in the future")
+    require((verification_time - created).total_seconds() <= PRE_D1_RECEIPT_MAX_AGE_SECONDS, "PRE_D1 receipt is stale")
     transcript = obj(receipt["transcript"], "PRE_D1 transcript reference")
     exact_keys(transcript, {"path", "sha256"}, "PRE_D1 transcript reference")
     transcript_name = safe_path(transcript["path"], "PRE_D1 transcript path")
@@ -1849,17 +2413,18 @@ def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closur
 
 def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt_path: Path | None = None, now: datetime | None = None, config: GateConfig = PRODUCTION_CONFIG, git_runner: GitRunner = default_git_runner, environment: Mapping[str, str] | None = None) -> dict[str, Any]:
     repo = repo_root.resolve()
+    current_time = normalize_verification_time(now)
     ops = GitOps(git_runner, environment)
     aggregate_raw, state_raw, state = verify_repository_anchor(ops, repo, aggregate_path, state_path, config)
     findings, items = validate_state_shape(state, aggregate_raw, config)
-    closure_result = verify_closure(ops, repo, state_raw, state, findings, items, config)
+    closure_result = verify_closure(ops, repo, state_raw, state, findings, items, config, current_time)
     d0_pass = closure_result["d0Pass"]
     pre_d1_pass = False
     if receipt_path is not None:
         require(d0_pass, "PRE_D1 receipt cannot authorize while D0 is blocked")
         obj(state["closureSet"], "closure set")
         closure_commit = ops.text(repo, "rev-parse", "HEAD")
-        verify_pre_d1_receipt(ops, repo, state_raw, closure_commit, receipt_path, config, now)
+        verify_pre_d1_receipt(ops, repo, state_raw, closure_commit, receipt_path, config, current_time)
         pre_d1_pass = True
     d1_authorized = d0_pass and pre_d1_pass
     agent_mutation = {key: (d1_authorized if key == "d1Implementation" else False) for key in AGENT_MUTATIONS}
