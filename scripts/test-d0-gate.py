@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -769,6 +770,7 @@ class GateCoreTests(unittest.TestCase):
         gate_dir.mkdir(mode=0o700)
         authority_path = gate_dir / f"d0-procedural-authority-{closure_id}.json"
         authority_path.write_bytes(GATE.canonical_json(authority))
+        authority_path.chmod(0o600)
         return temporary, fixture, {"authority": authority, "authorityPath": authority_path, "closure": closure, "config": config, "evidenceCommit": evidence_commit, "findings": findings, "items": items, "reference": reference, "state": state, "stateRaw": state_raw, "verificationTime": GATE.parse_utc("2026-08-26T00:31:00Z", "fixture verification time")}
 
     def writeProceduralAuthority(self, data: dict[str, object], document: object) -> None:
@@ -800,6 +802,106 @@ class GateCoreTests(unittest.TestCase):
         write(fixture.repository, GATE.GATE_STATE_PATH, b"{}\n")
         state = fixture.commit("state")
         return evidence, state
+
+    def test_external_gate_writer_creates_private_file_and_refuses_overwrite(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            raw = b'{"fixture":"external-gate"}\n'
+            path = GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", raw, "fixture gate", 1024)
+            gate_metadata = path.parent.lstat()
+            file_metadata = path.lstat()
+            self.assertEqual(path, fixture.repository / ".git" / "pkgre-gates" / "fixture.json")
+            self.assertEqual(path.read_bytes(), raw)
+            self.assertEqual(stat.S_IMODE(gate_metadata.st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(file_metadata.st_mode), 0o600)
+            self.assertEqual(file_metadata.st_nlink, 1)
+            self.assertEqual(GATE.load_external_gate_file(fixture.ops, fixture.repository, path, "fixture gate", 1024), raw)
+            self.assertRejected(lambda: GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", b"replacement\n", "fixture gate", 1024), "refusing to overwrite")
+            self.assertEqual(path.read_bytes(), raw)
+        finally:
+            temporary.cleanup()
+
+    def test_external_gate_writer_rejects_unsafe_directory_and_existing_names(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            real_gate = fixture.repository / ".git" / "pkgre-gates-real"
+            real_gate.mkdir(mode=0o700)
+            (fixture.repository / ".git" / "pkgre-gates").symlink_to(real_gate.name, target_is_directory=True)
+            self.assertRejected(lambda: GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", b"fixture\n", "fixture gate", 1024), "cannot safely create external gate file")
+            self.assertEqual(list(real_gate.iterdir()), [])
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            gate_dir = fixture.repository / ".git" / "pkgre-gates"
+            gate_dir.mkdir(mode=0o755)
+            self.assertRejected(lambda: GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", b"fixture\n", "fixture gate", 1024), "external gate directory mode must be 0700")
+            self.assertEqual(list(gate_dir.iterdir()), [])
+        finally:
+            temporary.cleanup()
+
+        for target in ("regular", "symlink"):
+            with self.subTest(target=target):
+                temporary, fixture = self.temporary_fixture()
+                try:
+                    gate_dir = fixture.repository / ".git" / "pkgre-gates"
+                    gate_dir.mkdir(mode=0o700)
+                    destination = gate_dir / "fixture.json"
+                    if target == "regular":
+                        destination.write_bytes(b"original\n")
+                        destination.chmod(0o600)
+                    else:
+                        link_target = fixture.repository / ".git" / "link-target"
+                        link_target.write_bytes(b"target\n")
+                        destination.symlink_to(Path("..") / link_target.name)
+                    self.assertRejected(lambda: GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", b"replacement\n", "fixture gate", 1024), "refusing to overwrite")
+                    if target == "regular":
+                        self.assertEqual(destination.read_bytes(), b"original\n")
+                    else:
+                        self.assertTrue(destination.is_symlink())
+                finally:
+                    temporary.cleanup()
+
+    def test_external_gate_writer_removes_private_temporary_after_publish_failure(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            with mock.patch.object(GATE.os, "link", side_effect=OSError("fixture publish failure")):
+                self.assertRejected(lambda: GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", b"fixture\n", "fixture gate", 1024), "cannot safely create external gate file")
+            gate_dir = fixture.repository / ".git" / "pkgre-gates"
+            self.assertEqual(list(gate_dir.iterdir()), [])
+        finally:
+            temporary.cleanup()
+
+    def test_external_gate_writer_supports_maximum_destination_name(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            name = "a" * GATE.MAX_PATH_COMPONENT_BYTES
+            path = GATE.create_external_gate_file(fixture.ops, fixture.repository, name, b"fixture\n", "fixture gate", 1024)
+            self.assertEqual(path.name, name)
+            self.assertEqual(path.read_bytes(), b"fixture\n")
+        finally:
+            temporary.cleanup()
+
+    def test_external_gate_writer_rolls_back_published_file_after_late_failure(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            original_fsync = GATE.os.fsync
+            calls = 0
+
+            def fail_gate_sync(fd: int) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("fixture gate sync failure")
+                original_fsync(fd)
+
+            with mock.patch.object(GATE.os, "fsync", side_effect=fail_gate_sync):
+                self.assertRejected(lambda: GATE.create_external_gate_file(fixture.ops, fixture.repository, "fixture.json", b"fixture\n", "fixture gate", 1024), "cannot safely create external gate file")
+            gate_dir = fixture.repository / ".git" / "pkgre-gates"
+            self.assertEqual(list(gate_dir.iterdir()), [])
+        finally:
+            temporary.cleanup()
 
     def test_procedural_authority_accepts_exact_external_binding_and_repository_labels(self) -> None:
         temporary, fixture, data = self.proceduralClosureFixture()
@@ -1016,7 +1118,7 @@ class GateCoreTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
-        for target, mode, expected in (("directory", 0o770, "external gate directory must not be group- or world-writable"), ("file", 0o660, "file must not be group- or world-writable")):
+        for target, mode, expected in (("directory", 0o750, "external gate directory mode must be 0700"), ("file", 0o640, "external gate file mode must be 0600")):
             with self.subTest(target=target):
                 temporary, fixture, data = self.proceduralClosureFixture()
                 try:

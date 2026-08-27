@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import secrets
 import shlex
 import stat
 import subprocess
@@ -647,6 +648,7 @@ def load_external_gate_file(ops: GitOps, repo_root: Path, path: Path, label: str
     for metadata, metadata_label in ((git_metadata, ".git directory"), (gate_metadata, "external gate directory")):
         require(metadata.st_uid == current_uid, f"{label}: {metadata_label} must be owned by the verifier user")
         require(metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0, f"{label}: {metadata_label} must not be group- or world-writable")
+    require(stat.S_IMODE(gate_metadata.st_mode) == 0o700, f"{label}: external gate directory mode must be 0700")
     git_dir = Path(ops.text(repo, "rev-parse", "--absolute-git-dir"))
     require(git_dir.resolve() == direct_git.resolve(), f"{label}: linked or indirect Git directory is forbidden")
     candidate = path if path.is_absolute() else Path.cwd() / path
@@ -670,7 +672,7 @@ def load_external_gate_file(ops: GitOps, repo_root: Path, path: Path, label: str
         before = os.fstat(file_fd)
         require(stat.S_ISREG(before.st_mode), f"{label}: expected regular non-symlink file")
         require(before.st_uid == current_uid, f"{label}: file must be owned by the verifier user")
-        require(before.st_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0, f"{label}: file must not be group- or world-writable")
+        require(stat.S_IMODE(before.st_mode) == 0o600, f"{label}: external gate file mode must be 0600")
         require(before.st_nlink == 1, f"{label}: hard-linked external gate file is forbidden")
         require(before.st_size <= max_bytes, f"{label}: file exceeds {max_bytes} bytes")
         chunks: list[bytes] = []
@@ -698,6 +700,134 @@ def load_external_gate_file(ops: GitOps, repo_root: Path, path: Path, label: str
     finally:
         if file_fd >= 0:
             os.close(file_fd)
+        if gate_fd >= 0:
+            os.close(gate_fd)
+        if git_fd >= 0:
+            os.close(git_fd)
+
+
+def create_external_gate_file(ops: GitOps, repo_root: Path, name: str, raw: bytes, label: str, max_bytes: int) -> Path:
+    """Create one private external gate file without following links or replacing a name."""
+    require(isinstance(raw, bytes) and 0 < len(raw) <= max_bytes, f"{label}: content must be 1..{max_bytes} bytes")
+    canonical_name = safe_path(name, f"{label} file name")
+    require("/" not in canonical_name, f"{label}: file name must be a single path component")
+    repo = repo_root.resolve()
+    direct_git = repo / ".git"
+    try:
+        git_metadata = direct_git.lstat()
+    except OSError as error:
+        raise GateVerificationError(f"{label}: direct .git directory is unavailable: {error}") from error
+    current_uid = os.geteuid()
+    require(stat.S_ISDIR(git_metadata.st_mode) and not stat.S_ISLNK(git_metadata.st_mode), f"{label}: .git must be a direct non-symlink directory")
+    require(git_metadata.st_uid == current_uid, f"{label}: .git directory must be owned by the current user")
+    require(git_metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0, f"{label}: .git directory must not be group- or world-writable")
+    git_dir = Path(ops.text(repo, "rev-parse", "--absolute-git-dir"))
+    require(git_dir.resolve() == direct_git.resolve(), f"{label}: linked or indirect Git directory is forbidden")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    git_fd = -1
+    gate_fd = -1
+    file_fd = -1
+    temporary_name = f".pkgre-tmp-{os.getpid()}-{secrets.token_hex(16)}"
+    temporary_exists = False
+    published = False
+    private_identity: tuple[int, int] | None = None
+    succeeded = False
+    try:
+        git_fd = os.open(direct_git, directory_flags)
+        opened_git = os.fstat(git_fd)
+        require((opened_git.st_dev, opened_git.st_ino) == (git_metadata.st_dev, git_metadata.st_ino), f"{label}: .git directory changed before opening")
+        try:
+            os.mkdir("pkgre-gates", mode=0o700, dir_fd=git_fd)
+            gate_created = True
+        except FileExistsError:
+            gate_created = False
+        gate_fd = os.open("pkgre-gates", directory_flags, dir_fd=git_fd)
+        gate_metadata = os.fstat(gate_fd)
+        if gate_created:
+            os.fchmod(gate_fd, 0o700)
+            gate_metadata = os.fstat(gate_fd)
+        require(stat.S_ISDIR(gate_metadata.st_mode), f"{label}: external gate directory must be a direct non-symlink directory")
+        require(gate_metadata.st_uid == current_uid, f"{label}: external gate directory must be owned by the current user")
+        require(stat.S_IMODE(gate_metadata.st_mode) == 0o700, f"{label}: external gate directory mode must be 0700")
+        try:
+            os.stat(canonical_name, dir_fd=gate_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise GateVerificationError(f"{label}: refusing to overwrite existing external gate file {canonical_name!r}")
+        file_fd = os.open(temporary_name, file_flags, 0o600, dir_fd=gate_fd)
+        temporary_exists = True
+        os.fchmod(file_fd, 0o600)
+        created_metadata = os.fstat(file_fd)
+        private_identity = (created_metadata.st_dev, created_metadata.st_ino)
+        offset = 0
+        while offset < len(raw):
+            written = os.write(file_fd, raw[offset:])
+            require(written > 0, f"{label}: zero-length write to private temporary file")
+            offset += written
+        os.fsync(file_fd)
+        temporary_metadata = os.fstat(file_fd)
+        require((temporary_metadata.st_dev, temporary_metadata.st_ino) == private_identity, f"{label}: private temporary identity changed while writing")
+        require(stat.S_ISREG(temporary_metadata.st_mode), f"{label}: private temporary is not a regular file")
+        require(temporary_metadata.st_uid == current_uid and stat.S_IMODE(temporary_metadata.st_mode) == 0o600, f"{label}: private temporary ownership or mode mismatch")
+        require(temporary_metadata.st_nlink == 1 and temporary_metadata.st_size == len(raw), f"{label}: private temporary link count or length mismatch")
+        try:
+            os.link(temporary_name, canonical_name, src_dir_fd=gate_fd, dst_dir_fd=gate_fd, follow_symlinks=False)
+        except FileExistsError as error:
+            raise GateVerificationError(f"{label}: refusing to overwrite existing external gate file {canonical_name!r}") from error
+        published = True
+        os.unlink(temporary_name, dir_fd=gate_fd)
+        temporary_exists = False
+        opened_final = os.fstat(file_fd)
+        named_final = os.stat(canonical_name, dir_fd=gate_fd, follow_symlinks=False)
+        require((opened_final.st_dev, opened_final.st_ino) == private_identity == (named_final.st_dev, named_final.st_ino), f"{label}: published external gate file identity mismatch")
+        require(opened_final.st_nlink == named_final.st_nlink == 1 and opened_final.st_size == named_final.st_size == len(raw), f"{label}: published external gate file link count or length mismatch")
+        require(stat.S_IMODE(opened_final.st_mode) == stat.S_IMODE(named_final.st_mode) == 0o600 and opened_final.st_uid == named_final.st_uid == current_uid, f"{label}: published external gate file ownership or mode mismatch")
+        os.fsync(gate_fd)
+        named_gate = os.stat("pkgre-gates", dir_fd=git_fd, follow_symlinks=False)
+        named_git = direct_git.lstat()
+        require((named_gate.st_dev, named_gate.st_ino) == (gate_metadata.st_dev, gate_metadata.st_ino), f"{label}: external gate directory name changed while writing")
+        require((named_git.st_dev, named_git.st_ino) == (opened_git.st_dev, opened_git.st_ino), f"{label}: .git directory name changed while writing")
+        os.fsync(git_fd)
+        succeeded = True
+        return direct_git / "pkgre-gates" / canonical_name
+    except BaseException as error:
+        cleanup_errors: list[str] = []
+        cleanup_changed = False
+        if gate_fd >= 0 and private_identity is not None:
+            for present, candidate_name in ((published, canonical_name), (temporary_exists, temporary_name)):
+                if not present:
+                    continue
+                try:
+                    candidate_metadata = os.stat(candidate_name, dir_fd=gate_fd, follow_symlinks=False)
+                    if (candidate_metadata.st_dev, candidate_metadata.st_ino) != private_identity:
+                        cleanup_errors.append(f"{candidate_name!r} no longer names the private temporary inode")
+                        continue
+                    os.unlink(candidate_name, dir_fd=gate_fd)
+                    cleanup_changed = True
+                except FileNotFoundError:
+                    pass
+                except OSError as cleanup_error:
+                    cleanup_errors.append(f"cannot remove {candidate_name!r}: {cleanup_error}")
+            if cleanup_changed:
+                try:
+                    os.fsync(gate_fd)
+                except OSError as cleanup_error:
+                    cleanup_errors.append(f"cannot sync cleanup: {cleanup_error}")
+        if cleanup_errors:
+            raise GateVerificationError(f"{label}: private external gate cleanup failed after {error}: {'; '.join(cleanup_errors)}") from error
+        if isinstance(error, GateVerificationError):
+            raise
+        if isinstance(error, OSError):
+            raise GateVerificationError(f"{label}: cannot safely create external gate file: {error}") from error
+        raise
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        if not succeeded and gate_fd >= 0 and (temporary_exists or published) and private_identity is None:
+            # Creation failed before a stable inode identity was available; the O_EXCL name is private but cannot be safely identified for unlink.
+            pass
         if gate_fd >= 0:
             os.close(gate_fd)
         if git_fd >= 0:
