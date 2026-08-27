@@ -563,6 +563,63 @@ def valid_b03_payloads() -> dict[str, dict[str, object]]:
     return {"github-governance-proof": payload}
 
 
+def b03_catalog(payloads: dict[str, dict[str, object]], index: int = 0) -> dict[str, object]:
+    return payloads["github-governance-proof"]["catalogs"][index]
+
+
+def b03_operation(catalog: dict[str, object], operation_id: str, kind: str = "restOperations") -> dict[str, object]:
+    matches = [operation for operation in catalog["providerContract"][kind] if operation["operationId"] == operation_id]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact operation {operation_id!r}")
+    return matches[0]
+
+
+def b03_transition(catalog: dict[str, object], target_state: str) -> dict[str, object]:
+    matches = [transition for transition in catalog["providerContract"]["bootstrapStateMachine"]["transitions"] if transition["to"] == target_state]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact transition to {target_state!r}")
+    return matches[0]
+
+
+def b03_rollback(catalog: dict[str, object]) -> dict[str, object]:
+    return catalog["providerContract"]["bootstrapStateMachine"]["rollback"]
+
+
+def b03_rollback_step(catalog: dict[str, object], section: str, action: str) -> dict[str, object]:
+    matches = [step for step in b03_rollback(catalog)[section] if step["action"] == action]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact rollback step {action!r}")
+    return matches[0]
+
+
+def b03_auxiliary_binding(catalog: dict[str, object], name: str) -> dict[str, object]:
+    matches = [binding for binding in b03_rollback(catalog)["auxiliaryBindingRegistry"] if binding["name"] == name]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact rollback auxiliary binding {name!r}")
+    return matches[0]
+
+
+def b03_conditional_group(step: dict[str, object], execute_when: str) -> dict[str, object]:
+    matches = [group for group in step["conditionalOperationGroups"] if group["executeWhen"] == execute_when]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact rollback conditional group {execute_when!r}")
+    return matches[0]
+
+
+def b03_typed_binding(catalog: dict[str, object], name: str) -> dict[str, object]:
+    matches = [binding for binding in catalog["providerContract"]["typedBindings"] if binding["name"] == name]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact provider typed binding {name!r}")
+    return matches[0]
+
+
+def b03_authentication_profile(catalog: dict[str, object], profile_id: str) -> dict[str, object]:
+    matches = [profile for profile in catalog["providerContract"]["authenticationProfiles"] if profile["profileId"] == profile_id]
+    if len(matches) != 1:
+        raise AssertionError(f"expected exact provider authentication profile {profile_id!r}")
+    return matches[0]
+
+
 def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
     target_gates = GATE.REPHASE_TARGETS[finding_id]
     return {
@@ -599,6 +656,11 @@ class GateCoreTests(unittest.TestCase):
 
     def assertB22Rejected(self, result: dict[str, object], package_paths: dict[str, str], text: str) -> None:
         self.assertRejected(lambda: self.validateB22(result, package_paths), text)
+
+    def assertB03MutationRejected(self, mutate, text: str = "frozen value mismatch") -> None:
+        payloads = valid_b03_payloads()
+        mutate(b03_catalog(payloads))
+        self.assertSemanticPayloadsRejected("D0-B03", "OP-D0-05", payloads, text)
 
     def temporary_fixture(self) -> tuple[tempfile.TemporaryDirectory[str], RepositoryFixture]:
         temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-gate-test-")
@@ -674,6 +736,508 @@ class GateCoreTests(unittest.TestCase):
 
     def test_b03_accepts_exact_semantic_target_design(self) -> None:
         self.validateSemanticPayloads("D0-B03", "OP-D0-05", valid_b03_payloads())
+
+    def test_b03_rejects_weakened_http_openapi_capture_and_projection_contract(self) -> None:
+        def omit_api_version(catalog):
+            b03_operation(catalog, "get-repository")["request"]["headers"].pop("X-GitHub-Api-Version")
+
+        cases = [
+            ("api-version-omitted", omit_api_version, "object-key mismatch"),
+            ("api-version-changed", lambda catalog: catalog["providerContract"]["http"].__setitem__("apiVersion", "2022-11-28"), "frozen value mismatch"),
+            ("openapi-commit", lambda catalog: catalog["providerContract"]["openApi"].__setitem__("commit", "0" * 40), "frozen value mismatch"),
+            ("openapi-digest", lambda catalog: catalog["providerContract"]["openApi"].__setitem__("sha256", "0" * 64), "frozen value mismatch"),
+            ("redirects", lambda catalog: catalog["providerContract"]["http"].__setitem__("redirectsAllowed", True), "frozen value mismatch"),
+            ("request-id", lambda catalog: catalog["providerContract"]["http"].__setitem__("providerRequestIdRequired", False), "frozen value mismatch"),
+            ("raw-body-digest", lambda catalog: b03_operation(catalog, "get-repository")["response"]["capture"].__setitem__("rawBodySha256Required", False), "frozen value mismatch"),
+            ("projection-digest", lambda catalog: b03_operation(catalog, "get-repository")["response"]["capture"].__setitem__("projectionSha256Required", False), "frozen value mismatch"),
+            ("pagination", lambda catalog: b03_operation(catalog, "list-rulesets")["response"]["pagination"].__setitem__("allPagesRequired", False), "frozen value mismatch"),
+            ("ambiguous-selection", lambda catalog: catalog["providerContract"]["projectionPolicy"]["reject"].__setitem__(5, "AMBIGUOUS_RESOURCE_ALLOWED"), "frozen value mismatch"),
+            ("raw-additions-not-isolated", lambda catalog: catalog["providerContract"]["projectionPolicy"].__setitem__("rawProviderAdditiveFields", "ALWAYS_REJECT"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_nonexact_github_requests_broadened_authority_and_id_confusion(self) -> None:
+        def fake_environment_admin_field(catalog):
+            b03_operation(catalog, "put-release-environment")["request"]["body"]["template"]["can_admins_bypass"] = False
+
+        def wildcard_action(catalog):
+            catalog["actions"]["selectedPolicy"]["patternsAllowed"][0] = "actions/checkout@v4"
+
+        def broaden_writer_token(catalog):
+            b03_operation(catalog, "mint-release-installation-token-after-approval")["request"]["body"]["template"]["permissions"]["issues"] = "write"
+
+        cases = [
+            ("fake-environment-admin-rest-field", fake_environment_admin_field, "object-key mismatch"),
+            ("selected-action-tag", wildcard_action, "frozen value mismatch"),
+            ("wrong-invariant-rule", lambda catalog: catalog["rulesets"]["invariants"]["providerCreateRequestBody"]["rules"][1].__setitem__("type", "creation"), "frozen value mismatch"),
+            ("app-installation-id-as-integration-id", lambda catalog: catalog["rulesets"]["admission"]["providerCreateRequestBody"]["bypass_actors"][0]["actor_id"].__setitem__("$binding", "releaseAppInstallationId"), "frozen value mismatch"),
+            ("check-id-as-app-id", lambda catalog: catalog["writer"]["appIntegrationIdBinding"].__setitem__("$binding", "candidateCheckIntegrationId"), "frozen value mismatch"),
+            ("user-bypass", lambda catalog: catalog["rulesets"]["admission"]["providerCreateRequestBody"]["bypass_actors"][0].__setitem__("actor_type", "User"), "frozen value mismatch"),
+            ("repository-role-bypass", lambda catalog: catalog["rulesets"]["admission"]["providerCreateRequestBody"]["bypass_actors"][0].__setitem__("actor_type", "RepositoryRole"), "frozen value mismatch"),
+            ("writer-permission-broadened", broaden_writer_token, "object-key mismatch"),
+            ("team-reviewer", lambda catalog: catalog["environment"]["providerCreateOrUpdateRequestBody"]["reviewers"][0].__setitem__("type", "Team"), "frozen value mismatch"),
+            ("self-review", lambda catalog: b03_operation(catalog, "put-release-environment")["request"]["body"]["template"].__setitem__("prevent_self_review", False), "frozen value mismatch"),
+            ("bootstrap-force", lambda catalog: b03_operation(catalog, "patch-main-ref-bootstrap-force-false")["request"]["body"]["template"].__setitem__("force", True), "frozen value mismatch"),
+            ("release-force", lambda catalog: b03_operation(catalog, "patch-main-ref-release-force-false")["request"]["body"]["template"].__setitem__("force", True), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_fork_pr_approval_policy_uses_least_restrictive_pinned_enum_and_records_limitations(self) -> None:
+        payloads = valid_b03_payloads()
+        expected_semantics = {
+            "goal": "AUTOMATIC_UNTRUSTED_READ_ONLY_FORK_VALIDATION_WHERE_PROVIDER_PERMITS",
+            "leastRestrictivePinnedOpenApiEnum": True,
+            "neverRequireApprovalEnumAvailable": False,
+            "newGitHubAccountsMayStillRequireMaintainerApproval": True,
+            "providerAntiAbuseBehaviorNotTrustAuthorization": True,
+        }
+        for catalog in payloads["github-governance-proof"]["catalogs"]:
+            with self.subTest(catalogId=catalog["catalogId"]):
+                actions = catalog["actions"]
+                self.assertEqual(actions["forkPullRequestApprovalPolicy"], GATE.GITHUB_FORK_PR_APPROVAL_POLICY)
+                self.assertEqual(actions["forkPullRequestApprovalSemantics"], expected_semantics)
+                self.assertEqual(actions["providerRequestBodies"]["forkPullRequestApproval"], {"approval_policy": "first_time_contributors_new_to_github"})
+                self.assertEqual(b03_operation(catalog, "set-fork-pr-approval-policy")["request"]["body"]["template"], {"approval_policy": "first_time_contributors_new_to_github"})
+        cases = [
+            ("broader-policy", lambda catalog: catalog["actions"].__setitem__("forkPullRequestApprovalPolicy", "all_external_contributors")),
+            ("broader-operation-body", lambda catalog: b03_operation(catalog, "set-fork-pr-approval-policy")["request"]["body"]["template"].__setitem__("approval_policy", "all_external_contributors")),
+            ("invent-never-require-approval-enum", lambda catalog: catalog["actions"]["forkPullRequestApprovalSemantics"].__setitem__("neverRequireApprovalEnumAvailable", True)),
+            ("erase-new-account-provider-limit", lambda catalog: catalog["actions"]["forkPullRequestApprovalSemantics"].__setitem__("newGitHubAccountsMayStillRequireMaintainerApproval", False)),
+            ("treat-provider-anti-abuse-as-trust", lambda catalog: catalog["actions"]["forkPullRequestApprovalSemantics"].__setitem__("providerAntiAbuseBehaviorNotTrustAuthorization", False)),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate)
+
+        def omit_local_bootstrap_verification(catalog):
+            b03_transition(catalog, "S4_INVARIANT_AND_BOOTSTRAP_ADMISSION_ACTIVE")["preconditions"].remove("B_REMAINS_DUAL_VERIFIED")
+
+        def mint_before_approval(catalog):
+            operations = b03_transition(catalog, "S10_FIRST_NORMAL_RELEASE_C_SUCCEEDED")["operations"]
+            mint = operations.pop(operations.index("mint-release-installation-token-after-approval"))
+            operations.insert(operations.index("review-release-pending-deployment"), mint)
+
+        def omit_signed_release_creation(catalog):
+            b03_transition(catalog, "S10_FIRST_NORMAL_RELEASE_C_SUCCEEDED")["operations"].remove("trusted-release-job-create-ssh-ed25519-signed-c-prime")
+
+        cases = [
+            ("bootstrap-parent-not-a", lambda catalog: catalog["providerContract"]["bootstrapStateMachine"]["bootstrapB"].__setitem__("soleParent", "CANDIDATE_HEAD"), "frozen value mismatch"),
+            ("workflow-authorizes-own-introduction", lambda catalog: catalog["providerContract"]["bootstrapStateMachine"]["bootstrapB"].__setitem__("candidateWorkflowMayAuthorizeOwnIntroduction", True), "frozen value mismatch"),
+            ("trusted-workflow-not-b", lambda catalog: catalog["providerContract"]["bootstrapStateMachine"]["firstNormalRelease"].__setitem__("trustedWorkflowCommit", "C0_CANDIDATE"), "frozen value mismatch"),
+            ("release-parent-not-b", lambda catalog: catalog["providerContract"]["bootstrapStateMachine"]["firstNormalRelease"].__setitem__("signedReleaseCommit", "C_PRIME_TREE_EQUALS_C0_SOLE_PARENT_C0"), "frozen value mismatch"),
+            ("bootstrap-local-verification-omitted", omit_local_bootstrap_verification, "expected exactly"),
+            ("token-minted-before-human-approval", mint_before_approval, "frozen value mismatch"),
+            ("signed-release-creation-omitted", omit_signed_release_creation, "expected exactly"),
+            ("candidate-workflow-used-as-release", lambda catalog: b03_operation(catalog, "dispatch-release-workflow-on-main")["request"].__setitem__("pathTemplate", "/repos/pkgre/rust/actions/workflows/$binding:candidateWorkflowId/dispatches"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_history_rewrite_incomplete_rollback_secret_leak_and_self_attestation(self) -> None:
+        def reset_main_after_advance(catalog):
+            step = catalog["providerContract"]["bootstrapStateMachine"]["rollback"]["afterMainAdvance"][4]
+            step["action"] = "RESET_MAIN_TO_BASELINE_A"
+
+        def omit_secret_cleanup(catalog):
+            catalog["providerContract"]["bootstrapStateMachine"]["rollback"]["afterMainAdvance"].pop(2)
+
+        def permit_secret_digest(catalog):
+            b03_operation(catalog, "operator-remove-environment-secret", "nonRestOperations")["forbiddenCapture"].remove("SECRET_DIGEST")
+
+        cases = [
+            ("post-advance-reset", reset_main_after_advance, "frozen value mismatch"),
+            ("history-rewrite-no-longer-forbidden", lambda catalog: catalog["providerContract"]["bootstrapStateMachine"]["rollback"]["forbidden"].__setitem__(1, "RESET_MAIN_TO_A_ALLOWED"), "frozen value mismatch"),
+            ("secret-cleanup-omitted", omit_secret_cleanup, "expected exactly"),
+            ("secret-digest-permitted", permit_secret_digest, "expected exactly"),
+            ("audit-self-attestation", lambda catalog: catalog["providerContract"]["proceduralReadbacks"][2].__setitem__("operatorSelfAttestationAllowed", True), "frozen value mismatch"),
+            ("audit-source-replaced", lambda catalog: b03_operation(catalog, "capture-provider-ui-audit-export", "nonRestOperations").__setitem__("channel", "OPERATOR_SELF_ATTESTATION"), "frozen value mismatch"),
+            ("admin-bypass-self-attestation", lambda catalog: catalog["environment"]["proceduralReadback"].__setitem__("operatorSelfAttestationAllowed", True), "frozen value mismatch"),
+            ("post-advance-postcondition-reset", lambda catalog: catalog["rollback"].__setitem__("postAdvancePostcondition", "RESET_MAIN_TO_A"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_unsafe_classic_protection_handover(self) -> None:
+        def move_classic_removal_before_replacement_readbacks(catalog):
+            transition = b03_transition(catalog, "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE")
+            operation = transition["operations"].pop(transition["operations"].index("delete-classic-branch-protection-if-baseline-present"))
+            transition["operations"].insert(0, operation)
+
+        def add_operation_before_handover_completes(operation_id: str):
+            def mutate(catalog):
+                b03_transition(catalog, "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE")["operations"].append(operation_id)
+            return mutate
+
+        handover = lambda catalog: b03_transition(catalog, "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE")["handoverSafety"]
+        cases = [
+            ("ref-advance-during-transition", lambda catalog: handover(catalog).__setitem__("refAdvanceAllowedDuringTransition", True), "frozen value mismatch"),
+            ("token-mint-during-transition", lambda catalog: handover(catalog).__setitem__("tokenMintAllowedDuringTransition", True), "frozen value mismatch"),
+            ("guard-gap", lambda catalog: handover(catalog).__setitem__("guardGapAllowed", True), "frozen value mismatch"),
+            ("single-sided-readback", lambda catalog: handover(catalog).__setitem__("beforeAndAfterReplacementControlReadbackRequired", False), "frozen value mismatch"),
+            ("missing-pre-removal-readback", lambda catalog: handover(catalog)["preRemovalReadbackOperationIds"].pop(), "expected exactly"),
+            ("reordered-post-removal-readback", lambda catalog: handover(catalog)["postRemovalReadbackOperationIds"].reverse(), "frozen value mismatch"),
+            ("removal-before-replacement-readbacks", move_classic_removal_before_replacement_readbacks, "frozen value mismatch"),
+            ("mint-before-s5-complete", add_operation_before_handover_completes("mint-bootstrap-installation-token"), "expected exactly"),
+            ("ref-advance-before-s5-complete", add_operation_before_handover_completes("patch-main-ref-bootstrap-force-false"), "expected exactly"),
+            ("failure-continues", lambda catalog: handover(catalog).__setitem__("failureDisposition", "CONTINUE_WITHOUT_REPLACEMENT_CONTROLS"), "frozen value mismatch"),
+            ("replacement-loss-not-abort", lambda catalog: b03_transition(catalog, "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE")["abortConditions"].remove("REPLACEMENT_RULE_LOST"), "expected exactly"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_unsafe_rollback_ref_classification_and_coverage(self) -> None:
+        def ref_classification(catalog):
+            return b03_rollback(catalog)["refClassification"]
+
+        def route_unknown_as_ordinary(catalog):
+            ref_classification(catalog)["outcomes"][3]["route"] = "beforeMainAdvance"
+
+        def treat_unreadable_as_a(catalog):
+            outcome = ref_classification(catalog)["outcomes"][0]
+            outcome["requirements"] = ["REF_ABSENT_OR_UNREADABLE_OR_OID_EQUALS_FRESH_BASELINE_A"]
+
+        def add_post_advance_ref_mutation(catalog):
+            b03_rollback_step(catalog, "afterMainAdvance", "ENTER_FORWARD_RECOVERY_FREEZE_BEFORE_ANY_OPTIONAL_CLEANUP")["operationIds"].append("patch-main-ref-bootstrap-force-false")
+
+        cases = [
+            ("unknown-routed-to-ordinary-rollback", route_unknown_as_ordinary, "frozen value mismatch"),
+            ("binary-a-else", lambda catalog: ref_classification(catalog).__setitem__("binaryAElseClassificationForbidden", False), "frozen value mismatch"),
+            ("unresolved-binding-not-incident", lambda catalog: ref_classification(catalog).__setitem__("unresolvedCommitBindingRoutesToUnknownIncident", False), "frozen value mismatch"),
+            ("missing-or-unreadable-treated-as-a", treat_unreadable_as_a, "expected exactly"),
+            ("missing-before-state", lambda catalog: b03_rollback(catalog)["beforeMainAdvanceStates"].pop(), "expected exactly"),
+            ("post-state-routed-before", lambda catalog: b03_rollback(catalog)["beforeMainAdvanceStates"].append("S7_MAIN_ADVANCED_A_TO_B_AND_BOOTSTRAP_TOKEN_REVOKED"), "expected exactly"),
+            ("missing-after-state", lambda catalog: b03_rollback(catalog)["afterMainAdvanceStates"].pop(), "expected exactly"),
+            ("step-state-coverage-weakened", lambda catalog: b03_rollback_step(catalog, "beforeMainAdvance", "READ_AND_CLASSIFY_MAIN_THEN_REQUIRE_EXACT_BASELINE_A")["applicableStates"].pop(), "expected exactly"),
+            ("post-advance-ref-mutation", add_post_advance_ref_mutation, "expected exactly"),
+            ("unknown-incident-ref-mutation", lambda catalog: b03_rollback(catalog)["unknownRefIncident"]["immediateOperationIds"].append("delete-temporary-bootstrap-ref"), "expected exactly"),
+            ("unknown-ref-mutation-not-forbidden", lambda catalog: b03_rollback(catalog)["unknownRefIncident"]["forbidden"].remove("RESET_FORCE_PUSH_DELETE_OR_OTHER_REF_MUTATION"), "expected exactly"),
+            ("post-advance-reset-allowed", lambda catalog: b03_rollback(catalog)["forbidden"].remove("RESET_MAIN_TO_A"), "expected exactly"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_destructive_rollback_defaults_or_cross_instance_bindings(self) -> None:
+        def resource_restore_step(catalog):
+            return b03_rollback_step(catalog, "beforeMainAdvance", "RESTORE_ACTIONS_ENVIRONMENT_APP_AND_WORKFLOW_STATE_BY_EXACT_FRESH_BASELINE_IDENTITY")
+
+        def secret_removal_group(catalog):
+            step = b03_rollback_step(catalog, "beforeMainAdvance", "REMOVE_ONLY_A_BASELINE-ABSENT_CEREMONY-CREATED_ENVIRONMENT_SECRET_WITHOUT_VALUE_CAPTURE")
+            return b03_conditional_group(step, "SECRET_BASELINE_ABSENT_AND_CEREMONY_CREATED_AND_STILL_PRESENT")
+
+        def ruleset_deletion_group(catalog):
+            step = b03_rollback_step(catalog, "beforeMainAdvance", "DELETE_ONLY_CEREMONY-CREATED_RULESETS_AFTER_BASELINE_PROTECTION_IS RESTORED")
+            return b03_conditional_group(step, "ADMISSION_RULESET_BASELINE_ABSENT_AND_CEREMONY_CREATED")
+
+        def temporary_ref_deletion_group(catalog):
+            step = b03_rollback_step(catalog, "beforeMainAdvance", "DELETE_ONLY_BASELINE-ABSENT_CEREMONY-CREATED_TEMPORARY_REFS_AND_CLOSE_ONLY_CEREMONY-CREATED_PULL_REQUESTS")
+            return b03_conditional_group(step, "BOOTSTRAP_TEMP_REF_BASELINE_ABSENT_AND_CEREMONY_CREATED")
+
+        cases = [
+            ("credential-material-in-ledger", lambda catalog: b03_rollback(catalog)["executionLedger"].__setitem__("credentialMaterialOrDigestAllowed", True), "frozen value mismatch"),
+            ("missing-ledger-means-delete", lambda catalog: b03_rollback(catalog)["executionLedger"].__setitem__("missingOrContradictoryEntryDisposition", "ASSUME_BASELINE_ABSENT_AND_DELETE"), "frozen value mismatch"),
+            ("skips-not-recorded", lambda catalog: b03_rollback(catalog)["executionLedger"].__setitem__("everySkippedStepOrGroupRecorded", False), "frozen value mismatch"),
+            ("resource-ledger-binding-removed", lambda catalog: b03_rollback(catalog)["auxiliaryBindingRegistry"].pop(0), "expected exactly"),
+            ("read-token-cross-instance-substitution", lambda catalog: b03_auxiliary_binding(catalog, "releaseInstallationReadTokenInstance").__setitem__("source", b03_auxiliary_binding(catalog, "bootstrapInstallationWriteTokenInstance")["source"] + "_SUBSTITUTE"), "frozen value mismatch"),
+            ("credential-ledger-destructive-default", lambda catalog: b03_auxiliary_binding(catalog, "ceremonyCredentialLedger").__setitem__("missingOrContradictoryDisposition", "REVOKE_ANY_MATCHING_TOKEN"), "frozen value mismatch"),
+            ("step-skip-without-evidence", lambda catalog: resource_restore_step(catalog).__setitem__("skipEvidenceRequired", False), "frozen value mismatch"),
+            ("group-skip-without-evidence", lambda catalog: secret_removal_group(catalog).__setitem__("skipEvidenceRequired", False), "frozen value mismatch"),
+            ("secret-baseline-presence-ignored", lambda catalog: secret_removal_group(catalog).__setitem__("executeWhen", "SECRET_PRESENT"), "frozen value mismatch"),
+            ("ruleset-baseline-presence-ignored", lambda catalog: ruleset_deletion_group(catalog).__setitem__("executeWhen", "RULESET_PRESENT"), "frozen value mismatch"),
+            ("ref-baseline-presence-ignored", lambda catalog: temporary_ref_deletion_group(catalog).__setitem__("executeWhen", "TEMP_REF_PRESENT"), "frozen value mismatch"),
+            ("signing-key-baseline-presence-ignored", lambda catalog: b03_rollback_step(catalog, "beforeMainAdvance", "DELETE_EXACT_SIGNING_KEY_ONLY_IF_BASELINE-ABSENT_AND_CEREMONY-CREATED")["conditionalOperationGroups"][0].__setitem__("executeWhen", "SIGNING_KEY_PRESENT"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_inexact_mutation_identity_or_readback_sequences(self) -> None:
+        def remove_declared_follow_up(catalog):
+            b03_operation(catalog, "set-actions-permissions")["response"]["requiredFollowUpReadbackOperationIds"].clear()
+
+        def reorder_follow_ups(catalog):
+            b03_operation(catalog, "update-admission-ruleset-to-final")["response"]["requiredFollowUpReadbackOperationIds"].reverse()
+
+        cases = [
+            ("follow-up-omitted", remove_declared_follow_up, "expected exactly"),
+            ("follow-ups-reordered", reorder_follow_ups, "frozen value mismatch"),
+            ("follow-up-not-immediate", lambda catalog: b03_operation(catalog, "set-actions-permissions")["response"].__setitem__("followUpTiming", "EVENTUALLY"), "frozen value mismatch"),
+            ("response-readback-id-mismatch-allowed", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"].__setitem__("responseAndReadbackIdentityMustMatch", False), "frozen value mismatch"),
+            ("selector-readback-mismatch-allowed", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"].__setitem__("afterReadbackMustMatchExactSelector", False), "frozen value mismatch"),
+            ("cross-resource-substitution-allowed", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"].__setitem__("crossResourceSubstitutionRejected", False), "frozen value mismatch"),
+            ("identity-readbacks-disagree", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"]["afterStateReadbackOperationIds"].pop(), "expected exactly"),
+            ("selector-path-broadened", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"]["exactSelector"].__setitem__("pathTemplate", "/repos/pkgre/rust/rulesets/by-name"), "frozen value mismatch"),
+            ("provider-id-replaced-by-name", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"].__setitem__("providerAssignedIdBinding", "invariantRulesetName"), "frozen value mismatch"),
+            ("provider-id-source-weakened", lambda catalog: b03_operation(catalog, "create-invariant-ruleset")["mutationIdentity"].__setitem__("providerAssignedIdSource", "NAME_LOOKUP"), "frozen value mismatch"),
+            ("transition-readback-omitted", lambda catalog: b03_transition(catalog, "S4_INVARIANT_AND_BOOTSTRAP_ADMISSION_ACTIVE")["operations"].remove("get-invariant-ruleset"), "expected exactly"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_secret_response_or_credential_capture_weakening(self) -> None:
+        def secret_capture(catalog):
+            return b03_operation(catalog, "mint-bootstrap-installation-token")["response"]["capture"]
+
+        cases = [
+            ("success-body-persisted", lambda catalog: secret_capture(catalog).__setitem__("bodyPersistenceAllowed", True), "frozen value mismatch"),
+            ("success-body-artifact", lambda catalog: secret_capture(catalog).__setitem__("bodyArtifactAllowed", True), "frozen value mismatch"),
+            ("success-body-length", lambda catalog: secret_capture(catalog).__setitem__("bodyLengthRecordingAllowed", True), "frozen value mismatch"),
+            ("success-body-hash", lambda catalog: secret_capture(catalog).__setitem__("bodyHashingAllowed", True), "frozen value mismatch"),
+            ("error-body-persisted", lambda catalog: secret_capture(catalog).__setitem__("errorBodyPersistenceAllowed", True), "frozen value mismatch"),
+            ("error-body-artifact", lambda catalog: secret_capture(catalog).__setitem__("errorBodyArtifactAllowed", True), "frozen value mismatch"),
+            ("error-body-length", lambda catalog: secret_capture(catalog).__setitem__("errorBodyLengthRecordingAllowed", True), "frozen value mismatch"),
+            ("error-body-hash", lambda catalog: secret_capture(catalog).__setitem__("errorBodyHashingAllowed", True), "frozen value mismatch"),
+            ("not-all-statuses", lambda catalog: secret_capture(catalog).__setitem__("allStatusBodyHandling", "SUCCESS_ONLY"), "frozen value mismatch"),
+            ("safe-envelope-open", lambda catalog: secret_capture(catalog).__setitem__("safeEnvelopeClosedWorld", False), "frozen value mismatch"),
+            ("safe-envelope-body-metadata", lambda catalog: secret_capture(catalog).__setitem__("safeEnvelopeBodyMetadataForbidden", False), "frozen value mismatch"),
+            ("secret-unexpected-status-body-captured", lambda catalog: b03_operation(catalog, "mint-bootstrap-installation-token")["response"].__setitem__("unexpectedStatus", "CAPTURE_ERROR_BODY_THEN_ABORT"), "frozen value mismatch"),
+            ("authorization-header-captured", lambda catalog: b03_operation(catalog, "mint-bootstrap-installation-token")["request"].__setitem__("authorizationHeaderCapture", "SHA256"), "frozen value mismatch"),
+            ("authorization-field-added-to-raw-envelope", lambda catalog: catalog["providerContract"]["rawCapture"]["requestFields"].append("authorizationHeaderSha256"), "expected exactly"),
+            ("token-digest-allowed-in-install-procedure", lambda catalog: b03_operation(catalog, "operator-install-app-and-environment-secret", "nonRestOperations")["forbiddenCapture"].remove("SECRET_DIGEST"), "expected exactly"),
+            ("token-profile-no-capture-removed", lambda catalog: b03_authentication_profile(catalog, "bootstrapInstallationWriteToken")["constraints"].remove("TOKEN_NEVER_CAPTURED"), "expected exactly"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_nonfresh_or_inexact_restore_inputs(self) -> None:
+        def restore(catalog):
+            return b03_operation(catalog, "restore-actions-permissions-from-pre-capture")["preCaptureRestore"]
+
+        cases = [
+            ("historical-d0-baseline", lambda catalog: restore(catalog).__setitem__("historicalD0BaselineMaySubstitute", True), "frozen value mismatch"),
+            ("raw-capture-binding-removed", lambda catalog: restore(catalog).pop("rawFreshCaptureBinding"), "object-key mismatch"),
+            ("typed-reconstruction-broadened", lambda catalog: restore(catalog).__setitem__("typedRequestBodyReconstruction", "COPY_WHOLE_HISTORICAL_RESPONSE"), "frozen value mismatch"),
+            ("openapi-revalidation-disabled", lambda catalog: restore(catalog).__setitem__("requestRevalidatedAgainstPinnedOpenApi", False), "frozen value mismatch"),
+            ("exact-projection-equality-disabled", lambda catalog: restore(catalog).__setitem__("exactProjectedReadbackAndDigestMustEqualFreshCapture", False), "frozen value mismatch"),
+            ("capture-operation-substituted", lambda catalog: restore(catalog).__setitem__("captureOperationId", "get-repository"), "frozen value mismatch"),
+            ("restore-readback-substituted", lambda catalog: restore(catalog).__setitem__("immediateReadbackOperationId", "get-repository"), "frozen value mismatch"),
+            ("typed-binding-from-stale-source", lambda catalog: b03_typed_binding(catalog, "preCaptureActionsPermissionsRequestBody").__setitem__("sourceOperation", "D0_HISTORICAL_BASELINE"), "frozen value mismatch"),
+            ("outer-rollback-allows-historical-baseline", lambda catalog: catalog["rollback"]["freshCapture"].__setitem__("historicalD0BaselineMaySubstitute", True), "frozen value mismatch"),
+            ("fresh-capture-not-required", lambda catalog: catalog["rollback"]["freshCapture"].__setitem__("required", False), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_wrong_user_installation_endpoint_authentication(self) -> None:
+        def user_installation_read(catalog):
+            return b03_operation(catalog, "list-user-installation-repositories")
+
+        cases = [
+            ("installation-token-profile", lambda catalog: user_installation_read(catalog).__setitem__("authProfile", "releaseInstallationReadToken"), "frozen value mismatch"),
+            ("app-endpoint-path", lambda catalog: user_installation_read(catalog)["request"].__setitem__("pathTemplate", "/installation/repositories"), "frozen value mismatch"),
+            ("github-app-auth-enabled", lambda catalog: user_installation_read(catalog)["pinnedOpenApiSemantics"].__setitem__("githubAppsEnabled", True), "frozen value mismatch"),
+            ("installation-access-token-semantics", lambda catalog: user_installation_read(catalog)["pinnedOpenApiSemantics"].__setitem__("authentication", "GITHUB_APP_INSTALLATION_ACCESS_TOKEN"), "frozen value mismatch"),
+            ("procedural-user-token-requirement-removed", lambda catalog: user_installation_read(catalog)["pinnedOpenApiSemantics"].__setitem__("operatorAdminProfileIsProceduralUserCredentialNotInstallationCredential", False), "frozen value mismatch"),
+            ("operator-profile-user-token-constraint-removed", lambda catalog: b03_authentication_profile(catalog, "operatorAdmin")["constraints"].remove("USER_ACCESS_TOKEN_ENDPOINTS_REQUIRE_EXPLICIT_REPOSITORY_PERMISSION"), "expected exactly"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_rejects_actor_signer_or_status_source_substitution(self) -> None:
+        def required_status_binding(catalog):
+            rules = catalog["rulesets"]["admission"]["providerFinalUpdateRequestBody"]["rules"]
+            return next(rule for rule in rules if rule["type"] == "required_status_checks")["parameters"]["required_status_checks"][0]
+
+        cases = [
+            ("dispatcher-id-from-reviewer-read", lambda catalog: b03_typed_binding(catalog, "dispatcherUserId").__setitem__("sourceOperation", "get-environment-reviewer-user"), "frozen value mismatch"),
+            ("reviewer-id-from-dispatcher-read", lambda catalog: b03_typed_binding(catalog, "reviewerUserId").__setitem__("sourceOperation", "get-release-dispatcher-user"), "frozen value mismatch"),
+            ("dispatch-actor-from-run-read", lambda catalog: b03_typed_binding(catalog, "dispatchAuthenticatedActorUserId").__setitem__("sourceOperation", "get-release-workflow-run"), "frozen value mismatch"),
+            ("review-audit-actor-from-self", lambda catalog: b03_typed_binding(catalog, "reviewApprovalAuditActorUserId").__setitem__("sourceOperation", "review-release-pending-deployment"), "frozen value mismatch"),
+            ("candidate-check-app-id-from-installation", lambda catalog: b03_typed_binding(catalog, "candidateCheckIntegrationId").__setitem__("jsonPointer", "/check_runs/0/app/installation_id"), "frozen value mismatch"),
+            ("candidate-check-id-from-release-app", lambda catalog: b03_typed_binding(catalog, "candidateCheckIntegrationId").__setitem__("sourceOperation", "get-release-app"), "frozen value mismatch"),
+            ("signer-authority-not-d0-b04", lambda catalog: b03_typed_binding(catalog, "signerGithubLogin")["authoritySource"].__setitem__("findingId", "D0-B03"), "frozen value mismatch"),
+            ("bootstrap-local-verification-weakened", lambda catalog: catalog["providerContract"]["bootstrapStateMachine"]["bootstrapB"].__setitem__("localVerification", "GITHUB_VERIFICATION_ONLY"), "frozen value mismatch"),
+            ("release-local-verification-disabled", lambda catalog: catalog["releaseWorkflow"]["jobs"]["release"]["signedCommit"].__setitem__("localExactKeyVerificationRequired", False), "frozen value mismatch"),
+            ("status-integration-app-substitution", lambda catalog: required_status_binding(catalog).__setitem__("integration_id", {"$binding": "releaseAppIntegrationId", "type": "POSITIVE_INT64"}), "frozen value mismatch"),
+            ("status-context-broadened", lambda catalog: required_status_binding(catalog).__setitem__("context", "pkgre-*-candidate/validate"), "frozen value mismatch"),
+            ("identity-made-nonbypassable-claim", lambda catalog: catalog["providerContract"]["actorAuthorization"].__setitem__("nonBypassableIdentityClaimed", True), "frozen value mismatch"),
+            ("reviewer-dispatcher-separation-disabled", lambda catalog: catalog["providerContract"]["actorAuthorization"]["separation"].__setitem__("reviewerMustDifferFromDispatcher", False), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_provider_operation_graph_is_closed_and_catalog_specific(self) -> None:
+        payloads = valid_b03_payloads()
+        rust = b03_catalog(payloads, 0)
+        js = b03_catalog(payloads, 1)
+        for catalog in (rust, js):
+            contract = catalog["providerContract"]
+            GATE.validate_github_operation_graph(catalog["catalogId"], contract["restOperations"], contract["bootstrapStateMachine"])
+            mutation_ids = {operation["operationId"] for operation in contract["restOperations"] if operation["request"]["method"] in {"POST", "PUT", "PATCH", "DELETE"}}
+            self.assertNotIn("enable-release-workflow", mutation_ids)
+            self.assertNotIn("unsuspend-release-app-installation", mutation_ids)
+        rust_mutations = {operation["operationId"] for operation in rust["providerContract"]["restOperations"] if operation["request"]["method"] in {"POST", "PUT", "PATCH", "DELETE"}}
+        js_mutations = {operation["operationId"] for operation in js["providerContract"]["restOperations"] if operation["request"]["method"] in {"POST", "PUT", "PATCH", "DELETE"}}
+        self.assertIn("delete-classic-branch-protection-if-baseline-present", rust_mutations)
+        self.assertIn("restore-classic-branch-protection-from-pre-capture", rust_mutations)
+        self.assertNotIn("delete-classic-branch-protection-if-baseline-present", js_mutations)
+        self.assertNotIn("restore-classic-branch-protection-from-pre-capture", js_mutations)
+        rest_operations = copy.deepcopy(rust["providerContract"]["restOperations"])
+        dead = copy.deepcopy(b03_operation(rust, "set-actions-permissions"))
+        dead["operationId"] = "unreferenced-settings-mutation"
+        rest_operations.append(dead)
+        self.assertRejected(lambda: GATE.validate_github_operation_graph("rust", rest_operations, rust["providerContract"]["bootstrapStateMachine"]), "unreferenced REST mutations")
+
+    def test_b03_mutation_response_identity_modes_are_explicit_and_noncontradictory(self) -> None:
+        payloads = valid_b03_payloads()
+        rust = b03_catalog(payloads)
+        bodyless = b03_operation(rust, "set-actions-permissions")["mutationIdentity"]["responseIdentity"]
+        self.assertEqual(bodyless["mode"], "BODYLESS_SUCCESS_SELECTOR_AND_IMMEDIATE_READBACK")
+        self.assertFalse(bodyless["responseResourceIdentityClaimed"])
+        id_bearing = b03_operation(rust, "put-release-environment")["mutationIdentity"]["responseIdentity"]
+        self.assertEqual(id_bearing["mode"], "ID_BEARING_RESPONSE_AND_IMMEDIATE_READBACK")
+        self.assertEqual(id_bearing["boundProviderId"], "environmentId")
+        self.assertEqual(b03_typed_binding(rust, "environmentId")["sourceOperation"], "put-release-environment")
+        secret = b03_operation(rust, "mint-bootstrap-installation-token")["mutationIdentity"]["responseIdentity"]
+        self.assertEqual(secret["mode"], "SECRET_TOKEN_RESPONSE_EXCLUDED_FROM_CAPTURE_AND_IDENTITY")
+        self.assertFalse(secret["responseBodyEntersIdentityPipeline"])
+        ref = b03_operation(rust, "patch-main-ref-bootstrap-force-false")["mutationIdentity"]["responseIdentity"]
+        self.assertEqual(ref["mode"], "REF_RESPONSE_AND_IMMEDIATE_REF_COMMIT_READBACK")
+        self.assertEqual(ref["expectedOidBinding"], "bootstrapCommitB")
+        deployment = b03_operation(rust, "review-release-pending-deployment")["mutationIdentity"]["responseIdentity"]
+        self.assertEqual(deployment["mode"], "ID_BEARING_RESPONSE_SET_AND_IMMEDIATE_READBACK")
+        self.assertEqual(deployment["boundProviderId"], "releaseDeploymentId")
+        self.assertEqual(b03_typed_binding(rust, "releaseDeploymentId")["sourceOperation"], "review-release-pending-deployment")
+        cases = [
+            ("bodyless-claims-response-resource", lambda catalog: b03_operation(catalog, "set-actions-permissions")["mutationIdentity"]["responseIdentity"].__setitem__("responseResourceIdentityClaimed", True), "frozen value mismatch"),
+            ("environment-id-from-get-only", lambda catalog: b03_typed_binding(catalog, "environmentId").__setitem__("sourceOperation", "get-release-environment"), "frozen value mismatch"),
+            ("secret-body-enters-identity", lambda catalog: b03_operation(catalog, "mint-bootstrap-installation-token")["mutationIdentity"]["responseIdentity"].__setitem__("responseBodyEntersIdentityPipeline", True), "frozen value mismatch"),
+            ("ref-response-treated-as-generic-id", lambda catalog: b03_operation(catalog, "patch-main-ref-bootstrap-force-false")["mutationIdentity"]["responseIdentity"].__setitem__("mode", "ID_BEARING_RESPONSE_AND_IMMEDIATE_READBACK"), "frozen value mismatch"),
+            ("deployment-id-from-eventual-list-only", lambda catalog: b03_typed_binding(catalog, "releaseDeploymentId").__setitem__("sourceOperation", "list-release-deployments"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_workflow_ids_are_selected_from_complete_set_then_used_numerically(self) -> None:
+        payloads = valid_b03_payloads()
+        catalog = b03_catalog(payloads)
+        list_workflows = b03_operation(catalog, "list-workflows")
+        selection = list_workflows["workflowBindingSelection"]
+        self.assertEqual(selection["matchSemantics"], "EXACTLY_ONE_PATH_AND_NAME_MATCH_PER_BINDING_FROM_COMPLETE_UNORDERED_PAGINATED_SET")
+        for binding_name, operation_id in (("candidateWorkflowId", "get-candidate-workflow"), ("releaseWorkflowId", "get-release-workflow"), ("pagesWorkflowId", "get-pages-workflow")):
+            binding = b03_typed_binding(catalog, binding_name)
+            self.assertEqual(binding["sourceOperation"], "list-workflows")
+            operation = b03_operation(catalog, operation_id)
+            self.assertEqual(operation["request"]["pathTemplate"], f"/repos/pkgre/rust/actions/workflows/$binding:{binding_name}")
+            self.assertTrue(operation["workflowIdentityReadback"]["requestPathUsesNumericIdBinding"])
+        self.assertEqual(b03_typed_binding(catalog, "candidateCheckIntegrationId")["jsonPointer"], "/check_runs/EXACT_CONTEXT_HEAD_SHA_WORKFLOW_JOB_MATCH/app/id")
+        cases = [
+            ("workflow-id-from-individual-get", lambda row: b03_typed_binding(row, "candidateWorkflowId").__setitem__("sourceOperation", "get-candidate-workflow"), "frozen value mismatch"),
+            ("workflow-get-by-full-path", lambda row: b03_operation(row, "get-candidate-workflow")["request"].__setitem__("pathTemplate", "/repos/pkgre/rust/actions/workflows/.github/workflows/pkgre-rust-candidate.yml"), "frozen value mismatch"),
+            ("workflow-selector-filename-only", lambda row: b03_operation(row, "list-workflows")["workflowBindingSelection"].__setitem__("pathNameSubstitutionAllowed", True), "frozen value mismatch"),
+            ("workflow-readback-path-substitution", lambda row: b03_operation(row, "get-candidate-workflow")["workflowIdentityReadback"].__setitem__("expectedPath", ".github/workflows/other.yml"), "frozen value mismatch"),
+            ("check-first-array-entry", lambda row: b03_typed_binding(row, "candidateCheckIntegrationId").__setitem__("jsonPointer", "/check_runs/0/app/id"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_pre_mutation_capture_has_closed_conditional_coverage_without_app_jwt(self) -> None:
+        payloads = valid_b03_payloads()
+        catalog = b03_catalog(payloads)
+        contract = catalog["providerContract"]
+        capture = contract["preMutationCaptureContract"]
+        GATE.validate_github_pre_mutation_capture_contract(catalog["catalogId"], capture, contract["restOperations"])
+        unconditional = capture["unconditionalCaptureOperationIds"]
+        self.assertNotIn("get-release-environment", unconditional)
+        self.assertIn("list-organization-app-installations", unconditional)
+        self.assertNotIn("get-release-app-installation", capture["allCaptureOperationIds"])
+        self.assertIn("list-user-installation-repositories", capture["allCaptureOperationIds"])
+        operation_by_id = {operation["operationId"]: operation for operation in contract["restOperations"]}
+        self.assertTrue(all(operation_by_id[operation_id]["authProfile"] in capture["preConfigurationAllowedAuthProfiles"] for operation_id in capture["allCaptureOperationIds"]))
+        invalid = copy.deepcopy(capture)
+        invalid["unconditionalCaptureOperationIds"].append("get-release-environment")
+        self.assertRejected(lambda: GATE.validate_github_pre_mutation_capture_contract("rust", invalid, contract["restOperations"]), "both unconditional and conditional")
+        cases = [
+            ("conditional-environment-read-made-unconditional", lambda row: row["providerContract"]["preMutationCaptureContract"]["unconditionalCaptureOperationIds"].append("get-release-environment"), "expected exactly"),
+            ("app-jwt-required-before-configuration", lambda row: row["providerContract"]["preMutationCaptureContract"]["allCaptureOperationIds"].append("get-release-app-installation"), "expected exactly"),
+            ("capture-closure-incomplete", lambda row: row["providerContract"]["preMutationCaptureContract"]["allCaptureOperationIds"].pop(), "expected exactly"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_404_projects_only_typed_absence_and_never_restore_input(self) -> None:
+        payloads = valid_b03_payloads()
+        catalog = b03_catalog(payloads)
+        operation = b03_operation(catalog, "get-classic-branch-protection")
+        absence = next(row for row in operation["response"]["admittedStatusSemantics"] if row["status"] == 404)
+        self.assertEqual(absence["outcome"], "TYPED_ABSENCE_ONLY")
+        self.assertEqual(absence["typedProjection"], {"presence": "ABSENT"})
+        self.assertFalse(absence["presentResourceProjectionAllowed"])
+        self.assertFalse(absence["providerIdBindingAllowed"])
+        self.assertFalse(absence["restoreRequestReconstructionAllowed"])
+        self.assertFalse(absence["responseBodyRestorationInputAllowed"])
+        cases = [
+            ("404-as-empty-present-object", lambda row: next(item for item in b03_operation(row, "get-classic-branch-protection")["response"]["admittedStatusSemantics"] if item["status"] == 404).__setitem__("typedProjection", {"presence": "PRESENT", "resource": {}}), "object-key mismatch"),
+            ("404-provider-id-binding", lambda row: next(item for item in b03_operation(row, "get-release-app")["response"]["admittedStatusSemantics"] if item["status"] == 404).__setitem__("providerIdBindingAllowed", True), "frozen value mismatch"),
+            ("404-restore-body", lambda row: next(item for item in b03_operation(row, "get-candidate-workflow-content-at-a")["response"]["admittedStatusSemantics"] if item["status"] == 404).__setitem__("responseBodyRestorationInputAllowed", True), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_b03_requires_catalog_specific_d0_b04_signer_separation_without_values(self) -> None:
+        payloads = valid_b03_payloads()
+        for catalog in payloads["github-governance-proof"]["catalogs"]:
+            separation = catalog["providerContract"]["catalogSignerSeparation"]
+            self.assertEqual(separation["authorityFindingId"], "D0-B04")
+            self.assertEqual(separation["assignmentStatus"], "NOT_YET_ASSIGNED_IN_D0_B03")
+            self.assertTrue(separation["mustDifferFromEveryOtherCatalog"])
+            self.assertFalse(separation["concreteIdentityValuesPresent"])
+        cases = [
+            ("shared-signer-authorized", lambda row: row["providerContract"]["catalogSignerSeparation"].__setitem__("mustDifferFromEveryOtherCatalog", False), "frozen value mismatch"),
+            ("concrete-signer-fabricated-in-b03", lambda row: row["providerContract"]["catalogSignerSeparation"].__setitem__("concreteIdentityValuesPresent", True), "frozen value mismatch"),
+            ("authority-source-allows-shared", lambda row: row["rulesets"]["invariants"]["signatureAuthority"].__setitem__("exactSshEd25519SignerEnforcedBy", "SHARED_PROVIDER_VERIFICATION"), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB03MutationRejected(mutate, expected)
+
+    def test_github_provider_set_projection_is_exact_unordered_and_unambiguous(self) -> None:
+        expected = [{"id": 7, "name": "admission"}, {"id": 9, "name": "invariants"}]
+        raw = [{"id": 9, "name": "invariants", "providerAdded": True}, {"id": 7, "name": "admission", "providerAdded": {"future": 1}}]
+        self.assertEqual(GATE.github_project_exact_provider_set(raw, expected, "provider-set"), sorted(expected, key=GATE.canonical_json))
+        duplicate_raw = [copy.deepcopy(raw[0]), copy.deepcopy(raw[0])]
+        self.assertRejected(lambda: GATE.github_project_exact_provider_set(duplicate_raw, expected, "provider-set"), "duplicate projected entries")
+        duplicate_expected = [copy.deepcopy(expected[0]), copy.deepcopy(expected[0])]
+        self.assertRejected(lambda: GATE.github_project_exact_provider_set(raw, duplicate_expected, "provider-set"), "expected provider set contains duplicate")
+        ambiguous_expected = [{"id": 7}, {"id": 7, "name": "admission"}]
+        ambiguous_raw = [{"id": 7, "name": "admission"}, {"id": 7}]
+        self.assertRejected(lambda: GATE.github_project_exact_provider_set(ambiguous_raw, ambiguous_expected, "provider-set"), "must match exactly one expected projection")
+        missing_match = [copy.deepcopy(raw[0]), {"id": 10, "name": "unexpected"}]
+        self.assertRejected(lambda: GATE.github_project_exact_provider_set(missing_match, expected, "provider-set"), "must match exactly one expected projection")
+        self.assertRejected(lambda: GATE.github_project_exact_provider_set(raw[:1], expected, "provider-set"), "set length mismatch")
+
+    def test_github_provider_projection_ignores_only_additive_raw_object_fields(self) -> None:
+        expected = {"id": 7, "name": "pkgre-rust-admission", "nested": {"state": "active"}, "actors": [{"id": 11, "type": "Integration"}]}
+        raw = {"id": 7, "name": "pkgre-rust-admission", "providerAdded": {"future": True}, "nested": {"state": "active", "future": "ignored"}, "actors": [{"id": 11, "type": "Integration", "future": 1}]}
+        self.assertEqual(GATE.github_project_exact_provider_value(raw, expected, "provider"), expected)
+        wrong = copy.deepcopy(raw)
+        wrong["nested"]["state"] = "evaluate"
+        self.assertRejected(lambda: GATE.github_project_exact_provider_value(wrong, expected, "provider"), "provider projected value mismatch")
+        missing = copy.deepcopy(raw)
+        del missing["actors"][0]["id"]
+        self.assertRejected(lambda: GATE.github_project_exact_provider_value(missing, expected, "provider"), "missing projected fields")
+        wrong_type = copy.deepcopy(raw)
+        wrong_type["id"] = "7"
+        self.assertRejected(lambda: GATE.github_project_exact_provider_value(wrong_type, expected, "provider"), "wrong JSON type")
+        extra_array_item = copy.deepcopy(raw)
+        extra_array_item["actors"].append({"id": 12, "type": "Integration"})
+        self.assertRejected(lambda: GATE.github_project_exact_provider_value(extra_array_item, expected, "provider"), "array length mismatch")
 
     def test_b01_rejects_nonexact_shapes_types_and_unsafe_semantic_text(self) -> None:
         cases = []

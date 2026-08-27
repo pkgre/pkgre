@@ -85,16 +85,19 @@ GITHUB_REST_BASE = "https://api.github.com"
 GITHUB_REST_OPENAPI_COMMIT = "7f6b9c117d7e720cb8dcbd6e650a20823f4b6f55"
 GITHUB_REST_OPENAPI_SHA256 = "1d25fa69c37ecff6f515f592e1e178b6268adb09ec635177578f5c394ddef355"
 GITHUB_PROVIDER_PROJECTION_DOMAIN = "pkgre-d0-github-provider-projection-v2"
+GITHUB_VERIFIED_COMMIT_REASON = "valid"
+GITHUB_FORK_PR_APPROVAL_POLICY = "first_time_contributors_new_to_github"
 GITHUB_PROVIDER_EVIDENCE_KINDS = [
     "ACTIONS_POLICY_READBACK",
     "ADMISSION_RULESET_ID_AND_READBACK",
     "AUDIT_LOG_RECORDS",
+    "BOOTSTRAP_COMMIT_AND_REF_ADVANCE",
     "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN",
     "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK",
     "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK",
     "D2_PRE_MUTATION_CAPTURE",
     "EFFECTIVE_MAIN_RULES_READBACK",
-    "FIRST_BOOTSTRAP_RUN_ID",
+    "FIRST_NORMAL_RELEASE_RUN",
     "INVARIANT_RULESET_ID_AND_READBACK",
     "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK",
     "PROTECTED_ENVIRONMENT_ID_AND_READBACK",
@@ -102,25 +105,28 @@ GITHUB_PROVIDER_EVIDENCE_KINDS = [
     "REF_UPDATE_AND_BYPASS_AUDIT",
     "RELEASE_APP_INSTALLATION_ID_AND_READBACK",
     "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK",
+    "SIGNING_KEY_REGISTRATION_AND_READBACK",
     "TRUSTED_SURFACE_TREE_READBACK",
 ]
 GITHUB_PROVIDER_REQUIRED_BINDINGS = {
-    "ACTIONS_POLICY_READBACK": ["repositoryId", "enabled", "allowedActions", "selectedPolicy", "requireFullLengthCommitSha", "defaultWorkflowPermissions", "canApprovePullRequestReviews", "forkPullRequestPolicy"],
+    "ACTIONS_POLICY_READBACK": ["repositoryId", "enabled", "allowedActions", "selectedPolicy", "requireFullLengthCommitSha", "defaultWorkflowPermissions", "canApprovePullRequestReviews", "forkPullRequestApprovalPolicy"],
     "ADMISSION_RULESET_ID_AND_READBACK": ["repositoryId", "rulesetId", "nodeId", "createdAt", "updatedAt", "source", "target", "enforcement", "conditions", "rulesAndParameters", "bypassActorId", "bypassActorType", "bypassMode"],
-    "AUDIT_LOG_RECORDS": ["repositoryId", "requestId", "actorId", "actorLogin", "action", "resourceId", "createdAt", "result"],
-    "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": ["repositoryId", "context", "integrationId", "candidateSha", "workflowId", "workflowRunId", "checkSuiteId", "checkRunId", "conclusion"],
+    "AUDIT_LOG_RECORDS": ["repositoryId", "requestId", "actorId", "actorLogin", "action", "resourceId", "createdAt", "result", "sourceArtifactSha256"],
+    "BOOTSTRAP_COMMIT_AND_REF_ADVANCE": ["repositoryId", "requestId", "baselineA", "bootstrapCommitB", "bootstrapTreeOid", "soleParentOid", "temporaryRef", "signatureFormat", "signerPrincipal", "signerGithubLogin", "signerSshSha256Fingerprint", "signerProviderSshSigningKeyId", "localVerificationTranscriptSha256", "providerVerificationVerified", "providerVerificationReason", "providerVerifiedAt", "preUpdateOid", "postUpdateOid", "force", "result"],
+    "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": ["repositoryId", "context", "renderedCheckRunName", "workflowName", "jobId", "jobNameLiteral", "integrationId", "candidateSha", "workflowId", "workflowRunId", "checkSuiteId", "checkRunId", "conclusion"],
     "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK": ["repositoryId", "workflowId", "nodeId", "path", "name", "defaultBranchCommitOid", "gitBlobOid", "contentSha256", "triggers", "permissions"],
     "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK": ["repositoryId", "sourceRef", "targetState", "httpStatus", "observedAt"],
-    "D2_PRE_MUTATION_CAPTURE": ["evidenceKey", "capturedAt", "apiVersion", "repository", "repositoryId", "canonicalOrigin", "transport", "sourceRef", "sourceCommitOid", "workflowBindings", "canonicalSettingsDigest", "providerRequestDigest", "rawResponseDigest"],
+    "D2_PRE_MUTATION_CAPTURE": ["evidenceKey", "capturedAt", "apiVersion", "repository", "repositoryId", "canonicalOrigin", "transport", "sourceRef", "sourceCommitOid", "workflowBindings", "canonicalSettingsDigest", "providerRequestDigest", "rawResponseDigest", "captureManifestSha256"],
     "EFFECTIVE_MAIN_RULES_READBACK": ["repositoryId", "sourceRef", "effectiveRules", "rulesetIds", "classicBranchProtectionState", "observedAt"],
-    "FIRST_BOOTSTRAP_RUN_ID": ["repositoryId", "workflowId", "workflowRunId", "deploymentId", "candidateSha", "preUpdateOid", "postUpdateOid", "bootstrapCommitOid", "treeOid", "soleParentOid", "signature", "signerBinding", "candidateBinding", "result"],
+    "FIRST_NORMAL_RELEASE_RUN": ["repositoryId", "workflowId", "workflowRunId", "deploymentId", "environmentId", "candidateTreeCommitOid", "signedReleaseCommitOid", "treeOid", "soleParentOid", "trustedWorkflowCommitOid", "trustedWorkflowBlobOid", "checkIntegrationId", "dispatcherUserId", "dispatchAuthenticatedActorUserId", "triggeringActorUserId", "reviewerUserId", "pendingDeploymentReviewerUserId", "pendingDeploymentCurrentUserCanApprove", "reviewAuthenticatedActorUserId", "reviewApprovalAuditActorUserId", "tokenRepositoryIds", "tokenPermissions", "tokenExpiresAt", "signerAccessInterfaceDesignId", "signerGithubLogin", "signerSshSha256Fingerprint", "signerProviderSshSigningKeyId", "providerVerificationVerified", "providerVerificationReason", "providerVerifiedAt", "preUpdateOid", "postUpdateOid", "localVerificationTranscriptSha256", "result"],
     "INVARIANT_RULESET_ID_AND_READBACK": ["repositoryId", "rulesetId", "nodeId", "createdAt", "updatedAt", "source", "target", "enforcement", "conditions", "rulesAndParameters", "bypassActors"],
     "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK": ["repositoryId", "workflowId", "nodeId", "path", "name", "defaultBranchCommitOid", "gitBlobOid", "contentSha256", "triggers", "permissions"],
-    "PROTECTED_ENVIRONMENT_ID_AND_READBACK": ["repositoryId", "environmentId", "nodeId", "name", "protectionRuleIds", "deploymentBranchPolicyIds", "reviewerProviderIds", "reviewerLogins", "preventSelfReview", "canAdminsBypass", "branchPolicy"],
+    "PROTECTED_ENVIRONMENT_ID_AND_READBACK": ["repositoryId", "environmentId", "nodeId", "name", "protectionRuleIds", "deploymentBranchPolicyIds", "reviewerProviderIds", "reviewerLogins", "preventSelfReview", "branchPolicy", "adminBypassUiReadbackSha256"],
     "PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING": ["repositoryId", "pullRequestId", "pullRequestNumber", "baseRef", "baseSha", "headSha", "reviewId", "reviewCommitId", "reviewerProviderId", "reviewerLogin", "reviewerAssociation", "codeOwnerReview", "lastPushApproval"],
     "REF_UPDATE_AND_BYPASS_AUDIT": ["repositoryId", "requestId", "sourceRef", "preUpdateOid", "postUpdateOid", "force", "fastForward", "actorType", "appId", "installationId", "rulesetId", "bypassMode", "auditRecordIds"],
     "RELEASE_APP_INSTALLATION_ID_AND_READBACK": ["repositoryId", "appId", "installationId", "slug", "owner", "repositorySelection", "selectedRepositoryIds", "selectedRepositoryCount", "installedPermissions", "requestedTokenPermissions", "tokenRepositoryIds"],
     "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK": ["repositoryId", "workflowId", "nodeId", "path", "name", "defaultBranchCommitOid", "gitBlobOid", "contentSha256", "triggers", "permissions", "releaseAuthorityConsumers"],
+    "SIGNING_KEY_REGISTRATION_AND_READBACK": ["repositoryId", "githubLogin", "sshEd25519PublicKey", "sshSha256Fingerprint", "title", "providerSshSigningKeyId", "providerCreatedAt", "baselinePresence", "createdByCeremony", "authenticatedUserReadbackSha256", "authenticatedKeyReadbackSha256", "publicKeyReadbackSha256", "result"],
     "TRUSTED_SURFACE_TREE_READBACK": ["repositoryId", "commitOid", "treeOid", "workflowManifest", "localActionManifest", "repositoryExecutableInputs", "externalRepositoryInputs", "externalActions", "canonicalSurfaceDigest"],
 }
 GITHUB_CANDIDATE_VALIDATION_SCOPE = ["ARCHIVE_HASHES", "CATALOG_POLICY", "CATALOG_SCHEMA", "PROJECTION"]
@@ -1620,6 +1626,45 @@ def exact_json_value(value: Any, expected: Any, label: str) -> None:
         require(value == expected, f"{label}: frozen value mismatch")
 
 
+def github_project_exact_provider_value(raw: Any, expected: Any, label: str) -> Any:
+    require(type(raw) is type(expected), f"{label}: provider field has wrong JSON type")
+    if isinstance(expected, dict):
+        raw_object = obj(raw, label)
+        missing = set(expected) - set(raw_object)
+        require(not missing, f"{label}: provider response is missing projected fields {sorted(missing)}")
+        return {key: github_project_exact_provider_value(raw_object[key], expected_value, f"{label}.{key}") for key, expected_value in expected.items()}
+    if isinstance(expected, list):
+        raw_array = arr(raw, label)
+        require(len(raw_array) == len(expected), f"{label}: provider projected array length mismatch")
+        return [github_project_exact_provider_value(raw_value, expected_value, f"{label}[{index}]") for index, (raw_value, expected_value) in enumerate(zip(raw_array, expected))]
+    require(raw == expected, f"{label}: provider projected value mismatch")
+    return raw
+
+
+def github_project_exact_provider_set(raw: Any, expected: Any, label: str) -> list[Any]:
+    raw_array = arr(raw, label)
+    expected_array = arr(expected, f"{label} expected")
+    require(len(raw_array) == len(expected_array), f"{label}: provider projected set length mismatch")
+    expected_keys = [canonical_json(value) for value in expected_array]
+    require(len(expected_keys) == len(set(expected_keys)), f"{label}: expected provider set contains duplicate projected entries")
+    projected: list[Any] = []
+    projected_keys: set[bytes] = set()
+    for raw_index, raw_value in enumerate(raw_array):
+        matches: list[Any] = []
+        for expected_index, expected_value in enumerate(expected_array):
+            try:
+                matches.append(github_project_exact_provider_value(raw_value, expected_value, f"{label}[{raw_index}]~expected[{expected_index}]"))
+            except GateVerificationError:
+                pass
+        require(len(matches) == 1, f"{label}[{raw_index}]: provider set entry must match exactly one expected projection")
+        key = canonical_json(matches[0])
+        require(key not in projected_keys, f"{label}: provider set contains duplicate projected entries")
+        projected_keys.add(key)
+        projected.append(matches[0])
+    require(projected_keys == set(expected_keys), f"{label}: provider projected set differs from expected set")
+    return sorted(projected, key=canonical_json)
+
+
 def github_login(value: Any, label: str) -> str:
     login = nonempty(value, label)
     require(GITHUB_LOGIN_RE.fullmatch(login) is not None, f"{label}: expected canonical lower-case GitHub login")
@@ -1629,6 +1674,749 @@ def github_login(value: Any, label: str) -> str:
 def github_provider_projection_digest(kind: str, value: Any) -> str:
     raw = GITHUB_PROVIDER_PROJECTION_DOMAIN.encode("ascii") + b"\0" + kind.encode("ascii") + b"\0" + canonical_json(value)
     return sha256(raw)
+
+
+
+def github_admitted_status_semantics(status: int) -> dict[str, Any]:
+    if status == 404:
+        return {
+            "status": 404,
+            "outcome": "TYPED_ABSENCE_ONLY",
+            "typedProjection": {"presence": "ABSENT"},
+            "presentResourceProjectionAllowed": False,
+            "providerIdBindingAllowed": False,
+            "restoreRequestReconstructionAllowed": False,
+            "responseBodyRestorationInputAllowed": False,
+        }
+    return {"status": status, "outcome": "PINNED_OPENAPI_OPERATION_SPECIFIC"}
+
+
+def github_mutation_response_identity(operation_id: str, admitted_statuses: list[int], secret_response: bool) -> tuple[dict[str, Any], str, str]:
+    provider_id_bindings = {
+        "create-d0-b04-ssh-signing-key-if-baseline-absent": ("signerProviderSshSigningKeyId", "CREATE_RESPONSE_AND_IMMEDIATE_AUTHENTICATED_AND_PUBLIC_READBACK"),
+        "put-release-environment": ("environmentId", "PUT_RESPONSE_AND_IMMEDIATE_GET_READBACK"),
+        "create-environment-main-policy": ("environmentBranchPolicyId", "CREATE_RESPONSE_AND_IMMEDIATE_LIST_READBACK"),
+        "create-admission-ruleset-bootstrap": ("admissionRulesetId", "CREATE_RESPONSE_AND_IMMEDIATE_GET_READBACK"),
+        "update-admission-ruleset-to-final": ("admissionRulesetId", "UPDATE_RESPONSE_AND_IMMEDIATE_GET_READBACK_OF_SAME_BOUND_ID"),
+        "create-invariant-ruleset": ("invariantRulesetId", "CREATE_RESPONSE_AND_IMMEDIATE_GET_READBACK"),
+        "review-release-pending-deployment": ("releaseDeploymentId", "EXACT_MUTATION_RESPONSE_MEMBER_AND_IMMEDIATE_DEPLOYMENT_READBACK"),
+    }
+    provider_id_binding, provider_id_source = provider_id_bindings.get(operation_id, ("NOT_APPLICABLE_NO_NEW_PROVIDER_RESOURCE_ID", "NOT_APPLICABLE_NO_NEW_PROVIDER_RESOURCE"))
+    if secret_response:
+        response_identity = {
+            "mode": "SECRET_TOKEN_RESPONSE_EXCLUDED_FROM_CAPTURE_AND_IDENTITY",
+            "responseResourceIdentityClaimed": False,
+            "responseBodyEntersIdentityPipeline": False,
+            "secretResponseBodyCaptureOrHashAllowed": False,
+            "ephemeralSafeMetadataMayValidateScopeAndExpiry": True,
+        }
+    elif operation_id == "review-release-pending-deployment":
+        response_identity = {
+            "mode": "ID_BEARING_RESPONSE_SET_AND_IMMEDIATE_READBACK",
+            "responseResourceIdentityClaimed": True,
+            "responseBodyEntersIdentityPipeline": True,
+            "boundProviderId": provider_id_binding,
+            "responseIdJsonPointer": "/EXACT_WORKFLOW_RUN_ENVIRONMENT_REF_AND_CANDIDATE_MATCH/id",
+            "responseMemberSelection": "EXACTLY_ONE_DEPLOYMENT_MATCHING_RELEASE_WORKFLOW_RUN_ENVIRONMENT_REF_AND_CANDIDATE",
+            "immediateReadbackMustRevalidateBoundId": True,
+        }
+    elif operation_id in {"patch-main-ref-bootstrap-force-false", "patch-main-ref-release-force-false"}:
+        expected_oid_binding = "bootstrapCommitB" if operation_id == "patch-main-ref-bootstrap-force-false" else "signedReleaseCommitCPrime"
+        response_identity = {
+            "mode": "REF_RESPONSE_AND_IMMEDIATE_REF_COMMIT_READBACK",
+            "responseResourceIdentityClaimed": True,
+            "responseBodyEntersIdentityPipeline": True,
+            "expectedOidBinding": expected_oid_binding,
+            "responseRefAndOidMustMatchExactRequest": True,
+            "immediateRefAndCommitReadbackRequired": True,
+        }
+    elif operation_id in provider_id_bindings:
+        response_identity = {
+            "mode": "ID_BEARING_RESPONSE_AND_IMMEDIATE_READBACK",
+            "responseResourceIdentityClaimed": True,
+            "responseBodyEntersIdentityPipeline": True,
+            "boundProviderId": provider_id_binding,
+            "responseIdJsonPointer": "/id",
+            "authoritativeProviderIdSource": provider_id_source,
+            "immediateReadbackMustRevalidateBoundId": True,
+        }
+    elif admitted_statuses == [204]:
+        response_identity = {
+            "mode": "BODYLESS_SUCCESS_SELECTOR_AND_IMMEDIATE_READBACK",
+            "responseResourceIdentityClaimed": False,
+            "responseBodyEntersIdentityPipeline": False,
+            "selectorAndRequestBodyDefineMutationTarget": True,
+        }
+    elif 204 in admitted_statuses:
+        response_identity = {
+            "mode": "BODYLESS_SUCCESS_OR_TYPED_NONRESOURCE_RESULT_AND_IMMEDIATE_READBACK",
+            "responseResourceIdentityClaimed": False,
+            "responseBodyEntersIdentityPipeline": False,
+            "selectorAndRequestBodyDefineMutationTarget": True,
+            "non204StatusesCannotProduceResourceIdentity": True,
+        }
+    else:
+        response_identity = {
+            "mode": "RESOURCE_RESPONSE_AND_IMMEDIATE_READBACK",
+            "responseResourceIdentityClaimed": True,
+            "responseBodyEntersIdentityPipeline": True,
+            "resourceIdentity": "EXACT_SELECTOR_AND_PINNED_OPENAPI_RESPONSE",
+        }
+    return response_identity, provider_id_binding, provider_id_source
+
+
+def github_state_machine_operation_references(state_machine: dict[str, Any]) -> set[str]:
+    references = {operation_id for transition in state_machine["transitions"] for operation_id in transition["operations"]}
+    rollback = state_machine["rollback"]
+    for section_name in ("beforeMainAdvance", "afterMainAdvance"):
+        for step in rollback[section_name]:
+            references.update(step["operationIds"])
+            for group in step["conditionalOperationGroups"]:
+                references.update(group["operationIds"])
+    references.update(rollback["unknownRefIncident"]["immediateOperationIds"])
+    for group in rollback["unknownRefIncident"]["conditionalOperationGroups"]:
+        references.update(group["operationIds"])
+    return references
+
+
+def validate_github_operation_graph(catalog_id: str, rest_operations: list[dict[str, Any]], state_machine: dict[str, Any]) -> None:
+    operation_ids = [operation["operationId"] for operation in rest_operations]
+    require(len(operation_ids) == len(set(operation_ids)), f"{catalog_id}: REST operation IDs must be unique")
+    mutation_ids = {
+        operation["operationId"]
+        for operation in rest_operations
+        if operation["request"]["method"] in {"POST", "PUT", "PATCH", "DELETE"}
+    }
+    references = github_state_machine_operation_references(state_machine)
+    unreferenced = mutation_ids - references
+    require(not unreferenced, f"{catalog_id}: unreferenced REST mutations: {sorted(unreferenced)}")
+    if catalog_id == "js":
+        forbidden = {"delete-classic-branch-protection-if-baseline-present", "restore-classic-branch-protection-from-pre-capture"} & mutation_ids
+        require(not forbidden, f"{catalog_id}: baseline-absent classic-protection mutations are forbidden: {sorted(forbidden)}")
+
+
+def validate_github_pre_mutation_capture_contract(catalog_id: str, capture: dict[str, Any], rest_operations: list[dict[str, Any]]) -> None:
+    operation_by_id = {operation["operationId"]: operation for operation in rest_operations}
+    require(len(operation_by_id) == len(rest_operations), f"{catalog_id}: pre-mutation capture cannot resolve duplicate REST operation IDs")
+    unconditional = arr(capture["unconditionalCaptureOperationIds"], f"{catalog_id}.preMutationCaptureContract.unconditionalCaptureOperationIds")
+    all_capture = arr(capture["allCaptureOperationIds"], f"{catalog_id}.preMutationCaptureContract.allCaptureOperationIds")
+    allowed_profiles = arr(capture["preConfigurationAllowedAuthProfiles"], f"{catalog_id}.preMutationCaptureContract.preConfigurationAllowedAuthProfiles")
+    require(len(unconditional) == len(set(unconditional)), f"{catalog_id}: unconditional pre-mutation capture operations must be unique")
+    require(len(all_capture) == len(set(all_capture)), f"{catalog_id}: all pre-mutation capture operations must be unique")
+    require(len(allowed_profiles) == len(set(allowed_profiles)), f"{catalog_id}: pre-configuration auth profiles must be unique")
+    conditional_ids: list[str] = []
+    for index, raw_branch in enumerate(arr(capture["conditionalCapture"], f"{catalog_id}.preMutationCaptureContract.conditionalCapture")):
+        branch = obj(raw_branch, f"{catalog_id}.preMutationCaptureContract.conditionalCapture[{index}]")
+        selector_id = nonempty(branch["selectorOperationId"], f"{catalog_id}.preMutationCaptureContract.conditionalCapture[{index}].selectorOperationId")
+        require(selector_id in unconditional, f"{catalog_id}: every conditional capture selector must be unconditional")
+        required_ids = arr(branch["requiredOperationIds"], f"{catalog_id}.preMutationCaptureContract.conditionalCapture[{index}].requiredOperationIds")
+        require(len(required_ids) == len(set(required_ids)), f"{catalog_id}: conditional pre-mutation capture operations must be unique within each branch")
+        conditional_ids.extend(required_ids)
+    overlap = set(unconditional) & set(conditional_ids)
+    require(not overlap, f"{catalog_id}: capture operations cannot be both unconditional and conditional: {sorted(overlap)}")
+    require(len(conditional_ids) == len(set(conditional_ids)), f"{catalog_id}: conditional pre-mutation capture branches cannot ambiguously require the same operation")
+    expected_closure = [*unconditional, *conditional_ids]
+    require(all_capture == expected_closure, f"{catalog_id}: allCaptureOperationIds must be the exact ordered unconditional and conditional union")
+    for operation_id in all_capture:
+        require(operation_id in operation_by_id, f"{catalog_id}: pre-mutation capture references unknown REST operation {operation_id}")
+        operation = operation_by_id[operation_id]
+        require(operation["request"]["method"] == "GET", f"{catalog_id}: pre-mutation capture operation {operation_id} must be read-only GET")
+        require(operation["authProfile"] in allowed_profiles, f"{catalog_id}: pre-mutation capture operation {operation_id} requires unavailable pre-configuration auth profile {operation['authProfile']}")
+    coverage_capture_ids = {
+        operation_id
+        for resource in arr(capture["mutableResourceCoverage"], f"{catalog_id}.preMutationCaptureContract.mutableResourceCoverage")
+        for operation_id in arr(resource["captureOperationIds"], f"{catalog_id}.preMutationCaptureContract.mutableResourceCoverage.captureOperationIds")
+    }
+    require(coverage_capture_ids <= set(all_capture), f"{catalog_id}: mutable-resource coverage references reads outside the pre-mutation capture closure: {sorted(coverage_capture_ids - set(all_capture))}")
+
+
+def github_binding(name: str, json_type: str = "POSITIVE_INT64") -> dict[str, str]:
+    return {"$binding": name, "type": json_type}
+
+
+def github_ruleset_request(name: str, rules: list[dict[str, Any]], bypass_actors: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"name": name, "target": "branch", "enforcement": "active", "bypass_actors": bypass_actors, "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}}, "rules": rules}
+
+
+def github_rest_operation(operation_id: str, phase: str, auth_profile: str, method: str, path_template: str, admitted_statuses: list[int], *, query_template: list[dict[str, Any]] | None = None, body_template: dict[str, Any] | None = None, pagination: bool = False, projection: str = "SUPPORTING_READBACK", secret_response: bool = False, follow_up_readbacks: list[str] | None = None, pre_capture_restore: dict[str, str] | None = None) -> dict[str, Any]:
+    if body_template is None:
+        body = {"kind": "NONE", "contentLength": 0, "sha256": EMPTY_SHA256}
+    else:
+        body = {"kind": "CANONICAL_JSON_BINDING_TEMPLATE", "template": body_template, "templateSha256": sha256(canonical_json(body_template)), "bindingSubstitution": "REPLACE_WHOLE_TYPED_BINDING_OBJECT_THEN_REVALIDATE_OPENAPI_SCHEMA", "transmittedEncoding": "UTF8_SORTED_KEYS_COMPACT_WITH_SINGLE_TRAILING_LF", "transmittedLength": "CAPTURE_AT_EXECUTION", "transmittedSha256": "CAPTURE_AT_EXECUTION"}
+    pagination_policy = {"kind": "RFC8288_LINK", "perPage": 100, "firstPage": 1, "followOnlyRelNextFromSameOrigin": True, "bindPreviousResponseRequestIdAndRawSha256": True, "repeatPageOrItemIdRejected": True, "stopOnlyWhenRelNextAbsent": True, "missingOrMalformedLinkRejected": True, "allPagesRequired": True} if pagination else {"kind": "NONE", "linkHeaderMustBeAbsent": True}
+    if secret_response:
+        capture = {"mode": "SECRET_RESPONSE_BODY_NEVER_PERSISTED_OR_HASHED_FOR_ANY_STATUS", "allStatusBodyHandling": "CONSUME_EPHEMERALLY_INSIDE_TOKEN_CLIENT_ONLY_NEVER_ENTER_CAPTURE_PIPELINE", "bodyPersistenceAllowed": False, "bodyArtifactAllowed": False, "bodyLengthRecordingAllowed": False, "bodyHashingAllowed": False, "errorBodyPersistenceAllowed": False, "errorBodyArtifactAllowed": False, "errorBodyLengthRecordingAllowed": False, "errorBodyHashingAllowed": False, "forbiddenRawFields": ["token"], "allowedSuccessProjectionFields": ["expires_at", "permissions", "repository_selection", "repositories"], "successProjectionEphemeralUntilSecretFieldDiscarded": True, "safeEnvelopeFields": ["httpStatus", "responseStartedAtUtc", "responseCompletedAtUtc", "xGitHubRequestId", "xGitHubApiVersionSelected", "rateLimitLimit", "rateLimitRemaining", "rateLimitReset"], "safeEnvelopeClosedWorld": True, "safeEnvelopeBodyMetadataForbidden": True, "responseHeadersCaptured": True, "providerRequestIdRequired": True, "operatorAttestationCannotSubstitute": True}
+        unexpected_status = "CAPTURE_ONLY_STATUS_SAFE_HEADERS_AND_REQUEST_ID_WITHOUT_BODY_LENGTH_DIGEST_OR_ARTIFACT_THEN_ABORT"
+        projection_input = "HTTP_STATUS_SAFE_HEADERS_AND_EPHEMERAL_SECRET_SAFE_SUCCESS_METADATA"
+    else:
+        capture = {"mode": "RAW_BODY_AND_STRICT_PROJECTION", "rawBodyRequired": True, "rawBodyLengthRequired": True, "rawBodySha256Required": True, "projectionArtifactRequired": True, "projectionSha256Required": True, "providerRequestIdRequired": True, "operatorAttestationCannotSubstitute": True}
+        unexpected_status = "CAPTURE_NONSECRET_ERROR_RESPONSE_THEN_ABORT"
+        projection_input = "HTTP_STATUS_HEADERS_AND_RAW_BODY"
+    follow_ups = [] if follow_up_readbacks is None else follow_up_readbacks
+    if method in {"POST", "PUT", "PATCH", "DELETE"}:
+        require(len(follow_ups) > 0, f"{operation_id}: every provider mutation requires an explicit immediate readback")
+    operation = {"operationId": operation_id, "phase": phase, "authProfile": auth_profile, "request": {"method": method, "baseUrl": GITHUB_REST_BASE, "pathTemplate": path_template, "queryTemplate": [] if query_template is None else query_template, "headers": {"Accept": GITHUB_REST_ACCEPT, "X-GitHub-Api-Version": GITHUB_REST_API_VERSION, "User-Agent": "pkgre-d0-github-governance-contract-v1"}, "authorizationHeaderCapture": "FORBIDDEN", "redirectPolicy": "FORBIDDEN", "body": body}, "response": {"admittedStatuses": admitted_statuses, "admittedStatusSemantics": [github_admitted_status_semantics(status) for status in admitted_statuses], "unexpectedStatus": unexpected_status, "capture": capture, "pagination": pagination_policy, "projection": projection, "projectionInput": projection_input, "requiredFollowUpReadbackOperationIds": follow_ups, "followUpTiming": "IMMEDIATE_BEFORE_ANY_NEXT_MUTATION" if follow_ups else "NOT_APPLICABLE"}}
+    if method in {"POST", "PUT", "PATCH", "DELETE"}:
+        response_identity, provider_id_binding, provider_id_source = github_mutation_response_identity(operation_id, admitted_statuses, secret_response)
+        before_sources = {
+            "CONFIGURE": "FRESH_PRE_MUTATION_CAPTURE_AND_EXACT_SELECTOR_READBACK",
+            "BOOTSTRAP": "FRESH_PRE_MUTATION_CAPTURE_CEREMONY_RESOURCE_LEDGER_AND_IMMEDIATE_EXACT_SELECTOR_READBACK",
+            "NORMAL_RELEASE": "CURRENT_TRUSTED_RELEASE_BINDINGS_AND_IMMEDIATE_EXACT_SELECTOR_READBACK",
+            "ROLLBACK": "FRESH_PRE_MUTATION_CAPTURE_CEREMONY_RESOURCE_LEDGER_AND_CURRENT_EXACT_SELECTOR_READBACK",
+        }
+        operation["mutationIdentity"] = {
+            "resourceType": projection,
+            "exactSelector": {"baseUrl": GITHUB_REST_BASE, "pathTemplate": path_template, "orderedQueryTemplate": [] if query_template is None else query_template, "requestBodyTemplateSha256": body.get("templateSha256", EMPTY_SHA256)},
+            "beforeStateSource": before_sources.get(phase, "EXACT_DECLARED_STATE_AND_IMMEDIATE_SELECTOR_READBACK"),
+            "providerAssignedIdBinding": provider_id_binding,
+            "providerAssignedIdSource": provider_id_source,
+            "responseIdentity": response_identity,
+            "afterStateReadbackOperationIds": follow_ups,
+            "responseAndReadbackIdentityMustMatch": response_identity["responseResourceIdentityClaimed"],
+            "afterReadbackMustMatchExactSelector": True,
+            "crossResourceSubstitutionRejected": True,
+        }
+    if pre_capture_restore is not None:
+        require(phase == "ROLLBACK" and method in {"POST", "PUT", "PATCH", "DELETE"}, f"{operation_id}: pre-capture restore must be a rollback mutation")
+        require(set(pre_capture_restore) == {"binding", "captureOperationId", "readbackOperationId"}, f"{operation_id}: invalid pre-capture restore declaration")
+        require(pre_capture_restore["readbackOperationId"] in follow_ups, f"{operation_id}: pre-capture restore readback must be an immediate follow-up")
+        operation["preCaptureRestore"] = {"rawFreshCaptureBinding": pre_capture_restore["binding"], "captureOperationId": pre_capture_restore["captureOperationId"], "typedRequestBodyReconstruction": "ALLOWLIST_PROVIDER_FIELDS_FROM_RAW_FRESH_CAPTURE_ONLY", "requestRevalidatedAgainstPinnedOpenApi": True, "immediateReadbackOperationId": pre_capture_restore["readbackOperationId"], "exactProjectedReadbackAndDigestMustEqualFreshCapture": True, "historicalD0BaselineMaySubstitute": False}
+    return operation
+
+
+def github_bootstrap_transition(catalog_id: str, repository: str, source_tip: str, source_ref: str, candidate_path: str, release_path: str, environment_name: str, invariant_name: str, admission_name: str, writer_slug: str, pre_mutation_capture_key: str, signing_key_evidence_key: str, bootstrap_evidence_key: str, normal_release_evidence_key: str) -> dict[str, Any]:
+    states = [
+        {"state": "S0_BASELINE_CAPTURED", "invariant": "FRESH_PROVIDER_CAPTURE_BINDS_EXACT_BASELINE_A_ALL_MUTABLE_SETTINGS_AND_SIGNING_KEY_BASELINE", "sourceRefExpected": source_tip},
+        {"state": "S1_D0_B04_SIGNING_IDENTITY_AND_PROVIDER_KEY_READY", "invariant": "CATALOG_SPECIFIC_D0_B04_PUBLIC_TRUST_AND_EXACT_GITHUB_SSH_SIGNING_KEY_ARE_READ_BACK_WITHOUT_PRIVATE_KEY_CAPTURE", "sourceRefExpected": source_tip},
+        {"state": "S2_ACTIONS_ENVIRONMENT_APP_READY", "invariant": "ACTIONS_POLICY_ENVIRONMENT_AND_REPOSITORY_SCOPED_WRITER_APP_READ_BACK", "sourceRefExpected": source_tip},
+        {"state": "S3_BOOTSTRAP_B_SIGNED_AND_DUAL_VERIFIED", "invariant": "B_HAS_SOLE_PARENT_A_EXACT_REVIEWED_TREE_LOCAL_EXACT_KEY_VERIFICATION_AND_GITHUB_VERIFIED_VALID_READBACK", "sourceRefExpected": source_tip},
+        {"state": "S4_INVARIANT_AND_BOOTSTRAP_ADMISSION_ACTIVE", "invariant": "BOOTSTRAP_ADMISSION_CLOSES_MAIN_TO_EXACT_APP_AND_NON_BYPASSABLE_INVARIANTS_ARE_EFFECTIVE", "sourceRefExpected": source_tip},
+        {"state": "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE", "invariant": "CLASSIC_PROTECTION_ABSENT_ONLY_AFTER_REPLACEMENT_CONTROLS_ARE_ACTIVE_AND_EFFECTIVE", "sourceRefExpected": source_tip},
+        {"state": "S6_BOOTSTRAP_TOKEN_MINTED", "invariant": "ONE_REPOSITORY_APP_TOKEN_EXISTS_ONLY_AFTER_BOOTSTRAP_ADMISSION_AND_INVARIANTS_ARE_EFFECTIVE", "sourceRefExpected": source_tip},
+        {"state": "S7_MAIN_ADVANCED_A_TO_B_AND_BOOTSTRAP_TOKEN_REVOKED", "invariant": "EXACT_APP_FAST_FORWARDED_MAIN_A_TO_DUAL_VERIFIED_B_WITH_FORCE_FALSE_THEN_TOKEN_WAS_REVOKED", "sourceRefExpected": "BOOTSTRAP_COMMIT_B"},
+        {"state": "S8_WORKFLOW_AND_CHECK_PRODUCER_READ_BACK", "invariant": "WORKFLOWS_ARE_READ_FROM_B_AND_CANDIDATE_CHECK_PRODUCER_IS_PROVIDER_BOUND", "sourceRefExpected": "BOOTSTRAP_COMMIT_B"},
+        {"state": "S9_ADMISSION_RULESET_FINALIZED", "invariant": "SAME_ADMISSION_RULESET_ID_NOW_ENFORCES_UPDATE_PULL_REQUEST_AND_EXACT_STATUS_CHECK_WITH_SOLE_APP_BYPASS", "sourceRefExpected": "BOOTSTRAP_COMMIT_B"},
+        {"state": "S10_FIRST_NORMAL_RELEASE_C_SUCCEEDED", "invariant": "TRUSTED_B_WORKFLOW_RELEASED_DUAL_VERIFIED_SIGNED_C_PRIME_FROM_REVIEWED_CANDIDATE_TREE_WITH_HUMAN_APPROVAL", "sourceRefExpected": "SIGNED_RELEASE_COMMIT_C_PRIME"},
+        {"state": "S11_FINAL_CAPTURE_AND_AUDIT_COMPLETE", "invariant": "ALL_SETTINGS_EFFECTIVE_RULES_REF_SIGNATURE_SIGNING_KEY_AND_AUDIT_READBACKS_PASS", "sourceRefExpected": "SIGNED_RELEASE_COMMIT_C_PRIME"},
+    ]
+    def transition(source: str, target: str, preconditions: list[str], operations: list[str], postconditions: list[str], abort_conditions: list[str], evidence: list[str]) -> dict[str, Any]:
+        return {"from": source, "to": target, "preconditions": preconditions, "operations": operations, "postconditions": postconditions, "abortConditions": abort_conditions, "auditEvidence": evidence}
+    classic_pre_transition_readbacks = ["get-main-ref", "get-admission-ruleset", "get-invariant-ruleset", "list-effective-main-rules"]
+    classic_transition_operations = ["delete-classic-branch-protection-if-baseline-present", "get-classic-branch-protection"] if catalog_id == "rust" else ["get-classic-branch-protection"]
+    classic_post_transition_readbacks = ["get-admission-ruleset", "get-invariant-ruleset", "list-effective-main-rules", "get-main-ref"]
+    classic_operations = classic_pre_transition_readbacks + classic_transition_operations + classic_post_transition_readbacks
+    classic_handover = transition("S4_INVARIANT_AND_BOOTSTRAP_ADMISSION_ACTIVE", "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE", ["SOURCE_REF_EQUALS_A", "BOOTSTRAP_ADMISSION_AND_INVARIANTS_EFFECTIVE", "NO_UNGUARDED_MAIN_REF_WRITE_INTERVAL"], classic_operations, ["CLASSIC_PROTECTION_ABSENT", "SAME_ADMISSION_AND_INVARIANT_RULESET_IDS_REMAIN_ACTIVE", "ALL_REPLACEMENT_RULES_REMAIN_EFFECTIVE", "MAIN_REMAINS_A"], ["REPLACEMENT_RULE_LOST", "RULESET_ID_REPLACED", "SOURCE_REF_DRIFT"], ["CLASSIC_BRANCH_PROTECTION_FINAL_READBACK", "ADMISSION_RULESET_ID_AND_READBACK", "INVARIANT_RULESET_ID_AND_READBACK", "EFFECTIVE_MAIN_RULES_READBACK"])
+    classic_handover["handoverSafety"] = {"preRemovalReadbackOperationIds": classic_pre_transition_readbacks, "transitionOperationIds": classic_transition_operations, "postRemovalReadbackOperationIds": classic_post_transition_readbacks, "beforeAndAfterReplacementControlReadbackRequired": True, "guardGapAllowed": False, "tokenMintAllowedDuringTransition": False, "refAdvanceAllowedDuringTransition": False, "failureDisposition": "ABORT_BEFORE_REMOVAL_OR_KEEP_REPLACEMENT_CONTROLS_ACTIVE_AND_ENTER_INCIDENT_FREEZE"}
+    transitions = [
+        transition("S0_BASELINE_CAPTURED", "S1_D0_B04_SIGNING_IDENTITY_AND_PROVIDER_KEY_READY", ["PRE_MUTATION_CAPTURE_FRESH_COMPLETE_AND_INCLUDES_SIGNING_KEY_SET", "D0_B04_OPERATOR_HANDOFF_AUTHORIZED_FOR_EXACT_CATALOG_SPECIFIC_PUBLIC_IDENTITY"], ["bind-d0-b04-catalog-signing-identity", "get-authenticated-signing-user", "list-authenticated-ssh-signing-keys", "list-public-ssh-signing-keys-for-d0-b04-user", "create-d0-b04-ssh-signing-key-if-baseline-absent", "get-d0-b04-ssh-signing-key", "list-public-ssh-signing-keys-for-d0-b04-user", "resolve-d0-b04-provider-signing-key-binding", "operator-install-public-trust-without-returning-private-material"], ["AUTHENTICATED_GITHUB_LOGIN_EQUALS_D0_B04_LOGIN", "PROVIDER_KEY_ID_TITLE_CREATED_AT_AND_EXACT_PUBLIC_KEY_BOUND", "PUBLIC_AND_AUTHENTICATED_KEY_READBACKS_IDENTICAL", "COMPUTED_SSH_SHA256_FINGERPRINT_EQUALS_D0_B04_FINGERPRINT", "CREATE_SKIPPED_IF_EXACT_KEY_PREEXISTED", "LOCAL_ALLOWED_SIGNERS_AND_REVOCATION_DIGESTS_MATCH_D0_B04"], ["MISSING_DUPLICATE_OR_WRONG_PROVIDER_KEY", "WRONG_GITHUB_LOGIN", "PUBLIC_KEY_OR_FINGERPRINT_MISMATCH", "PRIVATE_KEY_SECRET_BYTES_OR_DIGEST_ENTER_EVIDENCE", "SOURCE_REF_DRIFT"], [pre_mutation_capture_key, signing_key_evidence_key, "D0-B04"]),
+        transition("S1_D0_B04_SIGNING_IDENTITY_AND_PROVIDER_KEY_READY", "S2_ACTIONS_ENVIRONMENT_APP_READY", ["SOURCE_REF_EQUALS_A", "EXACT_SIGNING_KEY_REMAINS_REGISTERED", "OPERATOR_ADMIN_AUTH_ACTIVE"], ["get-environment-reviewer-user", "get-environment-reviewer-permission", "get-release-dispatcher-user", "get-release-dispatcher-permission", "set-actions-permissions", "get-actions-permissions", "set-selected-actions", "get-selected-actions", "set-default-workflow-permissions", "get-default-workflow-permissions", "set-fork-pr-approval-policy", "get-fork-pr-approval-policy", "put-release-environment", "get-release-environment", "create-environment-main-policy", "list-environment-branch-policies", "operator-install-app-and-environment-secret", "get-release-app", "list-organization-app-installations", "get-release-app-installation", "list-user-installation-repositories", "capture-environment-admin-bypass-ui-readback", "capture-environment-secret-name-and-scope-ui-readback", "mint-release-installation-read-token", "list-installation-repositories", "revoke-release-installation-read-token", "prove-release-installation-read-token-revoked"], ["REVIEWER_EXACT_CONFIGURED_LOGIN_ID_AND_LEGACY_PERMISSION_READ_WRITE_OR_ADMIN", "DISPATCHER_EXACT_CONFIGURED_LOGIN_ID_AND_LEGACY_PERMISSION_WRITE_OR_ADMIN", "REVIEWER_AND_DISPATCHER_PROVIDER_IDS_DIFFER", "ACTIONS_EXACT_READBACK", "ENVIRONMENT_EXACT_REST_PROJECTION", "ADMIN_BYPASS_DISABLED_UI_READBACK", "APP_INTEGRATION_INSTALLATION_AND_REPOSITORY_IDS_DISTINCT_AND_BOUND", "READ_TOKEN_METADATA_ONLY_AND_EXACTLY_ONE_REPOSITORY"], ["ANY_ACTOR_LOOKUP_PERMISSION_OR_READBACK_MISMATCH", "APP_SCOPE_BROADER_THAN_ONE_REPOSITORY", "SIGNING_KEY_REMOVED_OR_CHANGED", "SOURCE_REF_DRIFT"], ["ACTIONS_POLICY_READBACK", "PROTECTED_ENVIRONMENT_ID_AND_READBACK", "RELEASE_APP_INSTALLATION_ID_AND_READBACK", "PROVIDER_UI_ENVIRONMENT_ADMIN_BYPASS"]),
+        transition("S2_ACTIONS_ENVIRONMENT_APP_READY", "S3_BOOTSTRAP_B_SIGNED_AND_DUAL_VERIFIED", ["SOURCE_REF_EQUALS_A", "EXACT_BOOTSTRAP_TREE_FROZEN_BEFORE_SIGNING", "EXACT_SIGNING_KEY_REGISTERED_AND_LOCALLY_TRUSTED"], ["operator-create-ssh-ed25519-signed-bootstrap-b", "local-git-verify-commit-raw-bootstrap-b", "git-smart-protocol-upload-bootstrap-b-to-temporary-ref", "get-bootstrap-commit", "get-main-ref", "get-d0-b04-ssh-signing-key", "list-public-ssh-signing-keys-for-d0-b04-user"], ["B_SOLE_PARENT_EQUALS_A", "B_TREE_EQUALS_FROZEN_BOOTSTRAP_TREE", "TEMPORARY_REF_EQUALS_B", "LOCAL_GIT_VERIFY_COMMIT_PASS_WITH_EXACT_D0_B04_KEY_AND_PRINCIPAL", "GITHUB_COMMIT_VERIFICATION_VERIFIED_TRUE_REASON_VALID_AND_VERIFIED_AT_NON_NULL", "COMMIT_AND_KEY_EVIDENCE_BIND_EXACT_D0_B04_LOGIN_PUBLIC_KEY_FINGERPRINT_AND_PROVIDER_KEY_ID", "NO_CANDIDATE_WORKFLOW_EXECUTED"], ["B_PARENT_NOT_A", "TREE_OR_WORKFLOW_DIGEST_MISMATCH", "LOCAL_SIGNATURE_VERIFICATION_FAIL", "GITHUB_SIGNATURE_UNVERIFIED_WRONG_REASON_OR_MISSING_VERIFIED_AT", "SIGNING_KEY_REMOVED_OR_CHANGED", "CANDIDATE_CONTROLLED_WORKFLOW_EXECUTED", "SOURCE_REF_DRIFT"], [bootstrap_evidence_key, signing_key_evidence_key]),
+        transition("S3_BOOTSTRAP_B_SIGNED_AND_DUAL_VERIFIED", "S4_INVARIANT_AND_BOOTSTRAP_ADMISSION_ACTIVE", ["SOURCE_REF_EQUALS_A", "B_REMAINS_DUAL_VERIFIED", "RELEASE_APP_INTEGRATION_AND_INSTALLATION_EXACTLY_BOUND"], ["create-admission-ruleset-bootstrap", "get-admission-ruleset", "create-invariant-ruleset", "get-invariant-ruleset", "list-effective-main-rules", "get-main-ref"], ["ADMISSION_RULESET_BOOTSTRAP_FORM_ACTIVE_WITH_EXACT_UPDATE_RULE_AND_SOLE_APP_BYPASS", "INVARIANT_RULESET_EXACT_ACTIVE_READBACK", "EFFECTIVE_RULES_INCLUDE_BOOTSTRAP_ADMISSION_SIGNATURE_LINEAR_HISTORY_DELETION_AND_NON_FAST_FORWARD", "MAIN_REMAINS_A", "NO_USER_TEAM_REPOSITORY_ROLE_ADMIN_OR_OTHER_INTEGRATION_BYPASS"], ["RULESET_ID_AMBIGUOUS", "EFFECTIVE_RULE_MISSING", "ADMISSION_AUTHORITY_BROADENED", "MAIN_REF_CHANGED_DURING_CONTROL_INSTALLATION"], ["ADMISSION_RULESET_ID_AND_READBACK", "INVARIANT_RULESET_ID_AND_READBACK", "EFFECTIVE_MAIN_RULES_READBACK"]),
+        classic_handover,
+        transition("S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE", "S6_BOOTSTRAP_TOKEN_MINTED", ["SOURCE_REF_EQUALS_A", "BOOTSTRAP_ADMISSION_AND_INVARIANTS_EFFECTIVE", "CLASSIC_PROTECTION_ABSENT"], ["mint-bootstrap-installation-token", "list-bootstrap-token-repositories"], ["BOOTSTRAP_TOKEN_EXACTLY_ONE_REPOSITORY_CONTENTS_WRITE_METADATA_READ_AND_TTL_AT_MOST_3600_SECONDS", "TOKEN_RESPONSE_BODY_AUTHORIZATION_AND_TOKEN_DIGEST_NEVER_PERSISTED", "TOKEN_MINT_OCCURRED_ONLY_AFTER_REPLACEMENT_RULES_EFFECTIVE"], ["TOKEN_SCOPE_PERMISSION_OR_TTL_BROADENED", "SECRET_RESPONSE_CAPTURED", "SOURCE_REF_DRIFT"], ["RELEASE_APP_INSTALLATION_ID_AND_READBACK"]),
+        transition("S6_BOOTSTRAP_TOKEN_MINTED", "S7_MAIN_ADVANCED_A_TO_B_AND_BOOTSTRAP_TOKEN_REVOKED", ["IMMEDIATE_GET_MAIN_REF_EQUALS_A", "B_SOLE_PARENT_EQUALS_A", "B_LOCAL_AND_GITHUB_VERIFICATION_STILL_PASS", "BOOTSTRAP_TOKEN_SCOPE_STILL_EXACT"], ["get-main-ref", "patch-main-ref-bootstrap-force-false", "get-main-ref", "get-bootstrap-commit", "local-git-verify-commit-raw-bootstrap-b", "revoke-bootstrap-installation-token", "prove-bootstrap-installation-token-revoked"], ["PATCH_AUTHENTICATED_AS_EXACT_RELEASE_APP_INSTALLATION", "PATCH_BODY_SHA_EQUALS_B", "PATCH_FORCE_FALSE", "MAIN_EQUALS_B", "FAST_FORWARD_A_TO_B", "LOCAL_EXACT_KEY_SIGNATURE_VERIFICATION_PASS", "GITHUB_COMMIT_VERIFICATION_VERIFIED_TRUE_REASON_VALID_AND_VERIFIED_AT_NON_NULL", "BOOTSTRAP_TOKEN_REVOCATION_RETURNS_204_AND_SUBSEQUENT_AUTH_RETURNS_401"], ["PRE_UPDATE_REF_NOT_A", "HTTP_STATUS_NOT_200", "POST_UPDATE_REF_NOT_B", "SIGNATURE_OR_KEY_VERIFICATION_FAIL", "TOKEN_REVOCATION_OR_NEGATIVE_AUTH_PROOF_FAIL"], [bootstrap_evidence_key, signing_key_evidence_key, "REF_UPDATE_AND_BYPASS_AUDIT"]),
+        transition("S7_MAIN_ADVANCED_A_TO_B_AND_BOOTSTRAP_TOKEN_REVOKED", "S8_WORKFLOW_AND_CHECK_PRODUCER_READ_BACK", ["MAIN_EQUALS_B", "BOOTSTRAP_TOKEN_REVOKED", "NO_HISTORY_REWRITE_ALLOWED"], ["list-workflows", "get-candidate-workflow", "get-release-workflow", "get-pages-workflow", "get-candidate-workflow-content-at-b", "get-release-workflow-content-at-b", "get-pages-workflow-content-at-b", "run-bootstrap-candidate-producer-probe", "list-candidate-check-runs"], ["WORKFLOW_PROVIDER_IDS_PATHS_BLOBS_AND_CONTENT_DIGESTS_BOUND_TO_B", "CHECK_CONTEXT_AND_CHECK_PRODUCER_INTEGRATION_ID_BOUND", "PROBE_DOES_NOT_AUTHORIZE_WORKFLOW_INTRODUCTION"], ["WORKFLOW_AMBIGUITY", "CONTENT_DIGEST_MISMATCH", "CHECK_PRODUCER_UNBOUND_OR_CHANGED"], ["CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK", "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK", "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK", "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN"]),
+        transition("S8_WORKFLOW_AND_CHECK_PRODUCER_READ_BACK", "S9_ADMISSION_RULESET_FINALIZED", ["MAIN_EQUALS_B", "CHECK_PRODUCER_ID_BOUND", "RELEASE_APP_INTEGRATION_ID_BOUND", "ADMISSION_RULESET_ID_EQUALS_BOOTSTRAP_RULESET_ID"], ["update-admission-ruleset-to-final", "get-admission-ruleset", "list-effective-main-rules"], ["SAME_ADMISSION_RULESET_ID_EXACT_FINAL_ACTIVE_READBACK", "ONLY_RELEASE_APP_BYPASSES_UPDATE_PULL_REQUEST_AND_STATUS_CHECK_RULES", "CLASSIC_PROTECTION_ABSENT", "ALL_INVARIANT_RULES_REMAIN_EFFECTIVE"], ["ADMISSION_RULESET_ID_REPLACED", "APP_CHECK_OR_RULESET_ID_MISMATCH", "EXTRA_BYPASS_ACTOR", "INVARIANT_RULE_LOST", "SOURCE_REF_DRIFT"], ["ADMISSION_RULESET_ID_AND_READBACK", "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK", "EFFECTIVE_MAIN_RULES_READBACK"]),
+        transition("S9_ADMISSION_RULESET_FINALIZED", "S10_FIRST_NORMAL_RELEASE_C_SUCCEEDED", ["MAIN_EQUALS_B", "TRUSTED_RELEASE_WORKFLOW_BLOB_EQUALS_B", "CANDIDATE_TREE_COMMIT_C0_HAS_BASE_B_AND_EXACT_SUCCESSFUL_CHECK_FROM_BOUND_INTEGRATION", "EXACT_OPEN_PR_REVIEWS_FILES_AND_LAST_PUSH_APPROVAL_BOUND", "EXACT_D0_B04_SIGNING_KEY_REGISTERED_AND_LOCALLY_TRUSTED", "DISPATCHER_EXACT_LOGIN_ID_AND_WRITE_OR_ADMIN_PERMISSION_READ_BACK", "REVIEWER_EXACT_LOGIN_ID_ENVIRONMENT_MEMBERSHIP_AND_READ_WRITE_OR_ADMIN_PERMISSION_READ_BACK"], ["dispatch-release-workflow-on-main", "list-release-workflow-runs", "get-release-workflow-run", "get-release-run-jobs", "get-release-pending-deployments", "get-release-pending-deployments-as-reviewer", "review-release-pending-deployment", "list-release-deployments", "list-release-deployment-statuses", "capture-provider-ui-audit-export", "mint-release-installation-token-after-approval", "list-release-token-repositories", "trusted-release-job-create-ssh-ed25519-signed-c-prime", "git-smart-protocol-upload-signed-release-c-prime-to-temporary-ref", "patch-main-ref-release-force-false", "get-main-ref", "get-signed-release-commit", "local-git-verify-commit-raw-release-c-prime", "get-d0-b04-ssh-signing-key", "list-public-ssh-signing-keys-for-d0-b04-user", "revoke-release-installation-token", "prove-release-installation-token-revoked"], ["DISPATCH_AUTHENTICATED_ACTOR_AND_WORKFLOW_TRIGGERING_ACTOR_EQUAL_EXACT_CONFIGURED_DISPATCHER_ID", "PENDING_DEPLOYMENT_REVIEWER_CURRENT_USER_CAN_APPROVE_TRUE", "REVIEW_AUTHENTICATED_ACTOR_AND_PROVIDER_AUDIT_ACTOR_EQUAL_EXACT_CONFIGURED_REVIEWER_ID", "REVIEWER_DIFFERS_FROM_DISPATCHER_AND_TRIGGERING_ACTOR", "TOKEN_MINT_OCCURRED_AFTER_PROVIDER_AUDITED_APPROVAL", "TOKEN_ONE_REPOSITORY_CONTENTS_WRITE_METADATA_READ_AND_EXPIRES_WITHIN_3600_SECONDS", "C_PRIME_TREE_EQUALS_C0_TREE", "C_PRIME_SOLE_PARENT_EQUALS_B", "MAIN_EQUALS_C_PRIME", "PATCH_FORCE_FALSE", "LOCAL_EXACT_KEY_SIGNATURE_VERIFICATION_PASS", "GITHUB_COMMIT_VERIFICATION_VERIFIED_TRUE_REASON_VALID_AND_VERIFIED_AT_NON_NULL", "COMMIT_AND_KEY_EVIDENCE_BIND_EXACT_D0_B04_IDENTITY", "RELEASE_TOKEN_REVOKED_AND_SUBSEQUENT_AUTH_RETURNS_401"], ["WORKFLOW_BLOB_DIFFERS_FROM_TRUSTED_B", "DISPATCHER_ID_OR_PERMISSION_MISMATCH", "REVIEWER_ID_PERMISSION_APPROVAL_OR_AUDIT_MISMATCH", "SELF_APPROVAL", "TOKEN_MINT_BEFORE_APPROVAL", "TOKEN_SCOPE_OR_TTL_BROADENED", "BASE_OR_CANDIDATE_DRIFT", "SIGNING_KEY_REMOVED_CHANGED_OR_REVOKED", "REF_UPDATE_OR_SIGNATURE_FAILURE"], [normal_release_evidence_key, signing_key_evidence_key, "PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING", "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN", "REF_UPDATE_AND_BYPASS_AUDIT", "AUDIT_LOG_RECORDS"]),
+        transition("S10_FIRST_NORMAL_RELEASE_C_SUCCEEDED", "S11_FINAL_CAPTURE_AND_AUDIT_COMPLETE", ["MAIN_EQUALS_C_PRIME", "LOCAL_AND_GITHUB_SIGNATURE_VERIFICATION_PASS", "EXACT_SIGNING_KEY_REMAINS_REGISTERED"], ["get-main-ref", "get-signed-release-commit", "get-d0-b04-ssh-signing-key", "list-public-ssh-signing-keys-for-d0-b04-user", "get-actions-permissions", "get-selected-actions", "get-default-workflow-permissions", "get-fork-pr-approval-policy", "get-invariant-ruleset", "get-admission-ruleset", "list-effective-main-rules", "get-release-environment", "list-environment-branch-policies", "get-release-app", "get-release-app-installation", "list-user-installation-repositories", "capture-provider-ui-audit-export"], ["ALL_EXACT_PROJECTIONS_MATCH", "SIGNING_KEY_AND_BOTH_COMMIT_VERIFICATIONS_MATCH_D0_B04", "AUDIT_WINDOW_COMPLETE", "NO_UNEXPLAINED_SETTINGS_OR_REF_MUTATION", "D2_ADMISSION_READY"], ["ANY_PROJECTION_MISMATCH", "SIGNING_KEY_REMOVED_CHANGED_OR_REVOKED", "AUDIT_SOURCE_UNAVAILABLE_OR_SELF_ATTESTED", "UNEXPECTED_ACTOR_OR_MUTATION"], ["AUDIT_LOG_RECORDS", "D2_PRE_MUTATION_CAPTURE", signing_key_evidence_key, "EFFECTIVE_MAIN_RULES_READBACK"]),
+    ]
+    before_advance_states = [state["state"] for state in states[:7]]
+    after_advance_states = [state["state"] for state in states[7:]]
+    def rollback_step(order: int, action: str, condition: str, baseline_effect: str, operation_ids: list[str], postcondition: str, *, applicable_states: list[str], applicable_ref_classes: list[str], required_bindings: list[str], baseline_presence_from: list[str], success_postconditions: list[str], failure_disposition: str, conditional_operation_groups: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        return {"order": order, "action": action, "condition": condition, "applicableStates": applicable_states, "applicableRefClasses": applicable_ref_classes, "requiredBindings": required_bindings, "baselinePresenceFrom": baseline_presence_from, "baselineEffect": baseline_effect, "operationIds": operation_ids, "conditionalOperationGroups": [] if conditional_operation_groups is None else conditional_operation_groups, "skipEvidenceRequired": True, "postcondition": postcondition, "successPostconditions": success_postconditions, "failureDisposition": failure_disposition}
+    def conditional_operations(condition: str, required_bindings: list[str], operation_ids: list[str]) -> dict[str, Any]:
+        return {"executeWhen": condition, "requiredBindings": required_bindings, "operationIds": operation_ids, "skipEvidenceRequired": True, "unresolvedBindingDisposition": "SKIP_WITH_EVIDENCE_ONLY_IF_RESOURCE_OR_CREDENTIAL_IS_PROVED_NOT_APPLICABLE;OTHERWISE_INCIDENT_FREEZE"}
+    rollback_before = [
+        rollback_step(1, "READ_AND_CLASSIFY_MAIN_THEN_REQUIRE_EXACT_BASELINE_A", "ALWAYS", "NO_RESTORATIVE_WEAKENING_MAY_BEGIN_UNTIL_FRESH_PROVIDER_READBACK_PROVES_MAIN_EQUALS_A", ["get-main-ref"], "FRESH_MAIN_REF_PRESENT_READABLE_AND_EQUALS_BASELINE_A", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["baselineA"], baseline_presence_from=[pre_mutation_capture_key], success_postconditions=["MAIN_EQUALS_A", "REF_CLASSIFICATION_EVIDENCE_RECORDED"], failure_disposition="ENTER_UNKNOWN_REF_INCIDENT;PROHIBIT_EVERY_REF_MUTATION"),
+        rollback_step(2, "REVOKE_EACH_ACTIVE_CEREMONY_TOKEN_AND_PROVE_EXACT_NEGATIVE_AUTH", "FOR_EACH_EXACT_TOKEN_INSTANCE_MINTED_BY_THIS_CEREMONY_AND_NOT_ALREADY_PROVED_REVOKED", "NO_BASELINE_TOKEN_STATE_IS_RESTORED;ONLY_CEREMONY TOKENS ARE DESTROYED", [], "EVERY_MINTED_CEREMONY_TOKEN_IS_PROVED_REVOKED_OR_A PROVIDER-DOCUMENTED REVOCATION FAILURE ENTERS INCIDENT FREEZE", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["ceremonyCredentialLedger"], baseline_presence_from=[], success_postconditions=["NO_ACTIVE_CEREMONY_INSTALLATION_TOKEN", "EACH_REVOKED_TOKEN_INSTANCE_RETURNS_401"], failure_disposition="ABORT_RESTORATION_AND_ENTER_CREDENTIAL_INCIDENT_FREEZE", conditional_operation_groups=[conditional_operations("RELEASE_INSTALLATION_READ_TOKEN_MINTED_AND_NOT_PROVED_REVOKED", ["releaseInstallationReadTokenInstance"], ["revoke-release-installation-read-token", "prove-release-installation-read-token-revoked"]), conditional_operations("BOOTSTRAP_INSTALLATION_WRITE_TOKEN_MINTED_AND_NOT_PROVED_REVOKED", ["bootstrapInstallationWriteTokenInstance"], ["revoke-bootstrap-installation-token", "prove-bootstrap-installation-token-revoked"]), conditional_operations("RELEASE_INSTALLATION_WRITE_TOKEN_MINTED_AND_NOT_PROVED_REVOKED", ["releaseInstallationWriteTokenInstance"], ["revoke-release-installation-token", "prove-release-installation-token-revoked"])]),
+        rollback_step(3, "SUSPEND_ONLY_THE_EXACT_BOUND_CEREMONY_APP_INSTALLATION_AND_BLOCK_MINTING", "EXACT_RELEASE_APP_INSTALLATION_ID_IS_BOUND_EXISTS_AND_IS_NOT_ALREADY_SUSPENDED", "TEMPORARY_CONTAINMENT;LATER RESTORE EXACT FRESH BASELINE SUSPENSION STATE OR REQUIRE SEPARATE REMOVAL FOR A CEREMONY-CREATED INSTALLATION", ["suspend-release-app-installation", "get-release-app-installation"], "EXACT_BOUND_INSTALLATION_SUSPENDED;NO_OTHER INSTALLATION CHANGED", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["releaseAppIntegrationId", "releaseAppInstallationId"], baseline_presence_from=[pre_mutation_capture_key], success_postconditions=["NEW_TOKEN_MINTING_BLOCKED", "EXACT_INSTALLATION_ID_UNCHANGED"], failure_disposition="ENTER_CREDENTIAL_INCIDENT_FREEZE_WITH_MAIN_STILL_REQUIRED_AT_A"),
+        rollback_step(4, "DISABLE_ONLY_A_CEREMONY_CHANGED_WORKFLOW_BOUND_AT_CURRENT_DEFAULT_BRANCH", "EXACT_PROVIDER_WORKFLOW_ID_PATH_AND_CURRENT_DEFAULT_BRANCH_IDENTITY_EXIST_AND CEREMONY_CHANGED_OR_ACTIVATED_IT", "BASELINE-UNTOUCHED OR STALE-A OR NAME-SELECTED WORKFLOWS MUST NOT BE DISABLED", [], "ONLY_THE_EXACT_CEREMONY_CHANGED_CURRENT-BRANCH_WORKFLOW_IS_DISABLED", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["releaseWorkflowId"], baseline_presence_from=[pre_mutation_capture_key], success_postconditions=["OTHER_WORKFLOWS_UNCHANGED", "WORKFLOW_PROVIDER_ID_PATH_AND_DEFAULT_BRANCH_OID_REBOUND"], failure_disposition="SKIP_WITH_EVIDENCE_IF_NO_EXACT_CURRENT-BRANCH CEREMONY CHANGE;OTHERWISE INCIDENT FREEZE", conditional_operation_groups=[conditional_operations("EXACT_CURRENT_DEFAULT_BRANCH_RELEASE_WORKFLOW_WAS_CHANGED_OR_ACTIVATED_BY_CEREMONY", ["releaseWorkflowId", "baselineA"], ["disable-release-workflow", "get-release-workflow"])]),
+        rollback_step(5, "REMOVE_ONLY_A_BASELINE-ABSENT_CEREMONY-CREATED_ENVIRONMENT_SECRET_WITHOUT_VALUE_CAPTURE", "EXACT_SECRET_NAME_WAS ABSENT AT FRESH BASELINE AND CREATED BY THIS CEREMONY", "BASELINE-EXISTING SECRET MUST HAVE REMAINED UNTOUCHED;VALUE DIGEST CIPHERTEXT AND MATERIAL ARE NEVER READ", [], "CEREMONY-CREATED SECRET NAME ABSENT WITH METADATA-ONLY READBACK", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["releaseEnvironmentSecretName"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["BASELINE_EXISTING_SECRET_UNCHANGED", "CEREMONY_CREATED_SECRET_ABSENT"], failure_disposition="IF_BASELINE_SECRET_WAS_OVERWRITTEN ENTER_NONRESTORABLE_SECRET_INCIDENT", conditional_operation_groups=[conditional_operations("SECRET_BASELINE_ABSENT_AND_CEREMONY_CREATED_AND_STILL_PRESENT", ["releaseEnvironmentSecretName"], ["operator-remove-environment-secret"])]),
+        rollback_step(6, "RESTORE_CLASSIC_PROTECTION_FROM_FRESH_RAW_CAPTURE_BEFORE_REMOVING_REPLACEMENT_RULESETS", "CLASSIC_PROTECTION_WAS_PRESENT_IN_FRESH_BASELINE_AND_REMOVED_BY_THIS_CEREMONY", "RECONSTRUCT_TYPED_REQUEST_ONLY_FROM_FRESH_RAW_CAPTURE", [], "CLASSIC_PROTECTION_EXACTLY_EQUALS_FRESH_BASELINE_AND_EFFECTIVE_RULES_REMAIN_CLOSED", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["preCaptureClassicProtectionRequestBody"], baseline_presence_from=[pre_mutation_capture_key], success_postconditions=["CLASSIC_PROTECTION_EQUALS_FRESH_BASELINE", "NO_GUARD_GAP"], failure_disposition="ABORT_BEFORE_RULESET_WEAKENING;KEEP_REPLACEMENT_RULESETS_ACTIVE", conditional_operation_groups=[conditional_operations("CLASSIC_PROTECTION_BASELINE_PRESENT_AND_CEREMONY_REMOVED", ["preCaptureClassicProtectionRequestBody"], ["restore-classic-branch-protection-from-pre-capture", "get-classic-branch-protection", "list-effective-main-rules"])]) if catalog_id == "rust" else rollback_step(6, "CONFIRM_BASELINE_ABSENT_CLASSIC_PROTECTION_REMAINS_ABSENT", "CLASSIC_PROTECTION_WAS_ABSENT_IN_FRESH_BASELINE", "NO_CLASSIC_PROTECTION_MUTATION_IS_AUTHORIZED_FOR_THIS_CATALOG", ["get-classic-branch-protection", "list-effective-main-rules"], "CLASSIC_PROTECTION_REMAINS_TYPED_ABSENT_AND_REPLACEMENT_RULES_REMAIN_EFFECTIVE", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=[], baseline_presence_from=[pre_mutation_capture_key], success_postconditions=["CLASSIC_PROTECTION_REMAINS_ABSENT", "NO_GUARD_GAP"], failure_disposition="KEEP_REPLACEMENT_RULESETS_ACTIVE_AND_ENTER_MANUAL_PROVIDER_RESTORE_INCIDENT"),
+        rollback_step(7, "RESTORE_ACTIONS_ENVIRONMENT_APP_AND_WORKFLOW_STATE_BY_EXACT_FRESH_BASELINE_IDENTITY", "FOR_EACH_RESOURCE_CHANGED_BY_THIS_CEREMONY", "RESTORE BASELINE-EXISTING RESOURCES EXACTLY;DELETE OR REMOVE ONLY BASELINE-ABSENT CEREMONY-CREATED RESOURCES;NEVER SELECT BY NAME ALONE", [], "ALL_APPLICABLE_PROVIDER PROJECTIONS MATCH FRESH CAPTURE INCLUDING EXACT IDS AND ABSENCE", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["ceremonyResourceLedger"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["ACTIONS_POLICY_EQUALS_FRESH_BASELINE", "ENVIRONMENT_APP_AND_WORKFLOW_STATE_EQUAL_FRESH_BASELINE", "EVERY_UNCHANGED_RESOURCE_SKIP_EVIDENCED"], failure_disposition="KEEP_STRONGER_CONTAINMENT_AND_ENTER_MANUAL_PROVIDER_RESTORE_INCIDENT", conditional_operation_groups=[conditional_operations("ACTIONS_PERMISSIONS_CHANGED_BY_CEREMONY", ["preCaptureActionsPermissionsRequestBody"], ["restore-actions-permissions-from-pre-capture", "get-actions-permissions"]), conditional_operations("SELECTED_ACTIONS_POLICY_CHANGED_BY_CEREMONY", ["preCaptureSelectedActionsRequestBody"], ["restore-selected-actions-from-pre-capture", "get-selected-actions"]), conditional_operations("DEFAULT_WORKFLOW_PERMISSIONS_CHANGED_BY_CEREMONY", ["preCaptureDefaultWorkflowPermissionsRequestBody"], ["restore-default-workflow-permissions-from-pre-capture", "get-default-workflow-permissions"]), conditional_operations("FORK_PR_APPROVAL_POLICY_CHANGED_BY_CEREMONY", ["preCaptureForkPrApprovalPolicyRequestBody"], ["restore-fork-pr-approval-policy-from-pre-capture", "get-fork-pr-approval-policy"]), conditional_operations("ENVIRONMENT_OR_BRANCH_POLICY_CHANGED_OR_BASELINE_ABSENT_RESOURCE_CREATED_BY_CEREMONY", ["ceremonyResourceLedger"], ["operator-restore-environment-resources-from-pre-capture"]), conditional_operations("APP_INSTALLATION_STATE_CHANGED_OR_BASELINE_ABSENT_INSTALLATION_CREATED_BY_CEREMONY", ["ceremonyResourceLedger"], ["operator-restore-app-installation-from-pre-capture"]), conditional_operations("EXACT_CURRENT_DEFAULT_BRANCH_WORKFLOW_STATE_CHANGED_BY_CEREMONY", ["releaseWorkflowId", "ceremonyResourceLedger"], ["operator-restore-workflow-state-from-pre-capture"])]),
+        rollback_step(8, "DELETE_ONLY_CEREMONY-CREATED_RULESETS_AFTER_BASELINE_PROTECTION_IS RESTORED", "EACH_EXACT_RULESET_ID_WAS ABSENT AT FRESH BASELINE AND CREATED BY THIS CEREMONY", "BASELINE-EXISTING RULESETS ARE NEVER DELETED OR RESTORED FROM TARGET-STATE REQUESTS", [], "CEREMONY-CREATED RULESETS ABSENT AND FRESH BASELINE RULESET SET AND EFFECTIVE RULES RESTORED", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["admissionRulesetId", "invariantRulesetId"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["EXACT_BASELINE_RULESET_ID_SET_RESTORED", "EFFECTIVE_RULES_EQUAL_FRESH_BASELINE"], failure_disposition="KEEP_ANY_STRONGER_RULESET ACTIVE AND ENTER_MANUAL_PROVIDER_RESTORE_INCIDENT", conditional_operation_groups=[conditional_operations("ADMISSION_RULESET_BASELINE_ABSENT_AND_CEREMONY_CREATED", ["admissionRulesetId"], ["delete-admission-ruleset", "list-rulesets"]), conditional_operations("INVARIANT_RULESET_BASELINE_ABSENT_AND_CEREMONY_CREATED", ["invariantRulesetId"], ["delete-invariant-ruleset", "list-rulesets"]), conditional_operations("AFTER_ANY_RULESET_ROLLBACK_MUTATION", [], ["list-effective-main-rules"])]),
+        rollback_step(9, "DELETE_ONLY_BASELINE-ABSENT_CEREMONY-CREATED_TEMPORARY_REFS_AND_CLOSE_ONLY_CEREMONY-CREATED_PULL_REQUESTS", "FOR_EACH EXACT RESOURCE PROVED ABSENT AT FRESH BASELINE AND CREATED BY THIS CEREMONY", "BASELINE-EXISTING REFS AND PULL REQUESTS ARE NEVER DELETED OR CLOSED", [], "EVERY APPLICABLE CEREMONY RESOURCE ABSENT OR CLOSED BY EXACT ID READBACK", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["ceremonyResourceLedger"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["NO_BASELINE_RESOURCE_DELETED", "ONLY_EXACT_CEREMONY_IDS_MUTATED"], failure_disposition="RETAIN_RESOURCE_AND_ENTER_MANUAL_CLEANUP_HANDOFF;DO_NOT_MUTATE_MAIN", conditional_operation_groups=[conditional_operations("BOOTSTRAP_TEMP_REF_BASELINE_ABSENT_AND_CEREMONY_CREATED", ["bootstrapCommitB"], ["delete-temporary-bootstrap-ref", "get-temporary-bootstrap-ref-presence"]), conditional_operations("RELEASE_TEMP_REF_BASELINE_ABSENT_AND_CEREMONY_CREATED", ["signedReleaseCommitCPrime"], ["delete-temporary-release-ref", "get-temporary-release-ref-presence"]), conditional_operations("PROBE_OR_BOOTSTRAP_PR_BASELINE_ABSENT_AND_CEREMONY_CREATED", ["ceremonyPullRequestId"], ["operator-close-bootstrap-pr-if-created"])]),
+        rollback_step(10, "DELETE_EXACT_SIGNING_KEY_ONLY_IF_BASELINE-ABSENT_AND_CEREMONY-CREATED", "EXACT_D0_B04 KEY WAS ABSENT IN BOTH FRESH AUTHENTICATED AND PUBLIC SETS AND CREATED BY THIS CEREMONY", "PREEXISTING BASELINE SIGNING KEY IS NEVER DELETED", [], "CEREMONY-CREATED KEY ABSENT FROM AUTHENTICATED AND PUBLIC READBACKS", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["signerProviderSshSigningKeyId", "signerSshEd25519PublicKey"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["BASELINE_KEY_SET_PRESERVED", "CEREMONY_CREATED_KEY_ABSENT"], failure_disposition="RETAIN_KEY_AND_REQUIRE_SEPARATE_SIGNER_HANDOFF", conditional_operation_groups=[conditional_operations("SIGNING_KEY_BASELINE_ABSENT_AND_CEREMONY_CREATED", ["signerProviderSshSigningKeyId"], ["delete-d0-b04-ssh-signing-key", "get-d0-b04-ssh-signing-key-presence", "list-public-ssh-signing-keys-for-d0-b04-user"])]),
+        rollback_step(11, "RE_READ_MAIN_AND_REQUIRE_EXACT_BASELINE_A", "ALWAYS", "NO REF MUTATION IS PERMITTED DURING PRE-ADVANCE ROLLBACK", ["get-main-ref"], "MAIN_STILL_EQUALS_A", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["baselineA"], baseline_presence_from=[pre_mutation_capture_key], success_postconditions=["MAIN_EQUALS_A", "NO_HISTORY_REWRITE"], failure_disposition="ENTER_UNKNOWN_REF_INCIDENT;DO_NOT_CONTINUE ORDINARY ROLLBACK"),
+        rollback_step(12, "READ_BACK_ALL_RESOURCES_EFFECTIVE_RULES_TOKEN_DENIAL_AND_PROVIDER_AUDIT", "ALWAYS", "EVERY EXECUTED ACTION AND EVERY SKIP MUST BE PROVIDER OR CEREMONY-LEDGER EVIDENCED", ["get-actions-permissions", "get-selected-actions", "get-default-workflow-permissions", "get-fork-pr-approval-policy", "get-classic-branch-protection", "list-rulesets", "list-effective-main-rules", "list-environments", "list-environment-secrets", "get-release-app", "list-organization-app-installations", "capture-provider-ui-audit-export"], "MAIN_EQUALS_A_AND_EXACT_FRESH_PROVIDER_BASELINE_RESTORED_WITH_COMPLETE_ACTION_AND_SKIP EVIDENCE", applicable_states=before_advance_states, applicable_ref_classes=["MAIN_EQUALS_A"], required_bindings=["baselineA"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger", "ceremonyCredentialLedger"], success_postconditions=["ALL_PROJECTIONS_EQUAL_FRESH_BASELINE", "ALL_APPLICABLE_TOKENS_PROVED_DENIED", "AUDIT_WINDOW_COMPLETE", "EVERY_SKIP_EVIDENCED"], failure_disposition="D2_AND_LATER_BLOCKED;MANUAL_INCIDENT_HANDOFF_REQUIRED"),
+    ]
+    rollback_after = [
+        rollback_step(1, "CONFIRM_EXACT_POST_ADVANCE_REF_CLASS_AND_SIGNED_ANCESTRY", "FRESH_CLASSIFICATION_IS MAIN_EQUALS_B OR MAIN_EQUALS_C_PRIME", "CLASSIFICATION IDENTIFIES KNOWN COMMITS BUT DOES NOT TREAT HISTORICAL GITHUB VERIFICATION AS CURRENT SIGNER AUTHORIZATION", ["get-main-ref", "get-bootstrap-commit", "local-git-verify-commit-raw-bootstrap-b"], "TIP_AND_ANCESTRY EXACTLY MATCH THE SELECTED B OR C_PRIME CLASS", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["baselineA", "bootstrapCommitB"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["B_SOLE_PARENT_A_AND_CREATION_VERIFICATION_EVIDENCE_MATCHES", "C_PRIME_IF_CLASSIFIED_SOLE_PARENT_B_AND_CREATION_VERIFICATION_EVIDENCE_MATCHES"], failure_disposition="ENTER_UNKNOWN_REF_INCIDENT;PROHIBIT_EVERY_REF_MUTATION", conditional_operation_groups=[conditional_operations("REF_CLASS_IS_C_PRIME", ["signedReleaseCommitCPrime"], ["get-signed-release-commit", "local-git-verify-commit-raw-release-c-prime"])]),
+        rollback_step(2, "REVOKE_CEREMONY_TOKENS_AND_BLOCK_MINTING_THROUGH_THE_EXACT_BOUND_APP_INSTALLATION", "FOR_EACH ACTIVE CEREMONY CREDENTIAL AND THE EXACT INSTALLATION IF IT EXISTS", "INCIDENT CONTAINMENT MAY INTENTIONALLY DEVIATE FROM BASELINE;NO OTHER INSTALLATION OR CREDENTIAL IS MUTATED", ["operator-revoke-release-credentials"], "KNOWN CREDENTIALS REVOKED AND EXACT INSTALLATION SUSPENDED IF BOUND AND PRESENT", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["ceremonyCredentialLedger"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["NO_KNOWN_ACTIVE_CEREMONY_TOKEN", "NEW_TOKEN_MINTING_BLOCKED_IF_EXACT_INSTALLATION_EXISTS"], failure_disposition="KEEP_REF_IMMUTABLE_AND_ESCALATE_CREDENTIAL_INCIDENT", conditional_operation_groups=[conditional_operations("EXACT_RELEASE_APP_INSTALLATION_ID_BOUND_AND_PRESENT", ["releaseAppInstallationId"], ["suspend-release-app-installation", "get-release-app-installation"])]),
+        rollback_step(3, "ENTER_FORWARD_RECOVERY_FREEZE_BEFORE_ANY_OPTIONAL_CLEANUP", "ALWAYS", "NO RESET FORCE PUSH BYPASS EXPANSION NORMAL RELEASE OR UNSIGNED CORRECTION", ["operator-enter-forward-recovery-freeze"], "WRITES FROZEN;ONLY A NEW SEPARATELY REVIEWED SIGNED-FORWARD CEREMONY MAY CONTINUE", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["baselineA", "bootstrapCommitB"], baseline_presence_from=[], success_postconditions=["NORMAL_RELEASES_BLOCKED", "MAIN_UNCHANGED"], failure_disposition="INCIDENT REMAINS OPEN;PROHIBIT EVERY REF MUTATION"),
+        rollback_step(4, "CLASSIFY_AND_PRESERVE_THE_EXACT_ADMISSION_RULESET_ID_AND_FORM", "EXACT_ADMISSION_RULESET_ID BINDING EXISTS;OTHERWISE INCIDENT FREEZE", "FINAL FORM IS PRESERVED;BOOTSTRAP FORM IS PRESERVED AS CONTAINMENT WITH NORMAL RELEASE FORBIDDEN;MISSING WEAKENED WRONG-ID OR OTHER FORM IS AN INCIDENT", ["get-admission-ruleset-presence"], "ADMISSION CLASS IS EXACT_FINAL_FORM OR EXACT_BOOTSTRAP_FORM;NO RULESET REPLACEMENT", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["admissionRulesetId", "releaseAppIntegrationId"], baseline_presence_from=["ceremonyResourceLedger"], success_postconditions=["EXACT_FINAL_FORM_PRESERVED_OR_EXACT_BOOTSTRAP_FORM_PRESERVED", "BOOTSTRAP_FORM_PROHIBITS_NORMAL_RELEASE", "WRONG_ID_MISSING_OR_WEAKENED_FORM_ENTER_INCIDENT_FREEZE"], failure_disposition="KEEP_FORWARD_FREEZE;SEPARATE_ADMISSION_INCIDENT HANDOFF"),
+        rollback_step(5, "PRESERVE_NON_BYPASSABLE_INVARIANT_RULESET_AND_PROVE_EFFECTIVE RULES", "EXACT_INVARIANT_RULESET_ID BINDING EXISTS AND RESOURCE IS PRESENT", "NEVER REMOVE OR WEAKEN DELETION NON_FAST_FORWARD LINEAR_HISTORY OR SIGNATURE PROTECTION", ["get-invariant-ruleset-presence", "list-effective-main-rules"], "EXACT_INVARIANT RULESET ID AND FORM REMAIN EFFECTIVE", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["invariantRulesetId"], baseline_presence_from=["ceremonyResourceLedger"], success_postconditions=["NON_BYPASSABLE_INVARIANTS_EFFECTIVE", "NO_BYPASS_ACTOR"], failure_disposition="KEEP_FORWARD_FREEZE;SEPARATE_INVARIANT_INCIDENT HANDOFF"),
+        rollback_step(6, "CONDITIONALLY_DISABLE_EXACT_CURRENT-BRANCH_WORKFLOW_AND_REMOVE_ONLY_CEREMONY-CREATED SECRET", "EACH ACTION REQUIRES EXACT CURRENT IDENTITY AND CEREMONY CREATION OR CHANGE EVIDENCE", "NO STALE OR NAME-SELECTED WORKFLOW IS DISABLED;NO BASELINE-EXISTING SECRET IS REMOVED", [], "ONLY APPLICABLE EXACT CEREMONY RESOURCES ARE CONTAINED", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["ceremonyResourceLedger"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["OTHER_WORKFLOWS_UNCHANGED", "BASELINE_SECRET_UNCHANGED", "EACH_SKIP_EVIDENCED"], failure_disposition="KEEP_FORWARD_FREEZE_AND_RECORD_PARTIAL_CONTAINMENT", conditional_operation_groups=[conditional_operations("EXACT_RELEASE_WORKFLOW_ID_PATH_AND_CURRENT_DEFAULT_BRANCH_IDENTITY_EXIST_AND_CEREMONY_ACTIVATED_OR_CHANGED_IT", ["releaseWorkflowId"], ["disable-release-workflow", "get-release-workflow"]), conditional_operations("SECRET_BASELINE_ABSENT_AND_CEREMONY_CREATED_AND_STILL_PRESENT", ["releaseEnvironmentSecretName"], ["operator-remove-environment-secret"])]),
+        rollback_step(7, "REVOKE_SIGNER_LOCALLY_BEFORE_PROVIDER KEY DELETION_ONLY_UNDER_SEPARATE_COMPROMISE AUTHORIZATION", "EXPLICIT SIGNER COMPROMISE OR REVOCATION HANDOFF AUTHORIZES THE EXACT BOUND KEY", "LOCAL CURRENT REVOCATION POLICY IS AUTHORITATIVE;HISTORICAL GITHUB VERIFIED STATUS IS NONAUTHORITATIVE FOR FUTURE USE", [], "LOCAL POLICY REJECTS THE KEY BEFORE EXACT PROVIDER KEY DELETION", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["signerProviderSshSigningKeyId", "signerSshEd25519PublicKey"], baseline_presence_from=[pre_mutation_capture_key, "ceremonyResourceLedger"], success_postconditions=["LOCAL_REVOCATION_PRECEDES_PROVIDER_DELETION", "EXACT_KEY_ABSENT_IF_AUTHORIZED", "HISTORICAL_VERIFICATION_RECORDED_AS_NONAUTHORITY"], failure_disposition="RETAIN_PROVIDER KEY;KEEP_FORWARD_FREEZE;REQUIRE_SIGNER_INCIDENT HANDOFF", conditional_operation_groups=[conditional_operations("SEPARATE_EXACT_SIGNER_COMPROMISE_OR_REVOCATION_AUTHORIZATION_PRESENT", ["signerProviderSshSigningKeyId", "signerRevocationHandoffId"], ["operator-revoke-d0-b04-signer-locally", "delete-d0-b04-ssh-signing-key", "get-d0-b04-ssh-signing-key-presence", "list-public-ssh-signing-keys-for-d0-b04-user"])]),
+        rollback_step(8, "RETAIN_ONLY_ACTUALLY_CREATED COMMIT AND COMPLETE PROVIDER AUDIT EVIDENCE", "BOOTSTRAP B IS BOUND;READ C_PRIME ONLY IF IT WAS BOUND AND CREATED", "NO COMMIT OR AUDIT EVIDENCE DELETION;NO UNCONDITIONAL C_PRIME READ", ["get-bootstrap-commit", "capture-provider-ui-audit-export"], "B AND C_PRIME IF CREATED PLUS COMPLETE AUDIT WINDOW RETAINED", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["bootstrapCommitB"], baseline_presence_from=["ceremonyResourceLedger"], success_postconditions=["B_EVIDENCE_RETAINED", "C_PRIME_EVIDENCE_RETAINED_ONLY_IF_CREATED", "AUDIT_WINDOW_COMPLETE"], failure_disposition="KEEP_FORWARD_FREEZE;EVIDENCE_GAP INCIDENT", conditional_operation_groups=[conditional_operations("SIGNED_RELEASE_C_PRIME_WAS_BOUND_AND_CREATED", ["signedReleaseCommitCPrime"], ["get-signed-release-commit"])]),
+        rollback_step(9, "REQUIRE_NEW_REVIEWED_SIGNED_FORWARD_RECOVERY HANDOFF", "ALWAYS", "CURRENT CEREMONY CANNOT SELF-AUTHORIZE RECOVERY", ["operator-open-forward-recovery-handoff"], "NEW OPERATOR HANDOFF REQUIRED;D2 AND LATER REMAIN BLOCKED", applicable_states=after_advance_states, applicable_ref_classes=["MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B"], required_bindings=["bootstrapCommitB"], baseline_presence_from=[], success_postconditions=["CURRENT_TIP_AND_INCIDENT_BOUNDARY_DECLARED", "NO_IMPLICIT_AUTHORIZATION"], failure_disposition="KEEP_FORWARD_FREEZE_INDEFINITELY"),
+    ]
+    ref_classification = {
+        "operationId": "get-main-ref",
+        "freshReadRequired": True,
+        "classificationOccursBeforeAnyRollbackMutation": True,
+        "outcomes": [
+            {"class": "MAIN_EQUALS_A", "requirements": ["REF_PRESENT_AND_READABLE", "OID_EQUALS_FRESH_BASELINE_A"], "route": "beforeMainAdvance"},
+            {"class": "MAIN_EQUALS_B_AND_B_IS_DUAL_VERIFIED_SOLE_PARENT_A", "requirements": ["REF_PRESENT_AND_READABLE", "OID_EQUALS_EXACT_BOUND_BOOTSTRAP_B", "B_SOLE_PARENT_EQUALS_A", "B_CREATION_LOCAL_EXACT_KEY_AND_GITHUB_VERIFIED_VALID_EVIDENCE_MATCH", "CURRENT_LOCAL_REVOCATION_STATE_RECORDED_SEPARATELY_AND_NOT_OVERRIDDEN_BY_HISTORICAL_GITHUB_VERIFICATION"], "route": "afterMainAdvance"},
+            {"class": "MAIN_EQUALS_C_PRIME_AND_C_PRIME_IS_DUAL_VERIFIED_SOLE_PARENT_B", "requirements": ["REF_PRESENT_AND_READABLE", "OID_EQUALS_EXACT_BOUND_SIGNED_RELEASE_C_PRIME", "C_PRIME_SOLE_PARENT_EQUALS_B", "C_PRIME_CREATION_LOCAL_EXACT_KEY_AND_GITHUB_VERIFIED_VALID_EVIDENCE_MATCH", "CURRENT_LOCAL_REVOCATION_STATE_RECORDED_SEPARATELY_AND_NOT_OVERRIDDEN_BY_HISTORICAL_GITHUB_VERIFICATION"], "route": "afterMainAdvance"},
+            {"class": "REF_ABSENT_UNREADABLE_OR_ANY_OTHER_OID_OR_ANCESTRY", "requirements": ["ANY_404_AUTH_FAILURE_PARSE_FAILURE_UNBOUND_OID_WRONG_PARENT_WRONG_ANCESTRY_OR_NONMATCHING_TIP"], "route": "unknownRefIncident"},
+        ],
+        "binaryAElseClassificationForbidden": True,
+        "unresolvedCommitBindingRoutesToUnknownIncident": True,
+    }
+    admission_rollback_classification = {
+        "operationId": "get-admission-ruleset-presence",
+        "exactRulesetIdBinding": "admissionRulesetId",
+        "outcomes": [
+            {"class": "EXACT_FINAL_FORM", "requirements": ["HTTP_200", "EXACT_BOUND_RULESET_ID", "EXACT_FINAL_RULES_BYPASS_CONDITIONS_AND_ENFORCEMENT"], "action": "PRESERVE_AND_KEEP_FORWARD_FREEZE_UNTIL_NEW_HANDOFF"},
+            {"class": "EXACT_BOOTSTRAP_FORM", "requirements": ["HTTP_200", "EXACT_BOUND_RULESET_ID", "EXACT_BOOTSTRAP_RULES_BYPASS_CONDITIONS_AND_ENFORCEMENT"], "action": "PRESERVE_AS_CONTAINMENT_AND_PROHIBIT_NORMAL_RELEASE"},
+            {"class": "MISSING_WEAKENED_WRONG_ID_OR_OTHER_FORM", "requirements": ["HTTP_404_OR_ANY_NONEXACT_ID_FORM_OR_EFFECT"], "action": "KEEP_INCIDENT_FREEZE_AND_REQUIRE_SEPARATE_ADMISSION_RECOVERY"},
+        ],
+        "replacementForbidden": True,
+    }
+    unknown_ref_incident = {
+        "triggerClass": "REF_ABSENT_UNREADABLE_OR_ANY_OTHER_OID_OR_ANCESTRY",
+        "immediateOperationIds": ["operator-revoke-release-credentials", "operator-enter-unknown-ref-incident-freeze", "capture-provider-ui-audit-export"],
+        "conditionalOperationGroups": [conditional_operations("EXACT_RELEASE_APP_INSTALLATION_ID_BOUND_AND_CURRENTLY_EXISTS", ["releaseAppInstallationId"], ["suspend-release-app-installation", "get-release-app-installation"])],
+        "requiredResults": ["KNOWN_CREDENTIALS_REVOKED_OR_BLOCKED", "EVERY_REF_MUTATION_PROHIBITED", "PROVIDER_AND_AUDIT_EVIDENCE_PRESERVED", "SEPARATE_INCIDENT_HANDLING_REQUIRED"],
+        "forbidden": ["ASSUME_TIP_IS_B_OR_C_PRIME", "ORDINARY_SIGNED_FORWARD_RECOVERY", "RESET_FORCE_PUSH_DELETE_OR_OTHER_REF_MUTATION", "BYPASS_EXPANSION", "AUDIT_EVIDENCE_DELETION"],
+        "d2AndLaterBlocked": True,
+    }
+    auxiliary_rollback_bindings = [
+        {"name": "ceremonyResourceLedger", "source": "ROLLBACK_EXECUTION_LEDGER_RESOURCE_ENTRIES", "valueClass": "APPEND_ONLY_NONSECRET_LEDGER", "missingOrContradictoryDisposition": "INCIDENT_FREEZE_NOT_DESTRUCTIVE_DEFAULT"},
+        {"name": "ceremonyCredentialLedger", "source": "ROLLBACK_EXECUTION_LEDGER_CREDENTIAL_ENTRIES", "valueClass": "APPEND_ONLY_SECRET_FREE_LEDGER", "missingOrContradictoryDisposition": "INCIDENT_FREEZE_NOT_CREDENTIAL_GUESSING"},
+        {"name": "releaseInstallationReadTokenInstance", "source": "EXACT_CEREMONY_CREDENTIAL_LEDGER_ENTRY_AND_EPHEMERAL_SECRET_STORE_HANDLE", "valueClass": "INTERNAL_TOKEN_INSTANCE_REFERENCE_NEVER_MATERIAL_OR_DIGEST", "missingOrContradictoryDisposition": "INCIDENT_FREEZE_NOT_CROSS_TOKEN_SUBSTITUTION"},
+        {"name": "bootstrapInstallationWriteTokenInstance", "source": "EXACT_CEREMONY_CREDENTIAL_LEDGER_ENTRY_AND_EPHEMERAL_SECRET_STORE_HANDLE", "valueClass": "INTERNAL_TOKEN_INSTANCE_REFERENCE_NEVER_MATERIAL_OR_DIGEST", "missingOrContradictoryDisposition": "INCIDENT_FREEZE_NOT_CROSS_TOKEN_SUBSTITUTION"},
+        {"name": "releaseInstallationWriteTokenInstance", "source": "EXACT_CEREMONY_CREDENTIAL_LEDGER_ENTRY_AND_EPHEMERAL_SECRET_STORE_HANDLE", "valueClass": "INTERNAL_TOKEN_INSTANCE_REFERENCE_NEVER_MATERIAL_OR_DIGEST", "missingOrContradictoryDisposition": "INCIDENT_FREEZE_NOT_CROSS_TOKEN_SUBSTITUTION"},
+        {"name": "releaseEnvironmentSecretName", "source": "EXACT_CEREMONY_RESOURCE_LEDGER_ENTRY_WITH_FRESH_BASELINE_ABSENCE_AND_CREATE_READBACK", "valueClass": "NONSECRET_PROVIDER_RESOURCE_NAME", "missingOrContradictoryDisposition": "INCIDENT_FREEZE_NOT_SECRET_DELETION"},
+        {"name": "ceremonyPullRequestId", "source": "EXACT_CEREMONY_RESOURCE_LEDGER_ENTRY_WITH_FRESH_BASELINE_ABSENCE_AND_CREATE_READBACK", "valueClass": "POSITIVE_PROVIDER_ID", "missingOrContradictoryDisposition": "RETAIN_RESOURCE_AND_REQUIRE_MANUAL_HANDOFF"},
+        {"name": "signerRevocationHandoffId", "source": "SEPARATE_FRESH_OPERATOR_SIGNER_COMPROMISE_OR_REVOCATION_HANDOFF", "valueClass": "SECURITY_HANDOFF_ID", "missingOrContradictoryDisposition": "RETAIN_PROVIDER_KEY_AND_KEEP_FORWARD_FREEZE"},
+    ]
+    return {
+        "schema": "pkgre-d0-github-bootstrap-state-machine-v2",
+        "catalogId": catalog_id,
+        "repository": repository,
+        "sourceRef": source_ref,
+        "baselineA": source_tip,
+        "bootstrapB": {"temporaryRef": f"refs/heads/pkgre-{catalog_id}-bootstrap-b", "candidateWorkflowPath": candidate_path, "releaseWorkflowPath": release_path, "soleParent": "BASELINE_A", "tree": "EXACT_FROZEN_BOOTSTRAP_TREE", "signature": "SSH_ED25519_D0_B04_CATALOG_SPECIFIC", "localVerification": "GIT_VERIFY_COMMIT_RAW_WITH_FROZEN_ALLOWED_SIGNERS_AND_EXACT_FINGERPRINT", "providerVerification": {"verified": True, "reason": GITHUB_VERIFIED_COMMIT_REASON, "verifiedAtRequired": True}, "candidateWorkflowMayAuthorizeOwnIntroduction": False},
+        "admissionEvolution": {"rulesetName": admission_name, "rulesetIdBinding": "admissionRulesetId", "bootstrapForm": "UPDATE_ONLY_SOLE_RELEASE_APP_BYPASS", "finalForm": "UPDATE_PULL_REQUEST_REQUIRED_STATUS_CHECKS_SOLE_RELEASE_APP_BYPASS", "sameProviderRulesetIdRequired": True, "replacementAllowed": False},
+        "signingIdentity": {"authoritySource": "D0-B04", "scope": "CATALOG_SPECIFIC", "requiredBindings": ["signerGithubLogin", "signerSshEd25519PublicKey", "signerSshSha256Fingerprint", "signerSshKeyTitle", "signerProviderSshSigningKeyId", "signerProviderSshSigningKeyCreatedAt"], "githubPersistentVerificationAfterKeyRemoval": True, "runtimeExactKeyAndRevocationPolicyAuthoritative": True},
+        "firstNormalRelease": {"trustedWorkflowCommit": "BOOTSTRAP_COMMIT_B", "candidateTreeCommit": "C0_UNTRUSTED_DATA_ONLY", "signedReleaseCommit": "C_PRIME_TREE_EQUALS_C0_SOLE_PARENT_B", "providerVerification": {"verified": True, "reason": GITHUB_VERIFIED_COMMIT_REASON, "verifiedAtRequired": True}, "environment": environment_name, "admissionRuleset": admission_name, "invariantRuleset": invariant_name, "writerApp": writer_slug},
+        "states": states,
+        "transitions": transitions,
+        "rollback": {"decisionPoint": "FRESH_GET_MAIN_REF_EXACT_FOUR_WAY_CLASSIFICATION", "refClassification": ref_classification, "admissionRuleClassification": admission_rollback_classification, "executionLedger": {"schema": "pkgre-d0-github-rollback-execution-ledger-v1", "resourceEntryFields": ["resourceType", "exactProviderIdOrRef", "exactRepositoryId", "freshBaselinePresence", "freshBaselineCaptureOperationId", "freshBaselineRawArtifactSha256", "createdByCeremony", "changedByCeremony", "currentPresenceReadbackOperationId", "currentProjectionSha256"], "credentialEntryFields": ["credentialKind", "exactCeremonyInstanceInternalReference", "mintOperationId", "mintCompleted", "revokeOperationId", "revokeCompleted", "negativeAuthProofOperationId", "negativeAuthProofCompleted"], "credentialMaterialOrDigestAllowed": False, "conditionEvaluation": "FRESH_READBACK_PLUS_APPEND_ONLY_CEREMONY_LEDGER", "missingOrContradictoryEntryDisposition": "INCIDENT_FREEZE_NOT_DESTRUCTIVE_DEFAULT", "skipEvidenceFields": ["rollbackStepOrder", "conditionalGroupIndex", "condition", "evaluatedResult", "supportingReadbackOperationIds", "supportingArtifactSha256", "recordedAtUtc"], "everySkippedStepOrGroupRecorded": True}, "auxiliaryBindingRegistry": auxiliary_rollback_bindings, "beforeMainAdvanceStates": before_advance_states, "beforeMainAdvance": rollback_before, "afterMainAdvanceStates": after_advance_states, "afterMainAdvance": rollback_after, "unknownRefIncident": unknown_ref_incident, "forbidden": ["FORCE_PUSH", "RESET_MAIN_TO_A", "EXPAND_BYPASS_ACTORS", "REPLACE_ADMISSION_RULESET_ID", "UNSIGNED_OR_PROVIDER_UNVERIFIED_CORRECTIVE_COMMIT", "DELETE_AUDIT_EVIDENCE", "TREAT_GITHUB_PERSISTENT_VERIFICATION_AS_CURRENT_EXACT_KEY_AUTHORIZATION", "CLAIM_PAGES_CONTINUITY_RESTORED_WITHOUT_INDEPENDENT_TLS_HTTP_PROOF"]},
+    }
+
+def github_provider_contract(catalog_id: str, repository: str, repository_id: int, source_tip: str, source_ref: str, source_branch: str, candidate_path: str, release_path: str, pages_path: str, candidate_name: str, release_name: str, pages_name: str, check_context: str, environment_name: str, reviewer: str, dispatcher: str, writer_slug: str, admission_ruleset: dict[str, Any], invariant_ruleset: dict[str, Any], signing_identity: dict[str, Any], actions: dict[str, Any], pre_mutation_capture_key: str, signing_key_evidence_key: str, bootstrap_evidence_key: str, normal_release_evidence_key: str) -> dict[str, Any]:
+    owner, repo = repository.split("/", 1)
+    base = f"/repos/{owner}/{repo}"
+    bindings = [
+        {"name": "signerGithubLogin", "type": "GITHUB_LOGIN", "sourceOperation": "bind-d0-b04-catalog-signing-identity", "jsonPointer": "/githubLogin", "authoritySource": signing_identity["authoritySource"], "mustDifferFrom": []},
+        {"name": "signerSshEd25519PublicKey", "type": "SSH_ED25519_PUBLIC_KEY", "sourceOperation": "bind-d0-b04-catalog-signing-identity", "jsonPointer": "/sshEd25519PublicKey", "authoritySource": signing_identity["authoritySource"], "mustDifferFrom": []},
+        {"name": "signerSshSha256Fingerprint", "type": "SSH_SHA256_FINGERPRINT", "sourceOperation": "bind-d0-b04-catalog-signing-identity", "jsonPointer": "/sshSha256Fingerprint", "authoritySource": signing_identity["authoritySource"], "mustDifferFrom": []},
+        {"name": "signerSshKeyTitle", "type": "NONEMPTY_STRING", "sourceOperation": "bind-d0-b04-catalog-signing-identity", "jsonPointer": "/providerKeyTitle", "authoritySource": signing_identity["authoritySource"], "mustDifferFrom": []},
+        {"name": "signerProviderSshSigningKeyId", "type": "POSITIVE_INT64", "sourceOperation": "resolve-d0-b04-provider-signing-key-binding", "jsonPointer": "/id", "mustDifferFrom": []},
+        {"name": "signerProviderSshSigningKeyCreatedAt", "type": "UTC_TIMESTAMP", "sourceOperation": "resolve-d0-b04-provider-signing-key-binding", "jsonPointer": "/created_at", "mustDifferFrom": []},
+        {"name": "signerGithubUserId", "type": "POSITIVE_INT64", "sourceOperation": "get-authenticated-signing-user", "jsonPointer": "/id", "mustDifferFrom": ["reviewerUserId", "dispatcherUserId"]},
+        {"name": "releaseAppIntegrationId", "type": "POSITIVE_INT64", "sourceOperation": "get-release-app", "jsonPointer": "/id", "mustDifferFrom": ["releaseAppInstallationId", "candidateCheckIntegrationId"]},
+        {"name": "releaseAppInstallationId", "type": "POSITIVE_INT64", "sourceOperation": "list-organization-app-installations", "jsonPointer": "/installations/EXACT_APP_MATCH/id", "mustDifferFrom": ["releaseAppIntegrationId", "candidateCheckIntegrationId"]},
+        {"name": "candidateCheckIntegrationId", "type": "POSITIVE_INT64", "sourceOperation": "list-candidate-check-runs", "jsonPointer": "/check_runs/EXACT_CONTEXT_HEAD_SHA_WORKFLOW_JOB_MATCH/app/id", "mustDifferFrom": ["releaseAppIntegrationId", "releaseAppInstallationId"]},
+        {"name": "reviewerGithubLogin", "type": "GITHUB_LOGIN", "sourceOperation": "get-environment-reviewer-user", "jsonPointer": "/login", "frozenValue": reviewer, "mustDifferFrom": ["dispatcherGithubLogin"]},
+        {"name": "reviewerUserId", "type": "POSITIVE_INT64", "sourceOperation": "get-environment-reviewer-user", "jsonPointer": "/id", "mustDifferFrom": ["dispatcherUserId", "triggeringActorUserId", "dispatchAuthenticatedActorUserId"]},
+        {"name": "reviewerLegacyBasePermission", "type": "GITHUB_LEGACY_BASE_PERMISSION", "sourceOperation": "get-environment-reviewer-permission", "jsonPointer": "/permission", "allowedValues": ["read", "write", "admin"], "mustDifferFrom": []},
+        {"name": "dispatcherGithubLogin", "type": "GITHUB_LOGIN", "sourceOperation": "get-release-dispatcher-user", "jsonPointer": "/login", "frozenValue": dispatcher, "mustDifferFrom": ["reviewerGithubLogin"]},
+        {"name": "dispatcherUserId", "type": "POSITIVE_INT64", "sourceOperation": "get-release-dispatcher-user", "jsonPointer": "/id", "mustDifferFrom": ["reviewerUserId", "reviewAuthenticatedActorUserId", "reviewApprovalAuditActorUserId"], "mustEqual": ["dispatchAuthenticatedActorUserId", "triggeringActorUserId"]},
+        {"name": "dispatcherLegacyBasePermission", "type": "GITHUB_LEGACY_BASE_PERMISSION", "sourceOperation": "get-release-dispatcher-permission", "jsonPointer": "/permission", "allowedValues": ["write", "admin"], "mustDifferFrom": []},
+        {"name": "dispatchAuthenticatedActorUserId", "type": "POSITIVE_INT64", "sourceOperation": "dispatch-release-workflow-on-main", "jsonPointer": "/request/authenticatedActorProviderId", "mustDifferFrom": ["reviewerUserId"], "mustEqual": ["dispatcherUserId", "triggeringActorUserId"]},
+        {"name": "triggeringActorUserId", "type": "POSITIVE_INT64", "sourceOperation": "get-release-workflow-run", "jsonPointer": "/triggering_actor/id", "mustDifferFrom": ["reviewerUserId"], "mustEqual": ["dispatcherUserId", "dispatchAuthenticatedActorUserId"]},
+        {"name": "pendingDeploymentReviewerUserId", "type": "POSITIVE_INT64", "sourceOperation": "get-release-pending-deployments-as-reviewer", "jsonPointer": "/EXACT_ENVIRONMENT_MATCH/reviewers/EXACT_CONFIGURED_USER/reviewer/id", "mustDifferFrom": ["dispatcherUserId"], "mustEqual": ["reviewerUserId", "reviewAuthenticatedActorUserId", "reviewApprovalAuditActorUserId"]},
+        {"name": "pendingDeploymentCurrentUserCanApprove", "type": "BOOLEAN", "sourceOperation": "get-release-pending-deployments-as-reviewer", "jsonPointer": "/EXACT_ENVIRONMENT_MATCH/current_user_can_approve", "frozenValue": True, "mustDifferFrom": []},
+        {"name": "reviewAuthenticatedActorUserId", "type": "POSITIVE_INT64", "sourceOperation": "review-release-pending-deployment", "jsonPointer": "/request/authenticatedActorProviderId", "mustDifferFrom": ["dispatcherUserId"], "mustEqual": ["reviewerUserId", "pendingDeploymentReviewerUserId", "reviewApprovalAuditActorUserId"]},
+        {"name": "reviewApprovalAuditActorUserId", "type": "POSITIVE_INT64", "sourceOperation": "capture-provider-ui-audit-export", "jsonPointer": "/records/EXACT_PENDING_DEPLOYMENT_REVIEW/actor_id", "mustDifferFrom": ["dispatcherUserId"], "mustEqual": ["reviewerUserId", "pendingDeploymentReviewerUserId", "reviewAuthenticatedActorUserId"]},
+        {"name": "invariantRulesetId", "type": "POSITIVE_INT64", "sourceOperation": "create-invariant-ruleset", "jsonPointer": "/id", "mustDifferFrom": ["admissionRulesetId"]},
+        {"name": "admissionRulesetId", "type": "POSITIVE_INT64", "sourceOperation": "create-admission-ruleset-bootstrap", "jsonPointer": "/id", "mustDifferFrom": ["invariantRulesetId"]},
+        {"name": "environmentId", "type": "POSITIVE_INT64", "sourceOperation": "put-release-environment", "jsonPointer": "/id", "mustDifferFrom": []},
+        {"name": "environmentBranchPolicyId", "type": "POSITIVE_INT64", "sourceOperation": "create-environment-main-policy", "jsonPointer": "/id", "mustDifferFrom": []},
+        {"name": "candidateWorkflowId", "type": "POSITIVE_INT64", "sourceOperation": "list-workflows", "jsonPointer": "/workflows/EXACT_CANDIDATE_PATH_AND_NAME_MATCH/id", "mustDifferFrom": ["releaseWorkflowId", "pagesWorkflowId"]},
+        {"name": "releaseWorkflowId", "type": "POSITIVE_INT64", "sourceOperation": "list-workflows", "jsonPointer": "/workflows/EXACT_RELEASE_PATH_AND_NAME_MATCH/id", "mustDifferFrom": ["candidateWorkflowId", "pagesWorkflowId"]},
+        {"name": "pagesWorkflowId", "type": "POSITIVE_INT64", "sourceOperation": "list-workflows", "jsonPointer": "/workflows/EXACT_PAGES_PATH_AND_NAME_MATCH/id", "mustDifferFrom": ["candidateWorkflowId", "releaseWorkflowId"]},
+        {"name": "pullRequestNumber", "type": "POSITIVE_INT64", "sourceOperation": "list-open-candidate-pull-requests", "jsonPointer": "/EXACT_BASE_HEAD_MATCH/number", "mustDifferFrom": []},
+        {"name": "releaseWorkflowRunId", "type": "POSITIVE_INT64", "sourceOperation": "list-release-workflow-runs", "jsonPointer": "/workflow_runs/EXACT_DISPATCH_MATCH/id", "mustDifferFrom": []},
+        {"name": "pendingDeploymentEnvironmentId", "type": "POSITIVE_INT64", "sourceOperation": "get-release-pending-deployments", "jsonPointer": "/EXACT_ENVIRONMENT_MATCH/environment/id", "mustDifferFrom": [], "mustEqual": ["environmentId"]},
+        {"name": "releaseDeploymentId", "type": "POSITIVE_INT64", "sourceOperation": "review-release-pending-deployment", "jsonPointer": "/EXACT_WORKFLOW_RUN_ENVIRONMENT_REF_AND_CANDIDATE_MATCH/id", "mustDifferFrom": []},
+        {"name": "candidateTreeCommitOid", "type": "LOWERCASE_SHA1_40", "sourceOperation": "get-candidate-pull-request", "jsonPointer": "/head/sha", "mustDifferFrom": ["baselineA", "bootstrapCommitB", "signedReleaseCommitCPrime"]},
+        {"name": "bootstrapCommitB", "type": "LOWERCASE_SHA1_40", "sourceOperation": "operator-create-ssh-ed25519-signed-bootstrap-b", "jsonPointer": "/commitOid", "mustDifferFrom": ["baselineA", "candidateTreeCommitOid", "signedReleaseCommitCPrime"]},
+        {"name": "signedReleaseCommitCPrime", "type": "LOWERCASE_SHA1_40", "sourceOperation": "git-smart-protocol-upload-signed-release-c-prime-to-temporary-ref", "jsonPointer": "/commitOid", "mustDifferFrom": ["baselineA", "bootstrapCommitB", "candidateTreeCommitOid"]},
+        {"name": "baselineA", "type": "LOWERCASE_SHA1_40", "sourceOperation": "get-main-ref", "jsonPointer": "/object/sha", "frozenValue": source_tip, "mustDifferFrom": ["bootstrapCommitB", "candidateTreeCommitOid", "signedReleaseCommitCPrime"]},
+        {"name": "preCaptureActionsPermissionsRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-actions-permissions", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
+        {"name": "preCaptureSelectedActionsRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-selected-actions", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
+        {"name": "preCaptureDefaultWorkflowPermissionsRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-default-workflow-permissions", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
+        {"name": "preCaptureForkPrApprovalPolicyRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-fork-pr-approval-policy", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
+        {"name": "preCaptureClassicProtectionRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-classic-branch-protection", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
+    ]
+    raw_capture = {"schema": "pkgre-d0-github-raw-capture-envelope-v1", "artifactRoot": f"evidence/d2-github/{catalog_id}/provider-captures", "manifestCanonicalization": "UTF8_SORTED_KEYS_COMPACT_WITH_SINGLE_TRAILING_LF", "requestFields": ["contractOperationId", "sequence", "requestStartedAtUtc", "requestCompletedAtUtc", "authProfileId", "authenticatedActorProviderId", "method", "absoluteUrl", "path", "orderedQuery", "headersWithoutAuthorization", "requestBodyLength", "requestBodySha256"], "responseFields": ["httpStatus", "responseStartedAtUtc", "responseCompletedAtUtc", "xGitHubRequestId", "xGitHubApiVersionSelected", "link", "etag", "rateLimitLimit", "rateLimitRemaining", "rateLimitReset", "responseBodyLength", "responseBodySha256", "rawBodyArtifactPath", "projectionArtifactPath", "projectionSha256", "pageIndex", "previousPageResponseSha256", "nextLink"], "requiredHeaders": {"request": ["Accept", "X-GitHub-Api-Version", "User-Agent"], "response": ["X-GitHub-Request-Id"]}, "errorPolicy": "CAPTURE_NONSECRET_ERROR_BODY_AND_HEADERS_THEN_ABORT", "secretPolicy": {"authorizationHeader": "NEVER_CAPTURE", "privateKeys": "NEVER_CAPTURE_OR_HASH", "secretValues": "NEVER_CAPTURE_OR_HASH", "secretCiphertexts": "NEVER_CAPTURE_OR_HASH", "secretResponseBodies": "NEVER_PERSIST_OR_HASH", "redactionMarkers": "CAPTURE_FIELD_NAME_AND_REASON_ONLY"}}
+    projections = {"schema": "pkgre-d0-github-provider-projection-contract-v2", "domain": GITHUB_PROVIDER_PROJECTION_DOMAIN, "canonicalization": "UTF8_SORTED_KEYS_COMPACT_WITH_SINGLE_TRAILING_LF", "digestFormula": "SHA256(ASCII_DOMAIN_NUL_KIND_NUL_CANONICAL_JSON)", "rawProviderAdditiveFields": "ALLOWED_AND_IGNORED_ONLY_OUTSIDE_ALLOWLIST", "projectedRelevantFields": "CLOSED_WORLD_EXACT_MATCH", "arraySemantics": {"providerSets": "UNORDERED_EXACT_SET_SORT_BY_CANONICAL_PROJECTED_JSON", "orderedSequences": "EXPLICIT_OPERATION_SCHEMA_ONLY", "duplicates": "REJECT_BEFORE_CANONICALIZATION", "rawAdditiveObjectFields": "IGNORE_ONLY_OUTSIDE_PROJECTED_ALLOWLIST"}, "unorderedProviderSetOperations": ["list-authenticated-ssh-signing-keys", "list-public-ssh-signing-keys-for-d0-b04-user", "list-environments", "list-environment-branch-policies", "list-environment-secrets", "list-rulesets", "list-effective-main-rules", "list-organization-app-installations", "list-user-installation-repositories", "list-installation-repositories", "list-bootstrap-token-repositories", "list-release-token-repositories", "list-workflows", "list-open-candidate-pull-requests", "list-candidate-pull-request-reviews", "list-candidate-pull-request-files", "list-candidate-pull-request-commits", "list-candidate-check-runs", "list-release-workflow-runs", "get-release-run-jobs", "list-release-deployments", "list-release-deployment-statuses"], "reject": ["MISSING_REQUIRED_FIELD", "WRONG_JSON_TYPE", "UNKNOWN_ENUM", "DUPLICATE_ID_NAME_RULE_OR_BINDING", "AMBIGUOUS_MULTIPLE_MATCHING_RESOURCE", "INCOMPLETE_OR_UNBOUND_PAGINATION", "CROSS_RESOURCE_ID_MISMATCH", "WRONG_REPOSITORY_ID_OR_FULL_NAME", "STALE_REF_OID", "MISSING_PROVIDER_REQUEST_ID", "MISSING_API_VERSION", "RAW_BODY_DIGEST_MISMATCH", "PROJECTION_DIGEST_MISMATCH"], "contentReadback": {"bindGitBlobOid": True, "decodeBase64Strictly": True, "bindDecodedLength": True, "bindDecodedSha256": True, "rejectSymlinkSubmoduleOrDirectory": True}, "resourceSetRule": "EXACTLY_ONE_SELECTOR_MATCH_UNLESS_OPERATION_EXPLICITLY_PROJECTS_A_COMPLETE_SET"}
+    page = [{"name": "per_page", "value": "100"}, {"name": "page", "value": "$page"}]
+    common_reads = [
+        github_rest_operation("get-repository", "ALL", "operatorAdmin", "GET", base, [200], projection="REPOSITORY_IDENTITY"),
+        github_rest_operation("get-main-ref", "ALL", "operatorAdmin", "GET", f"{base}/git/ref/heads/{source_branch}", [200], projection="SOURCE_REF"),
+        github_rest_operation("get-authenticated-signing-user", "ALL", "signerGithubUser", "GET", "/user", [200], projection="SIGNING_KEY_REGISTRATION_AND_READBACK"),
+        github_rest_operation("list-authenticated-ssh-signing-keys", "ALL", "signerGithubUser", "GET", "/user/ssh_signing_keys", [200], query_template=page, pagination=True, projection="SIGNING_KEY_REGISTRATION_AND_READBACK"),
+        github_rest_operation("list-public-ssh-signing-keys-for-d0-b04-user", "ALL", "publicAnonymous", "GET", "/users/$binding:signerGithubLogin/ssh_signing_keys", [200], query_template=page, pagination=True, projection="SIGNING_KEY_REGISTRATION_AND_READBACK"),
+        github_rest_operation("get-d0-b04-ssh-signing-key", "ALL", "signerGithubUser", "GET", "/user/ssh_signing_keys/$binding:signerProviderSshSigningKeyId", [200], projection="SIGNING_KEY_REGISTRATION_AND_READBACK"),
+        github_rest_operation("get-d0-b04-ssh-signing-key-presence", "ROLLBACK", "signerGithubUser", "GET", "/user/ssh_signing_keys/$binding:signerProviderSshSigningKeyId", [200, 404], projection="SIGNING_KEY_REGISTRATION_AND_READBACK"),
+        github_rest_operation("list-environments", "ALL", "operatorAdmin", "GET", f"{base}/environments", [200], query_template=page, pagination=True, projection="ENVIRONMENT_SET"),
+        github_rest_operation("list-environment-secrets", "ALL", "operatorAdmin", "GET", f"{base}/environments/{environment_name}/secrets", [200], query_template=page, pagination=True, projection="ENVIRONMENT_SECRET_METADATA_SET"),
+        github_rest_operation("get-temporary-bootstrap-ref-presence", "ROLLBACK", "operatorAdmin", "GET", f"{base}/git/ref/heads/pkgre-{catalog_id}-bootstrap-b", [200, 404], projection="BOOTSTRAP_COMMIT_AND_REF_ADVANCE"),
+        github_rest_operation("get-temporary-release-ref-presence", "ROLLBACK", "operatorAdmin", "GET", f"{base}/git/ref/heads/pkgre-{catalog_id}-release-c-prime", [200, 404], projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("get-bootstrap-commit", "BOOTSTRAP_OR_ROLLBACK_IF_BOUND", "operatorAdmin", "GET", f"{base}/git/commits/$binding:bootstrapCommitB", [200], projection="BOOTSTRAP_COMMIT_AND_REF_ADVANCE"),
+        github_rest_operation("get-signed-release-commit", "NORMAL_RELEASE_OR_ROLLBACK_IF_BOUND", "operatorAdmin", "GET", f"{base}/git/commits/$binding:signedReleaseCommitCPrime", [200], projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("get-actions-permissions", "ALL", "operatorAdmin", "GET", f"{base}/actions/permissions", [200], projection="ACTIONS_POLICY_READBACK"),
+        github_rest_operation("get-selected-actions", "ALL", "operatorAdmin", "GET", f"{base}/actions/permissions/selected-actions", [200], projection="ACTIONS_POLICY_READBACK"),
+        github_rest_operation("get-default-workflow-permissions", "ALL", "operatorAdmin", "GET", f"{base}/actions/permissions/workflow", [200], projection="ACTIONS_POLICY_READBACK"),
+        github_rest_operation("get-fork-pr-approval-policy", "ALL", "operatorAdmin", "GET", f"{base}/actions/permissions/fork-pr-contributor-approval", [200], projection="ACTIONS_POLICY_READBACK"),
+        github_rest_operation("list-rulesets", "ALL", "operatorAdmin", "GET", f"{base}/rulesets", [200], query_template=[{"name": "includes_parents", "value": "false"}, {"name": "targets", "value": "branch"}, *page], pagination=True, projection="RULESET_SET"),
+        github_rest_operation("get-invariant-ruleset", "ALL", "operatorAdmin", "GET", f"{base}/rulesets/$binding:invariantRulesetId", [200], projection="INVARIANT_RULESET_ID_AND_READBACK"),
+        github_rest_operation("get-invariant-ruleset-presence", "ROLLBACK", "operatorAdmin", "GET", f"{base}/rulesets/$binding:invariantRulesetId", [200, 404], projection="INVARIANT_RULESET_ID_AND_READBACK"),
+        github_rest_operation("get-admission-ruleset", "ALL", "operatorAdmin", "GET", f"{base}/rulesets/$binding:admissionRulesetId", [200], projection="ADMISSION_RULESET_ID_AND_READBACK"),
+        github_rest_operation("get-admission-ruleset-presence", "ROLLBACK", "operatorAdmin", "GET", f"{base}/rulesets/$binding:admissionRulesetId", [200, 404], projection="ADMISSION_RULESET_ID_AND_READBACK"),
+        github_rest_operation("list-effective-main-rules", "ALL", "operatorAdmin", "GET", f"{base}/rules/branches/{source_branch}", [200], query_template=page, pagination=True, projection="EFFECTIVE_MAIN_RULES_READBACK"),
+        github_rest_operation("get-classic-branch-protection", "ALL", "operatorAdmin", "GET", f"{base}/branches/{source_branch}/protection", [200, 404], projection="CLASSIC_BRANCH_PROTECTION_FINAL_READBACK"),
+        github_rest_operation("get-release-environment", "ALL", "operatorAdmin", "GET", f"{base}/environments/{environment_name}", [200], projection="PROTECTED_ENVIRONMENT_ID_AND_READBACK"),
+        github_rest_operation("list-environment-branch-policies", "ALL", "operatorAdmin", "GET", f"{base}/environments/{environment_name}/deployment-branch-policies", [200], query_template=page, pagination=True, projection="PROTECTED_ENVIRONMENT_ID_AND_READBACK"),
+        github_rest_operation("get-environment-reviewer-user", "ALL", "operatorAdmin", "GET", f"/users/{reviewer}", [200], projection="REVIEWER_IDENTITY"),
+        github_rest_operation("get-environment-reviewer-permission", "ALL", "operatorAdmin", "GET", f"{base}/collaborators/{reviewer}/permission", [200], projection="REVIEWER_REPOSITORY_PERMISSION"),
+        github_rest_operation("get-release-dispatcher-user", "ALL", "operatorAdmin", "GET", f"/users/{dispatcher}", [200], projection="DISPATCHER_IDENTITY"),
+        github_rest_operation("get-release-dispatcher-permission", "ALL", "operatorAdmin", "GET", f"{base}/collaborators/{dispatcher}/permission", [200], projection="DISPATCHER_REPOSITORY_PERMISSION"),
+        github_rest_operation("get-release-app", "ALL", "operatorAdmin", "GET", f"/apps/{writer_slug}", [200, 404], projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK"),
+        github_rest_operation("get-release-app-installation", "ALL", "releaseAppJwt", "GET", "/app/installations/$binding:releaseAppInstallationId", [200], projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK"),
+        github_rest_operation("list-organization-app-installations", "ALL", "operatorAdmin", "GET", f"/orgs/{owner}/installations", [200], query_template=page, pagination=True, projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK"),
+        github_rest_operation("list-user-installation-repositories", "ALL", "operatorAdmin", "GET", "/user/installations/$binding:releaseAppInstallationId/repositories", [200], query_template=page, pagination=True, projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK"),
+        github_rest_operation("list-installation-repositories", "ALL", "releaseInstallationReadToken", "GET", "/installation/repositories", [200], query_template=page, pagination=True, projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK"),
+        github_rest_operation("prove-release-installation-read-token-revoked", "CONFIGURE", "revokedReleaseInstallationReadToken", "GET", "/installation/repositories", [401], projection="TOKEN_REVOCATION_NEGATIVE_AUTH"),
+        github_rest_operation("list-bootstrap-token-repositories", "BOOTSTRAP", "bootstrapInstallationWriteToken", "GET", "/installation/repositories", [200], query_template=page, pagination=True, projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK"),
+        github_rest_operation("list-release-token-repositories", "NORMAL_RELEASE", "releaseInstallationWriteToken", "GET", "/installation/repositories", [200], query_template=page, pagination=True, projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("prove-bootstrap-installation-token-revoked", "BOOTSTRAP", "revokedBootstrapInstallationWriteToken", "GET", "/installation/repositories", [401], projection="TOKEN_REVOCATION_NEGATIVE_AUTH"),
+        github_rest_operation("prove-release-installation-token-revoked", "NORMAL_RELEASE", "revokedReleaseInstallationWriteToken", "GET", "/installation/repositories", [401], projection="TOKEN_REVOCATION_NEGATIVE_AUTH"),
+        github_rest_operation("list-workflows", "ALL", "operatorAdmin", "GET", f"{base}/actions/workflows", [200], query_template=page, pagination=True, projection="WORKFLOW_SET"),
+        github_rest_operation("get-candidate-workflow", "ALL", "operatorAdmin", "GET", f"{base}/actions/workflows/$binding:candidateWorkflowId", [200], projection="CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK"),
+        github_rest_operation("get-release-workflow", "ALL", "operatorAdmin", "GET", f"{base}/actions/workflows/$binding:releaseWorkflowId", [200], projection="RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK"),
+        github_rest_operation("get-pages-workflow", "ALL", "operatorAdmin", "GET", f"{base}/actions/workflows/$binding:pagesWorkflowId", [200], projection="PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK"),
+        github_rest_operation("get-candidate-workflow-content-at-a", "PRE_MUTATION_CAPTURE", "operatorAdmin", "GET", f"{base}/contents/{candidate_path}", [200, 404], query_template=[{"name": "ref", "value": source_tip}], projection="D2_PRE_MUTATION_CAPTURE"),
+        github_rest_operation("get-release-workflow-content-at-a", "PRE_MUTATION_CAPTURE", "operatorAdmin", "GET", f"{base}/contents/{release_path}", [200, 404], query_template=[{"name": "ref", "value": source_tip}], projection="D2_PRE_MUTATION_CAPTURE"),
+        github_rest_operation("get-pages-workflow-content-at-a", "PRE_MUTATION_CAPTURE", "operatorAdmin", "GET", f"{base}/contents/{pages_path}", [200], query_template=[{"name": "ref", "value": source_tip}], projection="D2_PRE_MUTATION_CAPTURE"),
+        github_rest_operation("get-candidate-workflow-content-at-b", "BOOTSTRAP", "operatorAdmin", "GET", f"{base}/contents/{candidate_path}", [200], query_template=[{"name": "ref", "value": "$binding:bootstrapCommitB"}], projection="CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK"),
+        github_rest_operation("get-release-workflow-content-at-b", "BOOTSTRAP", "operatorAdmin", "GET", f"{base}/contents/{release_path}", [200], query_template=[{"name": "ref", "value": "$binding:bootstrapCommitB"}], projection="RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK"),
+        github_rest_operation("get-pages-workflow-content-at-b", "BOOTSTRAP", "operatorAdmin", "GET", f"{base}/contents/{pages_path}", [200], query_template=[{"name": "ref", "value": "$binding:bootstrapCommitB"}], projection="PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK"),
+        github_rest_operation("list-open-candidate-pull-requests", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/pulls", [200], query_template=[{"name": "state", "value": "open"}, {"name": "base", "value": source_branch}, *page], pagination=True, projection="PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"),
+        github_rest_operation("get-candidate-pull-request", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/pulls/$binding:pullRequestNumber", [200], projection="PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"),
+        github_rest_operation("list-candidate-pull-request-reviews", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/pulls/$binding:pullRequestNumber/reviews", [200], query_template=page, pagination=True, projection="PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"),
+        github_rest_operation("list-candidate-pull-request-files", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/pulls/$binding:pullRequestNumber/files", [200], query_template=page, pagination=True, projection="PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"),
+        github_rest_operation("list-candidate-pull-request-commits", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/pulls/$binding:pullRequestNumber/commits", [200], query_template=page, pagination=True, projection="PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"),
+        github_rest_operation("list-candidate-check-runs", "ALL", "operatorAdmin", "GET", f"{base}/commits/$binding:candidateTreeCommitOid/check-runs", [200], query_template=[{"name": "check_name", "value": check_context}, {"name": "filter", "value": "latest"}, *page], pagination=True, projection="CANDIDATE_CHECK_PRODUCER_ID_AND_RUN"),
+        github_rest_operation("list-release-workflow-runs", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/actions/workflows/$binding:releaseWorkflowId/runs", [200], query_template=[{"name": "event", "value": "workflow_dispatch"}, {"name": "branch", "value": source_branch}, *page], pagination=True, projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("get-release-workflow-run", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/actions/runs/$binding:releaseWorkflowRunId", [200], projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("get-release-run-jobs", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/actions/runs/$binding:releaseWorkflowRunId/jobs", [200], query_template=page, pagination=True, projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("get-release-pending-deployments", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/actions/runs/$binding:releaseWorkflowRunId/pending_deployments", [200], projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("get-release-pending-deployments-as-reviewer", "NORMAL_RELEASE", "reviewerUser", "GET", f"{base}/actions/runs/$binding:releaseWorkflowRunId/pending_deployments", [200], projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("list-release-deployments", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/deployments", [200], query_template=[{"name": "environment", "value": environment_name}, *page], pagination=True, projection="FIRST_NORMAL_RELEASE_RUN"),
+        github_rest_operation("list-release-deployment-statuses", "NORMAL_RELEASE", "operatorAdmin", "GET", f"{base}/deployments/$binding:releaseDeploymentId/statuses", [200], query_template=page, pagination=True, projection="FIRST_NORMAL_RELEASE_RUN"),
+    ]
+    operation_by_id = {operation["operationId"]: operation for operation in common_reads}
+    operation_by_id["list-workflows"]["workflowBindingSelection"] = {
+        "matchSemantics": "EXACTLY_ONE_PATH_AND_NAME_MATCH_PER_BINDING_FROM_COMPLETE_UNORDERED_PAGINATED_SET",
+        "completePaginationRequiredBeforeBinding": True,
+        "providerSetOrderSignificant": False,
+        "duplicateIdPathOrNameRejected": True,
+        "pathNameSubstitutionAllowed": False,
+        "bindings": [
+            {"binding": "candidateWorkflowId", "expectedPath": candidate_path, "expectedName": candidate_name},
+            {"binding": "releaseWorkflowId", "expectedPath": release_path, "expectedName": release_name},
+            {"binding": "pagesWorkflowId", "expectedPath": pages_path, "expectedName": pages_name},
+        ],
+    }
+    for operation_id, binding_name, expected_path, expected_name in (
+        ("get-candidate-workflow", "candidateWorkflowId", candidate_path, candidate_name),
+        ("get-release-workflow", "releaseWorkflowId", release_path, release_name),
+        ("get-pages-workflow", "pagesWorkflowId", pages_path, pages_name),
+    ):
+        operation_by_id[operation_id]["workflowIdentityReadback"] = {
+            "requestPathUsesNumericIdBinding": True,
+            "binding": binding_name,
+            "expectedPath": expected_path,
+            "expectedName": expected_name,
+            "returnedNumericIdMustEqualBinding": True,
+            "returnedPathAndNameMustMatchExactly": True,
+            "returnedStateMustBeProjected": True,
+            "filenameOrPathLookupForbidden": True,
+        }
+    operation_by_id["list-candidate-check-runs"]["checkProducerBindingSelection"] = {
+        "matchSemantics": "EXACTLY_ONE_CONTEXT_HEAD_SHA_WORKFLOW_RUN_WORKFLOW_AND_JOB_PRODUCER_MATCH_FROM_COMPLETE_UNORDERED_PAGINATED_SET",
+        "context": check_context,
+        "headShaBinding": "candidateTreeCommitOid",
+        "workflowIdBinding": "candidateWorkflowId",
+        "bindWorkflowRunIdAndJobId": True,
+        "arrayPositionSelectionForbidden": True,
+        "selectedAppIdBinding": "candidateCheckIntegrationId",
+    }
+    user_installation_repository_read = next(operation for operation in common_reads if operation["operationId"] == "list-user-installation-repositories")
+    user_installation_repository_read["pinnedOpenApiSemantics"] = {"operationId": "apps/list-installation-repos-for-authenticated-user", "summary": "List repositories accessible to the user access token", "githubAppsEnabled": False, "authentication": "GITHUB_USER_ACCESS_TOKEN_WITH_EXPLICIT_READ_WRITE_OR_ADMIN_PERMISSION_TO_EACH_RETURNED_REPOSITORY", "exactInstallationIdBinding": "releaseAppInstallationId", "admittedStatus": 200, "purpose": "CURRENT_INSTALLATION_REPOSITORY_READBACK_WITHOUT_REUSING_A_REVOKED_INSTALLATION_TOKEN", "operatorAdminProfileIsProceduralUserCredentialNotInstallationCredential": True}
+    rest_mutations = [
+        github_rest_operation("create-d0-b04-ssh-signing-key-if-baseline-absent", "CONFIGURE", "signerGithubUser", "POST", "/user/ssh_signing_keys", [201], body_template=signing_identity["providerRegistration"]["requestBody"], projection="SIGNING_KEY_REGISTRATION_AND_READBACK", follow_up_readbacks=["get-d0-b04-ssh-signing-key", "list-public-ssh-signing-keys-for-d0-b04-user"]),
+        github_rest_operation("delete-d0-b04-ssh-signing-key", "ROLLBACK", "signerGithubUser", "DELETE", "/user/ssh_signing_keys/$binding:signerProviderSshSigningKeyId", [204], projection="SIGNING_KEY_REGISTRATION_AND_READBACK", follow_up_readbacks=["get-d0-b04-ssh-signing-key-presence", "list-public-ssh-signing-keys-for-d0-b04-user"]),
+        github_rest_operation("set-actions-permissions", "CONFIGURE", "operatorAdmin", "PUT", f"{base}/actions/permissions", [204], body_template={"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True}, projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-actions-permissions"]),
+        github_rest_operation("set-selected-actions", "CONFIGURE", "operatorAdmin", "PUT", f"{base}/actions/permissions/selected-actions", [204], body_template={"github_owned_allowed": False, "verified_allowed": False, "patterns_allowed": actions["selectedPolicy"]["patternsAllowed"]}, projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-selected-actions"]),
+        github_rest_operation("set-default-workflow-permissions", "CONFIGURE", "operatorAdmin", "PUT", f"{base}/actions/permissions/workflow", [204], body_template={"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False}, projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-default-workflow-permissions"]),
+        github_rest_operation("set-fork-pr-approval-policy", "CONFIGURE", "operatorAdmin", "PUT", f"{base}/actions/permissions/fork-pr-contributor-approval", [204], body_template=actions["providerRequestBodies"]["forkPullRequestApproval"], projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-fork-pr-approval-policy"]),
+        github_rest_operation("restore-actions-permissions-from-pre-capture", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/actions/permissions", [204], body_template=github_binding("preCaptureActionsPermissionsRequestBody", "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"), projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-actions-permissions"], pre_capture_restore={"binding": "preCaptureActionsPermissionsRequestBody", "captureOperationId": "get-actions-permissions", "readbackOperationId": "get-actions-permissions"}),
+        github_rest_operation("restore-selected-actions-from-pre-capture", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/actions/permissions/selected-actions", [204], body_template=github_binding("preCaptureSelectedActionsRequestBody", "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"), projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-selected-actions"], pre_capture_restore={"binding": "preCaptureSelectedActionsRequestBody", "captureOperationId": "get-selected-actions", "readbackOperationId": "get-selected-actions"}),
+        github_rest_operation("restore-default-workflow-permissions-from-pre-capture", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/actions/permissions/workflow", [204], body_template=github_binding("preCaptureDefaultWorkflowPermissionsRequestBody", "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"), projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-default-workflow-permissions"], pre_capture_restore={"binding": "preCaptureDefaultWorkflowPermissionsRequestBody", "captureOperationId": "get-default-workflow-permissions", "readbackOperationId": "get-default-workflow-permissions"}),
+        github_rest_operation("restore-fork-pr-approval-policy-from-pre-capture", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/actions/permissions/fork-pr-contributor-approval", [204], body_template=github_binding("preCaptureForkPrApprovalPolicyRequestBody", "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"), projection="ACTIONS_POLICY_READBACK", follow_up_readbacks=["get-fork-pr-approval-policy"], pre_capture_restore={"binding": "preCaptureForkPrApprovalPolicyRequestBody", "captureOperationId": "get-fork-pr-approval-policy", "readbackOperationId": "get-fork-pr-approval-policy"}),
+        github_rest_operation("put-release-environment", "CONFIGURE", "operatorAdmin", "PUT", f"{base}/environments/{environment_name}", [200], body_template={"wait_timer": 0, "prevent_self_review": True, "reviewers": [{"type": "User", "id": github_binding("reviewerUserId")}], "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}, projection="PROTECTED_ENVIRONMENT_ID_AND_READBACK", follow_up_readbacks=["get-release-environment"]),
+        github_rest_operation("create-environment-main-policy", "CONFIGURE", "operatorAdmin", "POST", f"{base}/environments/{environment_name}/deployment-branch-policies", [200], body_template={"name": source_branch, "type": "branch"}, projection="PROTECTED_ENVIRONMENT_ID_AND_READBACK", follow_up_readbacks=["list-environment-branch-policies"]),
+        github_rest_operation("create-admission-ruleset-bootstrap", "BOOTSTRAP", "operatorAdmin", "POST", f"{base}/rulesets", [201], body_template=admission_ruleset["providerCreateRequestBody"], projection="ADMISSION_RULESET_ID_AND_READBACK", follow_up_readbacks=["get-admission-ruleset"]),
+        github_rest_operation("update-admission-ruleset-to-final", "BOOTSTRAP", "operatorAdmin", "PUT", f"{base}/rulesets/$binding:admissionRulesetId", [200], body_template=admission_ruleset["providerFinalUpdateRequestBody"], projection="ADMISSION_RULESET_ID_AND_READBACK", follow_up_readbacks=["get-admission-ruleset", "list-effective-main-rules"]),
+        github_rest_operation("create-invariant-ruleset", "BOOTSTRAP", "operatorAdmin", "POST", f"{base}/rulesets", [201], body_template=invariant_ruleset["providerCreateRequestBody"], projection="INVARIANT_RULESET_ID_AND_READBACK", follow_up_readbacks=["get-invariant-ruleset", "list-effective-main-rules"]),
+        github_rest_operation("delete-classic-branch-protection-if-baseline-present", "BOOTSTRAP", "operatorAdmin", "DELETE", f"{base}/branches/{source_branch}/protection", [204], projection="CLASSIC_BRANCH_PROTECTION_FINAL_READBACK", follow_up_readbacks=["get-classic-branch-protection"]),
+        github_rest_operation("restore-classic-branch-protection-from-pre-capture", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/branches/{source_branch}/protection", [200], body_template=github_binding("preCaptureClassicProtectionRequestBody", "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"), projection="CLASSIC_BRANCH_PROTECTION_FINAL_READBACK", follow_up_readbacks=["get-classic-branch-protection", "list-effective-main-rules"], pre_capture_restore={"binding": "preCaptureClassicProtectionRequestBody", "captureOperationId": "get-classic-branch-protection", "readbackOperationId": "get-classic-branch-protection"}),
+        github_rest_operation("mint-release-installation-read-token", "CONFIGURE", "releaseAppJwt", "POST", "/app/installations/$binding:releaseAppInstallationId/access_tokens", [201], body_template={"repository_ids": [repository_id], "permissions": {"metadata": "read"}}, projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK", secret_response=True, follow_up_readbacks=["list-installation-repositories"]),
+        github_rest_operation("revoke-release-installation-read-token", "CONFIGURE", "releaseInstallationReadToken", "DELETE", "/installation/token", [204], projection="TOKEN_REVOCATION_NEGATIVE_AUTH", follow_up_readbacks=["prove-release-installation-read-token-revoked"]),
+        github_rest_operation("mint-bootstrap-installation-token", "BOOTSTRAP", "releaseAppJwt", "POST", "/app/installations/$binding:releaseAppInstallationId/access_tokens", [201], body_template={"repository_ids": [repository_id], "permissions": {"contents": "write", "metadata": "read"}}, projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK", secret_response=True, follow_up_readbacks=["list-bootstrap-token-repositories"]),
+        github_rest_operation("patch-main-ref-bootstrap-force-false", "BOOTSTRAP", "bootstrapInstallationWriteToken", "PATCH", f"{base}/git/refs/heads/{source_branch}", [200], body_template={"sha": github_binding("bootstrapCommitB", "LOWERCASE_SHA1_40"), "force": False}, projection="BOOTSTRAP_COMMIT_AND_REF_ADVANCE", follow_up_readbacks=["get-main-ref", "get-bootstrap-commit"]),
+        github_rest_operation("revoke-bootstrap-installation-token", "BOOTSTRAP", "bootstrapInstallationWriteToken", "DELETE", "/installation/token", [204], projection="TOKEN_REVOCATION_NEGATIVE_AUTH", follow_up_readbacks=["prove-bootstrap-installation-token-revoked"]),
+        github_rest_operation("dispatch-release-workflow-on-main", "NORMAL_RELEASE", "dispatcherUser", "POST", f"{base}/actions/workflows/$binding:releaseWorkflowId/dispatches", [204], body_template={"ref": source_branch, "inputs": {"candidate_sha": github_binding("candidateTreeCommitOid", "LOWERCASE_SHA1_40")}}, projection="FIRST_NORMAL_RELEASE_RUN", follow_up_readbacks=["list-release-workflow-runs"]),
+        github_rest_operation("review-release-pending-deployment", "NORMAL_RELEASE", "reviewerUser", "POST", f"{base}/actions/runs/$binding:releaseWorkflowRunId/pending_deployments", [200], body_template={"environment_ids": [github_binding("pendingDeploymentEnvironmentId")], "state": "approved", "comment": "pkgre reviewed release approval"}, projection="FIRST_NORMAL_RELEASE_RUN", follow_up_readbacks=["list-release-deployments", "list-release-deployment-statuses"]),
+        github_rest_operation("mint-release-installation-token-after-approval", "NORMAL_RELEASE", "releaseAppJwt", "POST", "/app/installations/$binding:releaseAppInstallationId/access_tokens", [201], body_template={"repository_ids": [repository_id], "permissions": {"contents": "write", "metadata": "read"}}, projection="FIRST_NORMAL_RELEASE_RUN", secret_response=True, follow_up_readbacks=["list-release-token-repositories"]),
+        github_rest_operation("patch-main-ref-release-force-false", "NORMAL_RELEASE", "releaseInstallationWriteToken", "PATCH", f"{base}/git/refs/heads/{source_branch}", [200], body_template={"sha": github_binding("signedReleaseCommitCPrime", "LOWERCASE_SHA1_40"), "force": False}, projection="FIRST_NORMAL_RELEASE_RUN", follow_up_readbacks=["get-main-ref", "get-signed-release-commit"]),
+        github_rest_operation("revoke-release-installation-token", "NORMAL_RELEASE", "releaseInstallationWriteToken", "DELETE", "/installation/token", [204], projection="TOKEN_REVOCATION_NEGATIVE_AUTH", follow_up_readbacks=["prove-release-installation-token-revoked"]),
+        github_rest_operation("disable-release-workflow", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/actions/workflows/$binding:releaseWorkflowId/disable", [204], projection="RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK", follow_up_readbacks=["get-release-workflow"]),
+        github_rest_operation("enable-release-workflow", "ROLLBACK", "operatorAdmin", "PUT", f"{base}/actions/workflows/$binding:releaseWorkflowId/enable", [204], projection="RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK", follow_up_readbacks=["get-release-workflow"]),
+        github_rest_operation("suspend-release-app-installation", "ROLLBACK", "releaseAppJwt", "PUT", "/app/installations/$binding:releaseAppInstallationId/suspended", [204], projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK", follow_up_readbacks=["get-release-app-installation"]),
+        github_rest_operation("unsuspend-release-app-installation", "ROLLBACK", "releaseAppJwt", "DELETE", "/app/installations/$binding:releaseAppInstallationId/suspended", [204], projection="RELEASE_APP_INSTALLATION_ID_AND_READBACK", follow_up_readbacks=["get-release-app-installation"]),
+        github_rest_operation("delete-admission-ruleset", "ROLLBACK", "operatorAdmin", "DELETE", f"{base}/rulesets/$binding:admissionRulesetId", [204, 404], projection="ADMISSION_RULESET_ID_AND_READBACK", follow_up_readbacks=["list-rulesets"]),
+        github_rest_operation("delete-invariant-ruleset", "ROLLBACK", "operatorAdmin", "DELETE", f"{base}/rulesets/$binding:invariantRulesetId", [204, 404], projection="INVARIANT_RULESET_ID_AND_READBACK", follow_up_readbacks=["list-rulesets"]),
+        github_rest_operation("delete-environment-main-policy", "ROLLBACK", "operatorAdmin", "DELETE", f"{base}/environments/{environment_name}/deployment-branch-policies/$binding:environmentBranchPolicyId", [204], projection="PROTECTED_ENVIRONMENT_ID_AND_READBACK", follow_up_readbacks=["list-environment-branch-policies"]),
+        github_rest_operation("delete-release-environment", "ROLLBACK", "operatorAdmin", "DELETE", f"{base}/environments/{environment_name}", [204], projection="PROTECTED_ENVIRONMENT_ID_AND_READBACK", follow_up_readbacks=["list-environments"]),
+        github_rest_operation("delete-temporary-bootstrap-ref", "ROLLBACK", "operatorAdmin", "DELETE", f"{base}/git/refs/heads/pkgre-{catalog_id}-bootstrap-b", [204, 409, 422], projection="BOOTSTRAP_COMMIT_AND_REF_ADVANCE", follow_up_readbacks=["get-temporary-bootstrap-ref-presence"]),
+        github_rest_operation("delete-temporary-release-ref", "ROLLBACK", "operatorAdmin", "DELETE", f"{base}/git/refs/heads/pkgre-{catalog_id}-release-c-prime", [204, 409, 422], projection="FIRST_NORMAL_RELEASE_RUN", follow_up_readbacks=["get-temporary-release-ref-presence"]),
+    ]
+    omitted_mutation_ids = {"enable-release-workflow", "unsuspend-release-app-installation", "delete-environment-main-policy", "delete-release-environment"}
+    if catalog_id == "js":
+        omitted_mutation_ids.update({"delete-classic-branch-protection-if-baseline-present", "restore-classic-branch-protection-from-pre-capture"})
+    rest_mutations = [operation for operation in rest_mutations if operation["operationId"] not in omitted_mutation_ids]
+    rest_operations = common_reads + rest_mutations
+    non_rest_operations = [
+        {"operationId": "bind-d0-b04-catalog-signing-identity", "phase": "CONFIGURE", "actorProfile": "operatorSigningAuthority", "channel": "D0_B04_OPERATOR_HANDOFF", "preconditions": ["D0_B04_EXACT_CATALOG_SIGNING_DESIGN_AUTHORIZED"], "procedure": ["READ_ONLY_PUBLIC_GITHUB_LOGIN_SSH_ED25519_PUBLIC_KEY_SHA256_FINGERPRINT_AND_PROVIDER_TITLE", "RECOMPUTE_FINGERPRINT_FROM_PUBLIC_KEY", "REJECT_SHARED_RUST_JS_SIGNING_IDENTITY", "DO_NOT_READ_PRIVATE_KEY_OR_SECRET_DIGEST"], "outputs": ["GITHUB_LOGIN", "SSH_ED25519_PUBLIC_KEY", "SSH_SHA256_FINGERPRINT", "PROVIDER_KEY_TITLE", "D0_B04_ARTIFACT_SHA256"], "forbiddenCapture": ["PRIVATE_KEY", "SECRET_VALUE", "SECRET_DIGEST"]},
+        {"operationId": "resolve-d0-b04-provider-signing-key-binding", "phase": "CONFIGURE", "actorProfile": "signerGithubUser", "channel": "STRICT_PROVIDER_PROJECTION", "preconditions": ["FRESH_AUTHENTICATED_AND_PUBLIC_KEY_SETS_CAPTURED", "CREATE_COMPLETED_ONLY_IF_EXACT_KEY_ABSENT"], "procedure": ["SELECT_EXACTLY_ONE_KEY_MATCHING_D0_B04_PUBLIC_KEY_AND_TITLE", "BIND_ID_AND_CREATED_AT_FROM_AUTHENTICATED_READBACK", "REQUIRE_SAME_ID_KEY_TITLE_CREATED_AT_IN_PUBLIC_READBACK", "REJECT_AMBIGUOUS_DUPLICATE_OR_WRONG_LOGIN"], "outputs": ["PROVIDER_SSH_SIGNING_KEY_ID", "PROVIDER_CREATED_AT", "BASELINE_PRESENCE", "CREATED_BY_CEREMONY"], "forbiddenCapture": ["PRIVATE_KEY", "AUTHORIZATION_TOKEN", "SECRET_DIGEST"]},
+        {"operationId": "operator-install-public-trust-without-returning-private-material", "phase": "CONFIGURE", "actorProfile": "operatorBootstrapWriter", "channel": "LOCAL_OPERATOR_CEREMONY", "preconditions": ["D0_B04_EXACT_PUBLIC_SIGNER_AND_REVOCATION_ARTIFACTS_AUTHORIZED"], "procedure": ["INSTALL_PUBLIC_ALLOWED_SIGNERS_AND_REVOCATION_SET_ONLY", "REJECT_PRIVATE_KEY_SECRET_OR_SECRET_DIGEST_IN_EVIDENCE"], "outputs": ["PUBLIC_ARTIFACT_PATH_LENGTH_SHA256", "INSTALLATION_TRANSCRIPT_SHA256"], "forbiddenCapture": ["PRIVATE_KEY", "SECRET_VALUE", "SECRET_DIGEST"]},
+        {"operationId": "operator-install-app-and-environment-secret", "phase": "CONFIGURE", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI_AND_LOCAL_SECRET_STORE", "preconditions": ["APP_MANIFEST_AND_ONE_REPOSITORY_INSTALLATION_SCOPE_REVIEWED", "PROTECTED_ENVIRONMENT_EXISTS_OR_WILL_BE_CREATED_IN_SAME_CEREMONY"], "procedure": ["CREATE_OR_SELECT_CATALOG_SPECIFIC_GITHUB_APP", "INSTALL_ON_EXACT_REPOSITORY_ONLY", "STORE_PRIVATE_KEY_AS_PROTECTED_ENVIRONMENT_SECRET", "DO_NOT_RETURN_OR_HASH_SECRET_MATERIAL"], "outputs": ["APP_SLUG", "PROVIDER_APP_AND_INSTALLATION_READBACK_REFERENCES", "SECRET_NAME_AND_SCOPE_READBACK_REFERENCE"], "forbiddenCapture": ["APP_PRIVATE_KEY", "ENVIRONMENT_SECRET_VALUE", "SECRET_CIPHERTEXT", "SECRET_DIGEST"]},
+        {"operationId": "capture-environment-admin-bypass-ui-readback", "phase": "CONFIGURE", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI", "preconditions": ["ENVIRONMENT_CREATED", "CORRECT_REPOSITORY_ID_VISIBLE"], "procedure": ["OPEN_EXACT_ENVIRONMENT_PROTECTION_SETTINGS", "CAPTURE_PROVIDER_RENDERED_ADMIN_BYPASS_DISABLED_STATE", "BIND_AUTHENTICATED_ACTOR_REPOSITORY_ENVIRONMENT_URL_AND_UTC", "CORRELATE_PROVIDER_AUDIT_WINDOW"], "outputs": ["PROVIDER_UI_ARCHIVE_SHA256", "REDACTED_DOM_PROJECTION_SHA256", "AUDIT_RECORD_IDS"], "forbiddenCapture": ["COOKIE", "AUTHORIZATION_TOKEN", "SECRET_VALUE", "OPERATOR_SELF_ATTESTATION_AS_SUBSTITUTE"]},
+        {"operationId": "capture-environment-secret-name-and-scope-ui-readback", "phase": "CONFIGURE", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI", "preconditions": ["ENVIRONMENT_SECRET_INSTALLED"], "procedure": ["CAPTURE_ONLY_SECRET_NAME_SCOPE_AND_UPDATED_METADATA", "PROVE_SECRET_SCOPED_TO_EXACT_RELEASE_ENVIRONMENT"], "outputs": ["SECRET_METADATA_PROJECTION_SHA256", "PROVIDER_UI_ARCHIVE_SHA256"], "forbiddenCapture": ["SECRET_VALUE", "SECRET_CIPHERTEXT", "SECRET_DIGEST", "COOKIE", "AUTHORIZATION_TOKEN"]},
+        {"operationId": "operator-create-ssh-ed25519-signed-bootstrap-b", "phase": "BOOTSTRAP", "actorProfile": "operatorBootstrapWriter", "channel": "LOCAL_GIT", "preconditions": ["FRESH_BASELINE_A_READBACK", "FROZEN_BOOTSTRAP_TREE_DIGEST_APPROVED", "D0_B04_SIGNER_AVAILABLE"], "procedure": ["CREATE_COMMIT_B_WITH_EXACT_FROZEN_TREE", "SET_SOLE_PARENT_TO_BASELINE_A", "SIGN_WITH_EXACT_D0_B04_SSH_ED25519_KEY"], "outputs": ["COMMIT_OID", "TREE_OID", "SOLE_PARENT_OID", "SIGNER_PRINCIPAL"], "forbiddenCapture": ["SIGNING_PRIVATE_KEY", "SIGNING_AGENT_SECRET"]},
+        {"operationId": "local-git-verify-commit-raw-bootstrap-b", "phase": "BOOTSTRAP_OR_ROLLBACK_IF_BOUND", "actorProfile": "operatorBootstrapWriter", "channel": "LOCAL_GIT", "preconditions": ["BOOTSTRAP_B_OBJECT_AVAILABLE", "FROZEN_ALLOWED_SIGNERS_INSTALLED"], "procedure": ["RUN_GIT_CONFIG_GPG_FORMAT_SSH_ALLOWED_SIGNERS_VERIFY_COMMIT_RAW", "REQUIRE_EXACT_PRINCIPAL_KEY_FINGERPRINT_AND_GOOD_SIGNATURE"], "outputs": ["COMMAND_ARGV", "GIT_VERSION", "EXIT_STATUS_ZERO", "STDOUT_STDERR_TRANSCRIPT_SHA256"], "forbiddenCapture": ["PRIVATE_KEY", "SIGNING_AGENT_SECRET"]},
+        {"operationId": "git-smart-protocol-upload-bootstrap-b-to-temporary-ref", "phase": "BOOTSTRAP", "actorProfile": "operatorBootstrapWriter", "channel": "GIT_SMART_PROTOCOL_SSH", "preconditions": ["LOCAL_BOOTSTRAP_SIGNATURE_VERIFICATION_PASS", "MAIN_STILL_EQUALS_A"], "procedure": ["PUSH_B_TO_EXACT_TEMPORARY_REF_WITHOUT_FORCE", "READ_BACK_TEMPORARY_REF_AND_COMMIT_OBJECT", "DO_NOT_UPDATE_MAIN"], "outputs": ["COMMIT_OID", "TEMPORARY_REF", "PUSH_TRANSCRIPT_SHA256", "PROVIDER_READBACK_SHA256"], "forbiddenCapture": ["SSH_PRIVATE_KEY", "SSH_AGENT_SECRET"]},
+        {"operationId": "run-bootstrap-candidate-producer-probe", "phase": "BOOTSTRAP", "actorProfile": "dispatcherUser", "channel": "GITHUB_PULL_REQUEST_AND_ACTIONS", "preconditions": ["MAIN_EQUALS_B", "CANDIDATE_WORKFLOW_CONTENT_READ_FROM_B", "CANDIDATE_WORKFLOW_NAME_AND_VALIDATE_JOB_ID_LITERAL_FROZEN", "JOB_NAME_LITERAL_EQUALS_REQUIRED_STATUS_CONTEXT", "NO_MATRIX_DYNAMIC_JOB_NAME_OR_REUSABLE_WORKFLOW_CALL"], "procedure": ["OPEN_OR_UPDATE_NON_GOVERNANCE_PROBE_PULL_REQUEST", "WAIT_FOR_EXACT_RENDERED_CANDIDATE_CHECK_RUN_NAME", "BIND_CHECK_RUN_APP_INTEGRATION_WORKFLOW_RUN_WORKFLOW_AND_JOB_IDS", "REQUIRE_WORKFLOW_PATH_NAME_JOB_ID_LITERAL_JOB_NAME_AND_RENDERED_CONTEXT_MATCH_FROZEN_DERIVATION", "CLOSE_PROBE_WITHOUT_MERGE"], "outputs": ["PULL_REQUEST_ID", "WORKFLOW_ID", "WORKFLOW_RUN_ID", "JOB_ID", "RENDERED_CHECK_CONTEXT", "CHECK_SUITE_ID", "CHECK_RUN_ID", "CHECK_INTEGRATION_ID"], "forbiddenCapture": ["WORKFLOW_SECRET", "WRITE_TOKEN", "CANDIDATE_WORKFLOW_SELF_AUTHORIZATION", "MATRIX_OR_DYNAMIC_CHECK_CONTEXT"]},
+        {"operationId": "trusted-release-job-create-ssh-ed25519-signed-c-prime", "phase": "NORMAL_RELEASE", "actorProfile": "protectedReleaseJob", "channel": "TRUSTED_WORKFLOW_FROM_BOOTSTRAP_B_VIA_D0_B04_OPAQUE_SIGNER_INTERFACE", "preconditions": ["ENVIRONMENT_HUMAN_APPROVAL_COMPLETE", "RELEASE_JOB_IS_RUNNING_FROM_TRUSTED_WORKFLOW_BLOB", "EXACT_CATALOG_SIGNER_ACCESS_INTERFACE_AVAILABLE_ONLY_TO_RELEASE_JOB", "INTERFACE_PUBLIC_IDENTITY_PRINCIPAL_AND_FINGERPRINT_MATCH_D0_B04", "CANDIDATE_C0_AND_BASE_B_REVALIDATED", "TRUSTED_WORKFLOW_BLOB_BOUND_TO_B"], "procedure": ["BUILD_UNSIGNED_COMMIT_PAYLOAD_WITH_EXACT_C0_TREE_AND_SOLE_PARENT_B", "SEND_ONLY_DOMAIN_SEPARATED_BOUND_GIT_COMMIT_SIGN_REQUEST_TO_OPAQUE_INTERFACE", "RECEIVE_SSH_SIGNATURE_AND_PUBLIC_METADATA_ONLY", "VERIFY_RESPONSE_PRINCIPAL_PUBLIC_KEY_FINGERPRINT_NAMESPACE_ALGORITHM_AND_PAYLOAD_LOCALLY", "CREATE_C_PRIME_WITH_TREE_EXACTLY_C0_TREE_AND_SOLE_PARENT_EXACTLY_B", "BIND_FINAL_COMMIT_OID_TREE_PARENT_AND_SIGNATURE_METADATA"], "outputs": ["COMMIT_OID", "TREE_OID", "SOLE_PARENT_OID", "SSH_SIGNATURE", "SIGNATURE_METADATA", "SIGNER_INTERFACE_DESIGN_ID"], "forbiddenCapture": ["SIGNING_PRIVATE_KEY", "SIGNING_PRIVATE_KEY_DIGEST", "SIGNING_PRIVATE_KEY_CIPHERTEXT", "OPAQUE_SIGNER_HANDLE_MATERIAL", "ENVIRONMENT_SECRET", "INSTALLATION_TOKEN"]},
+        {"operationId": "git-smart-protocol-upload-signed-release-c-prime-to-temporary-ref", "phase": "NORMAL_RELEASE", "actorProfile": "releaseInstallationWriteToken", "channel": "GIT_SMART_PROTOCOL_HTTPS", "preconditions": ["C_PRIME_STRUCTURE_AND_SIGNATURE_LOCALLY_VALID", "INSTALLATION_TOKEN_MINTED_AFTER_APPROVAL"], "procedure": ["PUSH_C_PRIME_TO_EXACT_TEMPORARY_REF_WITHOUT_FORCE", "READ_BACK_COMMIT_AND_TEMPORARY_REF", "KEEP_MAIN_UNCHANGED"], "outputs": ["COMMIT_OID", "TEMPORARY_REF", "PUSH_TRANSCRIPT_SHA256", "PROVIDER_READBACK_SHA256"], "forbiddenCapture": ["INSTALLATION_TOKEN", "AUTHORIZATION_HEADER", "SIGNING_PRIVATE_KEY"]},
+        {"operationId": "local-git-verify-commit-raw-release-c-prime", "phase": "NORMAL_RELEASE_OR_ROLLBACK_IF_BOUND", "actorProfile": "operatorBootstrapWriter", "channel": "LOCAL_GIT", "preconditions": ["PROVIDER_C_PRIME_OBJECT_FETCHED", "FROZEN_ALLOWED_SIGNERS_INSTALLED"], "procedure": ["RUN_GIT_CONFIG_GPG_FORMAT_SSH_ALLOWED_SIGNERS_VERIFY_COMMIT_RAW", "REQUIRE_EXACT_PRINCIPAL_KEY_FINGERPRINT_AND_GOOD_SIGNATURE"], "outputs": ["COMMAND_ARGV", "GIT_VERSION", "EXIT_STATUS_ZERO", "STDOUT_STDERR_TRANSCRIPT_SHA256"], "forbiddenCapture": ["PRIVATE_KEY", "SIGNING_AGENT_SECRET"]},
+        {"operationId": "capture-provider-ui-audit-export", "phase": "ALL", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI_OR_PROVIDER_EXPORT", "preconditions": ["AUDIT_WINDOW_START_BOUND_TO_FRESH_PRE_MUTATION_CAPTURE"], "procedure": ["EXPORT_COMPLETE_PROVIDER_AUDIT_WINDOW", "BIND_EACH_MUTATION_TO_PROVIDER_ACTOR_RESOURCE_ACTION_RESULT_AND_UTC", "PROVE_NO_UNEXPLAINED_MUTATION", "REJECT_SELF_AUTHORED_SUMMARY_AS_EVIDENCE"], "outputs": ["PROVIDER_EXPORT_RAW_SHA256", "STRICT_AUDIT_PROJECTION_SHA256", "WINDOW_START_END", "RECORD_IDS"], "forbiddenCapture": ["COOKIE", "AUTHORIZATION_TOKEN", "OPERATOR_SELF_ATTESTATION_AS_SUBSTITUTE"]},
+        {"operationId": "operator-remove-environment-secret", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI", "preconditions": ["ROLLBACK_TRIGGERED"], "procedure": ["DELETE_EXACT_RELEASE_ENVIRONMENT_SECRET", "CAPTURE_NAME_AND_ABSENCE_READBACK_ONLY"], "outputs": ["SECRET_NAME", "ABSENCE_READBACK_SHA256", "AUDIT_RECORD_IDS"], "forbiddenCapture": ["SECRET_VALUE", "SECRET_CIPHERTEXT", "SECRET_DIGEST"]},
+        {"operationId": "operator-restore-environment-resources-from-pre-capture", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "REST_AND_AUTHENTICATED_PROVIDER_UI_FROM_FROZEN_PRE_CAPTURE", "preconditions": ["SOURCE_REF_FRESHLY_CLASSIFIED_AS_EXACT_A", "RAW_PRE_CAPTURE_COMPLETE", "CEREMONY_RESOURCE_LEDGER_COMPLETE"], "procedure": ["SELECT_EXACT_ENVIRONMENT_AND_BRANCH_POLICY_IDS_FROM_FRESH_CAPTURE_OR_CEREMONY_CREATE_RESPONSES", "RESTORE_BASELINE_EXISTING_ENVIRONMENT_AND_POLICY_FROM_TYPED_RAW_PRE_CAPTURE_REQUESTS", "DELETE_ONLY_BASELINE_ABSENT_CEREMONY_CREATED ENVIRONMENT_OR_POLICY", "PRESERVE_BASELINE SECRET METADATA_AND_NEVER_READ_VALUE_OR_DIGEST", "READ_BACK_EXACT IDS PROJECTIONS ABSENCE_AND_AUDIT"], "outputs": ["RESTORE_REQUEST_MANIFEST_SHA256", "RAW_READBACK_MANIFEST_SHA256", "PROJECTION_DIGEST_COMPARISON", "AUDIT_RECORD_IDS"], "forbiddenCapture": ["SECRET_VALUE", "SECRET_CIPHERTEXT", "SECRET_DIGEST", "HISTORICAL_D0_BASELINE_AS_FRESH_CAPTURE_SUBSTITUTE", "AMBIGUOUS_NAME_SELECTION"]},
+        {"operationId": "operator-restore-app-installation-from-pre-capture", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI_AND_REST_FROM_FROZEN_PRE_CAPTURE", "preconditions": ["SOURCE_REF_FRESHLY_CLASSIFIED_AS_EXACT_A", "RAW_PRE_CAPTURE_COMPLETE", "CEREMONY_RESOURCE_LEDGER_COMPLETE"], "procedure": ["SELECT_EXACT APP INTEGRATION AND INSTALLATION IDS", "RESTORE BASELINE SUSPENSION AND ONE-REPOSITORY SELECTION STATE", "REMOVE A BASELINE-ABSENT CEREMONY-CREATED INSTALLATION ONLY THROUGH A SEPARATE EXPLICIT PROVIDER REMOVAL SUBCEREMONY", "READ_BACK APP INSTALLATION REPOSITORY IDS PERMISSIONS AND AUDIT"], "outputs": ["EXACT_APP_AND_INSTALLATION_IDS", "RAW_READBACK_MANIFEST_SHA256", "PROJECTION_DIGEST_COMPARISON", "AUDIT_RECORD_IDS"], "forbiddenCapture": ["APP_PRIVATE_KEY", "TOKEN", "SECRET_VALUE", "SECRET_DIGEST", "AMBIGUOUS_SLUG_OR_NAME_SELECTION"]},
+        {"operationId": "operator-restore-workflow-state-from-pre-capture", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "REST_FROM_CURRENT_DEFAULT_BRANCH_AND_FROZEN_PRE_CAPTURE", "preconditions": ["SOURCE_REF_FRESHLY_CLASSIFIED_AS_EXACT_A", "RAW_PRE_CAPTURE_COMPLETE", "EXACT_WORKFLOW_PROVIDER_ID_PATH_AND_DEFAULT_BRANCH_OID_BOUND"], "procedure": ["REJECT STALE DEFAULT-BRANCH OR NAME-ONLY WORKFLOW SELECTION", "RESTORE ONLY CEREMONY-CHANGED ENABLED STATE", "REQUIRE BASELINE CONTENT IDENTITY OR ABSENCE TO MATCH CURRENT A", "READ_BACK EXACT PROVIDER ID PATH STATE DEFAULT-BRANCH OID AND AUDIT"], "outputs": ["WORKFLOW_ID_PATH_AND_DEFAULT_BRANCH_OID", "RAW_READBACK_SHA256", "PROJECTION_DIGEST_COMPARISON", "AUDIT_RECORD_IDS"], "forbiddenCapture": ["WORKFLOW_SECRET", "STALE_A_AS_CURRENT_IDENTITY", "NAME_ONLY_SELECTION"]},
+        {"operationId": "operator-enter-unknown-ref-incident-freeze", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "SEPARATE_INCIDENT_CEREMONY", "preconditions": ["REF_ABSENT_UNREADABLE_OR_ANY_OTHER_OID_OR_ANCESTRY"], "procedure": ["PROHIBIT EVERY REF MUTATION", "BLOCK NORMAL WRITER TOKEN MINTING", "PRESERVE PROVIDER REF COMMIT RULESET AND AUDIT EVIDENCE", "DO NOT ASSUME B OR C_PRIME", "REQUIRE SEPARATE INCIDENT HANDLING"], "outputs": ["INCIDENT_FREEZE_READBACK_MANIFEST_SHA256", "AUDIT_RECORD_IDS", "UNKNOWN_REF_CLASSIFICATION_EVIDENCE"], "forbiddenCapture": ["RESET", "FORCE_PUSH", "DELETE_REF", "ORDINARY_SIGNED_FORWARD_RECOVERY", "BYPASS_EXPANSION", "EVIDENCE_DELETION"]},
+        {"operationId": "operator-close-bootstrap-pr-if-created", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "AUTHENTICATED_PROVIDER_UI_OR_REST", "preconditions": ["BOOTSTRAP_OR_PROBE_PULL_REQUEST_EXISTS"], "procedure": ["CLOSE_WITHOUT_MERGE", "BIND_FINAL_PULL_REQUEST_STATE"], "outputs": ["PULL_REQUEST_ID", "FINAL_STATE", "AUDIT_RECORD_IDS"], "forbiddenCapture": []},
+        {"operationId": "operator-revoke-release-credentials", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "PROVIDER_AND_LOCAL_SECRET_STORE", "preconditions": ["SOURCE_REF_ADVANCED_OR_CREDENTIAL_COMPROMISE_SUSPECTED"], "procedure": ["REVOKE_ACTIVE_INSTALLATION_TOKENS_WHERE_PROVIDER_SUPPORTS", "ROTATE_OR_REVOKE_APP_PRIVATE_KEY", "REMOVE_ENVIRONMENT_SECRET", "PROVE_NEW_TOKEN_MINTING_BLOCKED"], "outputs": ["REVOCATION_AUDIT_RECORD_IDS", "APP_SUSPENSION_READBACK_SHA256", "SECRET_ABSENCE_READBACK_SHA256"], "forbiddenCapture": ["TOKEN", "PRIVATE_KEY", "SECRET_VALUE", "SECRET_DIGEST"]},
+        {"operationId": "operator-revoke-d0-b04-signer-locally", "phase": "ROLLBACK", "actorProfile": "operatorSigningAuthority", "channel": "D0_B04_LOCAL_TRUST_CEREMONY", "preconditions": ["SIGNER_COMPROMISE_OR_EXPLICIT_REVOCATION_AUTHORIZED"], "procedure": ["ADD_EXACT_PUBLIC_KEY_TO_FROZEN_REVOCATION_POLICY_BEFORE_PROVIDER_KEY_REMOVAL", "RECOMPUTE_AND_PERSIST_PUBLIC_REVOCATION_ARTIFACT_DIGEST", "PROVE_RUNTIME_REJECTS_BOTH_NEW_AND_HISTORIC_COMMITS_FROM_REVOKED_KEY", "ACKNOWLEDGE_GITHUB_MAY_KEEP_HISTORIC_COMMITS_VERIFIED"], "outputs": ["REVOCATION_ARTIFACT_PATH_LENGTH_SHA256", "LOCAL_REJECTION_TRANSCRIPT_SHA256", "GITHUB_PERSISTENT_VERIFICATION_ACKNOWLEDGEMENT"], "forbiddenCapture": ["PRIVATE_KEY", "SECRET_VALUE", "SECRET_DIGEST"]},
+        {"operationId": "operator-enter-forward-recovery-freeze", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "SEPARATE_INCIDENT_CEREMONY", "preconditions": ["SOURCE_REF_HAS_ADVANCED_BEYOND_A"], "procedure": ["PRESERVE_OR_STRENGTHEN_INVARIANT_RULESET", "BLOCK_NORMAL_WRITER_AND_ALL_NEW RELEASES", "DO_NOT_RESET_OR_FORCE_PUSH_MAIN", "RETAIN_B_C_PRIME_AND_AUDIT_EVIDENCE"], "outputs": ["FREEZE_SETTINGS_READBACK_MANIFEST_SHA256", "AUDIT_RECORD_IDS"], "forbiddenCapture": ["HISTORY_REWRITE", "BYPASS_EXPANSION", "EVIDENCE_DELETION"]},
+        {"operationId": "operator-open-forward-recovery-handoff", "phase": "ROLLBACK", "actorProfile": "operatorAdmin", "channel": "OPERATOR_HANDOFF", "preconditions": ["FORWARD_RECOVERY_FREEZE_EFFECTIVE"], "procedure": ["DECLARE_CURRENT_SIGNED_TIP_AND_INCIDENT_BOUNDARY", "REQUIRE_NEW_REVIEWED_SIGNED_FORWARD_COMMIT_CEREMONY", "KEEP_D2_AND_LATER_GATES_BLOCKED"], "outputs": ["HANDOFF_ID", "CURRENT_TIP", "EVIDENCE_MANIFEST_SHA256"], "forbiddenCapture": ["IMPLICIT_AUTHORIZATION", "RESET_TO_A", "UNSIGNED_CORRECTION"]},
+    ]
+    operation_ids = [operation["operationId"] for operation in rest_operations + non_rest_operations]
+    require(len(operation_ids) == len(set(operation_ids)), f"{catalog_id}: provider-contract operation IDs must be unique")
+    auth_profile_specs = {
+        "publicAnonymous": {"credentialKind": "NONE", "providerAuthority": "PUBLIC_READ_ONLY", "constraints": ["NO_AUTHORIZATION_HEADER", "NO_CREDENTIAL_CAPTURE"]},
+        "operatorAdmin": {"credentialKind": "GITHUB_USER_API_OR_UI_SESSION", "providerAuthority": "REPOSITORY_ADMIN", "constraints": ["SEPARATE_OPERATOR_CEREMONY", "NO_NORMAL_REF_WRITE", "MFA_ACTIVE", "USER_ACCESS_TOKEN_ENDPOINTS_REQUIRE_EXPLICIT_REPOSITORY_PERMISSION", "CREDENTIAL_NEVER_CAPTURED"]},
+        "operatorSigningAuthority": {"credentialKind": "LOCAL_D0_B04_SIGNING_CEREMONY", "providerAuthority": "NO_PROVIDER_WRITE_BY_THIS_PROFILE", "constraints": ["CATALOG_SPECIFIC_EXACT_PUBLIC_IDENTITY", "PRIVATE_KEY_AND_SECRET_DIGEST_NEVER_CAPTURED"]},
+        "signerGithubUser": {"credentialKind": "GITHUB_USER_API_CREDENTIAL", "providerAuthority": "OWN_SSH_SIGNING_KEYS_ONLY", "constraints": ["AUTHENTICATED_LOGIN_EQUALS_D0_B04_BINDING", "NO_REPOSITORY_SETTING_OR_REF_WRITE", "MFA_ACTIVE", "CREDENTIAL_NEVER_CAPTURED"]},
+        "releaseAppJwt": {"credentialKind": "GITHUB_APP_JWT", "providerAuthority": "APP_INSTALLATION_ADMINISTRATION_ONLY", "constraints": ["APP_ID_EXACT_BINDING", "JWT_TTL_AT_MOST_600_SECONDS", "PRIVATE_KEY_NEVER_CAPTURED"]},
+        "releaseInstallationReadToken": {"credentialKind": "GITHUB_APP_INSTALLATION_TOKEN", "providerAuthority": "ONE_REPOSITORY_METADATA_READ", "constraints": ["EXACT_REPOSITORY_ID", "METADATA_READ_ONLY", "TTL_AT_MOST_3600_SECONDS", "TOKEN_NEVER_CAPTURED", "REVOKE_AND_PROVE_401_AFTER_READBACK"]},
+        "bootstrapInstallationWriteToken": {"credentialKind": "GITHUB_APP_INSTALLATION_TOKEN", "providerAuthority": "ONE_REPOSITORY_CONTENTS_WRITE_METADATA_READ_BOOTSTRAP_ONLY", "constraints": ["MINT_ONLY_AFTER_BOOTSTRAP_ADMISSION_AND_INVARIANTS_EFFECTIVE", "EXACT_REPOSITORY_ID", "A_TO_B_ONLY", "FORCE_FALSE", "TTL_AT_MOST_3600_SECONDS", "TOKEN_NEVER_CAPTURED", "REVOKE_AND_PROVE_401_IMMEDIATELY_AFTER_A_TO_B"]},
+        "releaseInstallationWriteToken": {"credentialKind": "GITHUB_APP_INSTALLATION_TOKEN", "providerAuthority": "ONE_REPOSITORY_CONTENTS_WRITE_METADATA_READ_NORMAL_RELEASE", "constraints": ["MINT_ONLY_AFTER_ENVIRONMENT_APPROVAL", "EXACT_REPOSITORY_ID", "TTL_AT_MOST_3600_SECONDS", "TOKEN_NEVER_CAPTURED", "REVOKE_AND_PROVE_401_AFTER_REF_UPDATE"]},
+        "protectedReleaseJob": {"credentialKind": "GITHUB_ACTIONS_PROTECTED_ENVIRONMENT_JOB_RUNTIME", "providerAuthority": "NO_INDEPENDENT_PROVIDER_SETTINGS_OR_REF_WRITE", "constraints": ["TRUSTED_WORKFLOW_BLOB_FROM_BOOTSTRAP_B", "EXACT_RELEASE_JOB_ONLY", "AVAILABLE_ONLY_AFTER_HUMAN_ENVIRONMENT_APPROVAL", "OPAQUE_D0_B04_SIGNER_INTERFACE_ONLY", "PRIVATE_KEY_HANDLE_SECRET_CIPHERTEXT_AND_DIGEST_NEVER_CAPTURED"]},
+        "revokedReleaseInstallationReadToken": {"credentialKind": "REVOKED_GITHUB_APP_INSTALLATION_TOKEN", "providerAuthority": "NEGATIVE_AUTH_PROOF_ONLY", "constraints": ["EXACT_PREVIOUS_TOKEN_INSTANCE", "ONLY_401_ACCEPTED", "TOKEN_NEVER_CAPTURED"]},
+        "revokedBootstrapInstallationWriteToken": {"credentialKind": "REVOKED_GITHUB_APP_INSTALLATION_TOKEN", "providerAuthority": "NEGATIVE_AUTH_PROOF_ONLY", "constraints": ["EXACT_PREVIOUS_TOKEN_INSTANCE", "ONLY_401_ACCEPTED", "TOKEN_NEVER_CAPTURED"]},
+        "revokedReleaseInstallationWriteToken": {"credentialKind": "REVOKED_GITHUB_APP_INSTALLATION_TOKEN", "providerAuthority": "NEGATIVE_AUTH_PROOF_ONLY", "constraints": ["EXACT_PREVIOUS_TOKEN_INSTANCE", "ONLY_401_ACCEPTED", "TOKEN_NEVER_CAPTURED"]},
+        "operatorBootstrapWriter": {"credentialKind": "GITHUB_USER_GIT_CREDENTIAL_AND_LOCAL_SIGNER_ACCESS", "providerAuthority": "TEMPORARY_NON_MAIN_REF_STAGING_ONLY_BY_PROCEDURE", "constraints": ["D0_B04_EXACT_SIGNER", "MAIN_REF_UPDATE_FORBIDDEN", "TEMPORARY_REF_ONLY", "CREDENTIAL_NEVER_CAPTURED"]},
+        "dispatcherUser": {"credentialKind": "GITHUB_USER_ACTIONS_DISPATCH_CREDENTIAL", "providerAuthority": "EXACT_RELEASE_WORKFLOW_DISPATCH_ONLY", "constraints": ["AUTHENTICATED_USER_ID_EQUALS_EXACT_CONFIGURED_LOGIN_LOOKUP", "LEGACY_BASE_PERMISSION_WRITE_OR_ADMIN", "DISPATCH_ACTOR_EQUALS_WORKFLOW_TRIGGERING_ACTOR", "NO_SIGNER_OR_WRITER_SECRET_ACCESS", "CREDENTIAL_NEVER_CAPTURED"]},
+        "reviewerUser": {"credentialKind": "GITHUB_USER_ENVIRONMENT_REVIEW_CREDENTIAL", "providerAuthority": "EXACT_PENDING_DEPLOYMENT_APPROVAL_ONLY", "constraints": ["HUMAN_USER", "AUTHENTICATED_USER_ID_EQUALS_EXACT_CONFIGURED_ENVIRONMENT_REVIEWER", "LEGACY_BASE_PERMISSION_READ_WRITE_OR_ADMIN", "CURRENT_USER_CAN_APPROVE_TRUE", "PROVIDER_AUDIT_ACTOR_EQUALS_REVIEWER", "DIFFERS_FROM_TRIGGERING_ACTOR_AND_DISPATCHER", "NO_SIGNER_OR_APP_PRIVATE_KEY_ACCESS", "CREDENTIAL_NEVER_CAPTURED"]},
+    }
+    authentication_profiles = [
+        {"profileId": profile_id, **profile, "restOperationIds": [operation["operationId"] for operation in rest_operations if operation["authProfile"] == profile_id], "nonRestOperationIds": [operation["operationId"] for operation in non_rest_operations if operation["actorProfile"] == profile_id]}
+        for profile_id, profile in auth_profile_specs.items()
+    ]
+    state_machine = github_bootstrap_transition(catalog_id, repository, source_tip, source_ref, candidate_path, release_path, environment_name, invariant_ruleset["name"], admission_ruleset["name"], writer_slug, pre_mutation_capture_key, signing_key_evidence_key, bootstrap_evidence_key, normal_release_evidence_key)
+    resolved_operations = set(operation_ids)
+    referenced_operations = {operation_id for transition in state_machine["transitions"] for operation_id in transition["operations"]}
+    rollback_contract = state_machine["rollback"]
+    rollback_sequences: list[list[str]] = []
+    for section_name in ("beforeMainAdvance", "afterMainAdvance"):
+        for step in rollback_contract[section_name]:
+            rollback_sequences.append(step["operationIds"])
+            rollback_sequences.extend(group["operationIds"] for group in step["conditionalOperationGroups"])
+    rollback_sequences.append(rollback_contract["unknownRefIncident"]["immediateOperationIds"])
+    rollback_sequences.extend(group["operationIds"] for group in rollback_contract["unknownRefIncident"]["conditionalOperationGroups"])
+    referenced_operations.update(operation_id for sequence in rollback_sequences for operation_id in sequence)
+    require(referenced_operations <= resolved_operations, f"{catalog_id}: bootstrap state machine references unknown provider operations: {sorted(referenced_operations - resolved_operations)}")
+    validate_github_operation_graph(catalog_id, rest_operations, state_machine)
+    operation_by_id = {operation["operationId"]: operation for operation in rest_operations}
+    for operation in rest_mutations:
+        operation_id = operation["operationId"]
+        follow_ups = operation["response"]["requiredFollowUpReadbackOperationIds"]
+        identity = operation["mutationIdentity"]
+        require(identity["afterStateReadbackOperationIds"] == follow_ups, f"{catalog_id}: {operation_id} mutation identity/readback sequence mismatch")
+        require(identity["crossResourceSubstitutionRejected"] is True and identity["afterReadbackMustMatchExactSelector"] is True, f"{catalog_id}: {operation_id} mutation resource identity must be exact")
+        require(identity["responseAndReadbackIdentityMustMatch"] is identity["responseIdentity"]["responseResourceIdentityClaimed"], f"{catalog_id}: {operation_id} response/readback identity claim must match endpoint response semantics")
+        require(identity["exactSelector"]["baseUrl"] == GITHUB_REST_BASE and identity["exactSelector"]["pathTemplate"] == operation["request"]["pathTemplate"], f"{catalog_id}: {operation_id} mutation selector mismatch")
+        for follow_up_id in follow_ups:
+            require(follow_up_id in operation_by_id, f"{catalog_id}: {operation_id} references unknown follow-up readback {follow_up_id}")
+            require(operation_by_id[follow_up_id]["request"]["method"] == "GET", f"{catalog_id}: {operation_id} follow-up {follow_up_id} must be a provider GET readback")
+    ordered_sequences = [(f"{transition['from']}->{transition['to']}", transition["operations"]) for transition in state_machine["transitions"]]
+    ordered_sequences.extend((f"rollback[{index}]", sequence) for index, sequence in enumerate(rollback_sequences))
+    for sequence_label, sequence in ordered_sequences:
+        for index, operation_id in enumerate(sequence):
+            operation = operation_by_id.get(operation_id)
+            if operation is None or operation["request"]["method"] not in {"POST", "PUT", "PATCH", "DELETE"}:
+                continue
+            follow_ups = operation["response"]["requiredFollowUpReadbackOperationIds"]
+            require(sequence[index + 1:index + 1 + len(follow_ups)] == follow_ups, f"{catalog_id}: {sequence_label} must perform {operation_id} follow-up readbacks immediately and in declared order")
+    binding_names = [binding["name"] for binding in bindings]
+    require(len(binding_names) == len(set(binding_names)), f"{catalog_id}: provider typed-binding names must be unique")
+    auxiliary_binding_registry = rollback_contract["auxiliaryBindingRegistry"]
+    auxiliary_binding_names = [binding["name"] for binding in auxiliary_binding_registry]
+    require(len(auxiliary_binding_names) == len(set(auxiliary_binding_names)), f"{catalog_id}: rollback auxiliary-binding names must be unique")
+    declared_rollback_bindings = set(binding_names) | set(auxiliary_binding_names)
+    required_rollback_bindings = {
+        binding
+        for section_name in ("beforeMainAdvance", "afterMainAdvance")
+        for step in rollback_contract[section_name]
+        for binding in step["requiredBindings"] + [item for group in step["conditionalOperationGroups"] for item in group["requiredBindings"]]
+    }
+    required_rollback_bindings.update(binding for group in rollback_contract["unknownRefIncident"]["conditionalOperationGroups"] for binding in group["requiredBindings"])
+    require(required_rollback_bindings <= declared_rollback_bindings, f"{catalog_id}: rollback references undeclared bindings: {sorted(required_rollback_bindings - declared_rollback_bindings)}")
+    require(all(re.fullmatch(r"[a-z0-9_.-]+/[a-z0-9_.-]+@[0-9a-f]{40}", action) is not None for action in actions["selectedPolicy"]["patternsAllowed"]), f"{catalog_id}: every selected Action must use an exact 40-character lowercase commit SHA")
+    expected_invariant_rules = [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "required_linear_history"}, {"type": "required_signatures"}]
+    require(invariant_ruleset["providerCreateRequestBody"] == github_ruleset_request(invariant_ruleset["name"], expected_invariant_rules, []), f"{catalog_id}: invariant ruleset provider request drift")
+    expected_admission_bypass = [{"actor_id": github_binding("releaseAppIntegrationId"), "actor_type": "Integration", "bypass_mode": "always"}]
+    expected_admission_bootstrap_rules = [{"type": "update", "parameters": {"update_allows_fetch_and_merge": False}}]
+    expected_admission_final_rules = [
+        *expected_admission_bootstrap_rules,
+        {"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash", "rebase"], "dismiss_stale_reviews_on_push": True, "require_code_owner_review": True, "require_last_push_approval": True, "required_approving_review_count": 1, "required_review_thread_resolution": True}},
+        {"type": "required_status_checks", "parameters": {"do_not_enforce_on_create": False, "required_status_checks": [{"context": check_context, "integration_id": github_binding("candidateCheckIntegrationId")}], "strict_required_status_checks_policy": True}},
+    ]
+    require(admission_ruleset["providerCreateRequestBody"] == github_ruleset_request(admission_ruleset["name"], expected_admission_bootstrap_rules, expected_admission_bypass), f"{catalog_id}: bootstrap admission ruleset provider request drift")
+    require(admission_ruleset["providerFinalUpdateRequestBody"] == github_ruleset_request(admission_ruleset["name"], expected_admission_final_rules, expected_admission_bypass), f"{catalog_id}: final admission ruleset provider request drift")
+    pre_configuration_auth_profiles = ["publicAnonymous", "operatorAdmin", "signerGithubUser"]
+    unconditional_capture_operation_ids = [
+        "get-repository", "get-main-ref", "get-temporary-bootstrap-ref-presence", "get-temporary-release-ref-presence",
+        "get-authenticated-signing-user", "list-authenticated-ssh-signing-keys", "list-public-ssh-signing-keys-for-d0-b04-user",
+        "get-actions-permissions", "get-selected-actions", "get-default-workflow-permissions", "get-fork-pr-approval-policy",
+        "list-rulesets", "list-effective-main-rules", "get-classic-branch-protection",
+        "list-environments", "get-release-app", "list-organization-app-installations",
+        "list-workflows", "get-candidate-workflow-content-at-a", "get-release-workflow-content-at-a", "get-pages-workflow-content-at-a",
+    ]
+    conditional_capture = [
+        {"selectorOperationId": "list-environments", "condition": "EXACT_RELEASE_ENVIRONMENT_PRESENT", "requiredOperationIds": ["get-release-environment", "list-environment-branch-policies", "list-environment-secrets"]},
+        {"selectorOperationId": "list-environments", "condition": "EXACT_RELEASE_ENVIRONMENT_ABSENT", "requiredOperationIds": [], "absenceMustBeProjected": True},
+        {"selectorOperationId": "get-release-app", "condition": "HTTP_200", "requiredOperationIds": []},
+        {"selectorOperationId": "get-release-app", "condition": "HTTP_404", "requiredOperationIds": [], "absenceMustBeProjected": True},
+        {"selectorOperationId": "list-organization-app-installations", "condition": "EXACT_RELEASE_APP_INSTALLATION_PRESENT", "requiredOperationIds": ["list-user-installation-repositories"]},
+        {"selectorOperationId": "list-organization-app-installations", "condition": "EXACT_RELEASE_APP_INSTALLATION_ABSENT", "requiredOperationIds": [], "absenceMustBeProjected": True},
+    ]
+    all_capture_operation_ids = [*unconditional_capture_operation_ids, *(operation_id for branch in conditional_capture for operation_id in branch["requiredOperationIds"])]
+    classic_mutation_operation_ids = ["delete-classic-branch-protection-if-baseline-present", "restore-classic-branch-protection-from-pre-capture"] if catalog_id == "rust" else []
+    pre_mutation_capture_contract = {
+        "schema": "pkgre-d0-github-pre-mutation-capture-v3",
+        "maximumAgeSecondsAtFirstMutation": 600,
+        "sourceRefMustRemain": source_tip,
+        "captureBeforeAnyMutation": True,
+        "preConfigurationAllowedAuthProfiles": pre_configuration_auth_profiles,
+        "unconditionalCaptureOperationIds": unconditional_capture_operation_ids,
+        "conditionalCapture": conditional_capture,
+        "allCaptureOperationIds": all_capture_operation_ids,
+        "mutableResourceCoverage": [
+            {"resource": "D0_B04_GITHUB_SSH_SIGNING_KEY", "captureOperationIds": ["get-authenticated-signing-user", "list-authenticated-ssh-signing-keys", "list-public-ssh-signing-keys-for-d0-b04-user"], "mutationOperationIds": ["create-d0-b04-ssh-signing-key-if-baseline-absent", "delete-d0-b04-ssh-signing-key"], "rollbackRule": "DELETE_ONLY_IF_EXACT_KEY_ABSENT_AT_BASELINE_AND_CREATED_BY_THIS_CEREMONY"},
+            {"resource": "REPOSITORY_ACTIONS_POLICY", "captureOperationIds": ["get-actions-permissions", "get-selected-actions", "get-default-workflow-permissions", "get-fork-pr-approval-policy"], "mutationOperationIds": ["set-actions-permissions", "set-selected-actions", "set-default-workflow-permissions", "set-fork-pr-approval-policy", "restore-actions-permissions-from-pre-capture", "restore-selected-actions-from-pre-capture", "restore-default-workflow-permissions-from-pre-capture", "restore-fork-pr-approval-policy-from-pre-capture"], "rollbackRule": "RESTORE_EACH_SETTING_VIA_DISTINCT_TYPED_REQUEST_FROM_RAW_FRESH_CAPTURE_AND_EXACT_READBACK_DIGEST"},
+            {"resource": "RELEASE_ENVIRONMENT_BRANCH_POLICY_AND_SECRET_METADATA", "captureOperationIds": ["list-environments", "get-release-environment", "list-environment-branch-policies", "list-environment-secrets"], "mutationOperationIds": ["put-release-environment", "create-environment-main-policy", "operator-install-app-and-environment-secret", "operator-remove-environment-secret", "operator-restore-environment-resources-from-pre-capture"], "rollbackRule": "RESTORE_OR_DELETE_FROM_FRESH_PRESENCE_AND_METADATA_WITHOUT_SECRET_VALUE_CAPTURE"},
+            {"resource": "RELEASE_APP_AND_INSTALLATION", "captureOperationIds": ["get-release-app", "list-organization-app-installations", "list-user-installation-repositories"], "mutationOperationIds": ["operator-install-app-and-environment-secret", "suspend-release-app-installation", "operator-restore-app-installation-from-pre-capture"], "rollbackRule": "RESTORE_EXACT_BASELINE_INSTALLATION_STATE_OR_REMOVE_NEW_RESOURCE_BY_SEPARATE_OPERATOR_CEREMONY"},
+            {"resource": "RULESETS_AND_EFFECTIVE_MAIN_RULES", "captureOperationIds": ["list-rulesets", "list-effective-main-rules"], "mutationOperationIds": ["create-admission-ruleset-bootstrap", "update-admission-ruleset-to-final", "create-invariant-ruleset", "delete-admission-ruleset", "delete-invariant-ruleset"], "rollbackRule": "RESTORE_OR_DELETE_BY_EXACT_BASELINE_ID_WITH_NO_AMBIGUOUS_NAME_SELECTION"},
+            {"resource": "CLASSIC_MAIN_BRANCH_PROTECTION", "captureOperationIds": ["get-classic-branch-protection"], "mutationOperationIds": classic_mutation_operation_ids, "rollbackRule": "RESTORE_TYPED_REQUEST_ONLY_FROM_RAW_FRESH_CAPTURE_WITH_EXACT_READBACK_DIGEST" if catalog_id == "rust" else "CONFIRM_FRESH_BASELINE_ABSENCE_AND_NEVER_MUTATE_CLASSIC_PROTECTION"},
+            {"resource": "WORKFLOW_PROVIDER_STATE_AND_CONTENT", "captureOperationIds": ["list-workflows", "get-candidate-workflow-content-at-a", "get-release-workflow-content-at-a", "get-pages-workflow-content-at-a"], "mutationOperationIds": ["disable-release-workflow", "operator-restore-workflow-state-from-pre-capture"], "rollbackRule": "RESTORE_ENABLED_STATE_ONLY_BY_EXACT_PROVIDER_ID_PATH_AND_CURRENT_DEFAULT_BRANCH_IDENTITY"},
+            {"resource": "MAIN_AND_TEMPORARY_REFS", "captureOperationIds": ["get-main-ref", "get-temporary-bootstrap-ref-presence", "get-temporary-release-ref-presence"], "mutationOperationIds": ["patch-main-ref-bootstrap-force-false", "patch-main-ref-release-force-false", "delete-temporary-bootstrap-ref", "delete-temporary-release-ref"], "rollbackRule": "PRE_ADVANCE_MAIN_MUST_REMAIN_A_POST_ADVANCE_NO_HISTORY_REWRITE"},
+        ],
+        "completeness": {"allPagesRequired": True, "rawBodiesAndStrictProjectionsRequired": True, "providerRequestIdsRequired": True, "sameCeremony": True, "abortOnDriftOrUncoveredMutableResource": True},
+    }
+    validate_github_pre_mutation_capture_contract(catalog_id, pre_mutation_capture_contract, rest_operations)
+    actor_authorization_contract = {
+        "schema": "pkgre-d0-github-procedural-actor-authorization-v1",
+        "authorityNature": "PROVIDER_ACCOUNT_AND_REPOSITORY_PERMISSION_READBACK_PROCEDURAL_NOT_CRYPTOGRAPHIC_IDENTITY",
+        "nonBypassableIdentityClaimed": False,
+        "dispatcher": {
+            "configuredLogin": dispatcher,
+            "identityOperationId": "get-release-dispatcher-user",
+            "identityPathTemplate": f"/users/{dispatcher}",
+            "loginBinding": "dispatcherGithubLogin",
+            "userIdBinding": "dispatcherUserId",
+            "permissionOperationId": "get-release-dispatcher-permission",
+            "permissionPathTemplate": f"{base}/collaborators/{dispatcher}/permission",
+            "allowedLegacyBasePermissions": ["write", "admin"],
+            "permissionSemantics": "MAINTAIN_MAPS_TO_WRITE_PER_PINNED_GITHUB_OPENAPI",
+            "authorizedAction": "DISPATCH_EXACT_RELEASE_WORKFLOW_ON_MAIN",
+            "dispatchAuthenticatedActorBinding": "dispatchAuthenticatedActorUserId",
+            "workflowTriggeringActorBinding": "triggeringActorUserId",
+            "allUserIdsMustEqual": True,
+        },
+        "reviewer": {
+            "configuredLogin": reviewer,
+            "identityOperationId": "get-environment-reviewer-user",
+            "identityPathTemplate": f"/users/{reviewer}",
+            "loginBinding": "reviewerGithubLogin",
+            "userIdBinding": "reviewerUserId",
+            "permissionOperationId": "get-environment-reviewer-permission",
+            "permissionPathTemplate": f"{base}/collaborators/{reviewer}/permission",
+            "allowedLegacyBasePermissions": ["read", "write", "admin"],
+            "permissionSemantics": "TRIAGE_MAPS_TO_READ_PER_PINNED_GITHUB_OPENAPI",
+            "mustBeExactConfiguredEnvironmentReviewer": True,
+            "pendingDeploymentReviewerBinding": "pendingDeploymentReviewerUserId",
+            "pendingDeploymentCurrentUserCanApproveBinding": "pendingDeploymentCurrentUserCanApprove",
+            "pendingDeploymentCurrentUserCanApproveRequired": True,
+            "reviewAuthenticatedActorBinding": "reviewAuthenticatedActorUserId",
+            "providerAuditActorBinding": "reviewApprovalAuditActorUserId",
+            "allUserIdsMustEqual": True,
+        },
+        "separation": {"reviewerMustDifferFromDispatcher": True, "providerUserIdsMustDiffer": True, "selfApprovalForbidden": True},
+        "failurePolicy": "ABORT_ON_LOOKUP_LOGIN_ID_PERMISSION_PENDING_DEPLOYMENT_OR_AUDIT_ACTOR_MISMATCH",
+    }
+    return {
+        "schema": "pkgre-d0-github-provider-contract-v2",
+        "openApi": {"repository": "github/rest-api-description", "commit": GITHUB_REST_OPENAPI_COMMIT, "document": "descriptions/api.github.com/api.github.com.json", "sha256": GITHUB_REST_OPENAPI_SHA256, "schemaDialect": "OPENAPI_3_0", "validation": "REQUEST_AND_NONSECRET_RESPONSE_REVALIDATED_AGAINST_PINNED_DOCUMENT"},
+        "http": {"baseUrl": GITHUB_REST_BASE, "accept": GITHUB_REST_ACCEPT, "apiVersion": GITHUB_REST_API_VERSION, "tlsRequired": True, "redirectsAllowed": False, "crossOriginRedirectsAllowed": False, "providerRequestIdRequired": True, "selectedApiVersionResponseEvidenceRequired": True},
+        "repositoryBinding": {"fullName": repository, "repositoryId": repository_id, "owner": owner, "name": repo, "sourceRef": source_ref, "baselineA": source_tip},
+        "catalogSignerSeparation": {"authorityFindingId": "D0-B04", "assignmentStatus": "NOT_YET_ASSIGNED_IN_D0_B03", "mustDifferFromEveryOtherCatalog": True, "concreteIdentityValuesPresent": False},
+        "preMutationCaptureContract": pre_mutation_capture_contract,
+        "typedBindings": bindings,
+        "rawCapture": raw_capture,
+        "projectionPolicy": projections,
+        "authenticationProfiles": authentication_profiles,
+        "actorAuthorization": actor_authorization_contract,
+        "restOperations": rest_operations,
+        "nonRestOperations": non_rest_operations,
+        "proceduralReadbacks": [
+            {"readbackId": "environment-admin-bypass-disabled", "operationId": "capture-environment-admin-bypass-ui-readback", "providerFact": "ENVIRONMENT_ADMIN_BYPASS_DISABLED", "restFieldOrRequestParameterExists": False, "requiredEvidence": ["PROVIDER_UI_ARCHIVE_SHA256", "REDACTED_DOM_PROJECTION_SHA256", "AUDIT_RECORD_IDS"], "operatorSelfAttestationAllowed": False},
+            {"readbackId": "environment-secret-name-and-scope", "operationId": "capture-environment-secret-name-and-scope-ui-readback", "providerFact": "SECRET_EXISTS_ONLY_IN_EXACT_RELEASE_ENVIRONMENT", "restFieldOrRequestParameterExists": False, "requiredEvidence": ["SECRET_METADATA_PROJECTION_SHA256", "PROVIDER_UI_ARCHIVE_SHA256"], "secretValueOrDigestAllowed": False, "operatorSelfAttestationAllowed": False},
+            {"readbackId": "complete-provider-audit-window", "operationId": "capture-provider-ui-audit-export", "providerFact": "ALL_PROVIDER_MUTATIONS_EXPLAINED", "requiredEvidence": ["PROVIDER_EXPORT_RAW_SHA256", "STRICT_AUDIT_PROJECTION_SHA256", "WINDOW_START_END", "RECORD_IDS"], "operatorSelfAttestationAllowed": False},
+        ],
+        "bootstrapStateMachine": state_machine,
+    }
 
 
 def expected_github_catalog(catalog_id: str, repository: str, repository_id: int, runtime_origin: str, source_tip: str, reviewer: str, dispatcher: str, candidate_digest: str, release_digest: str, pages_digest: str, codeowners_digest: str) -> dict[str, Any]:
@@ -1641,14 +2429,32 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
     release_name = f"pkgre-{catalog_id}-release"
     pages_name = f"pkgre-{catalog_id}-pages-rollback"
     check_context = f"pkgre-{catalog_id}-candidate/validate"
+    candidate_job_id = "validate"
+    candidate_check_context_derivation = {
+        "workflowPath": candidate_path,
+        "workflowName": candidate_name,
+        "jobId": candidate_job_id,
+        "jobNameLiteral": check_context,
+        "jobNameExpressionAllowed": False,
+        "matrixStrategyAllowed": False,
+        "reusableWorkflowCallAllowed": False,
+        "renderedCheckRunName": check_context,
+        "requiredStatusCheckContext": check_context,
+        "providerProbeMustBindWorkflowIdRunIdJobIdCheckSuiteIdCheckRunIdAndIntegrationId": True,
+        "abortOnRenderedNameOrProducerMismatch": True,
+    }
     environment_name = f"pkgre-{catalog_id}-release"
     writer_slug = f"pkgre-{catalog_id}-release-writer"
     admission_name = f"pkgre-{catalog_id}-admission"
     invariant_name = f"pkgre-{catalog_id}-invariants"
     design_id = f"pkgre-{catalog_id}-github-governance-v1"
+    signing_design_id = f"pkgre-{catalog_id}-signing-v1"
     provider_evidence_keys = {kind: f"{catalog_id}-{kind.lower().replace('_', '-')}" for kind in GITHUB_PROVIDER_EVIDENCE_KINDS}
     candidate_producer_key = provider_evidence_keys["CANDIDATE_CHECK_PRODUCER_ID_AND_RUN"]
     pre_mutation_capture_key = provider_evidence_keys["D2_PRE_MUTATION_CAPTURE"]
+    bootstrap_evidence_key = provider_evidence_keys["BOOTSTRAP_COMMIT_AND_REF_ADVANCE"]
+    normal_release_evidence_key = provider_evidence_keys["FIRST_NORMAL_RELEASE_RUN"]
+    signing_key_evidence_key = provider_evidence_keys["SIGNING_KEY_REGISTRATION_AND_READBACK"]
     effective_rules_key = provider_evidence_keys["EFFECTIVE_MAIN_RULES_READBACK"]
     candidate_workflow_key = provider_evidence_keys["CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK"]
     release_workflow_key = provider_evidence_keys["RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK"]
@@ -1698,11 +2504,11 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "proposedContentSha256": candidate_digest,
         "targetCommitBinding": {"commitOidStatus": "NOT_YET_ASSIGNED", "gitBlobOidStatus": "NOT_YET_ASSIGNED", "providerWorkflowEvidenceKey": candidate_workflow_key},
         "trigger": {"pullRequest": True, "targetBranch": source_branch, "headShaSource": "GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", "push": False, "pullRequestTarget": False, "workflowRun": False, "workflowCall": False, "workflowDispatch": False},
-        "check": {"context": check_context, "conclusion": "success", "headShaEqualsCheckedOutCommit": True, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED"},
+        "check": {"context": check_context, "conclusion": "success", "headShaEqualsCheckedOutCommit": True, "contextDerivation": candidate_check_context_derivation, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED"},
         "permissions": permissions_candidate,
         "checkout": {"detached": True, "fetchFullHistory": True, "persistCredentials": False, "submodules": False, "lfs": False},
         "validationScope": GITHUB_CANDIDATE_VALIDATION_SCOPE,
-        "execution": {"candidateTreeIsDataOnly": True, "executeCandidateCode": False, "repositoryExecutableInputs": [], "externalRepositoryInputs": [GITHUB_EXTERNAL_INDEXER["repository"]], "actions": candidate_actions, "shellLogicSource": "INLINE_FROZEN_WORKFLOW_ONLY", "unlistedInputAllowed": False},
+        "execution": {"candidateTreeIsDataOnly": True, "executeCandidateCode": False, "repositoryExecutableInputs": [], "externalRepositoryInputs": [GITHUB_EXTERNAL_INDEXER["repository"]], "actions": candidate_actions, "shellLogicSource": "INLINE_FROZEN_WORKFLOW_ONLY", "unlistedInputAllowed": False, "signerAccess": False},
         "untrustedPullRequests": {"secretsAvailable": False, "writeTokenAvailable": False, "pullRequestTargetUsed": False, "lifecycleScriptsExecuted": False},
     }
     admission_job = {
@@ -1714,10 +2520,25 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "writerTokenAccess": False,
         "candidate": {"input": "candidate_sha", "format": "LOWERCASE_SHA1_40", "fetchFullHistory": True, "checkoutDetached": True, "objectTypeCommit": True, "verifyHeadEqualsInput": True, "verifyDescendsFromCurrentBase": True, "verifyCandidateTreeAfterCheckout": True, "persistCredentials": False, "submodules": False, "lfs": False, "candidateTreeIsDataOnly": True, "executeCandidateCode": False},
         "pullRequest": {"exactlyOneOpen": True, "baseBranch": source_branch, "baseShaEqualsCurrentSourceTip": True, "headShaEqualsCandidate": True, "codeOwnerApprovalRequired": True, "lastPushApprovalRequired": True, "staleApprovalsDismissed": True, "conversationResolutionRequired": True, "reviewCommitIdEqualsCandidate": True, "providerReviewEvidenceKey": provider_evidence_keys["PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"]},
-        "candidateCheck": {"context": check_context, "conclusion": "success", "headShaEqualsCandidate": True, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED"},
+        "candidateCheck": {"context": check_context, "conclusion": "success", "headShaEqualsCandidate": True, "contextDerivation": candidate_check_context_derivation, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED"},
         "trustedSurface": {"unchangedFromReviewedBase": True, "evidenceKey": trusted_surface_key, "closedWorkflowManifestRequired": True, "closedLocalActionManifestRequired": True, "executableInputDigestsRequired": True},
         "actions": candidate_actions,
         "result": "ADMISSION_DIGEST_BOUND_TO_BASE_CANDIDATE_AND_TRUSTED_SURFACE",
+        "signerAccess": False,
+    }
+    signer_access_interface = {
+        "designId": f"{signing_design_id}-protected-job-access-v1",
+        "authoritySource": {"findingId": "D0-B04", "handoffId": "OP-D0-04", "catalogId": catalog_id},
+        "implementationSelection": "D0_B04_OPERATOR_MUST_SELECT_EXACT_CATALOG_SPECIFIC_SIGNER_SERVICE_AGENT_OR_HANDLE",
+        "assignmentStatus": "NOT_YET_ASSIGNED_IN_D0_B03_TARGET_DESIGN",
+        "capabilityKind": "OPAQUE_SIGN_REQUEST_INTERFACE_NOT_PRIVATE_KEY_MATERIAL",
+        "handleMaterial": {"availableToEvidence": False, "digestAvailableToEvidence": False, "ciphertextAvailableToEvidence": False, "persistedByWorkflow": False},
+        "availability": {"workflowPath": release_path, "jobId": "release", "environment": environment_name, "onlyAfterProtectedEnvironmentApproval": True, "candidateJob": False, "admissionJob": False, "pagesJobs": False, "pullRequestJobs": False, "allOtherJobs": False},
+        "identityBinding": {"signingDesignId": signing_design_id, "githubLoginBinding": github_binding("signerGithubLogin", "GITHUB_LOGIN"), "publicKeyBinding": github_binding("signerSshEd25519PublicKey", "SSH_ED25519_PUBLIC_KEY"), "fingerprintBinding": github_binding("signerSshSha256Fingerprint", "SSH_SHA256_FINGERPRINT"), "principalMustMatchD0B04": True},
+        "requestContract": {"namespace": "git", "hashAlgorithm": "sha512", "signatureAlgorithm": "ssh-ed25519", "bindUnsignedCommitPayload": True, "bindTreeOid": True, "bindSoleParentOid": True, "bindRepositoryId": repository_id, "bindSourceRef": source_ref, "arbitraryPayloadSigningAllowed": False},
+        "responseContract": {"sshSignatureOnly": True, "signatureMetadata": ["namespace", "hashAlgorithm", "signatureAlgorithm", "publicKeyFingerprint", "principal"], "privateKeyMaterial": False, "privateKeyDigest": False, "opaqueHandleMaterial": False, "bindFinalCommitOidTreeAndSoleParent": True},
+        "githubAccountAuthority": {"usedForRepositoryWrite": False, "usedForRepositoryAdministration": False, "usedForEnvironmentApproval": False, "usedForWorkflowDispatch": False, "sshSigningKeyRegistrationOnly": True},
+        "failurePolicy": "ABORT_IF_INTERFACE_IDENTITY_SCOPE_AVAILABILITY_REQUEST_OR_RESPONSE_BINDING_DIFFERS",
     }
     release_job = {
         "jobId": "release",
@@ -1732,16 +2553,19 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "executeCandidateCode": False,
         "repositoryExecutableInputs": [],
         "actions": release_actions,
-        "signedCommit": {"treeEqualsCandidate": True, "soleParentEqualsFreshCapturedBase": True, "candidateShaTrailer": "Pkgre-Candidate", "signatureFormat": "SSH", "signatureAlgorithm": "ssh-ed25519", "exactSignerPolicySource": "D0-B04", "providerGenericSignatureIsDefenseInDepthOnly": True},
+        "signerAccess": copy.deepcopy(signer_access_interface),
+        "signedCommit": {"treeEqualsCandidate": True, "soleParentEqualsFreshCapturedBase": True, "candidateShaTrailer": "Pkgre-Candidate", "signatureFormat": "SSH", "signatureAlgorithm": "ssh-ed25519", "exactSignerPolicySource": signing_design_id, "localExactKeyVerificationRequired": True, "githubVerification": {"verified": True, "reason": GITHUB_VERIFIED_COMMIT_REASON, "verifiedAtRequired": True}, "githubSigningKeyReadbackRequired": True},
         "refUpdate": {"targetRef": source_ref, "api": "PATCH_GIT_REF", "force": False, "compareBaseToFreshCaptureImmediatelyBeforeUpdate": True, "fastForwardOnly": True, "freshCaptureEvidenceKey": pre_mutation_capture_key},
     }
     release_authority_consumers = {
         "protectedEnvironment": [{"workflowPath": release_path, "jobId": "release", "environment": environment_name}],
         "writerAppCredentialSecret": [{"workflowPath": release_path, "jobId": "release", "purpose": "MINT_REPOSITORY_SCOPED_WRITER_TOKEN"}],
         "writerTokenMintingAction": [{"workflowPath": release_path, "jobId": "release", "action": GITHUB_APP_TOKEN_ACTION}],
+        "signerAccessHandle": [{"workflowPath": release_path, "jobId": "release", "environment": environment_name, "interfaceDesignId": signer_access_interface["designId"], "assignmentStatus": signer_access_interface["assignmentStatus"], "purpose": "SIGN_EXACT_BOUND_GIT_COMMIT_PAYLOAD_WITHOUT_EXPOSING_PRIVATE_MATERIAL"}],
         "contentsWriteToken": [{"workflowPath": release_path, "jobId": "release", "targetRef": source_ref}],
         "allOtherConsumersForbidden": True,
         "closedWorldReferenceScanRequired": True,
+        "closedWorldReferenceScan": {"scanWorkflowPaths": [pages_path, candidate_path, release_path], "scanRepositoryExecutableInputs": protected_governance_paths, "allowedSignerAccessReferences": [{"workflowPath": release_path, "jobId": "release"}], "rejectUnlistedSignerHandleSecretServiceAgentOrSocketReference": True},
     }
     release_workflow = {
         "path": release_path,
@@ -1754,7 +2578,7 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "jobs": {"admission": admission_job, "release": release_job},
         "releaseAuthorityConsumers": release_authority_consumers,
         "protectedGovernancePaths": protected_governance_paths,
-        "signingAuthorityDesignId": f"pkgre-{catalog_id}-signing-v1",
+        "signingAuthorityDesignId": signing_design_id,
     }
     pages_workflow = {
         "path": pages_path,
@@ -1765,56 +2589,71 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "targetCommitBinding": {"commitOidStatus": "NOT_YET_ASSIGNED", "gitBlobOidStatus": "NOT_YET_ASSIGNED", "providerWorkflowEvidenceKey": pages_workflow_key},
         "triggers": {"push": {"enabled": True, "branches": [source_branch]}, "workflowDispatch": {"enabled": True, "requiredRef": source_ref}, "pullRequest": False, "pullRequestTarget": False, "workflowRun": False, "workflowCall": False},
         "jobs": {"validate": {"permissions": permissions_pages_validate, "environment": None, "candidateTreeIsDataOnly": True, "repositoryExecutableInputs": [entry["path"] for entry in repository_executable_inputs]}, "deploy": {"permissions": permissions_pages_deploy, "environment": "github-pages", "needs": ["validate"], "sourceRefRequired": source_ref}},
-        "releaseAuthorityAccess": {"protectedReleaseEnvironment": False, "writerAppCredentialSecret": False, "writerTokenMintingAction": False, "contentsWriteToken": False},
+        "releaseAuthorityAccess": {"protectedReleaseEnvironment": False, "writerAppCredentialSecret": False, "writerTokenMintingAction": False, "contentsWriteToken": False, "signerAccessHandle": False},
         "pullRequestCandidateExecutionRemoved": True,
         "rollbackContinuityRetained": True,
     }
+    environment_request = {"wait_timer": 0, "prevent_self_review": True, "reviewers": [{"type": "User", "id": github_binding("reviewerUserId")}], "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
+    environment_branch_policy_request = {"name": source_branch, "type": "branch"}
     environment = {
         "name": environment_name,
-        "reviewers": [{"type": "USER", "login": reviewer, "providerIdStatus": "NOT_YET_ASSIGNED"}],
+        "reviewers": [{"type": "USER", "login": reviewer, "providerIdBinding": github_binding("reviewerUserId")}],
         "requiredReviewerApprovals": 1,
         "preventSelfReview": True,
-        "canAdminsBypass": False,
-        "branchPolicy": {"kind": "CUSTOM", "patterns": [source_branch], "protectedBranchesOnly": False},
+        "providerCreateOrUpdateRequestBody": environment_request,
+        "providerBranchPolicyCreateRequestBody": environment_branch_policy_request,
+        "expectedRestReadbackProjection": {"repositoryId": repository_id, "environmentId": github_binding("environmentId"), "name": environment_name, "waitTimer": 0, "preventSelfReview": True, "reviewers": [{"type": "User", "id": github_binding("reviewerUserId"), "login": reviewer}], "deploymentBranchPolicy": {"protectedBranches": False, "customBranchPolicies": True}, "branchPolicies": [{"id": github_binding("environmentBranchPolicyId"), "name": source_branch, "type": "branch"}]},
+        "proceduralReadback": {"adminBypassDisabled": True, "operationId": "capture-environment-admin-bypass-ui-readback", "providerEvidenceKey": provider_evidence_keys["PROTECTED_ENVIRONMENT_ID_AND_READBACK"], "operatorSelfAttestationAllowed": False},
         "secretsAvailableOnlyAfterApproval": True,
     }
     writer = {
         "kind": "GITHUB_APP",
         "slug": writer_slug,
-        "appIdStatus": "NOT_YET_ASSIGNED",
-        "installation": {"repositorySelection": "SELECTED", "repositories": [repository], "repositoryIds": [repository_id], "repositoryCount": 1, "providerIdStatus": "NOT_YET_ASSIGNED"},
+        "appIntegrationIdBinding": github_binding("releaseAppIntegrationId"),
+        "installation": {"installationIdBinding": github_binding("releaseAppInstallationId"), "repositorySelection": "SELECTED", "repositories": [repository], "repositoryIds": [repository_id], "repositoryCount": 1},
         "installedPermissions": app_permissions,
-        "token": {"mintedOnlyInProtectedJob": "release", "maximumTtlSeconds": 3600, "repositories": [repository], "repositoryIds": [repository_id], "repositoryCount": 1, "requestedPermissions": app_permissions, "storedAfterJob": False},
-        "credential": {"location": "PROTECTED_ENVIRONMENT_SECRET", "materialReturnedInD0": False},
+        "token": {"mintedOnlyInProtectedJob": "release", "mintedOnlyAfterHumanApproval": True, "maximumTtlSeconds": 3600, "repositories": [repository], "repositoryIds": [repository_id], "repositoryCount": 1, "requestedPermissions": app_permissions, "storedAfterJob": False, "responseBodyPersistedOrHashed": False},
+        "credential": {"location": "PROTECTED_ENVIRONMENT_SECRET", "metadataReadbackOperationId": "capture-environment-secret-name-and-scope-ui-readback", "materialOrDigestReturnedInD0": False},
         "normalUse": {"workflowPath": release_path, "jobId": "release", "canApprovePullRequests": False, "canBeCodeOwner": False, "canAdministerRepository": False},
-        "admissionBypass": {"ruleset": admission_name, "actorType": "Integration", "actor": writer_slug, "providerActorIdStatus": "NOT_YET_ASSIGNED", "mode": "always"},
+        "admissionBypass": {"ruleset": admission_name, "actorType": "Integration", "actor": writer_slug, "providerActorIdBinding": github_binding("releaseAppIntegrationId"), "mode": "always"},
         "invariantBypassAllowed": False,
     }
+    admission_bypass = [{"actor_id": github_binding("releaseAppIntegrationId"), "actor_type": "Integration", "bypass_mode": "always"}]
+    admission_bootstrap_request = github_ruleset_request(admission_name, [
+        {"type": "update", "parameters": {"update_allows_fetch_and_merge": False}},
+    ], admission_bypass)
+    admission_final_request = github_ruleset_request(admission_name, [
+        {"type": "update", "parameters": {"update_allows_fetch_and_merge": False}},
+        {"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash", "rebase"], "dismiss_stale_reviews_on_push": True, "require_code_owner_review": True, "require_last_push_approval": True, "required_approving_review_count": 1, "required_review_thread_resolution": True}},
+        {"type": "required_status_checks", "parameters": {"do_not_enforce_on_create": False, "required_status_checks": [{"context": check_context, "integration_id": github_binding("candidateCheckIntegrationId")}], "strict_required_status_checks_policy": True}},
+    ], admission_bypass)
+    invariant_request = github_ruleset_request(invariant_name, [{"type": "deletion"}, {"type": "non_fast_forward"}, {"type": "required_linear_history"}, {"type": "required_signatures"}], [])
     admission_ruleset = {
         "name": admission_name,
-        "target": "BRANCH",
-        "enforcement": "ACTIVE",
-        "includeRefs": [source_ref],
-        "excludeRefs": [],
-        "bypassActors": [{"actorType": "Integration", "actor": writer_slug, "providerActorIdStatus": "NOT_YET_ASSIGNED", "mode": "always"}],
-        "administratorsBypass": False,
-        "restrictUpdates": {"type": "update", "parameters": {"updateAllowsFetchAndMerge": False}},
-        "pullRequest": {"required": True, "approvals": 1, "requireCodeOwnerReview": True, "requireLastPushApproval": True, "dismissStaleReviews": True, "requireConversationResolution": True},
-        "requiredStatusChecks": [{"context": check_context, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED", "strictRequiredStatusChecksPolicy": True}],
-        "normalMainWriterInvariant": {"exactlyOneActor": True, "actorType": "Integration", "actor": writer_slug, "allUsersTeamsRepositoryRolesAndOtherIntegrationsDenied": True},
+        "providerCreateRequestBody": admission_bootstrap_request,
+        "providerFinalUpdateRequestBody": admission_final_request,
+        "expectedBootstrapReadbackProjection": {"repositoryId": repository_id, "rulesetId": github_binding("admissionRulesetId"), "name": admission_name, "target": "branch", "enforcement": "active", "bypassActors": admission_bootstrap_request["bypass_actors"], "conditions": admission_bootstrap_request["conditions"], "rules": admission_bootstrap_request["rules"]},
+        "expectedFinalReadbackProjection": {"repositoryId": repository_id, "rulesetId": github_binding("admissionRulesetId"), "name": admission_name, "target": "branch", "enforcement": "active", "bypassActors": admission_final_request["bypass_actors"], "conditions": admission_final_request["conditions"], "rules": admission_final_request["rules"]},
+        "evolution": {"createAsBootstrapBeforeAtoB": True, "finalizeWithPutAfterCheckProducerBinding": True, "sameProviderRulesetIdRequired": True, "replacementAllowed": False},
+        "normalMainWriterInvariant": {"exactlyOneActor": True, "actorType": "Integration", "actor": writer_slug, "actorIdBinding": github_binding("releaseAppIntegrationId"), "allUsersTeamsRepositoryRolesAndOtherIntegrationsDenied": True},
     }
     invariant_ruleset = {
         "name": invariant_name,
-        "target": "BRANCH",
-        "enforcement": "ACTIVE",
-        "includeRefs": [source_ref],
-        "excludeRefs": [],
-        "bypassActors": [],
-        "administratorsBypass": False,
-        "requiredSignatures": {"required": True, "providerEnforcement": "ANY_GITHUB_VERIFIED_SIGNATURE", "providerPinsExactSshKey": False, "exactSshEd25519SignerEnforcedBy": "D0-B04_AND_RUNTIME", "defenseInDepthOnly": True},
-        "linearHistory": True,
-        "allowForcePushes": False,
-        "allowDeletions": False,
+        "providerCreateRequestBody": invariant_request,
+        "expectedReadbackProjection": {"repositoryId": repository_id, "rulesetId": github_binding("invariantRulesetId"), "name": invariant_name, "target": "branch", "enforcement": "active", "bypassActors": [], "conditions": invariant_request["conditions"], "rules": invariant_request["rules"]},
+        "signatureAuthority": {"providerEnforcement": "ANY_GITHUB_VERIFIED_SIGNATURE", "providerPinsExactSshKey": False, "exactSshEd25519SignerEnforcedBy": "D0-B04_RUNTIME_LOCAL_GIT_VERIFY_COMMIT_AND_EXACT_GITHUB_SIGNING_KEY_READBACK", "providerVerificationRequired": {"verified": True, "reason": GITHUB_VERIFIED_COMMIT_REASON, "verifiedAtRequired": True}, "providerRuleDefenseInDepthOnly": True},
+        "noBypassActorIncludingAdministrator": True,
+    }
+    signing_identity = {
+        "designId": signing_design_id,
+        "authoritySource": {"findingId": "D0-B04", "handoffId": "OP-D0-04", "catalogSpecific": True, "sharedAcrossCatalogsAllowed": False},
+        "typedBindings": {"githubLogin": github_binding("signerGithubLogin", "GITHUB_LOGIN"), "sshEd25519PublicKey": github_binding("signerSshEd25519PublicKey", "SSH_ED25519_PUBLIC_KEY"), "sshSha256Fingerprint": github_binding("signerSshSha256Fingerprint", "SSH_SHA256_FINGERPRINT"), "providerKeyTitle": github_binding("signerSshKeyTitle", "NONEMPTY_STRING"), "providerSshSigningKeyId": github_binding("signerProviderSshSigningKeyId"), "providerCreatedAt": github_binding("signerProviderSshSigningKeyCreatedAt", "UTC_TIMESTAMP")},
+        "providerRegistration": {"requestBody": {"key": github_binding("signerSshEd25519PublicKey", "SSH_ED25519_PUBLIC_KEY"), "title": github_binding("signerSshKeyTitle", "NONEMPTY_STRING")}, "authenticatedAndPublicReadbackRequired": True, "createOnlyIfExactKeyAbsentAtFreshBaseline": True, "deleteOnPreAdvanceRollbackOnlyIfCreatedByThisCeremony": True},
+        "commitVerification": {"localExactKeyAndPrincipalRequired": True, "githubVerifiedRequired": True, "githubReason": GITHUB_VERIFIED_COMMIT_REASON, "githubVerifiedAtNonNullRequired": True, "bootstrapBRequired": True, "normalReleaseCPrimeRequired": True},
+        "protectedJobAccess": copy.deepcopy(signer_access_interface),
+        "revocation": {"localRevocationPolicyAuthoritative": True, "githubPersistentVerificationAfterKeyRemovalAcknowledged": True, "providerVerifiedHistoricalCommitDoesNotOverrideCurrentRevocation": True},
+        "privateMaterial": {"providerRequestAllowed": False, "evidenceAllowed": False, "digestAllowed": False},
+        "providerEvidenceKey": provider_evidence_keys["SIGNING_KEY_REGISTRATION_AND_READBACK"],
     }
     provider_authority_boundary = {
         "normalRefUpdateAuthority": "SOLE_CATALOG_SPECIFIC_WRITER_APP_VIA_PROTECTED_RELEASE_JOB",
@@ -1839,24 +2678,38 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "requireFullLengthCommitSha": True,
         "defaultWorkflowPermissions": "read",
         "canApprovePullRequestReviews": False,
+        "forkPullRequestApprovalPolicy": GITHUB_FORK_PR_APPROVAL_POLICY,
+        "forkPullRequestApprovalSemantics": {"goal": "AUTOMATIC_UNTRUSTED_READ_ONLY_FORK_VALIDATION_WHERE_PROVIDER_PERMITS", "leastRestrictivePinnedOpenApiEnum": True, "neverRequireApprovalEnumAvailable": False, "newGitHubAccountsMayStillRequireMaintainerApproval": True, "providerAntiAbuseBehaviorNotTrustAuthorization": True},
         "forkPullRequests": {"writeTokenAvailable": False, "secretsAvailable": False},
         "unlistedActionAllowed": False,
+        "providerRequestBodies": {
+            "permissions": {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True},
+            "selectedActions": {"github_owned_allowed": False, "verified_allowed": False, "patterns_allowed": all_actions},
+            "workflowPermissions": {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": False},
+            "forkPullRequestApproval": {"approval_policy": GITHUB_FORK_PR_APPROVAL_POLICY},
+        },
+        "expectedReadbackProjection": {"enabled": True, "allowedActions": "selected", "shaPinningRequired": True, "githubOwnedAllowed": False, "verifiedAllowed": False, "patternsAllowed": all_actions, "defaultWorkflowPermissions": "read", "canApprovePullRequestReviews": False, "forkPullRequestApprovalPolicy": GITHUB_FORK_PR_APPROVAL_POLICY},
     }
     classic_baseline = {"state": "PRESENT", "capturedConfigurationSource": GITHUB_GOVERNANCE_BASELINE_PATH, "requiredCheckContext": "validate"} if catalog_id == "rust" else {"state": "ABSENT", "capturedConfigurationSource": GITHUB_GOVERNANCE_BASELINE_PATH, "observedHttpStatus": 404}
     classic_transition = {
         "baseline": classic_baseline,
         "targetFinalState": "ABSENT",
-        "mutation": "REMOVE_ONLY_AFTER_ACTIVE_RULESETS_AND_EFFECTIVE_MAIN_READBACK" if catalog_id == "rust" else "CONFIRM_ABSENT_AFTER_ACTIVE_RULESETS_AND_EFFECTIVE_MAIN_READBACK",
+        "stateMachineSubsequence": ["S3_BOOTSTRAP_B_SIGNED_AND_DUAL_VERIFIED", "S4_INVARIANT_AND_BOOTSTRAP_ADMISSION_ACTIVE", "S5_CLASSIC_PROTECTION_TRANSITION_COMPLETE"],
+        "mutation": "REMOVE_ONLY_AFTER_INVARIANT_BOOTSTRAP_ADMISSION_AND_EFFECTIVE_RULES_READBACK" if catalog_id == "rust" else "CONFIRM_ABSENT_AFTER_INVARIANT_BOOTSTRAP_ADMISSION_AND_EFFECTIVE_RULES_READBACK",
         "orderedSteps": [
-            {"order": 1, "action": "CAPTURE_FRESH_PRE_D2_SOURCE_SETTINGS_WORKFLOWS", "evidenceKey": pre_mutation_capture_key},
-            {"order": 2, "action": "INSTALL_AND_READ_BACK_ADMISSION_RULESET_ACTIVE", "evidenceKey": provider_evidence_keys["ADMISSION_RULESET_ID_AND_READBACK"]},
-            {"order": 3, "action": "INSTALL_AND_READ_BACK_INVARIANT_RULESET_ACTIVE", "evidenceKey": provider_evidence_keys["INVARIANT_RULESET_ID_AND_READBACK"]},
-            {"order": 4, "action": "READ_BACK_EFFECTIVE_MAIN_RULES_AND_PROVE_SOLE_WRITER_PLUS_INVARIANTS", "evidenceKey": effective_rules_key},
+            {"order": 1, "action": "CAPTURE_FRESH_PRE_D2_SOURCE_SETTINGS_WORKFLOWS_AND_PROVE_MAIN_EQUALS_A", "evidenceKey": pre_mutation_capture_key},
+            {"order": 2, "action": "INSTALL_AND_READ_BACK_BOOTSTRAP_ADMISSION_RULESET", "evidenceKey": provider_evidence_keys["ADMISSION_RULESET_ID_AND_READBACK"]},
+            {"order": 3, "action": "INSTALL_AND_READ_BACK_NON_BYPASSABLE_INVARIANT_RULESET", "evidenceKey": provider_evidence_keys["INVARIANT_RULESET_ID_AND_READBACK"]},
+            {"order": 4, "action": "READ_BACK_EFFECTIVE_MAIN_RULES_AND_PROVE_SOLE_APP_BYPASS_PLUS_INVARIANTS", "evidenceKey": effective_rules_key},
             {"order": 5, "action": "REMOVE_CLASSIC_PROTECTION" if catalog_id == "rust" else "CONFIRM_CLASSIC_PROTECTION_ABSENT", "evidenceKey": provider_evidence_keys["CLASSIC_BRANCH_PROTECTION_FINAL_READBACK"]},
-            {"order": 6, "action": "REPEAT_EFFECTIVE_MAIN_RULES_READBACK", "evidenceKey": effective_rules_key},
+            {"order": 6, "action": "READ_BACK_CLASSIC_PROTECTION_ABSENCE", "evidenceKey": provider_evidence_keys["CLASSIC_BRANCH_PROTECTION_FINAL_READBACK"]},
+            {"order": 7, "action": "READ_BACK_EXACT_ADMISSION_AND_INVARIANT_RULESET_IDS_AND_FORMS", "evidenceKeys": [provider_evidence_keys["ADMISSION_RULESET_ID_AND_READBACK"], provider_evidence_keys["INVARIANT_RULESET_ID_AND_READBACK"]]},
+            {"order": 8, "action": "REPEAT_EFFECTIVE_MAIN_RULES_PROOF_WITHOUT_GUARD_GAP", "evidenceKey": effective_rules_key},
+            {"order": 9, "action": "PROVE_MAIN_STILL_EQUALS_FRESH_BASELINE_A", "evidenceKey": pre_mutation_capture_key},
         ],
         "refAdvanceAllowedDuringTransition": False,
-        "failureResult": "ABORT_AND_RESTORE_CAPTURED_BASELINE_WITHOUT_REF_ADVANCE",
+        "tokenMintAllowedDuringTransition": False,
+        "failureResult": "ABORT_AND_EXECUTE_PRE_ADVANCE_ROLLBACK;MAIN_MUST_EQUAL_FRESH_BASELINE_A",
     }
     pre_d2_capture = {
         "evidenceKey": pre_mutation_capture_key,
@@ -1867,7 +2720,7 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "repositoryId": repository_id,
         "canonicalOrigin": runtime_origin,
         "transport": "HTTPS",
-        "credentialMode": "ANONYMOUS_READ_ONLY",
+        "credentialMode": "AUTHENTICATED_OPERATOR_ADMIN_WITHOUT_CREDENTIAL_CAPTURE",
         "sourceRef": source_ref,
         "sourceCommitOidStatus": "MUST_BE_CAPTURED_FRESH_NOT_COPIED_FROM_D0_BASELINE",
         "workflowPaths": [pages_path, candidate_path, release_path],
@@ -1880,12 +2733,13 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "ACTIONS_POLICY_READBACK": {"resourceType": "REPOSITORY_ACTIONS_POLICY", "repositoryId": repository_id},
         "ADMISSION_RULESET_ID_AND_READBACK": {"resourceType": "REPOSITORY_RULESET", "name": admission_name, "target": "branch"},
         "AUDIT_LOG_RECORDS": {"resourceType": "REPOSITORY_AUDIT_WINDOW", "repositoryId": repository_id, "startsAtCaptureEvidenceKey": pre_mutation_capture_key},
+        "BOOTSTRAP_COMMIT_AND_REF_ADVANCE": {"resourceType": "SIGNED_BOOTSTRAP_AND_REF_TRANSITION", "sourceRef": source_ref, "baselineA": source_tip, "bootstrapCommitBinding": "bootstrapCommitB"},
         "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": {"resourceType": "CHECK_RUN", "context": check_context, "headShaSource": "CANDIDATE_SHA"},
         "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"resourceType": "WORKFLOW", "path": candidate_path, "name": candidate_name},
         "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK": {"resourceType": "CLASSIC_BRANCH_PROTECTION", "sourceRef": source_ref, "targetState": "ABSENT"},
         "D2_PRE_MUTATION_CAPTURE": {"resourceType": "D2_PRE_MUTATION_CAPTURE", "repositoryId": repository_id, "sourceRef": source_ref},
         "EFFECTIVE_MAIN_RULES_READBACK": {"resourceType": "EFFECTIVE_BRANCH_RULES", "sourceRef": source_ref},
-        "FIRST_BOOTSTRAP_RUN_ID": {"resourceType": "WORKFLOW_BOOTSTRAP_RUN", "workflowPath": release_path, "sourceRef": source_ref},
+        "FIRST_NORMAL_RELEASE_RUN": {"resourceType": "TRUSTED_NORMAL_RELEASE_RUN", "workflowPath": release_path, "trustedWorkflowCommitBinding": "bootstrapCommitB", "sourceRef": source_ref},
         "INVARIANT_RULESET_ID_AND_READBACK": {"resourceType": "REPOSITORY_RULESET", "name": invariant_name, "target": "branch"},
         "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK": {"resourceType": "WORKFLOW", "path": pages_path, "name": pages_name},
         "PROTECTED_ENVIRONMENT_ID_AND_READBACK": {"resourceType": "DEPLOYMENT_ENVIRONMENT", "name": environment_name},
@@ -1893,6 +2747,7 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "REF_UPDATE_AND_BYPASS_AUDIT": {"resourceType": "GIT_REF_UPDATE", "sourceRef": source_ref, "actorSlug": writer_slug},
         "RELEASE_APP_INSTALLATION_ID_AND_READBACK": {"resourceType": "GITHUB_APP_INSTALLATION", "appSlug": writer_slug, "repositoryId": repository_id},
         "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"resourceType": "WORKFLOW", "path": release_path, "name": release_name},
+        "SIGNING_KEY_REGISTRATION_AND_READBACK": {"resourceType": "GITHUB_USER_SSH_SIGNING_KEY", "authorityDesignId": signing_design_id, "githubLoginBinding": "signerGithubLogin", "publicKeyBinding": "signerSshEd25519PublicKey"},
         "TRUSTED_SURFACE_TREE_READBACK": {"resourceType": "GIT_TRUSTED_SURFACE", "sourceRef": source_ref, "comparisonBaseCommitOid": source_tip},
     }
     resource_selectors = {kind: {"repositoryId": repository_id, **selector} for kind, selector in resource_selectors.items()}
@@ -1900,12 +2755,13 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "ACTIONS_POLICY_READBACK": actions,
         "ADMISSION_RULESET_ID_AND_READBACK": admission_ruleset,
         "AUDIT_LOG_RECORDS": {"repositoryId": repository_id, "startsAtCaptureEvidenceKey": pre_mutation_capture_key, "requiredActions": ["ACTIONS_POLICY_CHANGE", "APP_INSTALLATION_CHANGE", "BRANCH_PROTECTION_CHANGE", "ENVIRONMENT_CHANGE", "REF_UPDATE", "RULESET_CHANGE", "WORKFLOW_DISPATCH"]},
+        "BOOTSTRAP_COMMIT_AND_REF_ADVANCE": {"sourceRef": source_ref, "baselineA": source_tip, "bootstrapB": {"soleParent": "BASELINE_A", "tree": "EXACT_FROZEN_BOOTSTRAP_TREE", "signature": "SSH_ED25519_D0_B04_CATALOG_SPECIFIC", "localVerification": "GIT_VERIFY_COMMIT_RAW_WITH_FROZEN_ALLOWED_SIGNERS_AND_EXACT_FINGERPRINT", "providerVerification": {"verified": True, "reason": GITHUB_VERIFIED_COMMIT_REASON, "verifiedAtRequired": True}, "signingIdentityEvidenceKey": signing_key_evidence_key}, "refUpdate": {"actor": "EXACT_RELEASE_APP_INSTALLATION", "force": False, "preUpdateOid": "BASELINE_A", "postUpdateOid": "BOOTSTRAP_COMMIT_B"}},
         "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": {"check": candidate_ci["check"], "workflow": {"path": candidate_path, "name": candidate_name, "contentSha256": candidate_digest}},
         "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"path": candidate_path, "name": candidate_name, "contentSha256": candidate_digest, "trigger": candidate_ci["trigger"], "permissions": permissions_candidate},
         "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK": {"sourceRef": source_ref, "targetFinalState": "ABSENT", "transition": classic_transition},
         "D2_PRE_MUTATION_CAPTURE": pre_d2_capture,
         "EFFECTIVE_MAIN_RULES_READBACK": {"sourceRef": source_ref, "admission": admission_ruleset, "invariants": invariant_ruleset, "classicFinalState": "ABSENT"},
-        "FIRST_BOOTSTRAP_RUN_ID": {"releaseWorkflowPath": release_path, "sourceRef": source_ref, "signedCommit": release_job["signedCommit"], "refUpdate": release_job["refUpdate"], "freshCaptureEvidenceKey": pre_mutation_capture_key},
+        "FIRST_NORMAL_RELEASE_RUN": {"releaseWorkflowPath": release_path, "trustedWorkflowCommit": "BOOTSTRAP_COMMIT_B", "candidateTreeCommit": "C0_UNTRUSTED_DATA_ONLY", "signedReleaseCommit": "C_PRIME_TREE_EQUALS_C0_SOLE_PARENT_B", "sourceRef": source_ref, "environment": environment, "writerToken": writer["token"], "signerAccess": signer_access_interface, "signedCommit": release_job["signedCommit"], "refUpdate": release_job["refUpdate"], "freshCaptureEvidenceKey": pre_mutation_capture_key},
         "INVARIANT_RULESET_ID_AND_READBACK": invariant_ruleset,
         "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK": {"path": pages_path, "name": pages_name, "contentSha256": pages_digest, "triggers": pages_workflow["triggers"], "jobs": pages_workflow["jobs"]},
         "PROTECTED_ENVIRONMENT_ID_AND_READBACK": environment,
@@ -1913,8 +2769,10 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "REF_UPDATE_AND_BYPASS_AUDIT": {"refUpdate": release_job["refUpdate"], "writer": {"slug": writer_slug, "installation": writer["installation"]}, "admissionBypass": writer["admissionBypass"]},
         "RELEASE_APP_INSTALLATION_ID_AND_READBACK": {"slug": writer_slug, "installation": writer["installation"], "installedPermissions": writer["installedPermissions"], "token": writer["token"]},
         "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"path": release_path, "name": release_name, "contentSha256": release_digest, "triggers": release_workflow["triggers"], "jobPermissions": {key: value["permissions"] for key, value in release_workflow["jobs"].items()}, "releaseAuthorityConsumers": release_authority_consumers},
+        "SIGNING_KEY_REGISTRATION_AND_READBACK": signing_identity,
         "TRUSTED_SURFACE_TREE_READBACK": trusted_surface,
     }
+    provider_contract = github_provider_contract(catalog_id, repository, repository_id, source_tip, source_ref, source_branch, candidate_path, release_path, pages_path, candidate_name, release_name, pages_name, check_context, environment_name, reviewer, dispatcher, writer_slug, admission_ruleset, invariant_ruleset, signing_identity, actions, pre_mutation_capture_key, signing_key_evidence_key, bootstrap_evidence_key, normal_release_evidence_key)
     provider_evidence = [
         {
             "evidenceKey": provider_evidence_keys[kind],
@@ -1934,33 +2792,15 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         }
         for kind in GITHUB_PROVIDER_EVIDENCE_KINDS
     ]
-    no_advance_operations = [
-        {"order": 1, "action": "DISABLE_APP_TOKEN_MINTING", "target": writer_slug, "expectedState": "DISABLED"},
-        {"order": 2, "action": "DISABLE_RELEASE_WORKFLOW", "target": release_path, "expectedState": "DISABLED"},
-        {"order": 3, "action": "RESTORE_ACTIONS_POLICY_FROM_FRESH_CAPTURE", "target": repository, "expectedState": "CAPTURE_MATCH"},
-        {"order": 4, "action": "RESTORE_ADMISSION_RULESET_FROM_FRESH_CAPTURE", "target": admission_name, "expectedState": "CAPTURE_MATCH"},
-        {"order": 5, "action": "RESTORE_INVARIANT_RULESET_FROM_FRESH_CAPTURE", "target": invariant_name, "expectedState": "CAPTURE_MATCH"},
-        {"order": 6, "action": "RESTORE_CLASSIC_BRANCH_PROTECTION_FROM_FRESH_CAPTURE", "target": source_ref, "expectedState": classic_baseline["state"]},
-        {"order": 7, "action": "RESTORE_ENVIRONMENT_AND_APP_FROM_FRESH_CAPTURE", "target": repository, "expectedState": "CAPTURE_MATCH"},
-        {"order": 8, "action": "VERIFY_SOURCE_REF_EQUALS_FRESH_CAPTURE", "target": source_ref, "expectedStateFrom": {"evidenceKey": pre_mutation_capture_key, "field": "sourceCommitOid"}},
-        {"order": 9, "action": "READ_BACK_SETTINGS_EFFECTIVE_RULES_AND_AUDIT", "target": repository, "expectedState": "PASS"},
-    ]
-    advanced_operations = [
-        {"order": 1, "action": "DISABLE_APP_TOKEN_MINTING", "target": writer_slug, "expectedState": "DISABLED"},
-        {"order": 2, "action": "DISABLE_RELEASE_WORKFLOW", "target": release_path, "expectedState": "DISABLED"},
-        {"order": 3, "action": "PRESERVE_INVARIANT_RULESET", "target": invariant_name, "expectedState": "ACTIVE"},
-        {"order": 4, "action": "PRESERVE_ADMISSION_RULESET", "target": admission_name, "expectedState": "ACTIVE"},
-        {"order": 5, "action": "FREEZE_SOURCE_REF_WRITES", "target": repository, "expectedState": "FROZEN"},
-        {"order": 6, "action": "VERIFY_NO_HISTORY_REWRITE_FROM_FRESH_CAPTURE", "target": source_ref, "expectedStateFrom": {"evidenceKey": pre_mutation_capture_key, "field": "sourceCommitOid"}},
-        {"order": 7, "action": "CAPTURE_READBACK_EFFECTIVE_RULES_AND_AUDIT", "target": repository, "expectedState": "PASS"},
-        {"order": 8, "action": "REQUIRE_SEPARATE_INCIDENT_RECOVERY", "target": repository, "expectedState": "BLOCKED"},
-    ]
     rollback = {
-        "trigger": "ANY_D2_PROVIDER_READBACK_MISMATCH_OR_UNEXPECTED_REF_OR_TRUSTED_SURFACE_CHANGE",
-        "preconditions": {"historicalD0BaselinePath": GITHUB_GOVERNANCE_BASELINE_PATH, "historicalD0BaselineSha256": GITHUB_GOVERNANCE_BASELINE_SHA256, "sourceRef": source_ref, "freshCaptureEvidenceKey": pre_mutation_capture_key, "freshCaptureSourceTipField": "sourceCommitOid", "freshCaptureRequired": True, "historicalD0TipMaySubstituteForFreshCapture": False},
-        "ifSourceRefUnchanged": {"condition": "SOURCE_REF_EQUALS_FRESH_CAPTURE_SOURCE_COMMIT_OID", "operations": no_advance_operations},
-        "ifSourceRefAdvanced": {"condition": "SOURCE_REF_DIFFERS_FROM_FRESH_CAPTURE_SOURCE_COMMIT_OID", "operations": advanced_operations},
-        "postconditions": {"sourceHistoryRewritten": False, "writerDisabledUntilReview": True, "settingsReadbackRequired": True, "effectiveMainRulesReadbackRequired": True, "auditEvidenceRequired": True, "operatorReviewRequired": True},
+        "schema": "pkgre-d0-github-state-dependent-rollback-v2",
+        "trigger": "ANY_PROVIDER_READBACK_MISMATCH_UNEXPECTED_REF_CHANGE_OR_TRUSTED_SURFACE_CHANGE",
+        "freshCapture": {"evidenceKey": pre_mutation_capture_key, "sourceTipField": "sourceCommitOid", "required": True, "historicalD0BaselineMaySubstitute": False},
+        "stateMachineRollback": copy.deepcopy(provider_contract["bootstrapStateMachine"]["rollback"]),
+        "preAdvancePostcondition": "FRESH_GET_MAIN_REF_EQUALS_BASELINE_A;NO_REF_MUTATION;EXACT_PRE_CAPTURE_PROVIDER_STATE_RESTORED;EVERY_ACTION_AND_SKIP_EVIDENCED",
+        "postAdvancePostcondition": "EXACT_B_OR_C_PRIME_CLASSIFIED;NO_HISTORY_REWRITE;WRITES_FROZEN;EXACT_ADMISSION_FORM_CLASSIFIED_AND_PRESERVED;ONLY_ACTUALLY_CREATED_COMMITS_AND_AUDIT_EVIDENCE_RETAINED;NEW_SIGNED_FORWARD_RECOVERY_CEREMONY_REQUIRED",
+        "unknownRefPostcondition": "EVERY_REF_MUTATION_PROHIBITED;KNOWN_CREDENTIALS_REVOKED_OR_BLOCKED;PROVIDER_AND_AUDIT_EVIDENCE_PRESERVED;SEPARATE_INCIDENT_HANDLING_REQUIRED",
+        "operatorReviewRequired": True,
     }
     return {
         "catalogId": catalog_id,
@@ -1983,6 +2823,7 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "codeowners": codeowners,
         "actions": actions,
         "providerAssignedEvidence": provider_evidence,
+        "providerContract": provider_contract,
         "rollback": rollback,
     }
 
@@ -2012,7 +2853,7 @@ def validate_b03_payloads(results: list[dict[str, Any]], verification_time: date
     content_digests: list[tuple[str, str]] = []
     evidence_keys: list[tuple[str, str]] = []
     projection_digests: list[tuple[str, str]] = []
-    catalog_keys = {"catalogId", "designId", "repository", "repositoryId", "sourceAuthority", "sourceTipAtD0Baseline", "sourceTreeOidAtD0Baseline", "preD2MutationCapture", "candidateCI", "releaseWorkflow", "pagesWorkflow", "trustedSurface", "environment", "writer", "rulesets", "providerAuthorityBoundary", "classicBranchProtectionTransition", "codeowners", "actions", "providerAssignedEvidence", "rollback"}
+    catalog_keys = {"catalogId", "designId", "repository", "repositoryId", "sourceAuthority", "sourceTipAtD0Baseline", "sourceTreeOidAtD0Baseline", "preD2MutationCapture", "candidateCI", "releaseWorkflow", "pagesWorkflow", "trustedSurface", "environment", "writer", "rulesets", "providerAuthorityBoundary", "classicBranchProtectionTransition", "codeowners", "actions", "providerAssignedEvidence", "providerContract", "rollback"}
     for index, (catalog_id, repository, runtime_origin) in enumerate(specifications):
         row_label = f"{label}.catalogs[{index}]"
         catalog = obj(catalogs[index], row_label)
@@ -2029,11 +2870,11 @@ def validate_b03_payloads(results: list[dict[str, Any]], verification_time: date
         exact_keys(dispatcher_row, {"type", "login"}, f"{row_label}.releaseWorkflow.dispatchers[0]")
         dispatcher = github_login(dispatcher_row["login"], f"{row_label}.releaseWorkflow.dispatchers[0].login")
         environment = obj(catalog["environment"], f"{row_label}.environment")
-        exact_keys(environment, {"name", "reviewers", "requiredReviewerApprovals", "preventSelfReview", "canAdminsBypass", "branchPolicy", "secretsAvailableOnlyAfterApproval"}, f"{row_label}.environment")
+        exact_keys(environment, {"name", "reviewers", "requiredReviewerApprovals", "preventSelfReview", "providerCreateOrUpdateRequestBody", "providerBranchPolicyCreateRequestBody", "expectedRestReadbackProjection", "proceduralReadback", "secretsAvailableOnlyAfterApproval"}, f"{row_label}.environment")
         reviewers = arr(environment["reviewers"], f"{row_label}.environment.reviewers")
         require(len(reviewers) == 1, f"{row_label}: exact single environment reviewer required")
         reviewer_row = obj(reviewers[0], f"{row_label}.environment.reviewers[0]")
-        exact_keys(reviewer_row, {"type", "login", "providerIdStatus"}, f"{row_label}.environment.reviewers[0]")
+        exact_keys(reviewer_row, {"type", "login", "providerIdBinding"}, f"{row_label}.environment.reviewers[0]")
         reviewer = github_login(reviewer_row["login"], f"{row_label}.environment.reviewers[0].login")
         writer = obj(catalog["writer"], f"{row_label}.writer")
         writer_slug = security_identifier(writer.get("slug"), f"{row_label}.writer.slug")
