@@ -803,6 +803,41 @@ class GateCoreTests(unittest.TestCase):
         state = fixture.commit("state")
         return evidence, state
 
+    def test_draft_state_emits_or_exclusively_creates_only_private_draft(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            expected = GATE.initial_gate_state(GATE.GateConfig(repositories=(fixture.expected,)))
+            emitted = GATE.draft_gate_state(fixture.repository, config=GATE.GateConfig(repositories=(fixture.expected,)), environment=fixture.environment)
+            self.assertEqual(emitted, expected)
+            self.assertFalse((fixture.repository / GATE.GATE_STATE_PATH).exists())
+            self.assertFalse((fixture.repository / ".git" / "pkgre-gates").exists())
+            report = GATE.draft_gate_state(fixture.repository, write_external=True, config=GATE.GateConfig(repositories=(fixture.expected,)), environment=fixture.environment)
+            draft_path = fixture.repository / report["artifact"]["path"]
+            self.assertEqual(report, {
+                "schema": "pkgre-d0-state-draft-write-v1",
+                "artifact": {"path": f".git/pkgre-gates/{GATE.D0_STATE_DRAFT_NAME}", "sha256": GATE.sha256(GATE.canonical_json(expected))},
+                "d0EvidenceVerdict": "BLOCKED",
+                "d1Authorized": False,
+                "trackedGateStateWritten": False,
+            })
+            self.assertEqual(draft_path.read_bytes(), GATE.canonical_json(expected))
+            self.assertEqual(stat.S_IMODE(draft_path.lstat().st_mode), 0o600)
+            self.assertFalse((fixture.repository / GATE.GATE_STATE_PATH).exists())
+            self.assertRejected(lambda: GATE.draft_gate_state(fixture.repository, write_external=True, config=GATE.GateConfig(repositories=(fixture.expected,)), environment=fixture.environment), "refusing to overwrite")
+        finally:
+            temporary.cleanup()
+
+    def test_draft_state_cli_stdout_is_canonical_and_nonmutating(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            process = subprocess.run([sys.executable, str(GATE_PATH), "draft-state", "--repo", str(fixture.repository)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            self.assertEqual(process.returncode, 0, process.stderr.decode(errors="replace"))
+            self.assertEqual(process.stdout, GATE.canonical_json(GATE.initial_gate_state()))
+            self.assertFalse((fixture.repository / GATE.GATE_STATE_PATH).exists())
+            self.assertFalse((fixture.repository / ".git" / "pkgre-gates").exists())
+        finally:
+            temporary.cleanup()
+
     def test_external_gate_writer_creates_private_file_and_refuses_overwrite(self) -> None:
         temporary, fixture = self.temporary_fixture()
         try:

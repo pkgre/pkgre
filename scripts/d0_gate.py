@@ -27,6 +27,7 @@ from urllib.parse import urlsplit
 SCHEMA = "pkgre-d0-gate-state-v2"
 AGGREGATE_PATH = "evidence/d0-basis-inventory-2026-08-26.md"
 GATE_STATE_PATH = "evidence/d0-gate-state-2026-08-26.json"
+D0_STATE_DRAFT_NAME = "d0-state-draft.json"
 HISTORICAL_AGGREGATE_COMMIT = "5b7eb0f201dd9ea2a230d5dcefb6d085294a0cbf"
 HISTORICAL_AGGREGATE_SHA256 = "43279e19d0173fbf62096142238d61d2278de548fdad17f07646253e2adbefdd"
 HEX40_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -4961,14 +4962,37 @@ def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt
     }
 
 
+def draft_gate_state(repo_root: Path, *, write_external: bool = False, config: GateConfig = PRODUCTION_CONFIG, git_runner: GitRunner = default_git_runner, environment: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Return the canonical blocked draft, or create its fixed private external artifact."""
+    state = initial_gate_state(config)
+    if not write_external:
+        return state
+    repo = repo_root.resolve()
+    ops = GitOps(git_runner, environment)
+    raw = canonical_json(state)
+    path = create_external_gate_file(ops, repo, D0_STATE_DRAFT_NAME, raw, "D0 state draft", MAX_JSON_BYTES)
+    return {
+        "schema": "pkgre-d0-state-draft-write-v1",
+        "artifact": {"path": path.relative_to(repo).as_posix(), "sha256": sha256(raw)},
+        "d0EvidenceVerdict": "BLOCKED",
+        "d1Authorized": False,
+        "trackedGateStateWritten": False,
+    }
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="pkgre D0 closure security tooling")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    draft_parser = subparsers.add_parser("draft-state", help="emit the canonical blocked D0 draft without writing tracked state")
+    draft_parser.add_argument("--repo", type=Path, default=Path.cwd(), help="direct Git worktree root (default: current directory)")
+    draft_parser.add_argument("--write-external", action="store_true", help=f"exclusively create .git/pkgre-gates/{D0_STATE_DRAFT_NAME} instead of emitting the draft")
     openapi_parser = subparsers.add_parser("audit-github-openapi", help="audit frozen D0 GitHub contracts against the exact pinned OpenAPI document")
     openapi_parser.add_argument("document", type=Path, help="path to the exact pinned api.github.com OpenAPI JSON document")
     namespace = parser.parse_args(arguments)
     try:
-        if namespace.command == "audit-github-openapi":
+        if namespace.command == "draft-state":
+            result = draft_gate_state(namespace.repo, write_external=namespace.write_external)
+        elif namespace.command == "audit-github-openapi":
             result = audit_pinned_github_openapi(namespace.document)
         else:
             parser.error(f"unsupported command: {namespace.command}")
