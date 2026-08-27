@@ -10,6 +10,7 @@ import copy
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import shlex
@@ -84,6 +85,11 @@ GITHUB_REST_ACCEPT = "application/vnd.github+json"
 GITHUB_REST_BASE = "https://api.github.com"
 GITHUB_REST_OPENAPI_COMMIT = "7f6b9c117d7e720cb8dcbd6e650a20823f4b6f55"
 GITHUB_REST_OPENAPI_SHA256 = "1d25fa69c37ecff6f515f592e1e178b6268adb09ec635177578f5c394ddef355"
+GITHUB_REST_OPENAPI_DOCUMENT = "descriptions/api.github.com/api.github.com.json"
+GITHUB_REST_OPENAPI_VERSION = "1.1.4"
+GITHUB_OPENAPI_AUDIT_SCHEMA = "pkgre-d0-github-openapi-audit-v1"
+GITHUB_OPENAPI_AUDIT_SCOPE = {"document": "EXACT_SHA256_PINNED_GITHUB_OPENAPI_DOCUMENT", "dialect": "FAIL_CLOSED_SECURITY_RELEVANT_OPENAPI_3_0_SUBSET", "parameters": "CONTRACT_PATH_QUERY_SERIALIZATION_SCHEMA_WITNESSES_AND_NO_OTHER_REQUIRED_LOCATIONS", "requestBodies": "CONCRETE_TYPED_REPRESENTATIVE_SCHEMA_WITNESS_OR_FRESH_CAPTURE_RECONSTRUCTION_CONTRACT", "responseBindings": "JSON_POINTER_AND_TYPE_SCHEMA_WITNESS_NOT_RUNTIME_VALUE_VALIDATION", "pinnedClaims": "EXACT_CONFIGURED_OPERATION_SET_OPERATION_ID_SUMMARY_APP_ELIGIBILITY_STATUS", "completeOpenApiValidation": False}
+GITHUB_OPENAPI_REQUIRED_PINNED_CLAIMS = {"rust": frozenset({"list-user-installation-repositories"}), "js": frozenset({"list-user-installation-repositories"})}
 GITHUB_PROVIDER_PROJECTION_DOMAIN = "pkgre-d0-github-provider-projection-v2"
 GITHUB_VERIFIED_COMMIT_REASON = "valid"
 GITHUB_FORK_PR_APPROVAL_POLICY = "first_time_contributors_new_to_github"
@@ -2054,6 +2060,8 @@ def github_provider_contract(catalog_id: str, repository: str, repository_id: in
         {"name": "preCaptureForkPrApprovalPolicyRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-fork-pr-approval-policy", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
         {"name": "preCaptureClassicProtectionRequestBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "get-classic-branch-protection", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
     ]
+    if catalog_id == "js":
+        bindings = [binding for binding in bindings if binding["name"] != "preCaptureClassicProtectionRequestBody"]
     raw_capture = {"schema": "pkgre-d0-github-raw-capture-envelope-v1", "artifactRoot": f"evidence/d2-github/{catalog_id}/provider-captures", "manifestCanonicalization": "UTF8_SORTED_KEYS_COMPACT_WITH_SINGLE_TRAILING_LF", "requestFields": ["contractOperationId", "sequence", "requestStartedAtUtc", "requestCompletedAtUtc", "authProfileId", "authenticatedActorProviderId", "method", "absoluteUrl", "path", "orderedQuery", "headersWithoutAuthorization", "requestBodyLength", "requestBodySha256"], "responseFields": ["httpStatus", "responseStartedAtUtc", "responseCompletedAtUtc", "xGitHubRequestId", "xGitHubApiVersionSelected", "link", "etag", "rateLimitLimit", "rateLimitRemaining", "rateLimitReset", "responseBodyLength", "responseBodySha256", "rawBodyArtifactPath", "projectionArtifactPath", "projectionSha256", "pageIndex", "previousPageResponseSha256", "nextLink"], "requiredHeaders": {"request": ["Accept", "X-GitHub-Api-Version", "User-Agent"], "response": ["X-GitHub-Request-Id"]}, "errorPolicy": "CAPTURE_NONSECRET_ERROR_BODY_AND_HEADERS_THEN_ABORT", "secretPolicy": {"authorizationHeader": "NEVER_CAPTURE", "privateKeys": "NEVER_CAPTURE_OR_HASH", "secretValues": "NEVER_CAPTURE_OR_HASH", "secretCiphertexts": "NEVER_CAPTURE_OR_HASH", "secretResponseBodies": "NEVER_PERSIST_OR_HASH", "redactionMarkers": "CAPTURE_FIELD_NAME_AND_REASON_ONLY"}}
     projections = {"schema": "pkgre-d0-github-provider-projection-contract-v2", "domain": GITHUB_PROVIDER_PROJECTION_DOMAIN, "canonicalization": "UTF8_SORTED_KEYS_COMPACT_WITH_SINGLE_TRAILING_LF", "digestFormula": "SHA256(ASCII_DOMAIN_NUL_KIND_NUL_CANONICAL_JSON)", "rawProviderAdditiveFields": "ALLOWED_AND_IGNORED_ONLY_OUTSIDE_ALLOWLIST", "projectedRelevantFields": "CLOSED_WORLD_EXACT_MATCH", "arraySemantics": {"providerSets": "UNORDERED_EXACT_SET_SORT_BY_CANONICAL_PROJECTED_JSON", "orderedSequences": "EXPLICIT_OPERATION_SCHEMA_ONLY", "duplicates": "REJECT_BEFORE_CANONICALIZATION", "rawAdditiveObjectFields": "IGNORE_ONLY_OUTSIDE_PROJECTED_ALLOWLIST"}, "unorderedProviderSetOperations": ["list-authenticated-ssh-signing-keys", "list-public-ssh-signing-keys-for-d0-b04-user", "list-environments", "list-environment-branch-policies", "list-environment-secrets", "list-rulesets", "list-effective-main-rules", "list-organization-app-installations", "list-user-installation-repositories", "list-installation-repositories", "list-bootstrap-token-repositories", "list-release-token-repositories", "list-workflows", "list-open-candidate-pull-requests", "list-candidate-pull-request-reviews", "list-candidate-pull-request-files", "list-candidate-pull-request-commits", "list-candidate-check-runs", "list-release-workflow-runs", "get-release-run-jobs", "list-release-deployments", "list-release-deployment-statuses"], "reject": ["MISSING_REQUIRED_FIELD", "WRONG_JSON_TYPE", "UNKNOWN_ENUM", "DUPLICATE_ID_NAME_RULE_OR_BINDING", "AMBIGUOUS_MULTIPLE_MATCHING_RESOURCE", "INCOMPLETE_OR_UNBOUND_PAGINATION", "CROSS_RESOURCE_ID_MISMATCH", "WRONG_REPOSITORY_ID_OR_FULL_NAME", "STALE_REF_OID", "MISSING_PROVIDER_REQUEST_ID", "MISSING_API_VERSION", "RAW_BODY_DIGEST_MISMATCH", "PROJECTION_DIGEST_MISMATCH"], "contentReadback": {"bindGitBlobOid": True, "decodeBase64Strictly": True, "bindDecodedLength": True, "bindDecodedSha256": True, "rejectSymlinkSubmoduleOrDirectory": True}, "resourceSetRule": "EXACTLY_ONE_SELECTOR_MATCH_UNLESS_OPERATION_EXPLICITLY_PROJECTS_A_COMPLETE_SET"}
     page = [{"name": "per_page", "value": "100"}, {"name": "page", "value": "$page"}]
@@ -2826,6 +2834,751 @@ def expected_github_catalog(catalog_id: str, repository: str, repository_id: int
         "providerContract": provider_contract,
         "rollback": rollback,
     }
+
+
+GITHUB_BINDING_REPRESENTATIVES: dict[str, Any] = {
+    "BOOLEAN": True,
+    "GITHUB_LEGACY_BASE_PERMISSION": "write",
+    "GITHUB_LOGIN": "audit-user",
+    "LOWERCASE_SHA1_40": "a" * 40,
+    "NONEMPTY_STRING": "audit-value",
+    "POSITIVE_INT64": 123,
+    "SSH_ED25519_PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC audit",
+    "SSH_SHA256_FINGERPRINT": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "UTC_TIMESTAMP": "2026-01-01T00:00:00Z",
+}
+GITHUB_OPENAPI_RESPONSE_BINDING_TYPES = frozenset({"BOOLEAN", "GITHUB_LEGACY_BASE_PERMISSION", "GITHUB_LOGIN", "LOWERCASE_SHA1_40", "POSITIVE_INT64"})
+OPENAPI_SCHEMA_TYPES = frozenset({"array", "boolean", "integer", "number", "object", "string"})
+OPENAPI_AUDITED_FORMATS = frozenset({"int32", "int64"})
+OPENAPI_SCHEMA_SUPPORTED_KEYS = frozenset({"$ref", "additionalProperties", "allOf", "anyOf", "default", "deprecated", "description", "discriminator", "enum", "example", "format", "items", "maxItems", "maxLength", "maxProperties", "maximum", "minItems", "minLength", "minimum", "nullable", "oneOf", "pattern", "properties", "readOnly", "required", "title", "type", "uniqueItems", "writeOnly", "xml"})
+
+
+def unsupported_openapi_schema_keys(schema: dict[str, Any]) -> set[str]:
+    require(all(isinstance(key, str) for key in schema), "OpenAPI schema keys must be strings")
+    return {key for key in schema if key not in OPENAPI_SCHEMA_SUPPORTED_KEYS and not key.startswith("x-")}
+
+
+def parse_openapi_json(raw: bytes, label: str) -> dict[str, Any]:
+    require(len(raw) <= MAX_ARTIFACT_BYTES, f"{label}: OpenAPI JSON exceeds {MAX_ARTIFACT_BYTES} bytes")
+    try:
+        text = raw.decode("utf-8", errors="strict")
+        value = json.loads(text, object_pairs_hook=no_duplicate_object, parse_constant=reject_json_constant)
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8", errors="strict")
+    except (UnicodeDecodeError, UnicodeEncodeError, ValueError, json.JSONDecodeError, GateVerificationError) as error:
+        raise GateVerificationError(f"invalid strict OpenAPI JSON in {label}: {error}") from error
+    require(isinstance(value, dict), f"{label}: OpenAPI document must be an object")
+    return value
+
+
+def load_pinned_github_openapi(path: Path, expected_sha256: str = GITHUB_REST_OPENAPI_SHA256) -> tuple[bytes, dict[str, Any]]:
+    require(HEX64_RE.fullmatch(expected_sha256) is not None, "pinned GitHub OpenAPI digest is invalid")
+    raw = load_regular(path, "pinned GitHub OpenAPI document", MAX_ARTIFACT_BYTES)
+    require(sha256(raw) == expected_sha256, "pinned GitHub OpenAPI digest mismatch")
+    return raw, parse_openapi_json(raw, "pinned GitHub OpenAPI document")
+
+
+class GitHubOpenApiDocument:
+    def __init__(self, document: dict[str, Any]) -> None:
+        self.document = obj(document, "GitHub OpenAPI document")
+        require(isinstance(self.document.get("openapi"), str) and self.document["openapi"].startswith("3.0."), "GitHub OpenAPI document: expected OpenAPI 3.0.x")
+        self.paths = obj(self.document.get("paths"), "GitHub OpenAPI paths")
+
+    def resolve(self, value: Any, label: str) -> Any:
+        seen: set[str] = set()
+        while isinstance(value, dict) and "$ref" in value:
+            require(set(value) == {"$ref"}, f"{label}: OpenAPI 3.0 $ref siblings are forbidden")
+            reference = nonempty(value["$ref"], f"{label}.$ref")
+            require(reference.startswith("#/"), f"{label}: only local OpenAPI references are supported")
+            require(reference not in seen, f"{label}: cyclic direct OpenAPI reference")
+            seen.add(reference)
+            current: Any = self.document
+            for raw_component in reference[2:].split("/"):
+                require(re.fullmatch(r"(?:[^~]|~[01])*", raw_component) is not None, f"{label}: invalid JSON pointer escape in $ref")
+                component = raw_component.replace("~1", "/").replace("~0", "~")
+                if isinstance(current, dict):
+                    require(component in current, f"{label}: unresolved OpenAPI reference {reference!r}")
+                    current = current[component]
+                elif isinstance(current, list):
+                    require(component.isdigit() and int(component) < len(current), f"{label}: unresolved OpenAPI reference {reference!r}")
+                    current = current[int(component)]
+                else:
+                    raise GateVerificationError(f"{label}: unresolved OpenAPI reference {reference!r}")
+            value = current
+        return value
+
+    def operation(self, contract_path: str, method: str, label: str) -> tuple[str, dict[str, Any], dict[str, str]]:
+        require(method in {"get", "post", "put", "patch", "delete"}, f"{label}: unsupported HTTP method")
+        candidates: list[tuple[int, str, dict[str, Any], dict[str, str]]] = []
+        for openapi_path, raw_path_item in self.paths.items():
+            require(isinstance(openapi_path, str), f"{label}: OpenAPI path key must be a string")
+            path_item = obj(self.resolve(raw_path_item, f"OpenAPI path {openapi_path}"), f"OpenAPI path {openapi_path}")
+            if method not in path_item:
+                continue
+            operation = obj(self.resolve(path_item[method], f"{label} OpenAPI operation"), f"{label} OpenAPI operation")
+            parameter_map = openapi_parameter_map(self, path_item, operation, label)
+            fragments = re.split(r"(\{[^{}]+\})", openapi_path)
+            parameter_names: list[str] = []
+            pattern_parts: list[str] = []
+            for fragment in fragments:
+                if fragment.startswith("{"):
+                    parameter_name = fragment[1:-1]
+                    parameter_names.append(parameter_name)
+                    parameter = parameter_map.get(("path", parameter_name), {})
+                    multi_segment = parameter.get("x-multi-segment", False)
+                    require(type(multi_segment) is bool, f"{label}: OpenAPI path parameter {parameter_name!r} has malformed x-multi-segment")
+                    pattern_parts.append("(.+?)" if multi_segment else "([^/]+)")
+                else:
+                    pattern_parts.append(re.escape(fragment))
+            require(len(parameter_names) == len(set(parameter_names)), f"{label}: duplicate OpenAPI path placeholder")
+            match = re.fullmatch("".join(pattern_parts), contract_path)
+            if match is None:
+                continue
+            parameters = dict(zip(parameter_names, match.groups(), strict=True))
+            literal_score = len(re.sub(r"\{[^{}]+\}", "", openapi_path))
+            candidates.append((literal_score, openapi_path, path_item, parameters))
+        require(candidates, f"{label}: missing OpenAPI method/path match for {method.upper()} {contract_path}")
+        best_score = max(candidate[0] for candidate in candidates)
+        best = [candidate for candidate in candidates if candidate[0] == best_score]
+        require(len(best) == 1, f"{label}: ambiguous most-specific OpenAPI method/path match for {method.upper()} {contract_path}")
+        _, openapi_path, path_item, parameters = best[0]
+        operation = obj(self.resolve(path_item[method], f"{label} OpenAPI operation"), f"{label} OpenAPI operation")
+        return openapi_path, operation, parameters
+
+
+def openapi_schema_conjunctions(document: GitHubOpenApiDocument, schema: Any, label: str) -> list[list[dict[str, Any]]]:
+    resolved = obj(document.resolve(schema, label), label)
+    unknown = unsupported_openapi_schema_keys(resolved)
+    require(not unknown, f"{label}: unsupported OpenAPI schema keywords {sorted(unknown)!r}")
+    for boolean_key in ("deprecated", "nullable", "readOnly", "writeOnly"):
+        if boolean_key in resolved:
+            require(type(resolved[boolean_key]) is bool, f"{label}.{boolean_key}: expected boolean")
+    if "type" in resolved:
+        schema_type = nonempty(resolved["type"], f"{label}.type")
+        require(schema_type in OPENAPI_SCHEMA_TYPES, f"{label}: unsupported OpenAPI schema type {schema_type!r}")
+    base = {key: value for key, value in resolved.items() if key not in {"allOf", "anyOf", "oneOf"}}
+    conjunctions: list[list[dict[str, Any]]] = [[base]]
+    if "allOf" in resolved:
+        components = arr(resolved["allOf"], f"{label}.allOf")
+        require(components, f"{label}.allOf: expected nonempty array")
+        for index, component in enumerate(components):
+            component_alternatives = openapi_schema_conjunctions(document, component, f"{label}.allOf[{index}]")
+            conjunctions = [left + right for left in conjunctions for right in component_alternatives]
+    for composition in ("oneOf", "anyOf"):
+        if composition not in resolved:
+            continue
+        alternatives = arr(resolved[composition], f"{label}.{composition}")
+        require(alternatives, f"{label}.{composition}: expected nonempty array")
+        expanded = [variant for index, alternative in enumerate(alternatives) for variant in openapi_schema_conjunctions(document, alternative, f"{label}.{composition}[{index}]")]
+        conjunctions = [left + right for left in conjunctions for right in expanded]
+    return conjunctions
+
+
+def openapi_schema_conjunction_types(conjunction: list[dict[str, Any]], label: str) -> set[str] | None:
+    allowed: set[str] | None = None
+    for index, component in enumerate(conjunction):
+        if "type" not in component:
+            continue
+        schema_type = nonempty(component["type"], f"{label}[{index}].type")
+        require(schema_type in OPENAPI_SCHEMA_TYPES, f"{label}[{index}]: unsupported OpenAPI schema type {schema_type!r}")
+        component_types = {schema_type}
+        if component.get("nullable") is True:
+            component_types.add("null")
+        allowed = component_types if allowed is None else allowed & component_types
+    return allowed
+
+
+def openapi_schema_types(document: GitHubOpenApiDocument, schema: Any, label: str) -> set[str]:
+    conjunctions = openapi_schema_conjunctions(document, schema, label)
+    alternative_types = [openapi_schema_conjunction_types(conjunction, f"{label}.alternative[{index}]") for index, conjunction in enumerate(conjunctions)]
+    if any(types is None for types in alternative_types):
+        return set()
+    return set().union(*(types for types in alternative_types if types is not None))
+
+
+def openapi_value_errors(document: GitHubOpenApiDocument, value: Any, schema: Any, label: str, direction: str = "neutral") -> list[str]:
+    require(direction in {"neutral", "request", "response"}, f"{label}: invalid OpenAPI validation direction")
+    resolved = document.resolve(schema, label)
+    if not isinstance(resolved, dict):
+        return [f"{label}: schema is not an object"]
+    unknown = unsupported_openapi_schema_keys(resolved)
+    if unknown:
+        return [f"{label}: unsupported OpenAPI schema keywords {sorted(unknown)!r}"]
+    errors: list[str] = []
+    for boolean_key in ("deprecated", "nullable", "readOnly", "writeOnly"):
+        if boolean_key in resolved and type(resolved[boolean_key]) is not bool:
+            errors.append(f"{label}.{boolean_key}: expected boolean")
+    if direction == "request" and resolved.get("readOnly") is True:
+        errors.append(f"{label}: readOnly value is forbidden in an OpenAPI request witness")
+    if direction == "response" and resolved.get("writeOnly") is True:
+        errors.append(f"{label}: writeOnly value is forbidden in an OpenAPI response witness")
+    if "discriminator" in resolved:
+        discriminator = resolved["discriminator"]
+        if not isinstance(discriminator, dict) or not isinstance(discriminator.get("propertyName"), str) or not discriminator["propertyName"]:
+            errors.append(f"{label}.discriminator: expected object with nonempty propertyName")
+        elif set(discriminator) - {"propertyName", "mapping"}:
+            errors.append(f"{label}.discriminator: unsupported fields")
+        elif "mapping" in discriminator and (not isinstance(discriminator["mapping"], dict) or any(not isinstance(key, str) or not isinstance(target, str) or not target for key, target in discriminator["mapping"].items())):
+            errors.append(f"{label}.discriminator.mapping: expected string-to-nonempty-string object")
+    if "xml" in resolved and not isinstance(resolved["xml"], dict):
+        errors.append(f"{label}.xml: expected object")
+    if "format" in resolved:
+        schema_format = resolved["format"]
+        if not isinstance(schema_format, str) or schema_format not in OPENAPI_AUDITED_FORMATS:
+            errors.append(f"{label}.format: unsupported OpenAPI format {schema_format!r}")
+        elif schema_format == "int32" and (type(value) is not int or not -(2**31) <= value < 2**31):
+            errors.append(f"{label}: int32 format violated")
+        elif schema_format == "int64" and (type(value) is not int or not -(2**63) <= value < 2**63):
+            errors.append(f"{label}: int64 format violated")
+    all_of = resolved.get("allOf", [])
+    if not isinstance(all_of, list) or ("allOf" in resolved and not all_of):
+        errors.append(f"{label}.allOf: expected nonempty array")
+        all_of = []
+    for index, component in enumerate(all_of):
+        errors.extend(openapi_value_errors(document, value, component, f"{label}.allOf[{index}]", direction))
+    for composition in ("oneOf", "anyOf"):
+        if composition not in resolved:
+            continue
+        alternatives = resolved[composition]
+        if not isinstance(alternatives, list) or not alternatives:
+            errors.append(f"{label}.{composition}: expected nonempty array")
+            continue
+        outcomes = [openapi_value_errors(document, value, alternative, f"{label}.{composition}[{index}]", direction) for index, alternative in enumerate(alternatives)]
+        matches = sum(not outcome for outcome in outcomes)
+        if (composition == "oneOf" and matches != 1) or (composition == "anyOf" and matches < 1):
+            errors.append(f"{label}: {composition} matched {matches} alternatives")
+    schema_type = resolved.get("type")
+    predicates: dict[str, bool] = {
+        "array": isinstance(value, list),
+        "boolean": type(value) is bool,
+        "integer": type(value) is int,
+        "number": (type(value) is int or type(value) is float) and not isinstance(value, bool),
+        "object": isinstance(value, dict),
+        "string": isinstance(value, str),
+    }
+    if schema_type is not None:
+        if not isinstance(schema_type, str) or not schema_type:
+            errors.append(f"{label}.type: expected nonempty string")
+        elif schema_type not in predicates:
+            errors.append(f"{label}: unsupported OpenAPI schema type {schema_type!r}")
+        elif not predicates[schema_type] and not (value is None and resolved.get("nullable") is True):
+            errors.append(f"{label}: expected {schema_type};observed={type(value).__name__}")
+            return errors
+    if "enum" in resolved:
+        enum_values = resolved["enum"]
+        if not isinstance(enum_values, list) or not enum_values:
+            errors.append(f"{label}.enum: expected nonempty array")
+        elif value not in enum_values:
+            errors.append(f"{label}: value is outside OpenAPI enum")
+    if isinstance(value, dict):
+        required = resolved.get("required", [])
+        if not isinstance(required, list) or any(not isinstance(key, str) for key in required) or len(required) != len(set(required)):
+            errors.append(f"{label}.required: expected unique string array")
+            required = []
+        missing = set(required) - set(value)
+        if missing:
+            errors.append(f"{label}: missing required properties {sorted(missing)!r}")
+        properties = resolved.get("properties", {})
+        if not isinstance(properties, dict):
+            errors.append(f"{label}.properties: expected object")
+            properties = {}
+        additional = resolved.get("additionalProperties", True)
+        for key, item in value.items():
+            if key in properties:
+                errors.extend(openapi_value_errors(document, item, properties[key], f"{label}.{key}", direction))
+            elif additional is False:
+                errors.append(f"{label}: additional property {key!r} is forbidden")
+            elif isinstance(additional, dict):
+                errors.extend(openapi_value_errors(document, item, additional, f"{label}.{key}", direction))
+            elif additional is not True:
+                errors.append(f"{label}.additionalProperties: expected boolean or schema")
+        if "maxProperties" in resolved and (type(resolved["maxProperties"]) is not int or resolved["maxProperties"] < 0 or len(value) > resolved["maxProperties"]):
+            errors.append(f"{label}: maxProperties violated")
+    if isinstance(value, list):
+        if "items" in resolved:
+            for index, item in enumerate(value):
+                errors.extend(openapi_value_errors(document, item, resolved["items"], f"{label}[{index}]", direction))
+        if "minItems" in resolved and (type(resolved["minItems"]) is not int or resolved["minItems"] < 0 or len(value) < resolved["minItems"]):
+            errors.append(f"{label}: minItems violated")
+        if "maxItems" in resolved and (type(resolved["maxItems"]) is not int or resolved["maxItems"] < 0 or len(value) > resolved["maxItems"]):
+            errors.append(f"{label}: maxItems violated")
+        if "uniqueItems" in resolved and type(resolved["uniqueItems"]) is not bool:
+            errors.append(f"{label}.uniqueItems: expected boolean")
+        if resolved.get("uniqueItems") is True:
+            try:
+                encoded = [json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) for item in value]
+            except (TypeError, ValueError) as error:
+                errors.append(f"{label}: uniqueItems witness is not strict JSON:{error}")
+            else:
+                if len(encoded) != len(set(encoded)):
+                    errors.append(f"{label}: uniqueItems violated")
+    if type(value) in {int, float}:
+        if type(value) is float and not math.isfinite(value):
+            errors.append(f"{label}: non-finite number")
+        if "minimum" in resolved:
+            minimum = resolved["minimum"]
+            if type(minimum) not in {int, float} or (type(minimum) is float and not math.isfinite(minimum)):
+                errors.append(f"{label}.minimum: expected finite number")
+            elif value < minimum:
+                errors.append(f"{label}: minimum violated")
+        if "maximum" in resolved:
+            maximum = resolved["maximum"]
+            if type(maximum) not in {int, float} or (type(maximum) is float and not math.isfinite(maximum)):
+                errors.append(f"{label}.maximum: expected finite number")
+            elif value > maximum:
+                errors.append(f"{label}: maximum violated")
+    if isinstance(value, str):
+        if "minLength" in resolved and (type(resolved["minLength"]) is not int or resolved["minLength"] < 0 or len(value) < resolved["minLength"]):
+            errors.append(f"{label}: minLength violated")
+        if "maxLength" in resolved and (type(resolved["maxLength"]) is not int or resolved["maxLength"] < 0 or len(value) > resolved["maxLength"]):
+            errors.append(f"{label}: maxLength violated")
+        if "pattern" in resolved:
+            try:
+                matches = re.search(resolved["pattern"], value) is not None
+            except (TypeError, re.error) as error:
+                errors.append(f"{label}: unsupported OpenAPI regular expression:{error}")
+            else:
+                if not matches:
+                    errors.append(f"{label}: pattern violated")
+    return errors
+
+
+def validate_openapi_schema_subset(document: GitHubOpenApiDocument, value: Any, schema: Any, label: str, direction: str = "neutral") -> None:
+    errors = openapi_value_errors(document, value, schema, label, direction)
+    if errors:
+        raise GateVerificationError(f"{label}: OpenAPI schema mismatch:{errors[0]}")
+
+
+def github_binding_registry(catalog: dict[str, Any], label: str) -> dict[str, dict[str, Any]]:
+    bindings: dict[str, dict[str, Any]] = {}
+    for index, raw_binding in enumerate(arr(catalog["providerContract"]["typedBindings"], f"{label}.typedBindings")):
+        binding = obj(raw_binding, f"{label}.typedBindings[{index}]")
+        name = nonempty(binding.get("name"), f"{label}.typedBindings[{index}].name")
+        require(name not in bindings, f"{label}: duplicate typed binding {name!r}")
+        bindings[name] = binding
+    return bindings
+
+
+def github_binding_representative(name: str, bindings: dict[str, dict[str, Any]], label: str) -> Any:
+    require(name in bindings, f"{label}: unknown typed binding {name!r}")
+    binding_type = nonempty(bindings[name].get("type"), f"{label} binding type")
+    require(binding_type in GITHUB_BINDING_REPRESENTATIVES, f"{label}: binding type {binding_type!r} has no safe audit representative")
+    return copy.deepcopy(GITHUB_BINDING_REPRESENTATIVES[binding_type])
+
+
+def substitute_github_body_bindings(value: Any, bindings: dict[str, dict[str, Any]], label: str) -> Any:
+    if isinstance(value, dict):
+        if "$binding" in value:
+            require(set(value) == {"$binding", "type"}, f"{label}: malformed whole typed binding")
+            name = nonempty(value["$binding"], f"{label}.$binding")
+            declared_type = nonempty(value["type"], f"{label}.type")
+            require(name in bindings and bindings[name].get("type") == declared_type, f"{label}: typed binding declaration mismatch for {name!r}")
+            require(declared_type != "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", f"{label}: runtime-only OpenAPI request body binding cannot be nested")
+            return github_binding_representative(name, bindings, label)
+        return {key: substitute_github_body_bindings(item, bindings, f"{label}.{key}") for key, item in value.items()}
+    if isinstance(value, list):
+        return [substitute_github_body_bindings(item, bindings, f"{label}[{index}]") for index, item in enumerate(value)]
+    return value
+
+
+def openapi_parameter_map(document: GitHubOpenApiDocument, path_item: dict[str, Any], operation: dict[str, Any], label: str) -> dict[tuple[str, str], dict[str, Any]]:
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for layer_name, layer in (("path", path_item.get("parameters", [])), ("operation", operation.get("parameters", []))):
+        rows = arr(layer, f"{label}.{layer_name}Parameters")
+        seen: set[tuple[str, str]] = set()
+        for index, raw_parameter in enumerate(rows):
+            parameter = obj(document.resolve(raw_parameter, f"{label}.{layer_name}Parameters[{index}]"), f"{label}.{layer_name}Parameters[{index}]")
+            location = nonempty(parameter.get("in"), f"{label}.{layer_name}Parameters[{index}].in")
+            require(location in {"path", "query", "header", "cookie"}, f"{label}: unsupported OpenAPI parameter location {location!r}")
+            name = nonempty(parameter.get("name"), f"{label}.{layer_name}Parameters[{index}].name")
+            key = (location, name)
+            require(key not in seen, f"{label}: duplicate {layer_name}-level OpenAPI parameter {key!r}")
+            seen.add(key)
+            merged[key] = parameter
+    return merged
+
+
+def coerce_openapi_parameter_value(document: GitHubOpenApiDocument, raw_value: Any, schema: Any, label: str) -> Any:
+    if type(raw_value) is not str:
+        validate_openapi_schema_subset(document, raw_value, schema, label)
+        return raw_value
+    schema_types = openapi_schema_types(document, schema, label)
+    candidates: list[Any] = [raw_value] if not schema_types or "string" in schema_types else []
+    if "integer" in schema_types and re.fullmatch(r"-?(?:0|[1-9][0-9]*)", raw_value):
+        candidates.append(int(raw_value))
+    if "number" in schema_types:
+        try:
+            number = float(raw_value)
+        except ValueError:
+            pass
+        else:
+            if math.isfinite(number):
+                candidates.append(number)
+    if "boolean" in schema_types and raw_value in {"true", "false"}:
+        candidates.append(raw_value == "true")
+    valid: list[Any] = []
+    for candidate in candidates:
+        if not openapi_value_errors(document, candidate, schema, label):
+            valid.append(candidate)
+    require(valid, f"{label}: serialized parameter is incompatible with OpenAPI schema")
+    distinct = {(type(candidate).__name__, repr(candidate)) for candidate in valid}
+    require(len(distinct) == 1, f"{label}: serialized parameter has ambiguous OpenAPI coercion")
+    return valid[0]
+
+
+def validate_openapi_parameter_encoding(parameter: dict[str, Any], location: str, name: str, label: str) -> None:
+    require(location in {"path", "query"}, f"{label}: unsupported OpenAPI parameter location {location!r}")
+    require("schema" in parameter and "content" not in parameter, f"{label}: unsupported OpenAPI {location} parameter encoding for {name!r}")
+    for boolean_key in ("deprecated", "required"):
+        if boolean_key in parameter:
+            require(type(parameter[boolean_key]) is bool, f"{label}: OpenAPI {location} parameter {name!r} has non-boolean {boolean_key}")
+    require("allowEmptyValue" not in parameter, f"{label}: OpenAPI {location} parameter {name!r} uses unsupported allowEmptyValue")
+    require("allowReserved" not in parameter, f"{label}: OpenAPI {location} parameter {name!r} uses unsupported allowReserved")
+    expected_style, expected_explode = ("simple", False) if location == "path" else ("form", True)
+    if "style" in parameter:
+        require(parameter["style"] == expected_style, f"{label}: OpenAPI {location} parameter {name!r} uses unsupported style")
+    if "explode" in parameter:
+        require(type(parameter["explode"]) is bool and parameter["explode"] is expected_explode, f"{label}: OpenAPI {location} parameter {name!r} uses unsupported explode")
+    if location == "path":
+        multi_segment = parameter.get("x-multi-segment", False)
+        require(type(multi_segment) is bool, f"{label}: OpenAPI path parameter {name!r} has malformed x-multi-segment")
+    else:
+        require("x-multi-segment" not in parameter, f"{label}: OpenAPI query parameter {name!r} uses unsupported x-multi-segment")
+
+
+def audit_github_openapi_parameters(document: GitHubOpenApiDocument, openapi_path: str, path_item: dict[str, Any], operation: dict[str, Any], captured_path_parameters: dict[str, str], contract_operation: dict[str, Any], bindings: dict[str, dict[str, Any]], label: str) -> int:
+    parameters = openapi_parameter_map(document, path_item, operation, label)
+    placeholders = re.findall(r"\{([^{}]+)\}", openapi_path)
+    require(set(placeholders) == set(captured_path_parameters), f"{label}: internal OpenAPI path-parameter mismatch")
+    declared_path_parameters = {name for location, name in parameters if location == "path"}
+    require(declared_path_parameters == set(placeholders), f"{label}: OpenAPI path parameter declarations do not exactly match path placeholders")
+    for (location, name), parameter in parameters.items():
+        if "required" in parameter:
+            require(type(parameter["required"]) is bool, f"{label}: OpenAPI {location} parameter {name!r} has non-boolean required")
+        if location == "path":
+            require(parameter.get("required") is True, f"{label}: OpenAPI path parameter {name!r} is not required")
+        if location in {"header", "cookie"}:
+            require(parameter.get("required") is not True, f"{label}: unsupported required OpenAPI {location} parameter {name!r}")
+    audited = 0
+    for name in placeholders:
+        key = ("path", name)
+        require(key in parameters, f"{label}: undeclared OpenAPI path parameter {name!r}")
+        parameter = parameters[key]
+        validate_openapi_parameter_encoding(parameter, "path", name, label)
+        require(parameter.get("required") is True, f"{label}: OpenAPI path parameter {name!r} is not required")
+        serialized = captured_path_parameters[name]
+        require("/" not in serialized or parameter.get("x-multi-segment") is True, f"{label}: slash-containing value for non-multi-segment OpenAPI path parameter {name!r}")
+        binding_match = re.fullmatch(r"\$binding:([A-Za-z0-9_.:-]+)", serialized)
+        require(binding_match is not None or "$binding:" not in serialized, f"{label}: embedded path binding is unsupported")
+        value = github_binding_representative(binding_match.group(1), bindings, label) if binding_match else serialized
+        coerce_openapi_parameter_value(document, value, parameter["schema"], f"{label}.path.{name}")
+        audited += 1
+    query_rows = arr(contract_operation["request"].get("queryTemplate", []), f"{label}.queryTemplate")
+    seen_query: set[str] = set()
+    for index, raw_row in enumerate(query_rows):
+        row = obj(raw_row, f"{label}.queryTemplate[{index}]")
+        require(set(row) == {"name", "value"}, f"{label}.queryTemplate[{index}]: object-key mismatch")
+        name = nonempty(row["name"], f"{label}.queryTemplate[{index}].name")
+        require(name not in seen_query, f"{label}: duplicate query parameter {name!r}")
+        seen_query.add(name)
+        key = ("query", name)
+        require(key in parameters, f"{label}: unknown OpenAPI query parameter {name!r}")
+        parameter = parameters[key]
+        validate_openapi_parameter_encoding(parameter, "query", name, label)
+        raw_value = row["value"]
+        if raw_value == "$page":
+            value: Any = 1
+        elif isinstance(raw_value, str) and re.fullmatch(r"\$binding:([A-Za-z0-9_.:-]+)", raw_value):
+            value = github_binding_representative(raw_value.split(":", 1)[1], bindings, label)
+        else:
+            require(isinstance(raw_value, str) and "$binding:" not in raw_value, f"{label}: unsupported query binding serialization")
+            value = raw_value
+        coerce_openapi_parameter_value(document, value, parameter["schema"], f"{label}.query.{name}")
+        audited += 1
+    required_query: set[str] = set()
+    for (location, name), parameter in parameters.items():
+        if location == "query" and parameter.get("required") is True:
+            validate_openapi_parameter_encoding(parameter, "query", name, label)
+            required_query.add(name)
+    require(required_query <= seen_query, f"{label}: missing required OpenAPI query parameters {sorted(required_query - seen_query)!r}")
+    return audited
+
+
+def openapi_schema_required_set(component: dict[str, Any], label: str) -> set[str]:
+    required = component.get("required", [])
+    require(isinstance(required, list) and all(isinstance(key, str) for key in required) and len(required) == len(set(required)), f"{label}.required: expected unique string array")
+    return set(required)
+
+
+def openapi_conjunction_container_compatible(conjunction: list[dict[str, Any]], container_type: str, label: str) -> bool:
+    require(all(component.get("writeOnly") is not True for component in conjunction), f"{label}: writeOnly OpenAPI response container cannot be traversed")
+    types = openapi_schema_conjunction_types(conjunction, label)
+    require(types is None or container_type in types, f"{label}: OpenAPI schema conjunction is incompatible with {container_type} traversal")
+    return types == {container_type}
+
+
+def openapi_conjunction_property(document: GitHubOpenApiDocument, conjunction: list[dict[str, Any]], segment: str, label: str) -> tuple[list[list[dict[str, Any]]], bool]:
+    container_is_definitely_object = openapi_conjunction_container_compatible(conjunction, "object", label)
+    property_schemas: list[Any] = []
+    required = False
+    for index, component in enumerate(conjunction):
+        component_label = f"{label}.component[{index}]"
+        required_set = openapi_schema_required_set(component, component_label)
+        required = required or segment in required_set
+        properties = component.get("properties", {})
+        require(isinstance(properties, dict), f"{component_label}.properties: expected object")
+        additional = component.get("additionalProperties", True)
+        require(type(additional) is bool or isinstance(additional, dict), f"{component_label}.additionalProperties: expected boolean or schema")
+        if segment in properties:
+            property_schemas.append(properties[segment])
+        elif additional is False:
+            raise GateVerificationError(f"{label}: response pointer segment {segment!r} is forbidden by OpenAPI schema conjunction")
+        elif isinstance(additional, dict):
+            property_schemas.append(additional)
+    require(property_schemas, f"{label}: response pointer segment {segment!r} is absent from OpenAPI schema alternative")
+    alternatives: list[list[dict[str, Any]]] = [[]]
+    for index, property_schema in enumerate(property_schemas):
+        variants = openapi_schema_conjunctions(document, property_schema, f"{label}.property[{index}]")
+        alternatives = [left + right for left in alternatives for right in variants]
+    return alternatives, required and container_is_definitely_object
+
+
+def openapi_conjunction_items(document: GitHubOpenApiDocument, conjunction: list[dict[str, Any]], label: str) -> list[list[dict[str, Any]]]:
+    openapi_conjunction_container_compatible(conjunction, "array", label)
+    item_schemas = [component["items"] for component in conjunction if "items" in component]
+    require(item_schemas, f"{label}: EXACT_* response pointer selector cannot traverse an OpenAPI schema alternative without array items")
+    alternatives: list[list[dict[str, Any]]] = [[]]
+    for index, item_schema in enumerate(item_schemas):
+        variants = openapi_schema_conjunctions(document, item_schema, f"{label}.items[{index}]")
+        alternatives = [left + right for left in alternatives for right in variants]
+    return alternatives
+
+
+def openapi_response_pointer(document: GitHubOpenApiDocument, schema: Any, pointer: str, label: str) -> tuple[list[list[dict[str, Any]]], bool]:
+    require(pointer.startswith("/") and pointer != "/", f"{label}: invalid response JSON pointer")
+    raw_segments = pointer[1:].split("/")
+    segments: list[str] = []
+    for raw_segment in raw_segments:
+        require(re.fullmatch(r"(?:[^~]|~[01])*", raw_segment) is not None, f"{label}: invalid response JSON pointer escape")
+        segments.append(raw_segment.replace("~1", "/").replace("~0", "~"))
+    alternatives = openapi_schema_conjunctions(document, schema, f"{label}.response")
+    openapi_required = True
+    for index, segment in enumerate(segments):
+        next_alternatives: list[list[dict[str, Any]]] = []
+        if segment.startswith("EXACT_"):
+            openapi_required = False
+            for alternative_index, conjunction in enumerate(alternatives):
+                next_alternatives.extend(openapi_conjunction_items(document, conjunction, f"{label}.segment[{index}].alternative[{alternative_index}]"))
+        else:
+            for alternative_index, conjunction in enumerate(alternatives):
+                property_alternatives, property_required = openapi_conjunction_property(document, conjunction, segment, f"{label}.segment[{index}].alternative[{alternative_index}]")
+                next_alternatives.extend(property_alternatives)
+                openapi_required = openapi_required and property_required
+        require(next_alternatives, f"{label}: response pointer segment {segment!r} is absent from OpenAPI schema")
+        alternatives = next_alternatives
+    return alternatives, openapi_required
+
+
+def github_runtime_binding_consumers(binding_name: str, operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expected_template = {"$binding": binding_name, "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"}
+    return [operation for operation in operations if operation.get("request", {}).get("body", {}).get("template") == expected_template]
+
+
+def audit_github_typed_bindings(document: GitHubOpenApiDocument, catalog: dict[str, Any], matched_operations: dict[str, tuple[dict[str, Any], dict[str, Any]]], label: str) -> dict[str, int]:
+    contract = obj(catalog["providerContract"], f"{label}.providerContract")
+    operations = arr(contract["restOperations"], f"{label}.restOperations")
+    operation_by_id = {nonempty(operation.get("operationId"), f"{label}.restOperation.operationId"): operation for operation in operations}
+    require(len(operation_by_id) == len(operations), f"{label}: duplicate REST operation while classifying typed bindings")
+    non_rest_operations = arr(contract.get("nonRestOperations"), f"{label}.nonRestOperations")
+    non_rest_ids = [nonempty(obj(operation, f"{label}.nonRestOperations").get("operationId"), f"{label}.nonRestOperation.operationId") for operation in non_rest_operations]
+    require(len(non_rest_ids) == len(set(non_rest_ids)), f"{label}: duplicate non-REST operation while classifying typed bindings")
+    require(not (set(operation_by_id) & set(non_rest_ids)), f"{label}: REST and non-REST operation IDs overlap")
+    raw_capture = obj(contract.get("rawCapture"), f"{label}.rawCapture")
+    request_fields = set(unique_strings(raw_capture.get("requestFields"), f"{label}.rawCapture.requestFields"))
+    counts = {"typedBindingCount": 0, "responseSchemaBindingWitnessCount": 0, "responseBindingsNotGuaranteedPresentByOpenApi": 0, "runtimeFreshCaptureReconstructionBindingCount": 0, "requestEnvelopeBindingCount": 0, "nonRestBindingCount": 0}
+    for index, raw_binding in enumerate(arr(contract["typedBindings"], f"{label}.typedBindings")):
+        binding = obj(raw_binding, f"{label}.typedBindings[{index}]")
+        binding_name = nonempty(binding.get("name"), f"{label}.typedBindings[{index}].name")
+        binding_type = nonempty(binding.get("type"), f"{label}.{binding_name}.type")
+        source_id = nonempty(binding.get("sourceOperation"), f"{label}.{binding_name}.sourceOperation")
+        pointer = nonempty(binding.get("jsonPointer"), f"{label}.{binding_name}.jsonPointer")
+        require(pointer.startswith("/"), f"{label}.{binding_name}: typed binding JSON pointer must be absolute")
+        counts["typedBindingCount"] += 1
+        if binding_type == "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE":
+            require(source_id in operation_by_id, f"{label}.{binding_name}: fresh-capture reconstruction source is not a REST operation")
+            require(pointer == "/reconstructedRestoreRequest", f"{label}.{binding_name}: fresh-capture reconstruction has unexpected JSON pointer")
+            source = operation_by_id[source_id]
+            require(source_id in matched_operations and source["request"].get("method") == "GET", f"{label}.{binding_name}: fresh-capture reconstruction source must be an audited GET")
+            capture = obj(source["response"].get("capture"), f"{label}.{binding_name}.source.capture")
+            require(capture.get("mode") == "RAW_BODY_AND_STRICT_PROJECTION" and capture.get("rawBodyRequired") is True, f"{label}.{binding_name}: fresh-capture reconstruction source must retain a nonsecret raw response")
+            consumers = github_runtime_binding_consumers(binding_name, operations)
+            require(len(consumers) == 1, f"{label}.{binding_name}: fresh-capture reconstruction binding requires exactly one restore consumer")
+            consumer = consumers[0]
+            restore = obj(consumer.get("preCaptureRestore"), f"{label}.{binding_name}.preCaptureRestore")
+            exact_keys(restore, {"rawFreshCaptureBinding", "captureOperationId", "typedRequestBodyReconstruction", "requestRevalidatedAgainstPinnedOpenApi", "immediateReadbackOperationId", "exactProjectedReadbackAndDigestMustEqualFreshCapture", "historicalD0BaselineMaySubstitute"}, f"{label}.{binding_name}.preCaptureRestore")
+            require(restore.get("rawFreshCaptureBinding") == binding_name and restore.get("captureOperationId") == source_id, f"{label}.{binding_name}: restore declaration does not match fresh-capture binding source")
+            require(restore.get("typedRequestBodyReconstruction") == "ALLOWLIST_PROVIDER_FIELDS_FROM_RAW_FRESH_CAPTURE_ONLY", f"{label}.{binding_name}: restore reconstruction allowlist contract mismatch")
+            require(restore.get("requestRevalidatedAgainstPinnedOpenApi") is True and restore.get("historicalD0BaselineMaySubstitute") is False, f"{label}.{binding_name}: runtime-only request body lacks exact fresh-capture revalidation contract")
+            readback_id = nonempty(restore.get("immediateReadbackOperationId"), f"{label}.{binding_name}.immediateReadbackOperationId")
+            follow_ups = arr(consumer["response"].get("requiredFollowUpReadbackOperationIds"), f"{label}.{binding_name}.requiredFollowUpReadbackOperationIds")
+            require(readback_id in follow_ups and readback_id == source_id, f"{label}.{binding_name}: restore immediate readback does not match the declared capture readback")
+            require(restore.get("exactProjectedReadbackAndDigestMustEqualFreshCapture") is True, f"{label}.{binding_name}: restore must exactly equal the fresh projected readback and digest")
+            counts["runtimeFreshCaptureReconstructionBindingCount"] += 1
+            continue
+        require(binding_type in GITHUB_BINDING_REPRESENTATIVES, f"{label}.{binding_name}: typed binding type {binding_type!r} is outside the explicit OpenAPI-audit classification")
+        if source_id in operation_by_id and pointer.startswith("/request/"):
+            pointer_field = pointer.removeprefix("/request/")
+            require(pointer_field and "/" not in pointer_field and pointer_field in request_fields, f"{label}.{binding_name}: request-envelope binding is absent from the closed raw-capture request fields")
+            require(source_id in matched_operations, f"{label}.{binding_name}: request-envelope source operation was not audited")
+            counts["requestEnvelopeBindingCount"] += 1
+            continue
+        if source_id in non_rest_ids:
+            counts["nonRestBindingCount"] += 1
+            continue
+        require(source_id in operation_by_id, f"{label}.{binding_name}: typed binding source cannot be classified as REST response, request envelope, or non-REST")
+        require(binding_type in GITHUB_OPENAPI_RESPONSE_BINDING_TYPES, f"{label}.{binding_name}: REST response binding type {binding_type!r} lacks an explicit OpenAPI schema witness policy")
+        require(source_id in matched_operations, f"{label}.{binding_name}: response binding source operation was not audited")
+        _, openapi_operation = matched_operations[source_id]
+        contract_operation = operation_by_id[source_id]
+        response_schemas: list[Any] = []
+        presence_results: list[bool] = []
+        responses = obj(openapi_operation.get("responses"), f"{label}.{source_id}.responses")
+        for status in contract_operation["response"]["admittedStatuses"]:
+            if status < 200 or status >= 300:
+                continue
+            response = obj(document.resolve(responses[str(status)], f"{label}.{source_id}.response[{status}]"), f"{label}.{source_id}.response[{status}]")
+            content = obj(response.get("content", {}), f"{label}.{source_id}.response[{status}].content")
+            if "application/json" not in content:
+                presence_results.append(False)
+                continue
+            media = obj(content["application/json"], f"{label}.{source_id}.response[{status}].application/json")
+            require("schema" in media, f"{label}.{source_id}: JSON response has no OpenAPI schema")
+            response_schemas.append(media["schema"])
+        require(response_schemas, f"{label}.{source_id}: typed response binding has no admitted JSON success schema")
+        final_alternatives: list[list[dict[str, Any]]] = []
+        for schema in response_schemas:
+            finals, required_presence = openapi_response_pointer(document, schema, pointer, f"{label}.{binding_name}")
+            final_alternatives.extend(finals)
+            presence_results.append(required_presence)
+        expected_type = {"BOOLEAN": "boolean", "GITHUB_LEGACY_BASE_PERMISSION": "string", "GITHUB_LOGIN": "string", "LOWERCASE_SHA1_40": "string", "POSITIVE_INT64": "integer"}[binding_type]
+        representative = GITHUB_BINDING_REPRESENTATIVES[binding_type]
+        for alternative_index, conjunction in enumerate(final_alternatives):
+            types = openapi_schema_conjunction_types(conjunction, f"{label}.{binding_name}.final[{alternative_index}]")
+            require(types is not None and expected_type in types and types <= {expected_type, "null"}, f"{label}.{binding_name}: response pointer type is incompatible with binding type {binding_type}")
+            for component_index, component in enumerate(conjunction):
+                errors = openapi_value_errors(document, representative, component, f"{label}.{binding_name}.witness[{alternative_index}].component[{component_index}]", "response")
+                require(not errors, f"{label}.{binding_name}: representative response-schema witness is incompatible:{errors[0] if errors else ''}")
+        counts["responseSchemaBindingWitnessCount"] += 1
+        if not all(presence_results):
+            counts["responseBindingsNotGuaranteedPresentByOpenApi"] += 1
+    require(counts["typedBindingCount"] == sum(counts[key] for key in ("responseSchemaBindingWitnessCount", "runtimeFreshCaptureReconstructionBindingCount", "requestEnvelopeBindingCount", "nonRestBindingCount")), f"{label}: typed-binding audit classification is not exhaustive")
+    return counts
+
+
+def audit_github_openapi_contracts(document_value: dict[str, Any], catalogs: list[dict[str, Any]], required_pinned_claims: dict[str, frozenset[str]] | None = None) -> dict[str, Any]:
+    document = GitHubOpenApiDocument(document_value)
+    require(catalogs, "GitHub OpenAPI audit requires at least one catalog")
+    if required_pinned_claims is not None:
+        require(isinstance(required_pinned_claims, dict), "GitHub OpenAPI required pinned claims must be a catalog map")
+        for catalog_id, operation_ids in required_pinned_claims.items():
+            require(isinstance(catalog_id, str) and catalog_id, "GitHub OpenAPI required pinned-claim catalog IDs must be nonempty strings")
+            require(isinstance(operation_ids, frozenset) and all(isinstance(operation_id, str) and operation_id for operation_id in operation_ids), f"GitHub OpenAPI required pinned claims for {catalog_id!r} must be a frozenset of nonempty operation IDs")
+    results: list[dict[str, Any]] = []
+    catalog_ids: set[str] = set()
+    for catalog_index, catalog in enumerate(catalogs):
+        catalog = obj(catalog, f"catalog[{catalog_index}]")
+        catalog_id = nonempty(catalog.get("catalogId"), f"catalog[{catalog_index}].catalogId")
+        require(catalog_id not in catalog_ids, f"duplicate GitHub OpenAPI audit catalog {catalog_id!r}")
+        if required_pinned_claims is not None:
+            require(catalog_id in required_pinned_claims, "GitHub OpenAPI required pinned-claim catalog set mismatch")
+        catalog_ids.add(catalog_id)
+        label = f"GitHub OpenAPI audit {catalog_id}"
+        contract = obj(catalog.get("providerContract"), f"{label}.providerContract")
+        bindings = github_binding_registry(catalog, label)
+        operations = arr(contract.get("restOperations"), f"{label}.restOperations")
+        matched_operations: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        request_bodies = 0
+        runtime_only_bodies = 0
+        parameters = 0
+        pinned_claim_operation_ids: set[str] = set()
+        for operation_index, contract_operation_raw in enumerate(operations):
+            contract_operation = obj(contract_operation_raw, f"{label}.restOperations[{operation_index}]")
+            operation_id = nonempty(contract_operation.get("operationId"), f"{label}.restOperations[{operation_index}].operationId")
+            require(operation_id not in matched_operations, f"{label}: duplicate REST operation {operation_id!r}")
+            request = obj(contract_operation.get("request"), f"{label}.{operation_id}.request")
+            method = nonempty(request.get("method"), f"{label}.{operation_id}.method").lower()
+            contract_path = nonempty(request.get("pathTemplate"), f"{label}.{operation_id}.pathTemplate")
+            openapi_path, openapi_operation, captured_path_parameters = document.operation(contract_path, method, f"{label}.{operation_id}")
+            path_item = obj(document.resolve(document.paths[openapi_path], f"{label}.{operation_id}.pathItem"), f"{label}.{operation_id}.pathItem")
+            matched_operations[operation_id] = (path_item, openapi_operation)
+            parameters += audit_github_openapi_parameters(document, openapi_path, path_item, openapi_operation, captured_path_parameters, contract_operation, bindings, f"{label}.{operation_id}")
+            responses = obj(openapi_operation.get("responses"), f"{label}.{operation_id}.responses")
+            contract_response = obj(contract_operation.get("response"), f"{label}.{operation_id}.response")
+            admitted_statuses = arr(contract_response.get("admittedStatuses"), f"{label}.{operation_id}.admittedStatuses")
+            require(admitted_statuses and all(type(status) is int and 100 <= status <= 599 for status in admitted_statuses) and len(admitted_statuses) == len(set(admitted_statuses)), f"{label}.{operation_id}: admitted statuses must be a unique integer array of HTTP statuses and nonempty")
+            for status in admitted_statuses:
+                require(str(status) in responses, f"{label}.{operation_id}: admitted status {status!r} is undeclared by OpenAPI")
+            body = obj(request.get("body"), f"{label}.{operation_id}.body")
+            request_body = obj(document.resolve(openapi_operation["requestBody"], f"{label}.{operation_id}.requestBody"), f"{label}.{operation_id}.requestBody") if "requestBody" in openapi_operation else None
+            if request_body is not None and "required" in request_body:
+                require(type(request_body["required"]) is bool, f"{label}.{operation_id}.requestBody.required: expected boolean")
+            if body.get("kind") == "NONE":
+                if request_body is not None:
+                    require(request_body.get("required") is not True, f"{label}.{operation_id}: contract omits required OpenAPI request body")
+            else:
+                require(body.get("kind") == "CANONICAL_JSON_BINDING_TEMPLATE" and "template" in body, f"{label}.{operation_id}: unsupported contract request body kind")
+                require(request_body is not None, f"{label}.{operation_id}: contract sends a request body absent from OpenAPI")
+                content = obj(request_body.get("content"), f"{label}.{operation_id}.requestBody.content")
+                media = obj(content.get("application/json"), f"{label}.{operation_id}.requestBody.application/json")
+                require("schema" in media, f"{label}.{operation_id}: request body has no OpenAPI schema")
+                template = body["template"]
+                if isinstance(template, dict) and set(template) == {"$binding", "type"} and template.get("type") == "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE":
+                    binding_name = nonempty(template["$binding"], f"{label}.{operation_id}.runtimeBodyBinding")
+                    require(binding_name in bindings and bindings[binding_name].get("type") == "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", f"{label}.{operation_id}: runtime-only request body binding mismatch")
+                    restore = obj(contract_operation.get("preCaptureRestore"), f"{label}.{operation_id}.preCaptureRestore")
+                    require(restore.get("rawFreshCaptureBinding") == binding_name and restore.get("requestRevalidatedAgainstPinnedOpenApi") is True and restore.get("historicalD0BaselineMaySubstitute") is False, f"{label}.{operation_id}: runtime-only request body lacks exact fresh-capture revalidation contract")
+                    runtime_only_bodies += 1
+                else:
+                    concrete_body = substitute_github_body_bindings(template, bindings, f"{label}.{operation_id}.bodyTemplate")
+                    validate_openapi_schema_subset(document, concrete_body, media["schema"], f"{label}.{operation_id}.bodyTemplate", "request")
+                    request_bodies += 1
+            if "pinnedOpenApiSemantics" in contract_operation:
+                claim = obj(contract_operation["pinnedOpenApiSemantics"], f"{label}.{operation_id}.pinnedOpenApiSemantics")
+                require(claim.get("operationId") == openapi_operation.get("operationId"), f"{label}.{operation_id}: pinned OpenAPI operationId claim mismatch")
+                require(claim.get("summary") == openapi_operation.get("summary"), f"{label}.{operation_id}: pinned OpenAPI summary claim mismatch")
+                github_extension = obj(openapi_operation.get("x-github"), f"{label}.{operation_id}.x-github")
+                require(type(github_extension.get("enabledForGitHubApps")) is bool and claim.get("githubAppsEnabled") == github_extension["enabledForGitHubApps"], f"{label}.{operation_id}: pinned enabledForGitHubApps claim mismatch")
+                admitted_claim = claim.get("admittedStatus")
+                require(type(admitted_claim) is int and admitted_claim in admitted_statuses, f"{label}.{operation_id}: pinned admitted-status claim mismatch")
+                pinned_claim_operation_ids.add(operation_id)
+        if required_pinned_claims is not None:
+            require(pinned_claim_operation_ids == required_pinned_claims[catalog_id], f"{label}: pinned OpenAPI semantic claim operation set mismatch;expected={sorted(required_pinned_claims[catalog_id])!r};observed={sorted(pinned_claim_operation_ids)!r}")
+        binding_counts = audit_github_typed_bindings(document, catalog, matched_operations, label)
+        require(runtime_only_bodies == binding_counts["runtimeFreshCaptureReconstructionBindingCount"], f"{label}: runtime fresh-capture binding and request-body consumer counts differ")
+        results.append({"catalogId": catalog_id, "operationCount": len(operations), "parameterSchemaWitnessCount": parameters, "pinnedClaimCount": len(pinned_claim_operation_ids), "concreteRequestBodySchemaWitnessCount": request_bodies, **binding_counts})
+    if required_pinned_claims is not None:
+        require(set(required_pinned_claims) == catalog_ids, "GitHub OpenAPI required pinned-claim catalog set mismatch")
+    total_keys = ("operationCount", "parameterSchemaWitnessCount", "pinnedClaimCount", "concreteRequestBodySchemaWitnessCount", "typedBindingCount", "responseSchemaBindingWitnessCount", "responseBindingsNotGuaranteedPresentByOpenApi", "runtimeFreshCaptureReconstructionBindingCount", "requestEnvelopeBindingCount", "nonRestBindingCount")
+    totals = {key: sum(result[key] for result in results) for key in total_keys}
+    return {"schema": GITHUB_OPENAPI_AUDIT_SCHEMA, "scope": GITHUB_OPENAPI_AUDIT_SCOPE, "catalogs": results, "totals": totals, "result": "PASS"}
+
+
+def expected_github_openapi_audit_catalogs() -> list[dict[str, Any]]:
+    bases = {repository.id: repository.reviewed_commit for repository in PRODUCTION_REPOSITORIES}
+    catalogs: list[dict[str, Any]] = []
+    for catalog_id, repository, reviewer, dispatcher in (("rust", "pkgre/rust", "rust-reviewer", "rust-dispatcher"), ("js", "pkgre/js", "js-reviewer", "js-dispatcher")):
+        digests = [sha256(f"github-openapi-audit-{catalog_id}-{kind}-v1".encode()) for kind in ("candidate", "release", "pages", "codeowners")]
+        catalogs.append(expected_github_catalog(catalog_id, repository, GITHUB_REPOSITORY_IDS[repository], f"https://github.com/{repository}.git", bases[repository], reviewer, dispatcher, *digests))
+    return catalogs
+
+
+def audit_pinned_github_openapi(path: Path) -> dict[str, Any]:
+    raw, document = load_pinned_github_openapi(path)
+    require(document.get("openapi") == "3.0.3", "pinned GitHub OpenAPI version mismatch")
+    info = obj(document.get("info"), "pinned GitHub OpenAPI info")
+    require(info.get("title") == "GitHub v3 REST API" and info.get("version") == GITHUB_REST_OPENAPI_VERSION, "pinned GitHub OpenAPI identity mismatch")
+    result = audit_github_openapi_contracts(document, expected_github_openapi_audit_catalogs(), GITHUB_OPENAPI_REQUIRED_PINNED_CLAIMS)
+    result["document"] = {"repository": "github/rest-api-description", "commit": GITHUB_REST_OPENAPI_COMMIT, "path": GITHUB_REST_OPENAPI_DOCUMENT, "sha256": sha256(raw), "size": len(raw), "openapi": document["openapi"], "title": info["title"], "version": info["version"]}
+    return result
 
 
 def validate_b03_payloads(results: list[dict[str, Any]], verification_time: datetime) -> None:
@@ -3916,3 +4669,25 @@ def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt
         "mutationAuthority": {"agent": agent_mutation, "operatorRollout": operator_mutation, "operatorEmergencyExceptions": MUTATION_POLICY["operatorEmergencyExceptions"]},
         "laterGateMutationAuthority": later_authority,
     }
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="pkgre D0 closure security tooling")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    openapi_parser = subparsers.add_parser("audit-github-openapi", help="audit frozen D0 GitHub contracts against the exact pinned OpenAPI document")
+    openapi_parser.add_argument("document", type=Path, help="path to the exact pinned api.github.com OpenAPI JSON document")
+    namespace = parser.parse_args(arguments)
+    try:
+        if namespace.command == "audit-github-openapi":
+            result = audit_pinned_github_openapi(namespace.document)
+        else:
+            parser.error(f"unsupported command: {namespace.command}")
+    except GateVerificationError as error:
+        print(f"ERROR:{error}", file=sys.stderr)
+        return 1
+    sys.stdout.buffer.write(canonical_json(result))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

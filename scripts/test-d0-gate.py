@@ -637,6 +637,60 @@ def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -
     }
 
 
+def github_openapi_fixture() -> tuple[dict[str, object], list[dict[str, object]]]:
+    path_parameter = {"in": "path", "name": "thing_id", "required": True, "schema": {"type": "integer"}}
+    count_schema = {"type": "object", "additionalProperties": False, "required": ["count"], "properties": {"count": {"type": "integer", "minimum": 1}}}
+    list_schema = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}}}}
+    id_schema = {"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}
+    document: dict[str, object] = {
+        "openapi": "3.0.3",
+        "info": {"title": "fixture", "version": "1"},
+        "paths": {
+            "/things/{thing_id}": {
+                "parameters": [copy.deepcopy(path_parameter)],
+                "get": {
+                    "operationId": "things/list",
+                    "summary": "List things",
+                    "x-github": {"enabledForGitHubApps": False},
+                    "parameters": [{"in": "query", "name": "page", "schema": {"type": "integer", "default": 1}}],
+                    "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": list_schema}}}},
+                },
+            },
+            "/things/{thing_id}/mutate": {
+                "parameters": [copy.deepcopy(path_parameter)],
+                "post": {
+                    "operationId": "things/create",
+                    "x-github": {"enabledForGitHubApps": True},
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": count_schema}}},
+                    "responses": {"201": {"description": "created", "content": {"application/json": {"schema": id_schema}}}},
+                },
+            },
+            "/things/{thing_id}/restore": {
+                "parameters": [copy.deepcopy(path_parameter)],
+                "put": {
+                    "operationId": "things/restore",
+                    "x-github": {"enabledForGitHubApps": True},
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": count_schema}}},
+                    "responses": {"204": {"description": "restored"}},
+                },
+            },
+        },
+    }
+    bindings = [
+        {"name": "thingId", "type": "POSITIVE_INT64", "sourceOperation": "list-things", "jsonPointer": "/items/EXACT_THING/id", "mustDifferFrom": []},
+        {"name": "createdId", "type": "POSITIVE_INT64", "sourceOperation": "create-thing", "jsonPointer": "/id", "mustDifferFrom": []},
+        {"name": "restoreBody", "type": "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE", "sourceOperation": "list-things", "jsonPointer": "/reconstructedRestoreRequest", "mustDifferFrom": []},
+        {"name": "requestActor", "type": "POSITIVE_INT64", "sourceOperation": "create-thing", "jsonPointer": "/request/authenticatedActorProviderId", "mustDifferFrom": []},
+        {"name": "localId", "type": "POSITIVE_INT64", "sourceOperation": "fixture-local", "jsonPointer": "/id", "mustDifferFrom": []},
+    ]
+    list_things = GATE.github_rest_operation("list-things", "ALL", "fixture", "GET", "/things/$binding:thingId", [200], query_template=[{"name": "page", "value": "$page"}])
+    list_things["pinnedOpenApiSemantics"] = {"operationId": "things/list", "summary": "List things", "githubAppsEnabled": False, "admittedStatus": 200}
+    create_thing = GATE.github_rest_operation("create-thing", "CONFIGURE", "fixture", "POST", "/things/$binding:thingId/mutate", [201], body_template={"count": GATE.github_binding("thingId")}, follow_up_readbacks=["list-things"])
+    restore_thing = GATE.github_rest_operation("restore-thing", "ROLLBACK", "fixture", "PUT", "/things/$binding:thingId/restore", [204], body_template=GATE.github_binding("restoreBody", "OPENAPI_REQUEST_BODY_FROM_FRESH_CAPTURE"), follow_up_readbacks=["list-things"], pre_capture_restore={"binding": "restoreBody", "captureOperationId": "list-things", "readbackOperationId": "list-things"})
+    catalog = {"catalogId": "fixture", "providerContract": {"typedBindings": bindings, "rawCapture": {"requestFields": ["authenticatedActorProviderId"]}, "restOperations": [list_things, create_thing, restore_thing], "nonRestOperations": [{"operationId": "fixture-local"}]}}
+    return document, [catalog]
+
+
 class GateCoreTests(unittest.TestCase):
     def assertRejected(self, callable_object, text: str) -> None:
         with self.assertRaises(GATE.GateVerificationError) as caught:
@@ -672,6 +726,270 @@ class GateCoreTests(unittest.TestCase):
         write(fixture.repository, GATE.GATE_STATE_PATH, b"{}\n")
         state = fixture.commit("state")
         return evidence, state
+
+    def test_github_openapi_fixture_passes_with_explicit_runtime_only_classification(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        result = GATE.audit_github_openapi_contracts(document, catalogs)
+        self.assertEqual(result["schema"], GATE.GITHUB_OPENAPI_AUDIT_SCHEMA)
+        self.assertEqual(result["result"], "PASS")
+        expected_counts = {"operationCount": 3, "parameterSchemaWitnessCount": 4, "pinnedClaimCount": 1, "concreteRequestBodySchemaWitnessCount": 1, "typedBindingCount": 5, "responseSchemaBindingWitnessCount": 2, "responseBindingsNotGuaranteedPresentByOpenApi": 1, "runtimeFreshCaptureReconstructionBindingCount": 1, "requestEnvelopeBindingCount": 1, "nonRestBindingCount": 1}
+        self.assertEqual(result["scope"], GATE.GITHUB_OPENAPI_AUDIT_SCOPE)
+        self.assertEqual(result["catalogs"], [{"catalogId": "fixture", **expected_counts}])
+        self.assertEqual(result["totals"], expected_counts)
+
+    def test_github_openapi_loader_rejects_wrong_digest(self) -> None:
+        document, _ = github_openapi_fixture()
+        raw = GATE.canonical_json(document)
+        with tempfile.TemporaryDirectory(prefix="pkgre-openapi-test-") as temporary:
+            path = Path(temporary) / "openapi.json"
+            path.write_bytes(raw)
+            self.assertRejected(lambda: GATE.load_pinned_github_openapi(path, "0" * 64), "digest mismatch")
+            loaded_raw, loaded_document = GATE.load_pinned_github_openapi(path, GATE.sha256(raw))
+            self.assertEqual(loaded_raw, raw)
+            self.assertEqual(loaded_document, document)
+
+    def test_github_openapi_parser_rejects_duplicate_keys(self) -> None:
+        self.assertRejected(lambda: GATE.parse_openapi_json(b'{"openapi":"3.0.3","openapi":"3.0.3"}\n', "fixture"), "duplicate JSON object key")
+
+    def test_github_openapi_audit_rejects_ambiguous_most_specific_path(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{other_id}"] = copy.deepcopy(document["paths"]["/things/{thing_id}"])
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "ambiguous most-specific OpenAPI method/path match")
+
+    def test_github_openapi_audit_rejects_missing_method_path(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        del document["paths"]["/things/{thing_id}"]
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "missing OpenAPI method/path match")
+
+    def test_github_openapi_audit_rejects_incompatible_path_binding(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}"]["parameters"][0]["schema"] = {"type": "string"}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "expected string")
+
+    def test_github_openapi_audit_rejects_incompatible_query_binding(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}"]["get"]["parameters"][0]["schema"]["minimum"] = 2
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "minimum violated")
+
+    def test_github_openapi_audit_rejects_undeclared_status(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][1]["response"]["admittedStatuses"] = [202]
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "admitted status 202 is undeclared")
+
+    def test_github_openapi_audit_rejects_invalid_concrete_request_body(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][1]["request"]["body"]["template"] = {"count": 0}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "minimum violated")
+
+    def test_github_openapi_audit_rejects_missing_response_pointer(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["typedBindings"][0]["jsonPointer"] = "/missing"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "response pointer segment 'missing' is absent")
+
+    def test_github_openapi_audit_rejects_wrong_response_pointer_type(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["typedBindings"][1]["type"] = "BOOLEAN"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "response pointer type is incompatible with binding type BOOLEAN")
+
+    def test_github_openapi_audit_rejects_incorrect_github_apps_claim(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][0]["pinnedOpenApiSemantics"]["githubAppsEnabled"] = True
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "pinned enabledForGitHubApps claim mismatch")
+
+    def test_github_openapi_audit_rejects_weakened_runtime_body_contract(self) -> None:
+        for field, weakened_value in (("rawFreshCaptureBinding", "createdId"), ("requestRevalidatedAgainstPinnedOpenApi", False), ("historicalD0BaselineMaySubstitute", True)):
+            with self.subTest(field=field):
+                document, catalogs = github_openapi_fixture()
+                catalogs[0]["providerContract"]["restOperations"][2]["preCaptureRestore"][field] = weakened_value
+                self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "runtime-only request body lacks exact fresh-capture revalidation contract")
+
+    def test_github_openapi_path_matching_requires_explicit_multi_segment_extension(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}"]["parameters"][0]["schema"] = {"type": "string"}
+        catalogs[0]["providerContract"]["restOperations"][0]["request"]["pathTemplate"] = "/things/a/b"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "missing OpenAPI method/path match")
+        document["paths"]["/things/{thing_id}"]["parameters"][0]["x-multi-segment"] = True
+        self.assertEqual(GATE.audit_github_openapi_contracts(document, catalogs)["result"], "PASS")
+
+    def test_github_openapi_audit_rejects_malformed_multi_segment_extension(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}"]["parameters"][0]["x-multi-segment"] = "true"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "malformed x-multi-segment")
+
+    def test_github_openapi_audit_rejects_unsupported_parameter_serialization(self) -> None:
+        cases = (("style", "spaceDelimited", "unsupported style"), ("explode", False, "unsupported explode"), ("content", {"text/plain": {}}, "unsupported OpenAPI query parameter encoding"), ("allowEmptyValue", False, "unsupported allowEmptyValue"), ("allowReserved", False, "unsupported allowReserved"), ("x-multi-segment", False, "unsupported x-multi-segment"))
+        for key, value, expected in cases:
+            with self.subTest(key=key):
+                document, catalogs = github_openapi_fixture()
+                document["paths"]["/things/{thing_id}"]["get"]["parameters"][0][key] = value
+                self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), expected)
+
+    def test_github_openapi_audit_accepts_only_effective_default_parameter_serialization(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        for path_item in document["paths"].values():
+            path_item["parameters"][0].update({"style": "simple", "explode": False})
+        document["paths"]["/things/{thing_id}"]["get"]["parameters"][0].update({"style": "form", "explode": True})
+        self.assertEqual(GATE.audit_github_openapi_contracts(document, catalogs)["result"], "PASS")
+
+    def test_github_openapi_response_pointer_honors_all_of_conjunction(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"] = {"allOf": [{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}, {"type": "object", "additionalProperties": True}]}
+        self.assertEqual(GATE.audit_github_openapi_contracts(document, catalogs)["result"], "PASS")
+
+    def test_github_openapi_response_pointer_aggregates_all_of_required_sets(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"] = {"allOf": [{"type": "object", "properties": {"id": {"type": "integer"}}}, {"required": ["id"]}]}
+        result = GATE.audit_github_openapi_contracts(document, catalogs)
+        self.assertEqual(result["totals"]["responseBindingsNotGuaranteedPresentByOpenApi"], 1)
+
+    def test_github_openapi_response_pointer_rejects_all_of_additional_properties_conflict(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"] = {"allOf": [{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}, {"type": "object", "additionalProperties": False}]}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "response pointer segment 'id' is forbidden")
+
+    def test_github_openapi_response_pointer_applies_all_of_additional_properties_schema(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"] = {"allOf": [{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}, {"type": "object", "additionalProperties": {"type": "string"}}]}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "response pointer type is incompatible")
+
+    def test_github_openapi_nullable_response_container_does_not_guarantee_pointer_presence(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["nullable"] = True
+        result = GATE.audit_github_openapi_contracts(document, catalogs)
+        self.assertEqual(result["totals"]["responseBindingsNotGuaranteedPresentByOpenApi"], 2)
+
+    def test_github_openapi_response_pointer_rejects_conflicting_all_of_types(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"] = {"allOf": [{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}, {"type": "object", "properties": {"id": {"type": "string"}}}]}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "response pointer type is incompatible")
+
+    def test_github_openapi_response_pointer_rejects_one_of_branch_omitting_pointer(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"] = {"oneOf": [{"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}, {"type": "object", "required": ["other"], "properties": {"other": {"type": "integer"}}}]}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "response pointer segment 'id' is absent from OpenAPI schema alternative")
+
+    def test_github_openapi_typed_binding_classification_is_exhaustive(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["typedBindings"][-1]["sourceOperation"] = "undeclared-source"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "typed binding source cannot be classified")
+
+    def test_github_openapi_runtime_binding_requires_exactly_one_restore_consumer(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        duplicate = copy.deepcopy(catalogs[0]["providerContract"]["restOperations"][2])
+        duplicate["operationId"] = "restore-thing-again"
+        catalogs[0]["providerContract"]["restOperations"].append(duplicate)
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "requires exactly one restore consumer")
+
+    def test_github_openapi_runtime_binding_requires_nonsecret_get_capture(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        source = catalogs[0]["providerContract"]["restOperations"][0]
+        source["response"]["capture"]["mode"] = "SECRET_RESPONSE_BODY_NEVER_PERSISTED_OR_HASHED_FOR_ANY_STATUS"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "must retain a nonsecret raw response")
+
+    def test_github_openapi_runtime_binding_rejects_every_weakened_restore_field(self) -> None:
+        cases = (("captureOperationId", "create-thing", "does not match fresh-capture binding source"), ("typedRequestBodyReconstruction", "COPY_WHOLE_RESPONSE", "reconstruction allowlist contract mismatch"), ("immediateReadbackOperationId", "create-thing", "immediate readback does not match"), ("exactProjectedReadbackAndDigestMustEqualFreshCapture", False, "must exactly equal the fresh projected readback"))
+        for field, value, expected in cases:
+            with self.subTest(field=field):
+                document, catalogs = github_openapi_fixture()
+                catalogs[0]["providerContract"]["restOperations"][2]["preCaptureRestore"][field] = value
+                self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), expected)
+
+    def test_github_openapi_request_envelope_binding_must_be_declared(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["rawCapture"]["requestFields"] = ["contractOperationId"]
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "request-envelope binding is absent")
+
+    def test_github_openapi_audit_rejects_duplicate_admitted_statuses(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][1]["response"]["admittedStatuses"] = [201, 201]
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "admitted statuses must be a unique integer array")
+
+    def test_github_openapi_audit_rejects_nonboolean_request_body_required(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["requestBody"]["required"] = 1
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "requestBody.required: expected boolean")
+
+    def test_github_openapi_audit_rejects_incorrect_summary_claim(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][0]["pinnedOpenApiSemantics"]["summary"] = "Wrong summary"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "pinned OpenAPI summary claim mismatch")
+
+    def test_github_openapi_audit_requires_exact_pinned_claim_operation_set(self) -> None:
+        required = {"fixture": frozenset({"list-things"})}
+        document, catalogs = github_openapi_fixture()
+        self.assertEqual(GATE.audit_github_openapi_contracts(document, catalogs, required)["result"], "PASS")
+        del catalogs[0]["providerContract"]["restOperations"][0]["pinnedOpenApiSemantics"]
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs, required), "pinned OpenAPI semantic claim operation set mismatch")
+
+    def test_github_openapi_audit_rejects_extra_pinned_claim_operation(self) -> None:
+        required = {"fixture": frozenset({"list-things"})}
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][1]["pinnedOpenApiSemantics"] = {"operationId": "things/create", "summary": None, "githubAppsEnabled": True, "admittedStatus": 201}
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs, required), "pinned OpenAPI semantic claim operation set mismatch")
+
+    def test_github_openapi_audit_rejects_required_claim_catalog_mismatch(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs, {"other": frozenset({"list-things"})}), "required pinned-claim catalog set mismatch")
+
+    def test_github_openapi_schema_rejects_malformed_numeric_constraint_without_type_error(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["count"]["minimum"] = "1"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "minimum: expected finite number")
+
+    def test_github_openapi_schema_rejects_malformed_type_without_raw_type_error(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["count"]["type"] = []
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), ".type: expected nonempty string")
+
+    def test_github_openapi_schema_rejects_json_schema_null_type_in_openapi_3(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["count"]["type"] = "null"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "unsupported OpenAPI schema type 'null'")
+
+    def test_github_openapi_request_witness_rejects_read_only_value(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["count"]["readOnly"] = True
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "readOnly value is forbidden in an OpenAPI request witness")
+
+    def test_github_openapi_response_witness_rejects_write_only_value(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["properties"]["id"]["writeOnly"] = True
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "writeOnly value is forbidden in an OpenAPI response witness")
+
+    def test_github_openapi_schema_formats_are_explicit_and_bounded(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        id_schema = document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["201"]["content"]["application/json"]["schema"]["properties"]["id"]
+        id_schema["format"] = "int64"
+        self.assertEqual(GATE.audit_github_openapi_contracts(document, catalogs)["result"], "PASS")
+        id_schema["format"] = "provider-custom"
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "unsupported OpenAPI format")
+
+    def test_github_openapi_audit_rejects_required_unsupported_parameter_location(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}"]["get"]["parameters"].append({"in": "header", "name": "X-Required", "required": True, "schema": {"type": "string"}})
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "unsupported required OpenAPI header parameter")
+
+    def test_github_openapi_response_binding_marks_every_bodyless_success_as_not_guaranteed(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        document["paths"]["/things/{thing_id}/mutate"]["post"]["responses"]["202"] = {"description": "accepted"}
+        catalogs[0]["providerContract"]["restOperations"][1]["response"]["admittedStatuses"] = [201, 202]
+        result = GATE.audit_github_openapi_contracts(document, catalogs)
+        self.assertEqual(result["totals"]["responseBindingsNotGuaranteedPresentByOpenApi"], 2)
+
+    def test_github_openapi_audit_rejects_empty_admitted_statuses(self) -> None:
+        document, catalogs = github_openapi_fixture()
+        catalogs[0]["providerContract"]["restOperations"][0]["response"]["admittedStatuses"] = []
+        self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), "admitted statuses must be a unique integer array")
+
+    def test_github_openapi_malformed_metadata_and_schema_keys_fail_closed(self) -> None:
+        for key, value, expected in (("readOnly", 1, "readOnly: expected boolean"), ("format", [], "unsupported OpenAPI format"), ("discriminator", [], "discriminator: expected object")):
+            with self.subTest(key=key):
+                document, catalogs = github_openapi_fixture()
+                document["paths"]["/things/{thing_id}/mutate"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["count"][key] = value
+                self.assertRejected(lambda: GATE.audit_github_openapi_contracts(document, catalogs), expected)
+        document, _ = github_openapi_fixture()
+        validator = GATE.GitHubOpenApiDocument(document)
+        self.assertRejected(lambda: GATE.validate_openapi_schema_subset(validator, 1, {1: "invalid"}, "fixture"), "schema keys must be strings")
 
     def test_strict_semantic_primitives(self) -> None:
         self.assertTrue(GATE.strict_bool(True, "bool"))
