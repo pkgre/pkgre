@@ -1231,9 +1231,8 @@ def validate_procedure(raw: Any, label: str, expected_operations: list[str], exp
     security_text(environment["name"], f"{label}.test.environment.name", 128)
     require(strict_bool(environment["productionEndpointUsed"], f"{label}.test.environment.productionEndpointUsed") is False, f"{label}: procedure test must not exercise a production endpoint")
     test_case = obj(test["testCase"], f"{label}.test.testCase")
-    exact_keys(test_case, {"caseId", "evidenceRef"}, f"{label}.test.testCase")
+    exact_keys(test_case, {"caseId"}, f"{label}.test.testCase")
     security_identifier(test_case["caseId"], f"{label}.test.testCase.caseId")
-    security_identifier(test_case["evidenceRef"], f"{label}.test.testCase.evidenceRef")
     actor = security_text(test["actor"], f"{label}.test.actor", 128)
     require(actor == expected_owner, f"{label}: test actor does not match operator return")
     tested_at = parse_utc(test["testedAt"], f"{label}.test.testedAt")
@@ -1249,6 +1248,28 @@ def validate_procedure(raw: Any, label: str, expected_operations: list[str], exp
         require(expected_outcome == observed_outcome and row["result"] == "PASS", f"{label}: procedure test operation outcome did not pass exactly")
     require(test["result"] == "PASS", f"{label}: procedure test must PASS")
     return procedure
+
+
+def procedure_identity_rows(procedure: dict[str, Any], label: str) -> list[tuple[str, str]]:
+    test = procedure["test"]
+    return [
+        (procedure["procedureId"], f"{label}.procedureId"),
+        (test["eventId"], f"{label}.test.eventId"),
+        (test["fixture"]["fixtureId"], f"{label}.test.fixture.fixtureId"),
+        (test["fixture"]["replacementIdentity"]["value"], f"{label}.test.fixture.replacementIdentity.value"),
+        (test["testCase"]["caseId"], f"{label}.test.testCase.caseId"),
+    ]
+
+
+def require_globally_distinct_identifiers(rows: list[tuple[str, str]], label: str) -> None:
+    identities: dict[str, tuple[str, str]] = {}
+    for raw_identifier, source_label in rows:
+        identifier = security_identifier(raw_identifier, source_label)
+        identity_key = identifier.casefold()
+        previous = identities.get(identity_key)
+        previous_label = None if previous is None else previous[1]
+        require(previous is None, f"{label}: identifier {identifier!r} is reused by {previous_label} and {source_label}")
+        identities[identity_key] = (identifier, source_label)
 
 
 PAT_PROCEDURE_OPERATIONS = {
@@ -1425,6 +1446,19 @@ def validate_b01_payloads(results: list[dict[str, Any]], verification_time: date
     containment_event_ids = {event["eventId"] for event in containment["events"].values()} | {row["auditId"] for row in containment["audit"]}
     lifecycle_test_event_ids = {procedure["test"]["eventId"] for procedure in lifecycle["patProcedures"].values()} | {procedure["test"]["eventId"] for row in lifecycle["lifecycles"] for key, procedure in row.items() if key in KEY_LIFECYCLE_OPERATIONS}
     require(containment_event_ids.isdisjoint(lifecycle_test_event_ids), "D0-B01: containment and lifecycle test-event IDs must be globally distinct")
+    identity_rows = [
+        (containment["rotationId"], "D0-B01 credential-containment.rotationId joined to credential-lifecycle.rotationId"),
+        *[(event["eventId"], f"D0-B01 credential-containment.events.{name}.eventId") for name, event in containment["events"].items()],
+        (containment["installation"]["bindingId"], "D0-B01 credential-containment.installation.bindingId"),
+        (containment["installation"]["dns01Operation"]["operationId"], "D0-B01 credential-containment.installation.dns01Operation.operationId"),
+        *[(row["auditId"], f"D0-B01 credential-containment.audit[{index}].auditId") for index, row in enumerate(containment["audit"])],
+    ]
+    for name, procedure in lifecycle["patProcedures"].items():
+        identity_rows.extend(procedure_identity_rows(procedure, f"D0-B01 credential-lifecycle.patProcedures.{name}"))
+    for index, row in enumerate(lifecycle["lifecycles"]):
+        for name in KEY_LIFECYCLE_OPERATIONS:
+            identity_rows.extend(procedure_identity_rows(row[name], f"D0-B01 credential-lifecycle.lifecycles[{index}].{name}"))
+    require_globally_distinct_identifiers(identity_rows, "D0-B01 security-relevant identifiers")
 
 
 def validate_b02_attestation(payload: dict[str, Any], label: str, operator: str, returned_at: datetime, verification_time: datetime) -> dict[str, Any]:
@@ -1492,6 +1526,14 @@ def validate_b02_payloads(results: list[dict[str, Any]], verification_time: date
     lifecycle_event_ids = {lifecycle[key]["test"]["eventId"] for key in SSH_LIFECYCLE_OPERATIONS}
     require(attestation["attestation"]["eventId"] not in lifecycle_event_ids, "D0-B02: attestation and lifecycle test-event IDs must be distinct")
     require(attestation["authoritativeSource"]["sourceId"] != attestation["attestation"]["eventId"], "D0-B02: authoritative-source and attestation IDs must be distinct")
+    identity_rows = [
+        (attestation["authoritativeSource"]["sourceId"], "D0-B02 ssh-attestation.authoritativeSource.sourceId"),
+        (attestation["endpointObservation"]["observationId"], "D0-B02 ssh-attestation.endpointObservation.observationId"),
+        (attestation["attestation"]["eventId"], "D0-B02 ssh-attestation.attestation.eventId"),
+    ]
+    for name in SSH_LIFECYCLE_OPERATIONS:
+        identity_rows.extend(procedure_identity_rows(lifecycle[name], f"D0-B02 ssh-lifecycle.{name}"))
+    require_globally_distinct_identifiers(identity_rows, "D0-B02 security-relevant identifiers")
 
 
 def validate_generic_payloads(finding_id: str, disposition: str, results: list[dict[str, Any]], verification_time: datetime) -> None:

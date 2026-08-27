@@ -381,7 +381,7 @@ def semantic_procedure(identifier: str, operations: list[str], subject: dict[str
                 "name": "documented nonproduction tabletop" if mode == "TABLETOP" else "isolated nonproduction rehearsal",
                 "productionEndpointUsed": False,
             },
-            "testCase": {"caseId": f"case-{identifier}", "evidenceRef": f"evidence-{identifier}"},
+            "testCase": {"caseId": f"case-{identifier}"},
             "actor": SEMANTIC_OPERATOR,
             "testedAt": tested_at,
             "operations": [{"operation": operation, "expectedOutcome": outcome, "observedOutcome": outcome, "result": "PASS"} for operation in operations],
@@ -858,6 +858,30 @@ class GateCoreTests(unittest.TestCase):
         pat["recovery"]["test"]["procedureId"] = pat["recovery"]["procedureId"]
         cases.append(("procedure-test-event-reuse", payloads, "procedure and test-event IDs must be globally distinct"))
 
+        payloads = valid_b01_payloads()
+        procedure = payloads["credential-lifecycle"]["patProcedures"]["routineRotation"]
+        procedure["procedureId"] = payloads["credential-containment"]["installation"]["dns01Operation"]["operationId"]
+        procedure["test"]["procedureId"] = procedure["procedureId"]
+        cases.append(("procedure-containment-operation-reuse", payloads, "is reused by"))
+
+        payloads = valid_b01_payloads()
+        pat = payloads["credential-lifecycle"]["patProcedures"]
+        pat["recovery"]["test"]["fixture"]["fixtureId"] = pat["routineRotation"]["test"]["fixture"]["fixtureId"]
+        cases.append(("fixture-reuse", payloads, "is reused by"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["patProcedures"]["routineRotation"]["test"]["fixture"]["replacementIdentity"]["value"] = payloads["credential-containment"]["audit"][0]["auditId"]
+        cases.append(("replacement-identity-audit-reuse", payloads, "is reused by"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-lifecycle"]["patProcedures"]["routineRotation"]["test"]["fixture"]["fixtureId"] = payloads["credential-containment"]["events"]["permissionRepair"]["eventId"].upper()
+        cases.append(("case-folded-identifier-reuse", payloads, "is reused by"))
+
+        payloads = valid_b01_payloads()
+        payloads["credential-containment"]["rotationId"] = payloads["credential-containment"]["audit"][0]["auditId"]
+        payloads["credential-lifecycle"]["rotationId"] = payloads["credential-containment"]["rotationId"]
+        cases.append(("rotation-audit-reuse", payloads, "is reused by"))
+
         for name, actor, expected in (
             ("private-key-shaped-text", "-----BEGIN PRIVATE KEY-----", "private-key-shaped text is forbidden"),
             ("hex-secret-shaped-text", "0123456789abcdef0123456789abcdef", "secret-shaped hexadecimal text is forbidden"),
@@ -969,6 +993,25 @@ class GateCoreTests(unittest.TestCase):
         lifecycle["recovery"]["procedureId"] = lifecycle["rotation"]["test"]["eventId"]
         lifecycle["recovery"]["test"]["procedureId"] = lifecycle["recovery"]["procedureId"]
         cases.append(("procedure-test-event-reuse", payloads, "procedure and test-event IDs must be distinct"))
+
+        payloads = valid_b02_payloads()
+        procedure = payloads["ssh-lifecycle"]["rotation"]
+        procedure["procedureId"] = payloads["ssh-attestation"]["endpointObservation"]["observationId"]
+        procedure["test"]["procedureId"] = procedure["procedureId"]
+        cases.append(("procedure-observation-reuse", payloads, "is reused by"))
+
+        payloads = valid_b02_payloads()
+        lifecycle = payloads["ssh-lifecycle"]
+        lifecycle["recovery"]["test"]["fixture"]["fixtureId"] = lifecycle["rotation"]["test"]["fixture"]["fixtureId"]
+        cases.append(("fixture-reuse", payloads, "is reused by"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["rotation"]["test"]["fixture"]["replacementIdentity"]["value"] = payloads["ssh-attestation"]["attestation"]["eventId"]
+        cases.append(("replacement-identity-attestation-reuse", payloads, "is reused by"))
+
+        payloads = valid_b02_payloads()
+        payloads["ssh-lifecycle"]["rotation"]["test"]["testCase"]["caseId"] = payloads["ssh-attestation"]["authoritativeSource"]["sourceId"].upper()
+        cases.append(("case-folded-identifier-reuse", payloads, "is reused by"))
 
         payloads = valid_b02_payloads()
         payloads["ssh-attestation"]["secretMaterial"]["privateKeyValueRead"] = True
