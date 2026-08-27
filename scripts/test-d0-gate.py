@@ -967,6 +967,27 @@ class GateCoreTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
+    def test_pre_d1_transcript_requires_canonical_exact_receipt_binding(self) -> None:
+        closure_commit = "a" * 40
+        created_at = "2026-08-26T00:00:00Z"
+        rows = [{"id": "pkgre/pkgre", "head": "b" * 40}]
+        transcript = {"schema": "pkgre-pre-d1-refetch-transcript-v1", "d0ClosureCommit": closure_commit, "createdAt": created_at, "repositories": rows}
+        raw = GATE.canonical_json(transcript)
+        self.assertEqual(GATE.validate_pre_d1_transcript(raw, closure_commit=closure_commit, created_at=created_at, receipt_rows=rows), transcript)
+
+        noncanonical = json.dumps(transcript, ensure_ascii=False, sort_keys=False).encode()
+        self.assertRejected(lambda: GATE.validate_pre_d1_transcript(noncanonical, closure_commit=closure_commit, created_at=created_at, receipt_rows=rows), "JSON is not canonical")
+        for field, value, expected_error in (
+            ("schema", "pkgre-pre-d1-refetch-transcript-v0", "wrong schema"),
+            ("d0ClosureCommit", "c" * 40, "closure-commit binding mismatch"),
+            ("createdAt", "2026-08-26T00:00:01Z", "timestamp binding mismatch"),
+            ("repositories", [], "repository observations differ from receipt"),
+        ):
+            with self.subTest(field=field):
+                mutated = copy.deepcopy(transcript)
+                mutated[field] = value
+                self.assertRejected(lambda mutated=mutated: GATE.validate_pre_d1_transcript(GATE.canonical_json(mutated), closure_commit=closure_commit, created_at=created_at, receipt_rows=rows), expected_error)
+
     def test_pre_d1_receipt_and_transcript_require_hardened_external_files(self) -> None:
         def verify_fixture(fixture: RepositoryFixture, receipt_path: Path, state_raw: bytes) -> None:
             config = GATE.GateConfig(repositories=())
@@ -977,7 +998,7 @@ class GateCoreTests(unittest.TestCase):
         try:
             gate_dir = fixture.repository / ".git" / "pkgre-gates"
             gate_dir.mkdir(mode=0o700)
-            transcript_raw = b"bounded fetch transcript\n"
+            transcript_raw = GATE.canonical_json({"schema": "pkgre-pre-d1-refetch-transcript-v1", "d0ClosureCommit": fixture.base, "createdAt": "2026-08-26T00:00:00Z", "repositories": []})
             transcript_path = gate_dir / "pre-d1-transcript.json"
             transcript_path.write_bytes(transcript_raw)
             transcript_path.chmod(0o600)
@@ -1003,7 +1024,7 @@ class GateCoreTests(unittest.TestCase):
                 try:
                     gate_dir = fixture.repository / ".git" / "pkgre-gates"
                     gate_dir.mkdir(mode=0o700)
-                    transcript_raw = b"bounded fetch transcript\n"
+                    transcript_raw = GATE.canonical_json({"schema": "pkgre-pre-d1-refetch-transcript-v1", "d0ClosureCommit": fixture.base, "createdAt": "2026-08-26T00:00:00Z", "repositories": []})
                     transcript_path = gate_dir / "pre-d1-transcript.json"
                     transcript_path.write_bytes(transcript_raw)
                     transcript_path.chmod(0o600)

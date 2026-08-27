@@ -4956,13 +4956,29 @@ def collect_pre_d1_rows(repo_root: Path, closure_commit: str, config: GateConfig
     return rows
 
 
+def validate_pre_d1_transcript(raw: bytes, *, closure_commit: str, created_at: str, receipt_rows: list[Any]) -> dict[str, Any]:
+    """Require the transcript to be a canonical, exact binding of the receipt rows."""
+    require(isinstance(raw, bytes) and 0 < len(raw) <= MAX_TRANSCRIPT_BYTES, f"PRE_D1 transcript: content must be 1..{MAX_TRANSCRIPT_BYTES} bytes")
+    closure_commit = hex_digest(closure_commit, "PRE_D1 transcript closure commit", "sha1")
+    created_at = utc_text(created_at, "PRE_D1 transcript createdAt binding")
+    transcript = obj(parse_json(raw, "PRE_D1 transcript"), "PRE_D1 transcript")
+    exact_keys(transcript, {"schema", "d0ClosureCommit", "createdAt", "repositories"}, "PRE_D1 transcript")
+    require(transcript["schema"] == "pkgre-pre-d1-refetch-transcript-v1", "PRE_D1 transcript: wrong schema")
+    require(transcript["d0ClosureCommit"] == closure_commit, "PRE_D1 transcript: closure-commit binding mismatch")
+    require(transcript["createdAt"] == created_at, "PRE_D1 transcript: timestamp binding mismatch")
+    repositories = arr(transcript["repositories"], "PRE_D1 transcript repositories")
+    require(repositories == receipt_rows, "PRE_D1 transcript: repository observations differ from receipt")
+    return transcript
+
+
 def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closure_commit: str, receipt_path: Path, config: GateConfig, verification_time: datetime) -> None:
     gate_dir = repo_root.resolve() / ".git" / "pkgre-gates"
     receipt_raw = load_external_gate_file(ops, repo_root, receipt_path, "PRE_D1 receipt", MAX_JSON_BYTES)
     receipt = obj(parse_json(receipt_raw, str(receipt_path)), "PRE_D1 receipt")
     exact_keys(receipt, {"schema", "d0ClosureCommit", "createdAt", "immediatelyBeforeD1FirstEdit", "repositories", "transcript"}, "PRE_D1 receipt")
     require(receipt["schema"] == "pkgre-pre-d1-refetch-receipt-v2" and receipt["d0ClosureCommit"] == closure_commit and receipt["immediatelyBeforeD1FirstEdit"] is True, "PRE_D1 receipt binding mismatch")
-    created = parse_utc(receipt["createdAt"], "PRE_D1 receipt createdAt")
+    created_at = utc_text(receipt["createdAt"], "PRE_D1 receipt createdAt")
+    created = parse_utc(created_at, "PRE_D1 receipt createdAt")
     require((created - verification_time).total_seconds() <= RECEIPT_FUTURE_SKEW_SECONDS, "PRE_D1 receipt timestamp is too far in the future")
     require((verification_time - created).total_seconds() <= PRE_D1_RECEIPT_MAX_AGE_SECONDS, "PRE_D1 receipt is stale")
     transcript = obj(receipt["transcript"], "PRE_D1 transcript reference")
@@ -4973,7 +4989,8 @@ def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closur
     transcript_raw = load_external_gate_file(ops, repo_root, gate_dir / transcript_name, "PRE_D1 transcript", MAX_TRANSCRIPT_BYTES)
     require(sha256(transcript_raw) == transcript["sha256"], "PRE_D1 transcript digest mismatch")
     rows = arr(receipt["repositories"], "PRE_D1 repositories")
-    require(len(rows) == len(config.repositories), "PRE_D1 receipt must contain exactly four repositories")
+    require(len(rows) == len(config.repositories), f"PRE_D1 receipt must contain exactly {len(config.repositories)} repositories")
+    validate_pre_d1_transcript(transcript_raw, closure_commit=closure_commit, created_at=created_at, receipt_rows=rows)
     observed = []
     workspace = repo_root.resolve().parent
     for expected in config.repositories:
