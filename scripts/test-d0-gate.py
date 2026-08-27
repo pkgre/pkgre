@@ -518,6 +518,51 @@ def valid_b02_payloads() -> dict[str, dict[str, object]]:
     return {"ssh-attestation": attestation, "ssh-lifecycle": lifecycle}
 
 
+B03_CATALOGS = [
+    {"catalogId": "rust", "repository": "pkgre/rust", "runtimeOrigin": "https://github.com/pkgre/rust.git", "reviewer": "rust-reviewer", "dispatcher": "rust-dispatcher"},
+    {"catalogId": "js", "repository": "pkgre/js", "runtimeOrigin": "https://github.com/pkgre/js.git", "reviewer": "js-reviewer", "dispatcher": "js-dispatcher"},
+]
+
+
+def b03_content_digest(catalog_id: str, kind: str) -> str:
+    return GATE.sha256(f"synthetic-b03-{catalog_id}-{kind}-content-v1".encode())
+
+
+def valid_b03_payloads() -> dict[str, dict[str, object]]:
+    bases = {row.id: row.reviewed_commit for row in GATE.PRODUCTION_REPOSITORIES}
+    catalogs = [
+        GATE.expected_github_catalog(
+            specification["catalogId"],
+            specification["repository"],
+            GATE.GITHUB_REPOSITORY_IDS[specification["repository"]],
+            specification["runtimeOrigin"],
+            bases[specification["repository"]],
+            specification["reviewer"],
+            specification["dispatcher"],
+            b03_content_digest(specification["catalogId"], "candidate-workflow"),
+            b03_content_digest(specification["catalogId"], "release-workflow"),
+            b03_content_digest(specification["catalogId"], "pages-workflow"),
+            b03_content_digest(specification["catalogId"], "codeowners"),
+        )
+        for specification in B03_CATALOGS
+    ]
+    payload = {
+        "designId": "pkgre-public-catalog-github-governance-v1",
+        "operatorDecision": {"returnedBy": SEMANTIC_OPERATOR, "returnedAt": SEMANTIC_RETURNED_AT, "scope": "D2_GITHUB_TARGET_DESIGN_NO_SETTINGS_ACTION"},
+        "baseline": {
+            "path": GATE.GITHUB_GOVERNANCE_BASELINE_PATH,
+            "sha256": GATE.GITHUB_GOVERNANCE_BASELINE_SHA256,
+            "catalogConformance": [{"catalogId": "rust", "targetConforming": False}, {"catalogId": "js", "targetConforming": False}],
+            "auditLogAvailable": False,
+        },
+        "catalogs": catalogs,
+        "crossCatalogSeparation": {"workflowPathsDistinct": True, "workflowNamesDistinct": True, "checkContextsDistinct": True, "environmentsDistinct": True, "writerAppsDistinct": True, "rulesetNamesDistinct": True, "providerEvidenceKeysDistinct": True, "writerTokensRepositoryScoped": True},
+        "d0Mutation": {"githubSettingsChanged": False, "writerCredentialInstalled": False, "signerInstalled": False, "catalogRefAdvanced": False},
+        "result": "APPROVED_TARGET_DESIGN",
+    }
+    return {"github-governance-proof": payload}
+
+
 def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
     target_gates = GATE.REPHASE_TARGETS[finding_id]
     return {
@@ -622,11 +667,13 @@ class GateCoreTests(unittest.TestCase):
 
     def test_b01_and_b02_accept_exact_semantic_proof(self) -> None:
         self.validateSemanticPayloads("D0-B01", "OP-D0-01", valid_b01_payloads())
-        self.validateSemanticPayloads("D0-B02", "OP-D0-02", valid_b02_payloads())
-
         payloads = valid_b01_payloads()
         payloads["credential-containment"]["provider"]["expiry"] = "NO_EXPIRY"
         self.validateSemanticPayloads("D0-B01", "OP-D0-01", payloads)
+        self.validateSemanticPayloads("D0-B02", "OP-D0-02", valid_b02_payloads())
+
+    def test_b03_accepts_exact_semantic_target_design(self) -> None:
+        self.validateSemanticPayloads("D0-B03", "OP-D0-05", valid_b03_payloads())
 
     def test_b01_rejects_nonexact_shapes_types_and_unsafe_semantic_text(self) -> None:
         cases = []

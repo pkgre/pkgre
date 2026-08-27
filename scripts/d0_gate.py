@@ -71,6 +71,73 @@ B18_INCIDENT_PATH = "fixtures/d0-v1/basis-inventory/js-client-policy/raw/inciden
 B18_CONTACT = {"method": "GET", "url": "https://registry.npmjs.org/probe-missing", "responseStatus": 404}
 B21_TARGETS = ["https://rust.pkg.re/config.json", "https://js.pkg.re/pkgre-js"]
 B21_PROTOCOLS = ["HTTP/1.1", "HTTP/2"]
+GITHUB_GOVERNANCE_BASELINE_PATH = "fixtures/d0-v1/basis-inventory/github-governance/actual-vs-d2.json"
+GITHUB_GOVERNANCE_BASELINE_SHA256 = "f4522a842f9e041773014b3d7d7d78556536988a196918dc2e5c72ffd8b9d9e8"
+GITHUB_CHECKOUT_ACTION = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+GITHUB_APP_TOKEN_ACTION = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
+GITHUB_NIX_ACTION = "cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24"
+GITHUB_CONFIGURE_PAGES_ACTION = "actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b"
+GITHUB_UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+GITHUB_DEPLOY_PAGES_ACTION = "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e"
+GITHUB_REST_API_VERSION = "2026-03-10"
+GITHUB_REST_ACCEPT = "application/vnd.github+json"
+GITHUB_REST_BASE = "https://api.github.com"
+GITHUB_REST_OPENAPI_COMMIT = "7f6b9c117d7e720cb8dcbd6e650a20823f4b6f55"
+GITHUB_REST_OPENAPI_SHA256 = "1d25fa69c37ecff6f515f592e1e178b6268adb09ec635177578f5c394ddef355"
+GITHUB_PROVIDER_PROJECTION_DOMAIN = "pkgre-d0-github-provider-projection-v2"
+GITHUB_PROVIDER_EVIDENCE_KINDS = [
+    "ACTIONS_POLICY_READBACK",
+    "ADMISSION_RULESET_ID_AND_READBACK",
+    "AUDIT_LOG_RECORDS",
+    "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN",
+    "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK",
+    "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK",
+    "D2_PRE_MUTATION_CAPTURE",
+    "EFFECTIVE_MAIN_RULES_READBACK",
+    "FIRST_BOOTSTRAP_RUN_ID",
+    "INVARIANT_RULESET_ID_AND_READBACK",
+    "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK",
+    "PROTECTED_ENVIRONMENT_ID_AND_READBACK",
+    "PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING",
+    "REF_UPDATE_AND_BYPASS_AUDIT",
+    "RELEASE_APP_INSTALLATION_ID_AND_READBACK",
+    "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK",
+    "TRUSTED_SURFACE_TREE_READBACK",
+]
+GITHUB_PROVIDER_REQUIRED_BINDINGS = {
+    "ACTIONS_POLICY_READBACK": ["repositoryId", "enabled", "allowedActions", "selectedPolicy", "requireFullLengthCommitSha", "defaultWorkflowPermissions", "canApprovePullRequestReviews", "forkPullRequestPolicy"],
+    "ADMISSION_RULESET_ID_AND_READBACK": ["repositoryId", "rulesetId", "nodeId", "createdAt", "updatedAt", "source", "target", "enforcement", "conditions", "rulesAndParameters", "bypassActorId", "bypassActorType", "bypassMode"],
+    "AUDIT_LOG_RECORDS": ["repositoryId", "requestId", "actorId", "actorLogin", "action", "resourceId", "createdAt", "result"],
+    "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": ["repositoryId", "context", "integrationId", "candidateSha", "workflowId", "workflowRunId", "checkSuiteId", "checkRunId", "conclusion"],
+    "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK": ["repositoryId", "workflowId", "nodeId", "path", "name", "defaultBranchCommitOid", "gitBlobOid", "contentSha256", "triggers", "permissions"],
+    "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK": ["repositoryId", "sourceRef", "targetState", "httpStatus", "observedAt"],
+    "D2_PRE_MUTATION_CAPTURE": ["evidenceKey", "capturedAt", "apiVersion", "repository", "repositoryId", "canonicalOrigin", "transport", "sourceRef", "sourceCommitOid", "workflowBindings", "canonicalSettingsDigest", "providerRequestDigest", "rawResponseDigest"],
+    "EFFECTIVE_MAIN_RULES_READBACK": ["repositoryId", "sourceRef", "effectiveRules", "rulesetIds", "classicBranchProtectionState", "observedAt"],
+    "FIRST_BOOTSTRAP_RUN_ID": ["repositoryId", "workflowId", "workflowRunId", "deploymentId", "candidateSha", "preUpdateOid", "postUpdateOid", "bootstrapCommitOid", "treeOid", "soleParentOid", "signature", "signerBinding", "candidateBinding", "result"],
+    "INVARIANT_RULESET_ID_AND_READBACK": ["repositoryId", "rulesetId", "nodeId", "createdAt", "updatedAt", "source", "target", "enforcement", "conditions", "rulesAndParameters", "bypassActors"],
+    "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK": ["repositoryId", "workflowId", "nodeId", "path", "name", "defaultBranchCommitOid", "gitBlobOid", "contentSha256", "triggers", "permissions"],
+    "PROTECTED_ENVIRONMENT_ID_AND_READBACK": ["repositoryId", "environmentId", "nodeId", "name", "protectionRuleIds", "deploymentBranchPolicyIds", "reviewerProviderIds", "reviewerLogins", "preventSelfReview", "canAdminsBypass", "branchPolicy"],
+    "PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING": ["repositoryId", "pullRequestId", "pullRequestNumber", "baseRef", "baseSha", "headSha", "reviewId", "reviewCommitId", "reviewerProviderId", "reviewerLogin", "reviewerAssociation", "codeOwnerReview", "lastPushApproval"],
+    "REF_UPDATE_AND_BYPASS_AUDIT": ["repositoryId", "requestId", "sourceRef", "preUpdateOid", "postUpdateOid", "force", "fastForward", "actorType", "appId", "installationId", "rulesetId", "bypassMode", "auditRecordIds"],
+    "RELEASE_APP_INSTALLATION_ID_AND_READBACK": ["repositoryId", "appId", "installationId", "slug", "owner", "repositorySelection", "selectedRepositoryIds", "selectedRepositoryCount", "installedPermissions", "requestedTokenPermissions", "tokenRepositoryIds"],
+    "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK": ["repositoryId", "workflowId", "nodeId", "path", "name", "defaultBranchCommitOid", "gitBlobOid", "contentSha256", "triggers", "permissions", "releaseAuthorityConsumers"],
+    "TRUSTED_SURFACE_TREE_READBACK": ["repositoryId", "commitOid", "treeOid", "workflowManifest", "localActionManifest", "repositoryExecutableInputs", "externalRepositoryInputs", "externalActions", "canonicalSurfaceDigest"],
+}
+GITHUB_CANDIDATE_VALIDATION_SCOPE = ["ARCHIVE_HASHES", "CATALOG_POLICY", "CATALOG_SCHEMA", "PROJECTION"]
+GITHUB_LOGIN_RE = re.compile(r"^[a-z0-9](?:(?!.*--)[a-z0-9-]{0,37}[a-z0-9])?$")
+GITHUB_REPOSITORY_IDS = {"pkgre/rust": 1342904147, "pkgre/js": 1345630585}
+GITHUB_CATALOG_TREE_OIDS = {"pkgre/rust": "c448a9f3560bf286bd89a52aab0e5f77a4c85553", "pkgre/js": "b8c0d5dae071cad4416795e5612c1ddb234bd104"}
+GITHUB_PAGES_BASELINES = {
+    "rust": {"commitOid": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b", "gitBlobOid": "0799e0070b7500dea5aa688c1898a92c2a907f93", "contentSha256": "cd46abf20d47894a4ffcc10550953848f6dcbc6c3703239cee0635e4c453a114"},
+    "js": {"commitOid": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17", "gitBlobOid": "dd19b88fa455c48eb2a3a817072c8b954e8c65f3", "contentSha256": "4c6aaf4fff2ee0a2f2d1f433d01d1e6f7d62f069b21b7017488539d48660f7e8"},
+}
+GITHUB_EXTERNAL_INDEXER = {"repository": "pkgre/pkgre", "commitOid": "066293df21743cbf41fb571a38f2bb94059e7274", "treeOid": "0326ff44970839b753dca8b1f9bbd649b54c004d", "transport": "HTTPS", "canonicalOrigin": "https://github.com/pkgre/pkgre.git", "credentialMode": "ANONYMOUS_READ_ONLY"}
+GITHUB_JS_EXECUTABLE_INPUTS = [
+    {"path": "scripts/build-site.sh", "gitBlobOid": "03c77e160c8b1e3b4b469020b7998d45e07299df", "contentSha256": "f981bb5579d23695962a782f8dabd3eee18412a99252798ac7adf4cbb3b03b01"},
+    {"path": "scripts/check-bootstrap.sh", "gitBlobOid": "59be16f06d75de27796c79ce480945d9db4b1e3d", "contentSha256": "0bdfc67aaec370219a600012d85ee8e3f3d8d6ac733754ae5af11f9511604108"},
+    {"path": "scripts/check-site.sh", "gitBlobOid": "3a639046793e39946d6fe428ae552efbf5d8321d", "contentSha256": "99c2d663715bac9a796547df50599458a5c43c0acbbb1964becd3c6c92a0e4ac"},
+    {"path": "scripts/test-site.sh", "gitBlobOid": "7b2ef9aaccd65a07720dee64e2964f9d78cfcd33", "contentSha256": "4e804ad4bbb5bd5bf234373869a75c7b94352aa5feca1f4b76b498d3c90c5f39"},
+]
 
 
 @dataclass(frozen=True)
@@ -1537,6 +1604,487 @@ def validate_b02_payloads(results: list[dict[str, Any]], verification_time: date
     require_globally_distinct_identifiers(identity_rows, "D0-B02 security-relevant identifiers")
 
 
+def exact_json_value(value: Any, expected: Any, label: str) -> None:
+    require(type(value) is type(expected), f"{label}: expected JSON type {type(expected).__name__}")
+    if isinstance(expected, dict):
+        actual_object = obj(value, label)
+        exact_keys(actual_object, set(expected), label)
+        for key, expected_value in expected.items():
+            exact_json_value(actual_object[key], expected_value, f"{label}.{key}")
+    elif isinstance(expected, list):
+        actual_array = arr(value, label)
+        require(len(actual_array) == len(expected), f"{label}: expected exactly {len(expected)} entries")
+        for index, expected_value in enumerate(expected):
+            exact_json_value(actual_array[index], expected_value, f"{label}[{index}]")
+    else:
+        require(value == expected, f"{label}: frozen value mismatch")
+
+
+def github_login(value: Any, label: str) -> str:
+    login = nonempty(value, label)
+    require(GITHUB_LOGIN_RE.fullmatch(login) is not None, f"{label}: expected canonical lower-case GitHub login")
+    return login
+
+
+def github_provider_projection_digest(kind: str, value: Any) -> str:
+    raw = GITHUB_PROVIDER_PROJECTION_DOMAIN.encode("ascii") + b"\0" + kind.encode("ascii") + b"\0" + canonical_json(value)
+    return sha256(raw)
+
+
+def expected_github_catalog(catalog_id: str, repository: str, repository_id: int, runtime_origin: str, source_tip: str, reviewer: str, dispatcher: str, candidate_digest: str, release_digest: str, pages_digest: str, codeowners_digest: str) -> dict[str, Any]:
+    source_ref = "refs/heads/main"
+    source_branch = "main"
+    candidate_path = f".github/workflows/pkgre-{catalog_id}-candidate.yml"
+    release_path = f".github/workflows/pkgre-{catalog_id}-release.yml"
+    pages_path = ".github/workflows/pages.yml"
+    candidate_name = f"pkgre-{catalog_id}-candidate"
+    release_name = f"pkgre-{catalog_id}-release"
+    pages_name = f"pkgre-{catalog_id}-pages-rollback"
+    check_context = f"pkgre-{catalog_id}-candidate/validate"
+    environment_name = f"pkgre-{catalog_id}-release"
+    writer_slug = f"pkgre-{catalog_id}-release-writer"
+    admission_name = f"pkgre-{catalog_id}-admission"
+    invariant_name = f"pkgre-{catalog_id}-invariants"
+    design_id = f"pkgre-{catalog_id}-github-governance-v1"
+    provider_evidence_keys = {kind: f"{catalog_id}-{kind.lower().replace('_', '-')}" for kind in GITHUB_PROVIDER_EVIDENCE_KINDS}
+    candidate_producer_key = provider_evidence_keys["CANDIDATE_CHECK_PRODUCER_ID_AND_RUN"]
+    pre_mutation_capture_key = provider_evidence_keys["D2_PRE_MUTATION_CAPTURE"]
+    effective_rules_key = provider_evidence_keys["EFFECTIVE_MAIN_RULES_READBACK"]
+    candidate_workflow_key = provider_evidence_keys["CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK"]
+    release_workflow_key = provider_evidence_keys["RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK"]
+    pages_workflow_key = provider_evidence_keys["PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK"]
+    trusted_surface_key = provider_evidence_keys["TRUSTED_SURFACE_TREE_READBACK"]
+    source_tree_oid = GITHUB_CATALOG_TREE_OIDS[repository]
+    pages_baseline = GITHUB_PAGES_BASELINES[catalog_id]
+    collection_remote = next(row.remote_url for row in PRODUCTION_REPOSITORIES if row.id == repository)
+    permissions_candidate = {"actions": "none", "checks": "none", "contents": "read", "idToken": "none", "pages": "none", "pullRequests": "none", "allUnlisted": "none"}
+    permissions_release = {"actions": "none", "checks": "read", "contents": "read", "idToken": "none", "pages": "none", "pullRequests": "read", "allUnlisted": "none"}
+    permissions_pages_validate = {"actions": "none", "checks": "none", "contents": "read", "idToken": "none", "pages": "none", "pullRequests": "none", "allUnlisted": "none"}
+    permissions_pages_deploy = {"actions": "none", "checks": "none", "contents": "none", "idToken": "write", "pages": "write", "pullRequests": "none", "allUnlisted": "none"}
+    app_permissions = {"contents": "write", "metadata": "read", "allUnlisted": "none"}
+    candidate_actions = [GITHUB_CHECKOUT_ACTION, GITHUB_NIX_ACTION]
+    release_actions = [GITHUB_APP_TOKEN_ACTION, GITHUB_CHECKOUT_ACTION]
+    pages_actions = [GITHUB_CHECKOUT_ACTION, GITHUB_CONFIGURE_PAGES_ACTION, GITHUB_DEPLOY_PAGES_ACTION, GITHUB_NIX_ACTION, GITHUB_UPLOAD_ARTIFACT_ACTION]
+    all_actions = sorted(set(candidate_actions + release_actions + pages_actions))
+    workflow_manifest = [
+        {"path": pages_path, "name": pages_name, "purpose": "FROZEN_PAGES_ROLLBACK_PUBLICATION", "proposedContentSha256": pages_digest, "providerWorkflowEvidenceKey": pages_workflow_key, "providerWorkflowIdStatus": "NOT_YET_ASSIGNED", "targetGitBlobOidStatus": "NOT_YET_ASSIGNED"},
+        {"path": candidate_path, "name": candidate_name, "purpose": "VALIDATE_EXACT_PULL_REQUEST_HEAD", "proposedContentSha256": candidate_digest, "providerWorkflowEvidenceKey": candidate_workflow_key, "providerWorkflowIdStatus": "NOT_YET_ASSIGNED", "targetGitBlobOidStatus": "NOT_YET_ASSIGNED"},
+        {"path": release_path, "name": release_name, "purpose": "SIGN_AND_FAST_FORWARD_OPERATOR_APPROVED_CANDIDATE", "proposedContentSha256": release_digest, "providerWorkflowEvidenceKey": release_workflow_key, "providerWorkflowIdStatus": "NOT_YET_ASSIGNED", "targetGitBlobOidStatus": "NOT_YET_ASSIGNED"},
+    ]
+    repository_executable_inputs = copy.deepcopy(GITHUB_JS_EXECUTABLE_INPUTS if catalog_id == "js" else [])
+    external_repository_inputs = [copy.deepcopy(GITHUB_EXTERNAL_INDEXER)]
+    protected_governance_paths = [".github/CODEOWNERS", pages_path, candidate_path, release_path] + [entry["path"] for entry in repository_executable_inputs]
+    protected_governance_paths = sorted(protected_governance_paths)
+    trusted_surface = {
+        "comparisonBase": {"sourceRef": source_ref, "commitOid": source_tip, "treeOid": source_tree_oid},
+        "closedWorkflowManifest": {"root": ".github/workflows", "entries": workflow_manifest, "unlistedEntriesAllowed": False, "addRemoveRenameAllowedByNormalWriter": False},
+        "closedLocalActionManifest": {"root": ".github/actions", "entries": [], "unlistedEntriesAllowed": False, "addRemoveRenameAllowedByNormalWriter": False},
+        "repositoryExecutableInputs": repository_executable_inputs,
+        "externalRepositoryInputs": external_repository_inputs,
+        "externalActions": all_actions,
+        "workflowExecutableContracts": [
+            {"workflowPath": pages_path, "candidateTreeTreatment": "ACCEPTED_MAIN_DATA_ONLY", "repositoryExecutableInputs": [entry["path"] for entry in repository_executable_inputs], "externalRepositoryInputs": [GITHUB_EXTERNAL_INDEXER["repository"]], "externalActions": pages_actions, "pullRequestExecution": False, "unlistedExecutableInputAllowed": False},
+            {"workflowPath": candidate_path, "candidateTreeTreatment": "UNTRUSTED_DATA_ONLY", "repositoryExecutableInputs": [], "externalRepositoryInputs": [GITHUB_EXTERNAL_INDEXER["repository"]], "externalActions": candidate_actions, "pullRequestExecution": True, "unlistedExecutableInputAllowed": False},
+            {"workflowPath": release_path, "candidateTreeTreatment": "UNTRUSTED_DATA_ONLY", "repositoryExecutableInputs": [], "externalRepositoryInputs": [GITHUB_EXTERNAL_INDEXER["repository"]], "externalActions": release_actions, "pullRequestExecution": False, "unlistedExecutableInputAllowed": False},
+        ],
+        "normalWriterAdmission": {"compareEntireSurfaceToReviewedBase": True, "protectedPaths": protected_governance_paths, "manifestAbsenceIsProtected": True, "helperContentDigestRequired": True, "candidateMayModifySurface": False},
+        "governanceChangeCeremony": {"normalCatalogWriterForbidden": True, "requiresSeparateOperatorReviewedHandoff": True, "requiresFreshTargetDesignAndProviderReadback": True, "requiresRulesetMutationAudit": True, "mayNotReuseCatalogAdmission": True},
+        "evidenceKey": trusted_surface_key,
+    }
+    candidate_ci = {
+        "path": candidate_path,
+        "name": candidate_name,
+        "purpose": "VALIDATE_EXACT_PULL_REQUEST_HEAD",
+        "proposedContentSha256": candidate_digest,
+        "targetCommitBinding": {"commitOidStatus": "NOT_YET_ASSIGNED", "gitBlobOidStatus": "NOT_YET_ASSIGNED", "providerWorkflowEvidenceKey": candidate_workflow_key},
+        "trigger": {"pullRequest": True, "targetBranch": source_branch, "headShaSource": "GITHUB_EVENT_PULL_REQUEST_HEAD_SHA", "push": False, "pullRequestTarget": False, "workflowRun": False, "workflowCall": False, "workflowDispatch": False},
+        "check": {"context": check_context, "conclusion": "success", "headShaEqualsCheckedOutCommit": True, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED"},
+        "permissions": permissions_candidate,
+        "checkout": {"detached": True, "fetchFullHistory": True, "persistCredentials": False, "submodules": False, "lfs": False},
+        "validationScope": GITHUB_CANDIDATE_VALIDATION_SCOPE,
+        "execution": {"candidateTreeIsDataOnly": True, "executeCandidateCode": False, "repositoryExecutableInputs": [], "externalRepositoryInputs": [GITHUB_EXTERNAL_INDEXER["repository"]], "actions": candidate_actions, "shellLogicSource": "INLINE_FROZEN_WORKFLOW_ONLY", "unlistedInputAllowed": False},
+        "untrustedPullRequests": {"secretsAvailable": False, "writeTokenAvailable": False, "pullRequestTargetUsed": False, "lifecycleScriptsExecuted": False},
+    }
+    admission_job = {
+        "jobId": "admission",
+        "environment": None,
+        "needs": [],
+        "permissions": permissions_release,
+        "secretAccess": False,
+        "writerTokenAccess": False,
+        "candidate": {"input": "candidate_sha", "format": "LOWERCASE_SHA1_40", "fetchFullHistory": True, "checkoutDetached": True, "objectTypeCommit": True, "verifyHeadEqualsInput": True, "verifyDescendsFromCurrentBase": True, "verifyCandidateTreeAfterCheckout": True, "persistCredentials": False, "submodules": False, "lfs": False, "candidateTreeIsDataOnly": True, "executeCandidateCode": False},
+        "pullRequest": {"exactlyOneOpen": True, "baseBranch": source_branch, "baseShaEqualsCurrentSourceTip": True, "headShaEqualsCandidate": True, "codeOwnerApprovalRequired": True, "lastPushApprovalRequired": True, "staleApprovalsDismissed": True, "conversationResolutionRequired": True, "reviewCommitIdEqualsCandidate": True, "providerReviewEvidenceKey": provider_evidence_keys["PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING"]},
+        "candidateCheck": {"context": check_context, "conclusion": "success", "headShaEqualsCandidate": True, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED"},
+        "trustedSurface": {"unchangedFromReviewedBase": True, "evidenceKey": trusted_surface_key, "closedWorkflowManifestRequired": True, "closedLocalActionManifestRequired": True, "executableInputDigestsRequired": True},
+        "actions": candidate_actions,
+        "result": "ADMISSION_DIGEST_BOUND_TO_BASE_CANDIDATE_AND_TRUSTED_SURFACE",
+    }
+    release_job = {
+        "jobId": "release",
+        "environment": environment_name,
+        "needs": ["admission"],
+        "permissions": permissions_release,
+        "secretAccess": True,
+        "writerTokenAccess": True,
+        "revalidateAdmissionAgainstCurrentBase": True,
+        "rejectChangedCandidateOrBase": True,
+        "candidateTreeIsDataOnly": True,
+        "executeCandidateCode": False,
+        "repositoryExecutableInputs": [],
+        "actions": release_actions,
+        "signedCommit": {"treeEqualsCandidate": True, "soleParentEqualsFreshCapturedBase": True, "candidateShaTrailer": "Pkgre-Candidate", "signatureFormat": "SSH", "signatureAlgorithm": "ssh-ed25519", "exactSignerPolicySource": "D0-B04", "providerGenericSignatureIsDefenseInDepthOnly": True},
+        "refUpdate": {"targetRef": source_ref, "api": "PATCH_GIT_REF", "force": False, "compareBaseToFreshCaptureImmediatelyBeforeUpdate": True, "fastForwardOnly": True, "freshCaptureEvidenceKey": pre_mutation_capture_key},
+    }
+    release_authority_consumers = {
+        "protectedEnvironment": [{"workflowPath": release_path, "jobId": "release", "environment": environment_name}],
+        "writerAppCredentialSecret": [{"workflowPath": release_path, "jobId": "release", "purpose": "MINT_REPOSITORY_SCOPED_WRITER_TOKEN"}],
+        "writerTokenMintingAction": [{"workflowPath": release_path, "jobId": "release", "action": GITHUB_APP_TOKEN_ACTION}],
+        "contentsWriteToken": [{"workflowPath": release_path, "jobId": "release", "targetRef": source_ref}],
+        "allOtherConsumersForbidden": True,
+        "closedWorldReferenceScanRequired": True,
+    }
+    release_workflow = {
+        "path": release_path,
+        "name": release_name,
+        "purpose": "SIGN_AND_FAST_FORWARD_OPERATOR_APPROVED_CANDIDATE",
+        "proposedContentSha256": release_digest,
+        "targetCommitBinding": {"commitOidStatus": "NOT_YET_ASSIGNED", "gitBlobOidStatus": "NOT_YET_ASSIGNED", "providerWorkflowEvidenceKey": release_workflow_key},
+        "triggers": {"workflowDispatch": {"enabled": True, "candidateShaInput": "candidate_sha", "candidateShaRequired": True, "requiredRef": source_ref, "workflowFileOnDefaultBranch": True, "verifyGithubRefExactly": True, "verifyGithubShaEqualsFreshCapturedBase": True, "verifyActorIsExactlyOneConfiguredDispatcher": True}, "push": False, "pullRequest": False, "pullRequestTarget": False, "workflowRun": False, "workflowCall": False},
+        "dispatchers": [{"type": "USER", "login": dispatcher}],
+        "jobs": {"admission": admission_job, "release": release_job},
+        "releaseAuthorityConsumers": release_authority_consumers,
+        "protectedGovernancePaths": protected_governance_paths,
+        "signingAuthorityDesignId": f"pkgre-{catalog_id}-signing-v1",
+    }
+    pages_workflow = {
+        "path": pages_path,
+        "name": pages_name,
+        "purpose": "FROZEN_PAGES_ROLLBACK_PUBLICATION",
+        "baseline": copy.deepcopy(pages_baseline),
+        "proposedContentSha256": pages_digest,
+        "targetCommitBinding": {"commitOidStatus": "NOT_YET_ASSIGNED", "gitBlobOidStatus": "NOT_YET_ASSIGNED", "providerWorkflowEvidenceKey": pages_workflow_key},
+        "triggers": {"push": {"enabled": True, "branches": [source_branch]}, "workflowDispatch": {"enabled": True, "requiredRef": source_ref}, "pullRequest": False, "pullRequestTarget": False, "workflowRun": False, "workflowCall": False},
+        "jobs": {"validate": {"permissions": permissions_pages_validate, "environment": None, "candidateTreeIsDataOnly": True, "repositoryExecutableInputs": [entry["path"] for entry in repository_executable_inputs]}, "deploy": {"permissions": permissions_pages_deploy, "environment": "github-pages", "needs": ["validate"], "sourceRefRequired": source_ref}},
+        "releaseAuthorityAccess": {"protectedReleaseEnvironment": False, "writerAppCredentialSecret": False, "writerTokenMintingAction": False, "contentsWriteToken": False},
+        "pullRequestCandidateExecutionRemoved": True,
+        "rollbackContinuityRetained": True,
+    }
+    environment = {
+        "name": environment_name,
+        "reviewers": [{"type": "USER", "login": reviewer, "providerIdStatus": "NOT_YET_ASSIGNED"}],
+        "requiredReviewerApprovals": 1,
+        "preventSelfReview": True,
+        "canAdminsBypass": False,
+        "branchPolicy": {"kind": "CUSTOM", "patterns": [source_branch], "protectedBranchesOnly": False},
+        "secretsAvailableOnlyAfterApproval": True,
+    }
+    writer = {
+        "kind": "GITHUB_APP",
+        "slug": writer_slug,
+        "appIdStatus": "NOT_YET_ASSIGNED",
+        "installation": {"repositorySelection": "SELECTED", "repositories": [repository], "repositoryIds": [repository_id], "repositoryCount": 1, "providerIdStatus": "NOT_YET_ASSIGNED"},
+        "installedPermissions": app_permissions,
+        "token": {"mintedOnlyInProtectedJob": "release", "maximumTtlSeconds": 3600, "repositories": [repository], "repositoryIds": [repository_id], "repositoryCount": 1, "requestedPermissions": app_permissions, "storedAfterJob": False},
+        "credential": {"location": "PROTECTED_ENVIRONMENT_SECRET", "materialReturnedInD0": False},
+        "normalUse": {"workflowPath": release_path, "jobId": "release", "canApprovePullRequests": False, "canBeCodeOwner": False, "canAdministerRepository": False},
+        "admissionBypass": {"ruleset": admission_name, "actorType": "Integration", "actor": writer_slug, "providerActorIdStatus": "NOT_YET_ASSIGNED", "mode": "always"},
+        "invariantBypassAllowed": False,
+    }
+    admission_ruleset = {
+        "name": admission_name,
+        "target": "BRANCH",
+        "enforcement": "ACTIVE",
+        "includeRefs": [source_ref],
+        "excludeRefs": [],
+        "bypassActors": [{"actorType": "Integration", "actor": writer_slug, "providerActorIdStatus": "NOT_YET_ASSIGNED", "mode": "always"}],
+        "administratorsBypass": False,
+        "restrictUpdates": {"type": "update", "parameters": {"updateAllowsFetchAndMerge": False}},
+        "pullRequest": {"required": True, "approvals": 1, "requireCodeOwnerReview": True, "requireLastPushApproval": True, "dismissStaleReviews": True, "requireConversationResolution": True},
+        "requiredStatusChecks": [{"context": check_context, "expectedProducerEvidenceKey": candidate_producer_key, "expectedProducerIdStatus": "NOT_YET_ASSIGNED", "strictRequiredStatusChecksPolicy": True}],
+        "normalMainWriterInvariant": {"exactlyOneActor": True, "actorType": "Integration", "actor": writer_slug, "allUsersTeamsRepositoryRolesAndOtherIntegrationsDenied": True},
+    }
+    invariant_ruleset = {
+        "name": invariant_name,
+        "target": "BRANCH",
+        "enforcement": "ACTIVE",
+        "includeRefs": [source_ref],
+        "excludeRefs": [],
+        "bypassActors": [],
+        "administratorsBypass": False,
+        "requiredSignatures": {"required": True, "providerEnforcement": "ANY_GITHUB_VERIFIED_SIGNATURE", "providerPinsExactSshKey": False, "exactSshEd25519SignerEnforcedBy": "D0-B04_AND_RUNTIME", "defenseInDepthOnly": True},
+        "linearHistory": True,
+        "allowForcePushes": False,
+        "allowDeletions": False,
+    }
+    provider_authority_boundary = {
+        "normalRefUpdateAuthority": "SOLE_CATALOG_SPECIFIC_WRITER_APP_VIA_PROTECTED_RELEASE_JOB",
+        "rulesetMutationAuthority": "REPOSITORY_ADMINISTRATORS_AND_ORGANIZATION_OWNERS_AT_PROVIDER",
+        "settingsAuthorityNature": "OPERATOR_CONTROLLED_AUDITED_PROCEDURAL_NOT_CRYPTOGRAPHIC",
+        "nonBypassableIdentityClaimed": False,
+        "adminDirectRefUpdateIsNormalPath": False,
+        "settingsMutationRequiresSeparateOperatorHandoffAndAudit": True,
+    }
+    codeowners = {
+        "path": ".github/CODEOWNERS",
+        "proposedContentSha256": codeowners_digest,
+        "sourceBranch": source_branch,
+        "entries": [{"pattern": "*", "owners": [f"@pkgre/{catalog_id}-catalog-reviewers"]}, {"pattern": "/.github/CODEOWNERS", "owners": [f"@pkgre/{catalog_id}-security-reviewers"]}, {"pattern": "/.github/workflows/**", "owners": [f"@pkgre/{catalog_id}-security-reviewers"]}, {"pattern": "/.github/actions/**", "owners": [f"@pkgre/{catalog_id}-security-reviewers"]}],
+        "ownersHaveWriteAccess": True,
+        "writerAppIsOwner": False,
+    }
+    actions = {
+        "enabled": True,
+        "allowedActions": "SELECTED",
+        "selectedPolicy": {"githubOwnedAllowed": False, "verifiedAllowed": False, "patternsAllowed": all_actions},
+        "requireFullLengthCommitSha": True,
+        "defaultWorkflowPermissions": "read",
+        "canApprovePullRequestReviews": False,
+        "forkPullRequests": {"writeTokenAvailable": False, "secretsAvailable": False},
+        "unlistedActionAllowed": False,
+    }
+    classic_baseline = {"state": "PRESENT", "capturedConfigurationSource": GITHUB_GOVERNANCE_BASELINE_PATH, "requiredCheckContext": "validate"} if catalog_id == "rust" else {"state": "ABSENT", "capturedConfigurationSource": GITHUB_GOVERNANCE_BASELINE_PATH, "observedHttpStatus": 404}
+    classic_transition = {
+        "baseline": classic_baseline,
+        "targetFinalState": "ABSENT",
+        "mutation": "REMOVE_ONLY_AFTER_ACTIVE_RULESETS_AND_EFFECTIVE_MAIN_READBACK" if catalog_id == "rust" else "CONFIRM_ABSENT_AFTER_ACTIVE_RULESETS_AND_EFFECTIVE_MAIN_READBACK",
+        "orderedSteps": [
+            {"order": 1, "action": "CAPTURE_FRESH_PRE_D2_SOURCE_SETTINGS_WORKFLOWS", "evidenceKey": pre_mutation_capture_key},
+            {"order": 2, "action": "INSTALL_AND_READ_BACK_ADMISSION_RULESET_ACTIVE", "evidenceKey": provider_evidence_keys["ADMISSION_RULESET_ID_AND_READBACK"]},
+            {"order": 3, "action": "INSTALL_AND_READ_BACK_INVARIANT_RULESET_ACTIVE", "evidenceKey": provider_evidence_keys["INVARIANT_RULESET_ID_AND_READBACK"]},
+            {"order": 4, "action": "READ_BACK_EFFECTIVE_MAIN_RULES_AND_PROVE_SOLE_WRITER_PLUS_INVARIANTS", "evidenceKey": effective_rules_key},
+            {"order": 5, "action": "REMOVE_CLASSIC_PROTECTION" if catalog_id == "rust" else "CONFIRM_CLASSIC_PROTECTION_ABSENT", "evidenceKey": provider_evidence_keys["CLASSIC_BRANCH_PROTECTION_FINAL_READBACK"]},
+            {"order": 6, "action": "REPEAT_EFFECTIVE_MAIN_RULES_READBACK", "evidenceKey": effective_rules_key},
+        ],
+        "refAdvanceAllowedDuringTransition": False,
+        "failureResult": "ABORT_AND_RESTORE_CAPTURED_BASELINE_WITHOUT_REF_ADVANCE",
+    }
+    pre_d2_capture = {
+        "evidenceKey": pre_mutation_capture_key,
+        "status": "NOT_YET_ASSIGNED",
+        "captureRequiredAt": "IMMEDIATELY_BEFORE_FIRST_D2_PROVIDER_MUTATION",
+        "maximumAgeSecondsAtFirstMutation": 600,
+        "repository": repository,
+        "repositoryId": repository_id,
+        "canonicalOrigin": runtime_origin,
+        "transport": "HTTPS",
+        "credentialMode": "ANONYMOUS_READ_ONLY",
+        "sourceRef": source_ref,
+        "sourceCommitOidStatus": "MUST_BE_CAPTURED_FRESH_NOT_COPIED_FROM_D0_BASELINE",
+        "workflowPaths": [pages_path, candidate_path, release_path],
+        "requiredFields": GITHUB_PROVIDER_REQUIRED_BINDINGS["D2_PRE_MUTATION_CAPTURE"],
+        "abortOnAnyDrift": ["SOURCE_COMMIT_OID", "WORKFLOW_COMMIT_OR_BLOB_OR_CONTENT", "RULESETS", "EFFECTIVE_MAIN_RULES", "CLASSIC_BRANCH_PROTECTION", "ACTIONS_POLICY", "ENVIRONMENT", "APP_INSTALLATION_AND_PERMISSIONS"],
+        "bindingUses": ["BOOTSTRAP_BASE", "CANDIDATE_ADMISSION", "REF_COMPARE_AND_SWAP", "ROLLBACK_BRANCH_SELECTION", "AUDIT_WINDOW_START", "FINAL_READBACK_COMPARISON"],
+        "captureAndMutationSameOperatorCeremony": True,
+    }
+    resource_selectors: dict[str, dict[str, Any]] = {
+        "ACTIONS_POLICY_READBACK": {"resourceType": "REPOSITORY_ACTIONS_POLICY", "repositoryId": repository_id},
+        "ADMISSION_RULESET_ID_AND_READBACK": {"resourceType": "REPOSITORY_RULESET", "name": admission_name, "target": "branch"},
+        "AUDIT_LOG_RECORDS": {"resourceType": "REPOSITORY_AUDIT_WINDOW", "repositoryId": repository_id, "startsAtCaptureEvidenceKey": pre_mutation_capture_key},
+        "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": {"resourceType": "CHECK_RUN", "context": check_context, "headShaSource": "CANDIDATE_SHA"},
+        "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"resourceType": "WORKFLOW", "path": candidate_path, "name": candidate_name},
+        "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK": {"resourceType": "CLASSIC_BRANCH_PROTECTION", "sourceRef": source_ref, "targetState": "ABSENT"},
+        "D2_PRE_MUTATION_CAPTURE": {"resourceType": "D2_PRE_MUTATION_CAPTURE", "repositoryId": repository_id, "sourceRef": source_ref},
+        "EFFECTIVE_MAIN_RULES_READBACK": {"resourceType": "EFFECTIVE_BRANCH_RULES", "sourceRef": source_ref},
+        "FIRST_BOOTSTRAP_RUN_ID": {"resourceType": "WORKFLOW_BOOTSTRAP_RUN", "workflowPath": release_path, "sourceRef": source_ref},
+        "INVARIANT_RULESET_ID_AND_READBACK": {"resourceType": "REPOSITORY_RULESET", "name": invariant_name, "target": "branch"},
+        "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK": {"resourceType": "WORKFLOW", "path": pages_path, "name": pages_name},
+        "PROTECTED_ENVIRONMENT_ID_AND_READBACK": {"resourceType": "DEPLOYMENT_ENVIRONMENT", "name": environment_name},
+        "PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING": {"resourceType": "PULL_REQUEST_REVIEW", "baseRef": source_ref, "headShaSource": "CANDIDATE_SHA"},
+        "REF_UPDATE_AND_BYPASS_AUDIT": {"resourceType": "GIT_REF_UPDATE", "sourceRef": source_ref, "actorSlug": writer_slug},
+        "RELEASE_APP_INSTALLATION_ID_AND_READBACK": {"resourceType": "GITHUB_APP_INSTALLATION", "appSlug": writer_slug, "repositoryId": repository_id},
+        "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"resourceType": "WORKFLOW", "path": release_path, "name": release_name},
+        "TRUSTED_SURFACE_TREE_READBACK": {"resourceType": "GIT_TRUSTED_SURFACE", "sourceRef": source_ref, "comparisonBaseCommitOid": source_tip},
+    }
+    resource_selectors = {kind: {"repositoryId": repository_id, **selector} for kind, selector in resource_selectors.items()}
+    projection_inputs: dict[str, Any] = {
+        "ACTIONS_POLICY_READBACK": actions,
+        "ADMISSION_RULESET_ID_AND_READBACK": admission_ruleset,
+        "AUDIT_LOG_RECORDS": {"repositoryId": repository_id, "startsAtCaptureEvidenceKey": pre_mutation_capture_key, "requiredActions": ["ACTIONS_POLICY_CHANGE", "APP_INSTALLATION_CHANGE", "BRANCH_PROTECTION_CHANGE", "ENVIRONMENT_CHANGE", "REF_UPDATE", "RULESET_CHANGE", "WORKFLOW_DISPATCH"]},
+        "CANDIDATE_CHECK_PRODUCER_ID_AND_RUN": {"check": candidate_ci["check"], "workflow": {"path": candidate_path, "name": candidate_name, "contentSha256": candidate_digest}},
+        "CANDIDATE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"path": candidate_path, "name": candidate_name, "contentSha256": candidate_digest, "trigger": candidate_ci["trigger"], "permissions": permissions_candidate},
+        "CLASSIC_BRANCH_PROTECTION_FINAL_READBACK": {"sourceRef": source_ref, "targetFinalState": "ABSENT", "transition": classic_transition},
+        "D2_PRE_MUTATION_CAPTURE": pre_d2_capture,
+        "EFFECTIVE_MAIN_RULES_READBACK": {"sourceRef": source_ref, "admission": admission_ruleset, "invariants": invariant_ruleset, "classicFinalState": "ABSENT"},
+        "FIRST_BOOTSTRAP_RUN_ID": {"releaseWorkflowPath": release_path, "sourceRef": source_ref, "signedCommit": release_job["signedCommit"], "refUpdate": release_job["refUpdate"], "freshCaptureEvidenceKey": pre_mutation_capture_key},
+        "INVARIANT_RULESET_ID_AND_READBACK": invariant_ruleset,
+        "PAGES_WORKFLOW_PROVIDER_ID_AND_READBACK": {"path": pages_path, "name": pages_name, "contentSha256": pages_digest, "triggers": pages_workflow["triggers"], "jobs": pages_workflow["jobs"]},
+        "PROTECTED_ENVIRONMENT_ID_AND_READBACK": environment,
+        "PULL_REQUEST_REVIEW_AND_CANDIDATE_BINDING": admission_job["pullRequest"],
+        "REF_UPDATE_AND_BYPASS_AUDIT": {"refUpdate": release_job["refUpdate"], "writer": {"slug": writer_slug, "installation": writer["installation"]}, "admissionBypass": writer["admissionBypass"]},
+        "RELEASE_APP_INSTALLATION_ID_AND_READBACK": {"slug": writer_slug, "installation": writer["installation"], "installedPermissions": writer["installedPermissions"], "token": writer["token"]},
+        "RELEASE_WORKFLOW_PROVIDER_ID_AND_READBACK": {"path": release_path, "name": release_name, "contentSha256": release_digest, "triggers": release_workflow["triggers"], "jobPermissions": {key: value["permissions"] for key, value in release_workflow["jobs"].items()}, "releaseAuthorityConsumers": release_authority_consumers},
+        "TRUSTED_SURFACE_TREE_READBACK": trusted_surface,
+    }
+    provider_evidence = [
+        {
+            "evidenceKey": provider_evidence_keys[kind],
+            "kind": kind,
+            "catalogId": catalog_id,
+            "designId": design_id,
+            "repository": repository,
+            "repositoryId": repository_id,
+            "resourceSelector": resource_selectors[kind],
+            "projectionSchema": f"pkgre-d2-github-{kind.lower().replace('_', '-')}-projection-v1",
+            "projectionDomain": GITHUB_PROVIDER_PROJECTION_DOMAIN,
+            "expectedProjectionSha256": github_provider_projection_digest(kind, {"catalogId": catalog_id, "designId": design_id, "repository": repository, "repositoryId": repository_id, "resourceSelector": resource_selectors[kind], "configuration": projection_inputs[kind]}),
+            "requiredReturnedBindings": GITHUB_PROVIDER_REQUIRED_BINDINGS[kind],
+            "allUnlistedReturnedFields": "REJECT",
+            "providerAssignedIdStatus": "NOT_YET_ASSIGNED",
+            "readbackRequiredAt": "D2_SIGNING",
+        }
+        for kind in GITHUB_PROVIDER_EVIDENCE_KINDS
+    ]
+    no_advance_operations = [
+        {"order": 1, "action": "DISABLE_APP_TOKEN_MINTING", "target": writer_slug, "expectedState": "DISABLED"},
+        {"order": 2, "action": "DISABLE_RELEASE_WORKFLOW", "target": release_path, "expectedState": "DISABLED"},
+        {"order": 3, "action": "RESTORE_ACTIONS_POLICY_FROM_FRESH_CAPTURE", "target": repository, "expectedState": "CAPTURE_MATCH"},
+        {"order": 4, "action": "RESTORE_ADMISSION_RULESET_FROM_FRESH_CAPTURE", "target": admission_name, "expectedState": "CAPTURE_MATCH"},
+        {"order": 5, "action": "RESTORE_INVARIANT_RULESET_FROM_FRESH_CAPTURE", "target": invariant_name, "expectedState": "CAPTURE_MATCH"},
+        {"order": 6, "action": "RESTORE_CLASSIC_BRANCH_PROTECTION_FROM_FRESH_CAPTURE", "target": source_ref, "expectedState": classic_baseline["state"]},
+        {"order": 7, "action": "RESTORE_ENVIRONMENT_AND_APP_FROM_FRESH_CAPTURE", "target": repository, "expectedState": "CAPTURE_MATCH"},
+        {"order": 8, "action": "VERIFY_SOURCE_REF_EQUALS_FRESH_CAPTURE", "target": source_ref, "expectedStateFrom": {"evidenceKey": pre_mutation_capture_key, "field": "sourceCommitOid"}},
+        {"order": 9, "action": "READ_BACK_SETTINGS_EFFECTIVE_RULES_AND_AUDIT", "target": repository, "expectedState": "PASS"},
+    ]
+    advanced_operations = [
+        {"order": 1, "action": "DISABLE_APP_TOKEN_MINTING", "target": writer_slug, "expectedState": "DISABLED"},
+        {"order": 2, "action": "DISABLE_RELEASE_WORKFLOW", "target": release_path, "expectedState": "DISABLED"},
+        {"order": 3, "action": "PRESERVE_INVARIANT_RULESET", "target": invariant_name, "expectedState": "ACTIVE"},
+        {"order": 4, "action": "PRESERVE_ADMISSION_RULESET", "target": admission_name, "expectedState": "ACTIVE"},
+        {"order": 5, "action": "FREEZE_SOURCE_REF_WRITES", "target": repository, "expectedState": "FROZEN"},
+        {"order": 6, "action": "VERIFY_NO_HISTORY_REWRITE_FROM_FRESH_CAPTURE", "target": source_ref, "expectedStateFrom": {"evidenceKey": pre_mutation_capture_key, "field": "sourceCommitOid"}},
+        {"order": 7, "action": "CAPTURE_READBACK_EFFECTIVE_RULES_AND_AUDIT", "target": repository, "expectedState": "PASS"},
+        {"order": 8, "action": "REQUIRE_SEPARATE_INCIDENT_RECOVERY", "target": repository, "expectedState": "BLOCKED"},
+    ]
+    rollback = {
+        "trigger": "ANY_D2_PROVIDER_READBACK_MISMATCH_OR_UNEXPECTED_REF_OR_TRUSTED_SURFACE_CHANGE",
+        "preconditions": {"historicalD0BaselinePath": GITHUB_GOVERNANCE_BASELINE_PATH, "historicalD0BaselineSha256": GITHUB_GOVERNANCE_BASELINE_SHA256, "sourceRef": source_ref, "freshCaptureEvidenceKey": pre_mutation_capture_key, "freshCaptureSourceTipField": "sourceCommitOid", "freshCaptureRequired": True, "historicalD0TipMaySubstituteForFreshCapture": False},
+        "ifSourceRefUnchanged": {"condition": "SOURCE_REF_EQUALS_FRESH_CAPTURE_SOURCE_COMMIT_OID", "operations": no_advance_operations},
+        "ifSourceRefAdvanced": {"condition": "SOURCE_REF_DIFFERS_FROM_FRESH_CAPTURE_SOURCE_COMMIT_OID", "operations": advanced_operations},
+        "postconditions": {"sourceHistoryRewritten": False, "writerDisabledUntilReview": True, "settingsReadbackRequired": True, "effectiveMainRulesReadbackRequired": True, "auditEvidenceRequired": True, "operatorReviewRequired": True},
+    }
+    return {
+        "catalogId": catalog_id,
+        "designId": design_id,
+        "repository": repository,
+        "repositoryId": repository_id,
+        "sourceAuthority": {"canonicalRuntimeOrigin": runtime_origin, "transport": "HTTPS", "credentialMode": "ANONYMOUS_READ_ONLY", "redirectsAllowed": False, "credentialInUrlAllowed": False, "sourceRef": source_ref, "sourceBranch": source_branch, "symbolicHeadAllowed": False, "collectionRemote": {"origin": collection_remote, "transport": "SSH", "purpose": "REVIEWED_LOCAL_D0_COLLECTION_ONLY", "runtimeUseAllowed": False}},
+        "sourceTipAtD0Baseline": source_tip,
+        "sourceTreeOidAtD0Baseline": source_tree_oid,
+        "preD2MutationCapture": pre_d2_capture,
+        "candidateCI": candidate_ci,
+        "releaseWorkflow": release_workflow,
+        "pagesWorkflow": pages_workflow,
+        "trustedSurface": trusted_surface,
+        "environment": environment,
+        "writer": writer,
+        "rulesets": {"admission": admission_ruleset, "invariants": invariant_ruleset},
+        "providerAuthorityBoundary": provider_authority_boundary,
+        "classicBranchProtectionTransition": classic_transition,
+        "codeowners": codeowners,
+        "actions": actions,
+        "providerAssignedEvidence": provider_evidence,
+        "rollback": rollback,
+    }
+
+
+def validate_b03_payloads(results: list[dict[str, Any]], verification_time: datetime) -> None:
+    require(len(results) == 1, "D0-B03: exact single-handoff contribution required")
+    result = results[0]
+    operator, returned_at = operator_return_context(result, "D0-B03")
+    payload = result["_semanticPayloads"]["github-governance-proof"]
+    label = "D0-B03 github-governance-proof"
+    exact_keys(payload, {"designId", "operatorDecision", "baseline", "catalogs", "crossCatalogSeparation", "d0Mutation", "result"}, label)
+    decision = obj(payload["operatorDecision"], f"{label}.operatorDecision")
+    exact_keys(decision, {"returnedBy", "returnedAt", "scope"}, f"{label}.operatorDecision")
+    require(security_text(decision["returnedBy"], f"{label}.operatorDecision.returnedBy", 128) == operator, f"{label}: operator identity mismatch")
+    decision_time = parse_utc(decision["returnedAt"], f"{label}.operatorDecision.returnedAt")
+    require(decision_time == returned_at, f"{label}: operator return time mismatch")
+    require_no_later(decision_time, verification_time + timedelta(seconds=D0_EVIDENCE_FUTURE_SKEW_SECONDS), f"{label}.operatorDecision")
+    catalogs = arr(payload["catalogs"], f"{label}.catalogs")
+    require(len(catalogs) == 2, f"{label}: exact Rust and JS catalog designs required")
+    specifications = [
+        ("rust", "pkgre/rust", "https://github.com/pkgre/rust.git"),
+        ("js", "pkgre/js", "https://github.com/pkgre/js.git"),
+    ]
+    source_tips = {row.id: row.reviewed_commit for row in PRODUCTION_REPOSITORIES}
+    expected_catalogs: list[dict[str, Any]] = []
+    identities: list[tuple[str, str]] = []
+    content_digests: list[tuple[str, str]] = []
+    evidence_keys: list[tuple[str, str]] = []
+    projection_digests: list[tuple[str, str]] = []
+    catalog_keys = {"catalogId", "designId", "repository", "repositoryId", "sourceAuthority", "sourceTipAtD0Baseline", "sourceTreeOidAtD0Baseline", "preD2MutationCapture", "candidateCI", "releaseWorkflow", "pagesWorkflow", "trustedSurface", "environment", "writer", "rulesets", "providerAuthorityBoundary", "classicBranchProtectionTransition", "codeowners", "actions", "providerAssignedEvidence", "rollback"}
+    for index, (catalog_id, repository, runtime_origin) in enumerate(specifications):
+        row_label = f"{label}.catalogs[{index}]"
+        catalog = obj(catalogs[index], row_label)
+        exact_keys(catalog, catalog_keys, row_label)
+        candidate = obj(catalog["candidateCI"], f"{row_label}.candidateCI")
+        exact_keys(candidate, {"path", "name", "purpose", "proposedContentSha256", "targetCommitBinding", "trigger", "check", "permissions", "checkout", "validationScope", "execution", "untrustedPullRequests"}, f"{row_label}.candidateCI")
+        release = obj(catalog["releaseWorkflow"], f"{row_label}.releaseWorkflow")
+        exact_keys(release, {"path", "name", "purpose", "proposedContentSha256", "targetCommitBinding", "triggers", "dispatchers", "jobs", "releaseAuthorityConsumers", "protectedGovernancePaths", "signingAuthorityDesignId"}, f"{row_label}.releaseWorkflow")
+        pages = obj(catalog["pagesWorkflow"], f"{row_label}.pagesWorkflow")
+        exact_keys(pages, {"path", "name", "purpose", "baseline", "proposedContentSha256", "targetCommitBinding", "triggers", "jobs", "releaseAuthorityAccess", "pullRequestCandidateExecutionRemoved", "rollbackContinuityRetained"}, f"{row_label}.pagesWorkflow")
+        dispatchers = arr(release["dispatchers"], f"{row_label}.releaseWorkflow.dispatchers")
+        require(len(dispatchers) == 1, f"{row_label}: exact single dispatcher required")
+        dispatcher_row = obj(dispatchers[0], f"{row_label}.releaseWorkflow.dispatchers[0]")
+        exact_keys(dispatcher_row, {"type", "login"}, f"{row_label}.releaseWorkflow.dispatchers[0]")
+        dispatcher = github_login(dispatcher_row["login"], f"{row_label}.releaseWorkflow.dispatchers[0].login")
+        environment = obj(catalog["environment"], f"{row_label}.environment")
+        exact_keys(environment, {"name", "reviewers", "requiredReviewerApprovals", "preventSelfReview", "canAdminsBypass", "branchPolicy", "secretsAvailableOnlyAfterApproval"}, f"{row_label}.environment")
+        reviewers = arr(environment["reviewers"], f"{row_label}.environment.reviewers")
+        require(len(reviewers) == 1, f"{row_label}: exact single environment reviewer required")
+        reviewer_row = obj(reviewers[0], f"{row_label}.environment.reviewers[0]")
+        exact_keys(reviewer_row, {"type", "login", "providerIdStatus"}, f"{row_label}.environment.reviewers[0]")
+        reviewer = github_login(reviewer_row["login"], f"{row_label}.environment.reviewers[0].login")
+        writer = obj(catalog["writer"], f"{row_label}.writer")
+        writer_slug = security_identifier(writer.get("slug"), f"{row_label}.writer.slug")
+        codeowners = obj(catalog["codeowners"], f"{row_label}.codeowners")
+        exact_keys(codeowners, {"path", "proposedContentSha256", "sourceBranch", "entries", "ownersHaveWriteAccess", "writerAppIsOwner"}, f"{row_label}.codeowners")
+        candidate_digest = hex_digest(candidate["proposedContentSha256"], f"{row_label}.candidateCI.proposedContentSha256")
+        release_digest = hex_digest(release["proposedContentSha256"], f"{row_label}.releaseWorkflow.proposedContentSha256")
+        pages_digest = hex_digest(pages["proposedContentSha256"], f"{row_label}.pagesWorkflow.proposedContentSha256")
+        codeowners_digest = hex_digest(codeowners["proposedContentSha256"], f"{row_label}.codeowners.proposedContentSha256")
+        identities.extend([(reviewer, f"{row_label}.environment reviewer"), (dispatcher, f"{row_label}.release dispatcher"), (writer_slug, f"{row_label}.writer app")])
+        content_digests.extend([(candidate_digest, f"{row_label}.candidateCI content"), (release_digest, f"{row_label}.releaseWorkflow content"), (pages_digest, f"{row_label}.pagesWorkflow content"), (codeowners_digest, f"{row_label}.codeowners content")])
+        provider_evidence = arr(catalog["providerAssignedEvidence"], f"{row_label}.providerAssignedEvidence")
+        require(len(provider_evidence) == len(GITHUB_PROVIDER_EVIDENCE_KINDS), f"{row_label}: exact provider-evidence coverage required")
+        observed_kinds: list[str] = []
+        for evidence_index, raw_evidence in enumerate(provider_evidence):
+            evidence_label = f"{row_label}.providerAssignedEvidence[{evidence_index}]"
+            evidence = obj(raw_evidence, evidence_label)
+            exact_keys(evidence, {"evidenceKey", "kind", "catalogId", "designId", "repository", "repositoryId", "resourceSelector", "projectionSchema", "projectionDomain", "expectedProjectionSha256", "requiredReturnedBindings", "allUnlistedReturnedFields", "providerAssignedIdStatus", "readbackRequiredAt"}, evidence_label)
+            kind = nonempty(evidence["kind"], f"{evidence_label}.kind")
+            observed_kinds.append(kind)
+            evidence_key = security_identifier(evidence["evidenceKey"], f"{evidence_label}.evidenceKey")
+            evidence_keys.append((evidence_key, f"{evidence_label}.evidenceKey"))
+            selector = obj(evidence["resourceSelector"], f"{evidence_label}.resourceSelector")
+            require(selector.get("repositoryId") == GITHUB_REPOSITORY_IDS[repository], f"{evidence_label}: resource selector must bind the exact repository ID")
+            projection_digest = hex_digest(evidence["expectedProjectionSha256"], f"{evidence_label}.expectedProjectionSha256")
+            projection_digests.append((projection_digest, f"{evidence_label}.expectedProjectionSha256"))
+            returned_bindings = arr(evidence["requiredReturnedBindings"], f"{evidence_label}.requiredReturnedBindings")
+            require(len(returned_bindings) == len(set(returned_bindings)), f"{evidence_label}: required returned bindings must be unique")
+        require(observed_kinds == GITHUB_PROVIDER_EVIDENCE_KINDS, f"{row_label}: provider-evidence kinds are missing,duplicated,or out of canonical order")
+        expected_catalogs.append(expected_github_catalog(catalog_id, repository, GITHUB_REPOSITORY_IDS[repository], runtime_origin, source_tips[repository], reviewer, dispatcher, candidate_digest, release_digest, pages_digest, codeowners_digest))
+    require_globally_distinct_identifiers(identities, "D0-B03 reviewer,dispatcher,and writer identities")
+    require(len({digest for digest, _ in content_digests}) == len(content_digests), "D0-B03 workflow and CODEOWNERS content digests must be globally distinct")
+    require_globally_distinct_identifiers(evidence_keys, "D0-B03 provider evidence keys")
+    require(len({digest for digest, _ in projection_digests}) == len(projection_digests), "D0-B03 provider projection digests must be globally distinct")
+    expected = {
+        "designId": "pkgre-public-catalog-github-governance-v1",
+        "operatorDecision": {"returnedBy": operator, "returnedAt": result["_operatorReturnedAt"], "scope": "D2_GITHUB_TARGET_DESIGN_NO_SETTINGS_ACTION"},
+        "baseline": {
+            "path": GITHUB_GOVERNANCE_BASELINE_PATH,
+            "sha256": GITHUB_GOVERNANCE_BASELINE_SHA256,
+            "catalogConformance": [{"catalogId": "rust", "targetConforming": False}, {"catalogId": "js", "targetConforming": False}],
+            "auditLogAvailable": False,
+        },
+        "catalogs": expected_catalogs,
+        "crossCatalogSeparation": {"workflowPathsDistinct": True, "workflowNamesDistinct": True, "checkContextsDistinct": True, "environmentsDistinct": True, "writerAppsDistinct": True, "rulesetNamesDistinct": True, "providerEvidenceKeysDistinct": True, "writerTokensRepositoryScoped": True},
+        "d0Mutation": {"githubSettingsChanged": False, "writerCredentialInstalled": False, "signerInstalled": False, "catalogRefAdvanced": False},
+        "result": "APPROVED_TARGET_DESIGN",
+    }
+    exact_json_value(payload, expected, label)
+
+
 def validate_phase_amendment_payloads(finding_id: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
     expected_targets = REPHASE_TARGETS[finding_id]
     amendment_ids: list[tuple[str, str]] = []
@@ -1581,6 +2129,8 @@ def validate_generic_payloads(finding_id: str, disposition: str, results: list[d
         validate_b01_payloads(results, verification_time)
     elif disposition == "SATISFIED" and finding_id == "D0-B02":
         validate_b02_payloads(results, verification_time)
+    elif disposition == "SATISFIED" and finding_id == "D0-B03":
+        validate_b03_payloads(results, verification_time)
     else:
         raise GateVerificationError(f"{finding_id}: strict semantic payload validation is not installed")
 
