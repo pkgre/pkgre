@@ -397,7 +397,7 @@ class GitOps:
         except UnicodeDecodeError as error:
             raise GateVerificationError(f"git {' '.join(arguments)} returned non-UTF-8 output") from error
 
-    def blob(self, repo: Path, commit: str, relative: str, label: str, max_bytes: int = MAX_ARTIFACT_BYTES) -> bytes:
+    def blob(self, repo: Path, commit: str, relative: str, label: str, max_bytes: int = MAX_ARTIFACT_BYTES, expected_mode: str | None = None) -> bytes:
         require(HEX40_RE.fullmatch(commit) is not None, f"{label}: invalid commit")
         safe_path(relative, f"{label} path")
         output = self.run(repo, "ls-tree", "--full-tree", "-z", commit, "--", f":(literal){relative}").stdout
@@ -409,6 +409,9 @@ class GitOps:
             raise GateVerificationError(f"{label}: Git tree entry is not UTF-8") from error
         match = re.fullmatch(r"(100644|100755) blob ([0-9a-f]{40})\t(.+)", row)
         require(match is not None and match.group(3) == relative, f"{label}: entry is not a regular Git blob")
+        if expected_mode is not None:
+            require(expected_mode in {"100644", "100755"}, f"{label}: invalid expected Git blob mode")
+            require(match.group(1) == expected_mode, f"{label}: Git blob mode must be {expected_mode}")
         size_text = self.text(repo, "cat-file", "-s", match.group(2))
         require(size_text.isdigit() and int(size_text) <= max_bytes, f"{label}: Git blob exceeds {max_bytes} bytes")
         raw = self.run(repo, "cat-file", "blob", match.group(2)).stdout
@@ -958,36 +961,73 @@ def parse_name_status(raw: bytes, label: str) -> list[tuple[str, str]]:
     return rows
 
 
-def validate_closure_history(ops: GitOps, repo: Path, base: str, evidence_commit: str, state_commit: str) -> dict[str, Any]:
-    for label, commit in (("historical", base), ("evidence", evidence_commit), ("state", state_commit)):
-        require(HEX40_RE.fullmatch(commit) is not None, f"closure history: invalid {label} commit")
-    require(base != state_commit and evidence_commit != state_commit, "closure history: state commit must be distinct")
-    require(ops.run(repo, "merge-base", "--is-ancestor", base, state_commit, check=False).returncode == 0, "closure history: historical commit is not an ancestor of state commit")
-    commit_ids = parse_nul_paths(ops.run(repo, "rev-list", "--reverse", "--ancestry-path", "-z", f"{base}..{state_commit}").stdout, "closure history commits")
-    require(commit_ids and commit_ids[-1] == state_commit, "closure history: state commit is not the validated tip")
-    require((commit_ids[-2] if len(commit_ids) >= 2 else base) == evidence_commit, "closure history: evidence commit must immediately precede state commit")
+def is_gate_state_alias(path: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "", path.casefold())
+    return "d0gatestate" in normalized
+
+
+def validate_gate_state_history(ops: GitOps, repo: Path, base: str, head: str, state_raw: bytes, closure_evidence_commit: str | None, config: GateConfig) -> dict[str, Any]:
+    for label, commit in (("historical", base), ("HEAD", head)):
+        require(HEX40_RE.fullmatch(commit) is not None, f"gate-state history: invalid {label} commit")
+    if closure_evidence_commit is not None:
+        require(HEX40_RE.fullmatch(closure_evidence_commit) is not None, "gate-state history: invalid closure evidence commit")
+    require(base != head, "gate-state history: tracked state must be introduced after the historical commit")
+    require(ops.run(repo, "merge-base", "--is-ancestor", base, head, check=False).returncode == 0, "gate-state history: historical commit is not an ancestor of HEAD")
+    base_paths = [safe_path(path, f"gate-state historical tree[{index}]") for index, path in enumerate(parse_nul_paths(ops.run(repo, "ls-tree", "--full-tree", "-r", "--name-only", "-z", base).stdout, "gate-state historical tree"))]
+    base_aliases = sorted(path for path in base_paths if is_gate_state_alias(path))
+    require(not base_aliases, f"gate-state history: historical tree contains gate-state path or alias: {base_aliases!r}")
+    commit_ids = parse_nul_paths(ops.run(repo, "rev-list", "--reverse", "--ancestry-path", "-z", f"{base}..{head}").stdout, "gate-state history commits")
+    require(commit_ids and commit_ids[-1] == head, "gate-state history: HEAD is not the validated tip")
+    initial_raw = canonical_json(initial_gate_state(config))
     previous = base
+    state_introduction_commit: str | None = None
+    closure_state_commit: str | None = None
     evidence_changed_paths: list[str] = []
     commits: list[dict[str, Any]] = []
     for commit in commit_ids:
-        require(HEX40_RE.fullmatch(commit) is not None, "closure history: invalid rev-list commit")
+        require(HEX40_RE.fullmatch(commit) is not None, "gate-state history: invalid rev-list commit")
         parent_row = ops.text(repo, "rev-list", "--parents", "-n", "1", commit).split()
-        require(parent_row == [commit, previous], f"closure history: merge, discontinuity, or unexpected parent at {commit}")
+        require(parent_row == [commit, previous], f"gate-state history: merge, discontinuity, or unexpected parent at {commit}")
         raw_changes = ops.run(repo, "diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "--no-renames", "--no-ext-diff", previous, commit).stdout
-        changes = parse_name_status(raw_changes, f"closure history {commit}")
-        require(changes, f"closure history: empty commit {commit} is forbidden")
+        changes = parse_name_status(raw_changes, f"gate-state history {commit}")
+        require(changes, f"gate-state history: empty commit {commit} is forbidden")
         paths = [path for _status, path in changes]
-        if commit == state_commit:
-            require(previous == evidence_commit and paths == [GATE_STATE_PATH], "closure history: state commit must change only the gate-state path")
+        aliases = sorted(path for path in paths if is_gate_state_alias(path) and path != GATE_STATE_PATH)
+        require(not aliases, f"gate-state history: alternate gate-state path is forbidden at {commit}: {aliases!r}")
+        require(AGGREGATE_PATH not in paths, f"gate-state history: immutable historical aggregate changed at {commit}")
+        state_changes = [(status, path) for status, path in changes if path == GATE_STATE_PATH]
+        if state_changes:
+            require(paths == [GATE_STATE_PATH] and len(state_changes) == 1, f"gate-state history: state commit must change only the canonical gate-state path at {commit}")
+            status = state_changes[0][0]
+            if state_introduction_commit is None:
+                require(status == "A", f"gate-state history: initial gate state must be introduced exactly once at {commit}")
+                committed_initial = ops.blob(repo, commit, GATE_STATE_PATH, "initial tracked gate state", MAX_JSON_BYTES, expected_mode="100644")
+                require(committed_initial == initial_raw, "gate-state history: initial tracked gate state differs from the exact canonical blocked state")
+                state_introduction_commit = commit
+            else:
+                require(closure_evidence_commit is not None and closure_state_commit is None and commit == head and status == "M", f"gate-state history: gate state changed outside the sole final closure-state commit {commit}")
+                require(previous == closure_evidence_commit, "gate-state history: closure evidence commit must immediately precede the final state commit")
+                closure_state_commit = commit
         else:
-            require(GATE_STATE_PATH not in paths, f"closure history: gate state changed before final state commit {commit}")
-            require(AGGREGATE_PATH not in paths, f"closure history: immutable historical aggregate changed at {commit}")
             forbidden = sorted(path for path in paths if not is_d0_path(path))
-            require(not forbidden, f"closure history: forbidden non-D0 paths at {commit}: {forbidden!r}")
+            require(not forbidden, f"gate-state history: forbidden non-D0 paths at {commit}: {forbidden!r}")
             evidence_changed_paths.extend(paths)
         commits.append({"commit": commit, "parent": previous, "changes": [{"status": status, "path": path} for status, path in changes]})
         previous = commit
-    return {"commits": commits, "evidenceChangedPaths": sorted(set(evidence_changed_paths))}
+    require(state_introduction_commit is not None, "gate-state history: canonical initial blocked state was never introduced")
+    committed_head_state = ops.blob(repo, head, GATE_STATE_PATH, "current tracked gate state", MAX_JSON_BYTES, expected_mode="100644")
+    require(committed_head_state == state_raw, "working gate state is not the exact HEAD gate-state blob")
+    if closure_evidence_commit is None:
+        require(closure_state_commit is None and state_raw == initial_raw, "gate-state history: blocked HEAD must retain the exact canonical initial state")
+    else:
+        require(closure_state_commit == head, "gate-state history: closure state must be the sole final HEAD state change")
+        require(state_introduction_commit != head and closure_evidence_commit not in {base, state_introduction_commit, head}, "gate-state history: closure commits must be distinct from the base, introduction, and HEAD")
+    return {
+        "closureStateCommit": closure_state_commit,
+        "commits": commits,
+        "evidenceChangedPaths": sorted(set(evidence_changed_paths)),
+        "stateIntroductionCommit": state_introduction_commit,
+    }
 
 
 def parse_aggregate(aggregate: bytes) -> tuple[set[str], dict[str, str]]:
@@ -4546,7 +4586,6 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
     procedural_authority_report = {**PROCEDURAL_AUTHORITY_ASSURANCE, "externalFile": None, "required": False, "sha256": None, "contentBindingVerified": False}
     evidence_commit: str | None = None
     closure_id: str | None = None
-    history: dict[str, Any] | None = None
     if closure is None:
         require(procedural_authority_path is None, "procedural authority input is forbidden without a closure set")
         require(all(item["evidence"] is None for item in items.values()), "gate state: handoff evidence requires a closure set")
@@ -4557,12 +4596,8 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         evidence_commit = nonempty(closure["closureEvidenceCommit"], "closure evidence commit")
         evidence_tree_sha = nonempty(closure["evidenceTreeSha256"], "closure evidence-tree SHA-256")
         require(CLOSURE_SET_RE.fullmatch(closure_id) is not None and HEX40_RE.fullmatch(evidence_commit) is not None and HEX64_RE.fullmatch(evidence_tree_sha) is not None, "closure set: invalid ID, evidence commit, or evidence-tree SHA-256")
-        current_head = ops.text(repo, "rev-parse", "HEAD")
-        require(HEX40_RE.fullmatch(current_head) is not None, "repository HEAD is not SHA-1")
-        history = validate_closure_history(ops, repo, config.historical_aggregate_commit, evidence_commit, current_head)
         computed_tree_sha, _tree_entries = committed_evidence_tree(ops, repo, evidence_commit)
         require(evidence_tree_sha == computed_tree_sha, "closure set: committed evidence-tree SHA-256 mismatch")
-        require(ops.blob(repo, current_head, GATE_STATE_PATH, "closure gate state", MAX_JSON_BYTES) == state_raw, "working gate state is not the exact closure-state commit blob")
         require(procedural_authority_path is not None, "closure evidence requires an external procedural-authority assertion")
         procedural_authority = verify_procedural_authority(ops, repo, state_raw, closure, items, procedural_authority_path)
         procedural_authority_report = procedural_authority["report"]
@@ -4573,6 +4608,9 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
                     result["_closureSetId"] = closure_id
                 handoff_evidence[handoff_id] = verified
         require(handoff_evidence, "closure set must contain at least one reviewed operator return")
+    current_head = ops.text(repo, "rev-parse", "HEAD")
+    require(HEX40_RE.fullmatch(current_head) is not None, "repository HEAD is not SHA-1")
+    history = validate_gate_state_history(ops, repo, config.historical_aggregate_commit, current_head, state_raw, evidence_commit, config)
     open_findings: list[str] = []
     waived_findings: list[str] = []
     terminal_dispositions = {"SATISFIED", "REPHASED", "ACKNOWLEDGED_CONTAINED", "DEFERRED_REVIEWED", "WAIVED_BY_POLICY"}
@@ -4616,7 +4654,6 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         elif finding_id == "D0-B19":
             validate_b19(disposition, mode, result_rows)
         elif finding_id == "D0-B21":
-            require(history is not None, "D0-B21: validated closure history is absent")
             validate_b21(disposition, mode, result_rows, history["evidenceChangedPaths"], config)
         elif finding_id == "D0-B22":
             validate_b22(disposition, mode, result_rows)
@@ -4630,13 +4667,40 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
     return {"d0Pass": d0_pass, "openFindings": sorted(open_findings), "completeHandoffs": complete_handoffs, "handoffComplete": handoff_complete, "waivedFindings": sorted(waived_findings), "proceduralAuthority": procedural_authority_report}
 
 
+def canonical_worktree_file(repo: Path, supplied_path: Path, relative_path: str, label: str) -> Path:
+    expected = repo / relative_path
+    require(supplied_path.is_absolute() and supplied_path == expected, f"{label}: must use the exact canonical worktree path {expected}")
+    current = repo
+    for component in relative_path.split("/")[:-1]:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except OSError as error:
+            raise GateVerificationError(f"{label}: cannot stat canonical parent {current}: {error}") from error
+        require(stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode), f"{label}: canonical parent must be a direct non-symlink directory: {current}")
+    try:
+        metadata = expected.lstat()
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot stat canonical file {expected}: {error}") from error
+    require(stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode), f"{label}: canonical file must be a direct regular non-symlink file: {expected}")
+    require(metadata.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) == 0, f"{label}: canonical data file must be non-executable: {expected}")
+    return expected
+
+
 def verify_repository_anchor(ops: GitOps, repo: Path, aggregate_path: Path, state_path: Path, config: GateConfig) -> tuple[bytes, bytes, dict[str, Any]]:
-    aggregate_raw = load_regular(aggregate_path, "aggregate", MAX_JSON_BYTES)
+    require(repo.is_absolute() and repo == repo.resolve(), "repository anchor: supplied repository must be an absolute resolved path")
+    require(ops.text(repo, "rev-parse", "--show-toplevel") == str(repo), "repository anchor: supplied repository is not the exact Git worktree root")
+    aggregate_file = canonical_worktree_file(repo, aggregate_path, AGGREGATE_PATH, "aggregate")
+    state_file = canonical_worktree_file(repo, state_path, GATE_STATE_PATH, "gate state")
+    aggregate_raw = load_regular(aggregate_file, "aggregate", MAX_JSON_BYTES)
     require(sha256(aggregate_raw) == config.historical_aggregate_sha256, "aggregate digest differs from verifier-pinned historical record")
-    committed_aggregate = ops.blob(repo, config.historical_aggregate_commit, AGGREGATE_PATH, "historical aggregate", MAX_JSON_BYTES)
+    committed_aggregate = ops.blob(repo, config.historical_aggregate_commit, AGGREGATE_PATH, "historical aggregate", MAX_JSON_BYTES, expected_mode="100644")
     require(committed_aggregate == aggregate_raw, "working aggregate differs from immutable historical aggregate blob")
-    state_raw = load_regular(state_path, "gate state", MAX_JSON_BYTES)
-    state = obj(parse_json(state_raw, str(state_path)), "gate state")
+    state_raw = load_regular(state_file, "gate state", MAX_JSON_BYTES)
+    current_head = ops.text(repo, "rev-parse", "HEAD")
+    require(HEX40_RE.fullmatch(current_head) is not None, "repository HEAD is not SHA-1")
+    require(ops.blob(repo, current_head, GATE_STATE_PATH, "HEAD gate state", MAX_JSON_BYTES, expected_mode="100644") == state_raw, "working gate state is not the exact HEAD gate-state blob")
+    state = obj(parse_json(state_raw, str(state_file)), "gate state")
     return aggregate_raw, state_raw, state
 
 
@@ -4916,7 +4980,7 @@ def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closur
         expected_head = closure_commit if expected.id == "pkgre/pkgre" else expected.reviewed_commit
         observed.append(observe_pre_d1_repository(ops, workspace, expected, expected_head, config))
     require(rows == observed, "PRE_D1 receipt repository observations do not exactly match the verifier's live refetch")
-    require(ops.blob(repo_root, closure_commit, GATE_STATE_PATH, "PRE_D1 closure state", MAX_JSON_BYTES) == state_raw, "PRE_D1 closure commit does not contain the verified gate state")
+    require(ops.blob(repo_root, closure_commit, GATE_STATE_PATH, "PRE_D1 closure state", MAX_JSON_BYTES, expected_mode="100644") == state_raw, "PRE_D1 closure commit does not contain the verified gate state")
 
 
 def verify_gate(repo_root: Path, aggregate_path: Path, state_path: Path, receipt_path: Path | None = None, now: datetime | None = None, config: GateConfig = PRODUCTION_CONFIG, git_runner: GitRunner = default_git_runner, environment: Mapping[str, str] | None = None, procedural_authority_path: Path | None = None) -> dict[str, Any]:

@@ -93,6 +93,10 @@ class RepositoryFixture:
         process = subprocess.run(["git", "-C", str(self.repository), "commit", "-m", message], env=self.environment, check=True, stdout=subprocess.PIPE)
         return git(self.repository, "rev-parse", "HEAD").stdout.decode().strip()
 
+    def empty_commit(self, message: str) -> str:
+        process = subprocess.run(["git", "-C", str(self.repository), "commit", "--allow-empty", "-m", message], env=self.environment, check=True, stdout=subprocess.PIPE)
+        return git(self.repository, "rev-parse", "HEAD").stdout.decode().strip()
+
 
 def aterm_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -727,6 +731,10 @@ class GateCoreTests(unittest.TestCase):
         authority_labels = authority_labels or dict(repository_labels)
         closure_id = "d0-closure-0123456789abcdef"
         handoff_id = "OP-D0-01"
+        config = GATE.GateConfig(historical_aggregate_commit=fixture.base, historical_aggregate_sha256="a" * 64, repositories=(fixture.expected,))
+        initial_state_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+        write(fixture.repository, GATE.GATE_STATE_PATH, initial_state_raw)
+        initial_state_commit = fixture.commit("canonical initial blocked state")
         prefix = f"evidence/d0-closure/{closure_id}/{handoff_id}"
         proof_ref = write_canonical_json(fixture.repository, f"{prefix}/credential-policy.json", {"fixture": "procedural-authority"})
         operator = {
@@ -747,7 +755,6 @@ class GateCoreTests(unittest.TestCase):
         review_ref = write_canonical_json(fixture.repository, f"{prefix}/procedural-review.json", review)
         evidence_commit = fixture.commit("procedural evidence")
         evidence_tree_sha256, _entries = GATE.committed_evidence_tree(fixture.ops, fixture.repository, evidence_commit)
-        config = GATE.GateConfig(historical_aggregate_commit=fixture.base, historical_aggregate_sha256="a" * 64, repositories=(fixture.expected,))
         state = GATE.initial_gate_state(config)
         closure = {"id": closure_id, "closureEvidenceCommit": evidence_commit, "evidenceTreeSha256": evidence_tree_sha256}
         state["closureSet"] = closure
@@ -771,7 +778,7 @@ class GateCoreTests(unittest.TestCase):
         authority_path = gate_dir / f"d0-procedural-authority-{closure_id}.json"
         authority_path.write_bytes(GATE.canonical_json(authority))
         authority_path.chmod(0o600)
-        return temporary, fixture, {"authority": authority, "authorityPath": authority_path, "closure": closure, "config": config, "evidenceCommit": evidence_commit, "findings": findings, "items": items, "reference": reference, "state": state, "stateRaw": state_raw, "verificationTime": GATE.parse_utc("2026-08-26T00:31:00Z", "fixture verification time")}
+        return temporary, fixture, {"authority": authority, "authorityPath": authority_path, "closure": closure, "config": config, "evidenceCommit": evidence_commit, "findings": findings, "initialStateCommit": initial_state_commit, "initialStateRaw": initial_state_raw, "items": items, "reference": reference, "state": state, "stateRaw": state_raw, "verificationTime": GATE.parse_utc("2026-08-26T00:31:00Z", "fixture verification time")}
 
     def writeProceduralAuthority(self, data: dict[str, object], document: object) -> None:
         data["authorityPath"].write_bytes(GATE.canonical_json(document))
@@ -796,12 +803,34 @@ class GateCoreTests(unittest.TestCase):
         authority["handoffs"].append({"handoffId": "OP-D0-02", "assignments": assignments})
         return items, authority
 
-    def finish_linear_history(self, fixture: RepositoryFixture) -> tuple[str, str]:
+    def fixtureGateConfig(self, fixture: RepositoryFixture) -> object:
+        return GATE.GateConfig(historical_aggregate_commit=fixture.base, historical_aggregate_sha256="a" * 64, repositories=(fixture.expected,))
+
+    def introduceInitialGateState(self, fixture: RepositoryFixture, config: object | None = None) -> tuple[object, bytes, str]:
+        config = self.fixtureGateConfig(fixture) if config is None else config
+        state_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+        write(fixture.repository, GATE.GATE_STATE_PATH, state_raw)
+        return config, state_raw, fixture.commit("canonical initial blocked state")
+
+    def finish_linear_history(self, fixture: RepositoryFixture) -> tuple[object, bytes, str, str]:
+        config, _initial_raw, _introduction = self.introduceInitialGateState(fixture)
         write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
         evidence = fixture.commit("evidence")
-        write(fixture.repository, GATE.GATE_STATE_PATH, b"{}\n")
+        state_raw = b"{}\n"
+        write(fixture.repository, GATE.GATE_STATE_PATH, state_raw)
         state = fixture.commit("state")
-        return evidence, state
+        return config, state_raw, evidence, state
+
+    def anchoredGateFixture(self) -> tuple[tempfile.TemporaryDirectory[str], RepositoryFixture, object, bytes, bytes]:
+        temporary, fixture = self.temporary_fixture()
+        aggregate_raw = b"synthetic historical aggregate\n"
+        write(fixture.repository, GATE.AGGREGATE_PATH, aggregate_raw)
+        aggregate_commit = fixture.commit("historical aggregate")
+        config = GATE.GateConfig(historical_aggregate_commit=aggregate_commit, historical_aggregate_sha256=GATE.sha256(aggregate_raw), repositories=(fixture.expected,))
+        state_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+        write(fixture.repository, GATE.GATE_STATE_PATH, state_raw)
+        fixture.commit("canonical initial blocked state")
+        return temporary, fixture, config, aggregate_raw, state_raw
 
     def test_draft_state_emits_or_exclusively_creates_only_private_draft(self) -> None:
         temporary, fixture = self.temporary_fixture()
@@ -1039,6 +1068,7 @@ class GateCoreTests(unittest.TestCase):
         temporary, fixture, data = self.proceduralClosureFixture()
         try:
             self.assertRejected(lambda: GATE.verify_closure(fixture.ops, fixture.repository, data["stateRaw"], data["state"], data["findings"], data["items"], None, data["config"], data["verificationTime"]), "requires an external procedural-authority assertion")
+            git(fixture.repository, "reset", "--hard", data["initialStateCommit"])
             initial = GATE.initial_gate_state(data["config"])
             initial_findings = GATE.indexed(initial["findings"], "id", "initial findings")
             initial_items = GATE.indexed(initial["handoff"]["items"], "id", "initial handoffs")
@@ -2662,8 +2692,8 @@ class GateCoreTests(unittest.TestCase):
             fixture.commit("forbidden")
             (fixture.repository / "docs/forbidden.md").unlink()
             fixture.commit("revert")
-            evidence, state = self.finish_linear_history(fixture)
-            self.assertRejected(lambda: GATE.validate_closure_history(fixture.ops, fixture.repository, fixture.base, evidence, state), "forbidden non-D0 paths")
+            config, state_raw, evidence, state = self.finish_linear_history(fixture)
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, state, state_raw, evidence, config), "forbidden non-D0 paths")
         finally:
             temporary.cleanup()
 
@@ -2678,20 +2708,378 @@ class GateCoreTests(unittest.TestCase):
             fixture.commit("main")
             process = subprocess.run(["git", "-C", str(fixture.repository), "merge", "--no-ff", "side", "-m", "merge"], env=fixture.environment, check=True, stdout=subprocess.PIPE)
             self.assertEqual(process.returncode, 0)
-            evidence, state = self.finish_linear_history(fixture)
-            self.assertRejected(lambda: GATE.validate_closure_history(fixture.ops, fixture.repository, fixture.base, evidence, state), "merge, discontinuity")
+            config, state_raw, evidence, state = self.finish_linear_history(fixture)
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, state, state_raw, evidence, config), "merge, discontinuity")
         finally:
             temporary.cleanup()
 
     def test_history_rejects_second_state_path(self) -> None:
         temporary, fixture = self.temporary_fixture()
         try:
+            config, _initial_raw, _introduction = self.introduceInitialGateState(fixture)
             write(fixture.repository, "evidence/d0-closure/set/proof", b"proof\n")
             evidence = fixture.commit("evidence")
-            write(fixture.repository, GATE.GATE_STATE_PATH, b"{}\n")
+            state_raw = b"{}\n"
+            write(fixture.repository, GATE.GATE_STATE_PATH, state_raw)
             write(fixture.repository, "evidence/d0-closure/set/late", b"late\n")
             state = fixture.commit("state plus evidence")
-            self.assertRejected(lambda: GATE.validate_closure_history(fixture.ops, fixture.repository, fixture.base, evidence, state), "state commit must change only")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, state, state_raw, evidence, config), "state commit must change only")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_accepts_canonical_blocked_and_closure_lifecycle(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, initial_raw, introduction = self.introduceInitialGateState(fixture)
+            blocked = GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, introduction, initial_raw, None, config)
+            self.assertEqual(blocked["stateIntroductionCommit"], introduction)
+            self.assertIsNone(blocked["closureStateCommit"])
+            self.assertEqual(blocked["evidenceChangedPaths"], [])
+
+            proof_path = "evidence/d0-closure/set/proof.json"
+            write(fixture.repository, proof_path, b"{}\n")
+            evidence = fixture.commit("closure evidence")
+            still_blocked = GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, evidence, initial_raw, None, config)
+            self.assertEqual(still_blocked["stateIntroductionCommit"], introduction)
+            self.assertIsNone(still_blocked["closureStateCommit"])
+            self.assertEqual(still_blocked["evidenceChangedPaths"], [proof_path])
+
+            closure_raw = b'{"fixture":"closed"}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, closure_raw)
+            closure_state = fixture.commit("final closure state")
+            closed = GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, closure_state, closure_raw, evidence, config)
+            self.assertEqual(closed["stateIntroductionCommit"], introduction)
+            self.assertEqual(closed["closureStateCommit"], closure_state)
+            self.assertEqual(closed["evidenceChangedPaths"], [proof_path])
+            self.assertEqual([row["commit"] for row in closed["commits"]], [introduction, evidence, closure_state])
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_empty_commits_in_every_lifecycle_position(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config = self.fixtureGateConfig(fixture)
+            empty = fixture.empty_commit("empty before state introduction")
+            initial_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            head = fixture.commit("canonical initial blocked state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), f"empty commit {empty} is forbidden")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            empty = fixture.empty_commit("empty while blocked")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, empty, initial_raw, None, config), f"empty commit {empty} is forbidden")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, _initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
+            fixture.commit("closure evidence content")
+            empty = fixture.empty_commit("empty declared closure evidence")
+            closure_raw = b'{"fixture":"closed"}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, closure_raw)
+            head = fixture.commit("final closure state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, closure_raw, empty, config), f"empty commit {empty} is forbidden")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_absent_wrong_or_mixed_initial_state(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config = self.fixtureGateConfig(fixture)
+            write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
+            head = fixture.commit("evidence without state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, b"{}\n", None, config), "canonical initial blocked state was never introduced")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config = self.fixtureGateConfig(fixture)
+            wrong_raw = b"{}\n"
+            write(fixture.repository, GATE.GATE_STATE_PATH, wrong_raw)
+            head = fixture.commit("wrong initial state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, wrong_raw, None, config), "differs from the exact canonical blocked state")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config = self.fixtureGateConfig(fixture)
+            initial_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
+            head = fixture.commit("mixed initial state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "state commit must change only")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_intermediate_mutation_deletion_and_aliases(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, GATE.GATE_STATE_PATH, b'{"temporary":true}\n')
+            fixture.commit("temporary state mutation")
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            head = fixture.commit("state revert")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "outside the sole final closure-state commit")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            (fixture.repository / GATE.GATE_STATE_PATH).unlink()
+            fixture.commit("delete state")
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            head = fixture.commit("reintroduce state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "outside the sole final closure-state commit")
+        finally:
+            temporary.cleanup()
+
+        alias_path = "evidence/d0-closure/set/D0-Gate-State-shadow.json"
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config = self.fixtureGateConfig(fixture)
+            write(fixture.repository, alias_path, b"{}\n")
+            fixture.commit("alias before state")
+            initial_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            head = fixture.commit("canonical initial state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "alternate gate-state path")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, alias_path, b"{}\n")
+            head = fixture.commit("alias after state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "alternate gate-state path")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_separator_and_component_aliases(self) -> None:
+        alias_paths = [
+            "evidence/d0-closure/set/D0_Gate.State-shadow.json",
+            "evidence/d0-closure/set/d0gatestate-shadow.json",
+            "evidence/d0-closure/d0-gate-state-shadow/proof.json",
+            "evidence/d0-closure/set/d0+gate+state-shadow.json",
+            "evidence/d0-closure/set/d0@gate@state-shadow.json",
+            "evidence/d0-closure/set/d0=gate=state-shadow.json",
+            "evidence/d0-closure/set/d0,gate,state-shadow.json",
+            "evidence/d0-closure/set/copy-d0-gate-state.json",
+            "evidence/d0-closure/set/d0/gate/state-shadow.json",
+            "evidence/d0-closure/set/d0-gate/state-shadow.json",
+            "evidence/d0-closure/set/d0/gate-state-shadow.json",
+        ]
+        for alias_path in alias_paths:
+            self.assertTrue(GATE.is_gate_state_alias(alias_path), alias_path)
+            with self.subTest(alias_path=alias_path):
+                temporary, fixture = self.temporary_fixture()
+                try:
+                    config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+                    write(fixture.repository, alias_path, b"{}\n")
+                    head = fixture.commit("alternate state alias")
+                    self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "alternate gate-state path")
+                finally:
+                    temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            for alias_path in alias_paths:
+                write(fixture.repository, alias_path, b"{}\n")
+            historical = fixture.commit("historical aliases")
+            config = GATE.GateConfig(historical_aggregate_commit=historical, historical_aggregate_sha256="a" * 64, repositories=(fixture.expected,))
+            initial_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            head = fixture.commit("canonical initial state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, historical, head, initial_raw, None, config), "historical tree contains gate-state path or alias")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_unsupported_alias_paths(self) -> None:
+        for alias_path in ("evidence/d0-closure/set/d0 gate state.json", "evidence/d0-closure/set/d0-gaté-state.json"):
+            with self.subTest(alias_path=alias_path, location="history"):
+                temporary, fixture = self.temporary_fixture()
+                try:
+                    config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+                    write(fixture.repository, alias_path, b"{}\n")
+                    head = fixture.commit("unsupported alternate state alias")
+                    self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "unsupported path component")
+                finally:
+                    temporary.cleanup()
+
+            with self.subTest(alias_path=alias_path, location="historical-tree"):
+                temporary, fixture = self.temporary_fixture()
+                try:
+                    write(fixture.repository, alias_path, b"{}\n")
+                    historical = fixture.commit("unsupported historical alias")
+                    config = GATE.GateConfig(historical_aggregate_commit=historical, historical_aggregate_sha256="a" * 64, repositories=(fixture.expected,))
+                    initial_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+                    write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+                    head = fixture.commit("canonical initial state")
+                    self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, historical, head, initial_raw, None, config), "unsupported path component")
+                finally:
+                    temporary.cleanup()
+
+    def test_gate_state_history_rejects_nonfinal_or_misordered_closure(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, _initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
+            evidence = fixture.commit("closure evidence")
+            write(fixture.repository, "evidence/d0-closure/set/intervening.json", b"{}\n")
+            fixture.commit("intervening evidence")
+            closure_raw = b'{"fixture":"closed"}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, closure_raw)
+            head = fixture.commit("closure state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, closure_raw, evidence, config), "must immediately precede")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, _initial_raw, introduction = self.introduceInitialGateState(fixture)
+            closure_raw = b'{"fixture":"closed"}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, closure_raw)
+            head = fixture.commit("closure directly after introduction")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, closure_raw, introduction, config), "closure commits must be distinct")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, _initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
+            evidence = fixture.commit("closure evidence")
+            closure_raw = b'{"fixture":"closed"}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, closure_raw)
+            fixture.commit("premature closure state")
+            write(fixture.repository, "evidence/d0-closure/set/after.json", b"{}\n")
+            head = fixture.commit("evidence after closure state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, closure_raw, evidence, config), "outside the sole final closure-state commit")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_aggregate_mutation_and_worktree_state_mismatch(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, GATE.AGGREGATE_PATH, b"mutated aggregate\n")
+            head = fixture.commit("aggregate mutation")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "immutable historical aggregate changed")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, _initial_raw, introduction = self.introduceInitialGateState(fixture)
+            uncommitted_raw = b'{"uncommitted":true}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, uncommitted_raw)
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, introduction, uncommitted_raw, None, config), "not the exact HEAD gate-state blob")
+        finally:
+            temporary.cleanup()
+
+    def test_gate_state_history_rejects_executable_canonical_state_blobs(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config = self.fixtureGateConfig(fixture)
+            initial_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+            write(fixture.repository, GATE.GATE_STATE_PATH, initial_raw)
+            (fixture.repository / GATE.GATE_STATE_PATH).chmod(0o755)
+            head = fixture.commit("executable initial gate state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, initial_raw, None, config), "Git blob mode must be 100644")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            config, _initial_raw, _introduction = self.introduceInitialGateState(fixture)
+            write(fixture.repository, "evidence/d0-closure/set/proof.json", b"{}\n")
+            evidence = fixture.commit("closure evidence")
+            closure_raw = b'{"fixture":"closed"}\n'
+            write(fixture.repository, GATE.GATE_STATE_PATH, closure_raw)
+            (fixture.repository / GATE.GATE_STATE_PATH).chmod(0o755)
+            head = fixture.commit("executable closure gate state")
+            self.assertRejected(lambda: GATE.validate_gate_state_history(fixture.ops, fixture.repository, fixture.base, head, closure_raw, evidence, config), "Git blob mode must be 100644")
+        finally:
+            temporary.cleanup()
+
+    def test_repository_anchor_rejects_executable_canonical_data(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            aggregate_raw = b"synthetic historical aggregate\n"
+            write(fixture.repository, GATE.AGGREGATE_PATH, aggregate_raw)
+            (fixture.repository / GATE.AGGREGATE_PATH).chmod(0o755)
+            aggregate_commit = fixture.commit("executable historical aggregate")
+            (fixture.repository / GATE.AGGREGATE_PATH).chmod(0o644)
+            config = GATE.GateConfig(historical_aggregate_commit=aggregate_commit, historical_aggregate_sha256=GATE.sha256(aggregate_raw), repositories=(fixture.expected,))
+            state_raw = GATE.canonical_json(GATE.initial_gate_state(config))
+            write(fixture.repository, GATE.GATE_STATE_PATH, state_raw)
+            fixture.commit("canonical initial blocked state")
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, fixture.repository / GATE.AGGREGATE_PATH, fixture.repository / GATE.GATE_STATE_PATH, config), "Git blob mode must be 100644")
+        finally:
+            temporary.cleanup()
+
+        for relative in (GATE.AGGREGATE_PATH, GATE.GATE_STATE_PATH):
+            with self.subTest(relative=relative):
+                temporary, fixture, config, _aggregate_raw, _state_raw = self.anchoredGateFixture()
+                try:
+                    (fixture.repository / relative).chmod(0o755)
+                    self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, fixture.repository / GATE.AGGREGATE_PATH, fixture.repository / GATE.GATE_STATE_PATH, config), "canonical data file must be non-executable")
+                finally:
+                    temporary.cleanup()
+
+    def test_repository_anchor_rejects_nested_shadow_worktree_root(self) -> None:
+        temporary, fixture, config, aggregate_raw, state_raw = self.anchoredGateFixture()
+        try:
+            shadow = fixture.repository / "shadow"
+            write(shadow, GATE.AGGREGATE_PATH, aggregate_raw)
+            write(shadow, GATE.GATE_STATE_PATH, state_raw)
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, shadow.resolve(), shadow / GATE.AGGREGATE_PATH, shadow / GATE.GATE_STATE_PATH, config), "not the exact Git worktree root")
+        finally:
+            temporary.cleanup()
+
+    def test_repository_anchor_requires_exact_paths_head_bytes_and_direct_parents(self) -> None:
+        temporary, fixture, config, aggregate_raw, state_raw = self.anchoredGateFixture()
+        try:
+            aggregate_path = fixture.repository / GATE.AGGREGATE_PATH
+            state_path = fixture.repository / GATE.GATE_STATE_PATH
+            observed_aggregate, observed_state, state = GATE.verify_repository_anchor(fixture.ops, fixture.repository, aggregate_path, state_path, config)
+            self.assertEqual(observed_aggregate, aggregate_raw)
+            self.assertEqual(observed_state, state_raw)
+            self.assertEqual(state, GATE.initial_gate_state(config))
+
+            aggregate_alias = fixture.repository / "evidence/../evidence/d0-basis-inventory-aggregate-2026-08-26.md"
+            state_alias = fixture.repository / "evidence/../evidence/d0-gate-state-2026-08-26.json"
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, aggregate_alias, state_path, config), "exact canonical worktree path")
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, aggregate_path, state_alias, config), "exact canonical worktree path")
+
+            alternate_aggregate = fixture.repository / "evidence/alternate-aggregate.md"
+            alternate_state = fixture.repository / "evidence/alternate-state.json"
+            alternate_aggregate.write_bytes(aggregate_raw)
+            alternate_state.write_bytes(state_raw)
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, alternate_aggregate, state_path, config), "exact canonical worktree path")
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, aggregate_path, alternate_state, config), "exact canonical worktree path")
+
+            write(fixture.repository, GATE.GATE_STATE_PATH, b'{"uncommitted":true}\n')
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, aggregate_path, state_path, config), "not the exact HEAD gate-state blob")
+        finally:
+            temporary.cleanup()
+
+        temporary, fixture, config, _aggregate_raw, _state_raw = self.anchoredGateFixture()
+        try:
+            evidence = fixture.repository / "evidence"
+            evidence_real = fixture.repository / "evidence-real"
+            evidence.rename(evidence_real)
+            evidence.symlink_to(evidence_real.name, target_is_directory=True)
+            self.assertRejected(lambda: GATE.verify_repository_anchor(fixture.ops, fixture.repository, fixture.repository / GATE.AGGREGATE_PATH, fixture.repository / GATE.GATE_STATE_PATH, config), "direct non-symlink directory")
         finally:
             temporary.cleanup()
 
