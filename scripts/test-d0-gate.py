@@ -518,6 +518,23 @@ def valid_b02_payloads() -> dict[str, dict[str, object]]:
     return {"ssh-attestation": attestation, "ssh-lifecycle": lifecycle}
 
 
+def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
+    target_gates = GATE.REPHASE_TARGETS[finding_id]
+    return {
+        "amendmentId": amendment_id or f"amendment-{finding_id.lower()}",
+        "decision": "APPROVE_EXACT_REPHASE",
+        "findingId": finding_id,
+        "currentEvidenceSatisfied": False,
+        "d0WorkAuthorized": False,
+        "targetGates": list(target_gates),
+        "deferredRequirements": [{"gateId": gate_id, "requirement": GATE.LATER_GATES_BY_ID[gate_id]["requirement"]} for gate_id in target_gates],
+        "operatorDecision": {"returnedBy": SEMANTIC_OPERATOR, "returnedAt": SEMANTIC_RETURNED_AT},
+        "rationale": "The named proof remains unsatisfied and is explicitly moved to the exact later gates.",
+        "residualRisks": ["The deferred requirement remains blocking at every named later gate."],
+        "result": "APPROVED",
+    }
+
+
 class GateCoreTests(unittest.TestCase):
     def assertRejected(self, callable_object, text: str) -> None:
         with self.assertRaises(GATE.GateVerificationError) as caught:
@@ -1057,10 +1074,114 @@ class GateCoreTests(unittest.TestCase):
         result["claims"]["evidenceByKind"] = result["_evidenceByKind"]
         self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B01", "SATISFIED", result), "cannot be reused")
 
-        amendment = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": {}}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
-        self.assertEqual(GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), {"phase-amendment": {}})
+        amendment_payload = valid_phase_amendment("D0-B09")
+        amendment = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": amendment_payload}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
+        self.assertEqual(GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), {"phase-amendment": amendment_payload})
+        GATE.validate_generic_policy("D0-B09", "REPHASED", "EXACT_PHASE_AMENDMENT", [amendment], SEMANTIC_VERIFICATION_TIME)
         amendment["claims"]["targetGates"] = ["PRE_D6_EDGE"]
         self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), "target-gate claim mismatch")
+
+    def test_phase_amendment_accepts_every_policy_mapping_and_handoff(self) -> None:
+        for finding_id, target_gates in GATE.REPHASE_TARGETS.items():
+            with self.subTest(finding_id=finding_id):
+                results = [
+                    self.semanticResult(
+                        finding_id,
+                        handoff_id,
+                        {"phase-amendment": valid_phase_amendment(finding_id, amendment_id=f"amendment-{finding_id.lower()}-{handoff_id.lower()}")},
+                        disposition="REPHASED",
+                        target_gates=target_gates,
+                    )
+                    for handoff_id in GATE.FINDING_HANDOFFS[finding_id]
+                ]
+                GATE.validate_generic_policy(finding_id, "REPHASED", "EXACT_PHASE_AMENDMENT", results, SEMANTIC_VERIFICATION_TIME)
+
+    def test_phase_amendment_rejects_nonexact_or_unsafe_decisions(self) -> None:
+        cases: list[tuple[str, dict[str, object], str]] = []
+
+        cases.append(("empty", {}, "object-key mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["unexpected"] = True
+        cases.append(("extra-key", payload, "object-key mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["decision"] = "APPROVE_REPHASE"
+        cases.append(("wrong-decision", payload, "decision/result mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["result"] = "REJECTED"
+        cases.append(("wrong-result", payload, "decision/result mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["findingId"] = "D0-B08"
+        cases.append(("wrong-finding", payload, "finding binding mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["targetGates"] = ["PRE_D6_EDGE"]
+        cases.append(("missing-target", payload, "target-gate list mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["deferredRequirements"][0]["gateId"] = "PRE_D7_REAL_RAIN_EDGE"
+        cases.append(("wrong-deferred-gate", payload, "exact later-gate requirement"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["deferredRequirements"][0]["unexpected"] = True
+        cases.append(("extra-deferred-key", payload, "object-key mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["deferredRequirements"][0]["requirement"] = "trust this label"
+        cases.append(("wrong-requirement", payload, "exact later-gate requirement"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["currentEvidenceSatisfied"] = True
+        cases.append(("claims-satisfied", payload, "current evidence must remain unsatisfied"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["currentEvidenceSatisfied"] = 0
+        cases.append(("nonboolean-satisfaction", payload, "expected boolean"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["d0WorkAuthorized"] = True
+        cases.append(("authorizes-d0", payload, "must not authorize D0 work"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["d0WorkAuthorized"] = "false"
+        cases.append(("nonboolean-authorization", payload, "expected boolean"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["operatorDecision"]["returnedBy"] = "other-operator"
+        cases.append(("actor-mismatch", payload, "operator identity mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["operatorDecision"]["returnedAt"] = "2026-08-26T00:10:01Z"
+        cases.append(("time-mismatch", payload, "operator return time mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["operatorDecision"]["unexpected"] = True
+        cases.append(("extra-operator-decision-key", payload, "object-key mismatch"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["residualRisks"] = []
+        cases.append(("empty-risks", payload, "at least 1 entries"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["residualRisks"] = ["Deferred proof remains open.", "DEFERRED PROOF REMAINS OPEN."]
+        cases.append(("duplicate-risks", payload, "duplicate risk"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["rationale"] = "-----BEGIN OPENSSH PRIVATE KEY-----"
+        cases.append(("secret-shaped-rationale", payload, "private-key-shaped text"))
+
+        for name, payload, expected in cases:
+            with self.subTest(name=name):
+                result = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": payload}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
+                self.assertRejected(lambda: GATE.validate_generic_policy("D0-B09", "REPHASED", "EXACT_PHASE_AMENDMENT", [result], SEMANTIC_VERIFICATION_TIME), expected)
+
+    def test_phase_amendment_ids_are_globally_casefold_unique_across_handoffs(self) -> None:
+        first = self.semanticResult("D0-B04", "OP-D0-04", {"phase-amendment": valid_phase_amendment("D0-B04", amendment_id="amendment-shared")}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B04"])
+        second = self.semanticResult("D0-B04", "OP-D0-05", {"phase-amendment": valid_phase_amendment("D0-B04", amendment_id="AMENDMENT-SHARED")}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B04"])
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B04", "REPHASED", "EXACT_PHASE_AMENDMENT", [first, second], SEMANTIC_VERIFICATION_TIME), "amendment ID")
 
     def test_gitops_rejects_caller_transport_and_builds_trusted_ssh(self) -> None:
         environment = dict(os.environ)

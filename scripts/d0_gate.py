@@ -180,6 +180,7 @@ SAT_EVIDENCE = {finding_id: set().union(*by_handoff.values()) for finding_id, by
 REPHASE_TARGETS = {
     "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
 }
+LATER_GATES_BY_ID = {row["id"]: row for row in LATER_GATES}
 RAIN_SSH_HOST = "rain.pacna.org"
 RAIN_SSH_FINGERPRINT = "SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI"
 INFRA_REPOSITORY_ID = "infra/infra"
@@ -1536,8 +1537,47 @@ def validate_b02_payloads(results: list[dict[str, Any]], verification_time: date
     require_globally_distinct_identifiers(identity_rows, "D0-B02 security-relevant identifiers")
 
 
+def validate_phase_amendment_payloads(finding_id: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
+    expected_targets = REPHASE_TARGETS[finding_id]
+    amendment_ids: list[tuple[str, str]] = []
+    for result in results:
+        handoff_id = result["_handoffId"]
+        label = f"{finding_id}/{handoff_id} phase-amendment"
+        payload = result["_semanticPayloads"]["phase-amendment"]
+        exact_keys(payload, {"amendmentId", "decision", "findingId", "currentEvidenceSatisfied", "d0WorkAuthorized", "targetGates", "deferredRequirements", "operatorDecision", "rationale", "residualRisks", "result"}, label)
+        amendment_id = security_identifier(payload["amendmentId"], f"{label}.amendmentId")
+        amendment_ids.append((amendment_id, f"{label}.amendmentId"))
+        require(payload["decision"] == "APPROVE_EXACT_REPHASE" and payload["result"] == "APPROVED", f"{label}: exact rephase approval decision/result mismatch")
+        require(payload["findingId"] == finding_id, f"{label}: finding binding mismatch")
+        require(strict_bool(payload["currentEvidenceSatisfied"], f"{label}.currentEvidenceSatisfied") is False, f"{label}: current evidence must remain unsatisfied")
+        require(strict_bool(payload["d0WorkAuthorized"], f"{label}.d0WorkAuthorized") is False, f"{label}: phase amendment must not authorize D0 work")
+        require(payload["targetGates"] == expected_targets, f"{label}: target-gate list mismatch")
+        deferred = arr(payload["deferredRequirements"], f"{label}.deferredRequirements")
+        require(len(deferred) == len(expected_targets), f"{label}: deferred-requirement coverage mismatch")
+        for index, gate_id in enumerate(expected_targets):
+            row_label = f"{label}.deferredRequirements[{index}]"
+            row = obj(deferred[index], row_label)
+            exact_keys(row, {"gateId", "requirement"}, row_label)
+            require(row["gateId"] == gate_id and row["requirement"] == LATER_GATES_BY_ID[gate_id]["requirement"], f"{row_label}: must bind the exact later-gate requirement")
+        operator, returned_at = operator_return_context(result, finding_id)
+        decision = obj(payload["operatorDecision"], f"{label}.operatorDecision")
+        exact_keys(decision, {"returnedBy", "returnedAt"}, f"{label}.operatorDecision")
+        require(security_text(decision["returnedBy"], f"{label}.operatorDecision.returnedBy", 128) == operator, f"{label}: operator identity mismatch")
+        decision_time = parse_utc(decision["returnedAt"], f"{label}.operatorDecision.returnedAt")
+        require(decision_time == returned_at, f"{label}: operator return time mismatch")
+        require_no_later(decision_time, verification_time + timedelta(seconds=D0_EVIDENCE_FUTURE_SKEW_SECONDS), f"{label}.operatorDecision")
+        security_text(payload["rationale"], f"{label}.rationale", 1024)
+        risks = arr(payload["residualRisks"], f"{label}.residualRisks")
+        require(1 <= len(risks) <= 32, f"{label}.residualRisks: expected at least 1 entries and at most 32")
+        normalized_risks = [security_text(risk, f"{label}.residualRisks[{index}]", 512) for index, risk in enumerate(risks)]
+        require(len({risk.casefold() for risk in normalized_risks}) == len(normalized_risks), f"{label}.residualRisks: duplicate risk")
+    require_globally_distinct_identifiers(amendment_ids, f"{finding_id} phase-amendment IDs")
+
+
 def validate_generic_payloads(finding_id: str, disposition: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
-    if disposition == "SATISFIED" and finding_id == "D0-B01":
+    if disposition == "REPHASED":
+        validate_phase_amendment_payloads(finding_id, results, verification_time)
+    elif disposition == "SATISFIED" and finding_id == "D0-B01":
         validate_b01_payloads(results, verification_time)
     elif disposition == "SATISFIED" and finding_id == "D0-B02":
         validate_b02_payloads(results, verification_time)
