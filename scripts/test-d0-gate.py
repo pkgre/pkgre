@@ -938,6 +938,80 @@ class GateCoreTests(unittest.TestCase):
         finally:
             temporary.cleanup()
 
+    def test_pre_d1_receipt_and_transcript_require_hardened_external_files(self) -> None:
+        def verify_fixture(fixture: RepositoryFixture, receipt_path: Path, state_raw: bytes) -> None:
+            config = GATE.GateConfig(repositories=())
+            with mock.patch.object(fixture.ops, "blob", return_value=state_raw):
+                GATE.verify_pre_d1_receipt(fixture.ops, fixture.repository, state_raw, fixture.base, receipt_path, config, GATE.parse_utc("2026-08-26T00:00:00Z", "fixture time"))
+
+        temporary, fixture = self.temporary_fixture()
+        try:
+            gate_dir = fixture.repository / ".git" / "pkgre-gates"
+            gate_dir.mkdir(mode=0o700)
+            transcript_raw = b"bounded fetch transcript\n"
+            transcript_path = gate_dir / "pre-d1-transcript.json"
+            transcript_path.write_bytes(transcript_raw)
+            transcript_path.chmod(0o600)
+            state_raw = b'{"fixture":"state"}\n'
+            receipt = {"schema": "pkgre-pre-d1-refetch-receipt-v2", "d0ClosureCommit": fixture.base, "createdAt": "2026-08-26T00:00:00Z", "immediatelyBeforeD1FirstEdit": True, "repositories": [], "transcript": {"path": transcript_path.name, "sha256": GATE.sha256(transcript_raw)}}
+            receipt_path = gate_dir / "pre-d1-receipt.json"
+            receipt_path.write_bytes(GATE.canonical_json(receipt))
+            receipt_path.chmod(0o600)
+            verify_fixture(fixture, receipt_path, state_raw)
+        finally:
+            temporary.cleanup()
+
+        for target, attack, expected_error in (
+            ("receipt", "mode", "PRE_D1 receipt: external gate file mode must be 0600"),
+            ("transcript", "mode", "PRE_D1 transcript: external gate file mode must be 0600"),
+            ("receipt", "symlink", "PRE_D1 receipt: cannot safely open external gate file"),
+            ("transcript", "symlink", "PRE_D1 transcript: cannot safely open external gate file"),
+            ("receipt", "hardlink", "PRE_D1 receipt: hard-linked external gate file is forbidden"),
+            ("transcript", "hardlink", "PRE_D1 transcript: hard-linked external gate file is forbidden"),
+        ):
+            with self.subTest(target=target, attack=attack):
+                temporary, fixture = self.temporary_fixture()
+                try:
+                    gate_dir = fixture.repository / ".git" / "pkgre-gates"
+                    gate_dir.mkdir(mode=0o700)
+                    transcript_raw = b"bounded fetch transcript\n"
+                    transcript_path = gate_dir / "pre-d1-transcript.json"
+                    transcript_path.write_bytes(transcript_raw)
+                    transcript_path.chmod(0o600)
+                    state_raw = b'{"fixture":"state"}\n'
+                    receipt = {"schema": "pkgre-pre-d1-refetch-receipt-v2", "d0ClosureCommit": fixture.base, "createdAt": "2026-08-26T00:00:00Z", "immediatelyBeforeD1FirstEdit": True, "repositories": [], "transcript": {"path": transcript_path.name, "sha256": GATE.sha256(transcript_raw)}}
+                    receipt_path = gate_dir / "pre-d1-receipt.json"
+                    receipt_path.write_bytes(GATE.canonical_json(receipt))
+                    receipt_path.chmod(0o600)
+                    attacked = receipt_path if target == "receipt" else transcript_path
+                    if attack == "mode":
+                        attacked.chmod(0o644)
+                    elif attack == "symlink":
+                        raw = attacked.read_bytes()
+                        attacked.unlink()
+                        outside = fixture.repository / ".git" / f"{target}-outside"
+                        outside.write_bytes(raw)
+                        outside.chmod(0o600)
+                        attacked.symlink_to(Path("..") / outside.name)
+                    else:
+                        os.link(attacked, gate_dir / f"{target}-second-link")
+                    self.assertRejected(lambda: verify_fixture(fixture, receipt_path, state_raw), expected_error)
+                finally:
+                    temporary.cleanup()
+
+    def test_pre_d1_receipt_rejects_file_outside_external_gate_directory(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            gate_dir = fixture.repository / ".git" / "pkgre-gates"
+            gate_dir.mkdir(mode=0o700)
+            outside = fixture.repository / ".git" / "receipt.json"
+            outside.write_bytes(b"{}\n")
+            outside.chmod(0o600)
+            with mock.patch.object(fixture.ops, "blob", return_value=b"state\n"):
+                self.assertRejected(lambda: GATE.verify_pre_d1_receipt(fixture.ops, fixture.repository, b"state\n", fixture.base, outside, GATE.GateConfig(repositories=()), GATE.parse_utc("2026-08-26T00:00:00Z", "fixture time")), "file must be directly under")
+        finally:
+            temporary.cleanup()
+
     def test_procedural_authority_accepts_exact_external_binding_and_repository_labels(self) -> None:
         temporary, fixture, data = self.proceduralClosureFixture()
         try:

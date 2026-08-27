@@ -4893,16 +4893,8 @@ def collect_pre_d1_rows(repo_root: Path, closure_commit: str, config: GateConfig
 
 
 def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closure_commit: str, receipt_path: Path, config: GateConfig, verification_time: datetime) -> None:
-    git_dir = Path(ops.text(repo_root, "rev-parse", "--absolute-git-dir")).resolve()
-    gate_dir = git_dir / "pkgre-gates"
-    try:
-        gate_mode = gate_dir.lstat().st_mode
-    except OSError as error:
-        raise GateVerificationError(f"PRE_D1 gate directory is unavailable: {error}") from error
-    require(stat.S_ISDIR(gate_mode) and not stat.S_ISLNK(gate_mode), "PRE_D1 gate directory must be a direct non-symlink directory")
-    resolved_receipt = receipt_path.resolve()
-    require(resolved_receipt.parent == gate_dir.resolve(), "PRE_D1 receipt must be an external file directly under .git/pkgre-gates")
-    receipt_raw = load_regular(resolved_receipt, "PRE_D1 receipt", MAX_JSON_BYTES)
+    gate_dir = repo_root.resolve() / ".git" / "pkgre-gates"
+    receipt_raw = load_external_gate_file(ops, repo_root, receipt_path, "PRE_D1 receipt", MAX_JSON_BYTES)
     receipt = obj(parse_json(receipt_raw, str(receipt_path)), "PRE_D1 receipt")
     exact_keys(receipt, {"schema", "d0ClosureCommit", "createdAt", "immediatelyBeforeD1FirstEdit", "repositories", "transcript"}, "PRE_D1 receipt")
     require(receipt["schema"] == "pkgre-pre-d1-refetch-receipt-v2" and receipt["d0ClosureCommit"] == closure_commit and receipt["immediatelyBeforeD1FirstEdit"] is True, "PRE_D1 receipt binding mismatch")
@@ -4912,9 +4904,9 @@ def verify_pre_d1_receipt(ops: GitOps, repo_root: Path, state_raw: bytes, closur
     transcript = obj(receipt["transcript"], "PRE_D1 transcript reference")
     exact_keys(transcript, {"path", "sha256"}, "PRE_D1 transcript reference")
     transcript_name = safe_path(transcript["path"], "PRE_D1 transcript path")
-    require("/" not in transcript_name and transcript_name != resolved_receipt.name, "PRE_D1 transcript must be a distinct sibling file")
+    require("/" not in transcript_name and transcript_name != receipt_path.name, "PRE_D1 transcript must be a distinct sibling file")
     require(HEX64_RE.fullmatch(nonempty(transcript["sha256"], "PRE_D1 transcript digest")) is not None, "PRE_D1 transcript digest is invalid")
-    transcript_raw = load_regular(gate_dir / transcript_name, "PRE_D1 transcript", MAX_TRANSCRIPT_BYTES)
+    transcript_raw = load_external_gate_file(ops, repo_root, gate_dir / transcript_name, "PRE_D1 transcript", MAX_TRANSCRIPT_BYTES)
     require(sha256(transcript_raw) == transcript["sha256"], "PRE_D1 transcript digest mismatch")
     rows = arr(receipt["repositories"], "PRE_D1 repositories")
     require(len(rows) == len(config.repositories), "PRE_D1 receipt must contain exactly four repositories")
