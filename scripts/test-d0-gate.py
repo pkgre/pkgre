@@ -565,6 +565,148 @@ def rewrite_b18_document(candidate: dict[str, object], kind: str, mutate) -> Non
     candidate["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
 
 
+B19_CLOSURE_ID = "d0-closure-1023456789abcdef"
+B19_EVENT_TIMES = {
+    "no-lan-confirmation": "2026-08-26T00:08:00Z",
+    "d13-reentry-contract": "2026-08-26T00:09:00Z",
+    "policy-disposition": SEMANTIC_RETURNED_AT,
+}
+
+
+def valid_b19_payloads() -> dict[str, dict[str, object]]:
+    return {
+        "no-lan-confirmation": {
+            "confirmedBy": SEMANTIC_OPERATOR,
+            "confirmedAt": B19_EVENT_TIMES["no-lan-confirmation"],
+            "factState": "ABSENT",
+            "rolloutScope": "THIS_ROLLOUT_STAGE",
+            "basisScope": "PINNED_HISTORICAL_D0_AGGREGATE",
+            "selectionState": "NO_LAN_SELECTED",
+            "selectedInstances": [],
+            "absentRows": copy.deepcopy(GATE.B19_ABSENT_ROWS),
+            "universalEnvironmentAbsenceClaimed": False,
+            "currentRuntimeAbsenceClaimed": False,
+            "evidenceClassification": "EXPLICIT_D0_DEFERRAL",
+            "placeholderInvented": False,
+            "impliedDefaultSelected": False,
+            "publicInstanceReused": False,
+            "authorizationGranted": False,
+            "result": "CONFIRMED_ABSENT",
+        },
+        "d13-reentry-contract": {
+            "reviewedBy": SEMANTIC_OPERATOR,
+            "reviewedAt": B19_EVENT_TIMES["d13-reentry-contract"],
+            "gate": copy.deepcopy(GATE.B19_REENTRY_GATE),
+            "trigger": "BEFORE_FIRST_LAN_SOURCE_IMPLEMENTATION_CONFIGURATION_CREDENTIAL_DNS_TLS_OR_DEPLOYMENT_EDIT",
+            "requiredBefore": copy.deepcopy(GATE.B19_PRE_D13_MUTATIONS),
+            "selectionRequirements": copy.deepcopy(GATE.B19_ABSENT_ROWS),
+            "sharedAbstractConstraints": copy.deepcopy(GATE.B19_SHARED_ABSTRACT_CONSTRAINTS),
+            "sharedConstraintsSelectConcreteRows": False,
+            "concreteRowsSelected": False,
+            "d13Completed": False,
+            "futureLanActivationAuthorized": False,
+            "publicInstanceReuseAllowed": False,
+            "placeholderOrImpliedDefaultsAllowed": False,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "REENTRY_REQUIRED",
+        },
+        "policy-disposition": {
+            "approvedBy": SEMANTIC_OPERATOR,
+            "approvedAt": B19_EVENT_TIMES["policy-disposition"],
+            "decision": "CLOSE_AS_REVIEWED_DEFERRAL",
+            "disposition": "DEFERRED_REVIEWED",
+            "mode": "NO_LAN_SELECTED",
+            "factState": "ABSENT",
+            "rolloutScope": "THIS_ROLLOUT_STAGE",
+            "selectedInstances": [],
+            "reviewedDeferralOnly": True,
+            "deferralNotApproval": True,
+            "findingSatisfied": False,
+            "waiverApproved": False,
+            "lanSelected": False,
+            "allPreD13LanMutationsUnauthorized": True,
+            "futureLanActivationAuthorized": False,
+            "independentPhaseAuthority": False,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "APPROVED",
+        },
+    }
+
+
+def valid_b19_result(payloads: dict[str, dict[str, object]] | None = None, config=GATE.PRODUCTION_CONFIG) -> dict[str, object]:
+    payloads = valid_b19_payloads() if payloads is None else payloads
+    evidence_by_kind: dict[str, list[str]] = {}
+    references: dict[str, dict[str, object]] = {}
+    ref_ids: dict[str, str] = {}
+    context = {
+        "closureSetId": B19_CLOSURE_ID,
+        "handoffId": "OP-D0-10",
+        "historicalAggregate": {
+            "commit": config.historical_aggregate_commit,
+            "sha256": config.historical_aggregate_sha256,
+        },
+    }
+    for index, kind in enumerate(GATE.B19_SEMANTIC_EVIDENCE_KINDS, 1):
+        ref_id = f"b19-semantic-{index}"
+        predecessors = [
+            {"kind": predecessor_kind, "refId": ref_ids[predecessor_kind], "sha256": references[ref_ids[predecessor_kind]]["sha256"]}
+            for predecessor_kind in GATE.B19_PREDECESSOR_KINDS[kind]
+        ]
+        raw = GATE.canonical_json(
+            {
+                "schema": GATE.B19_SEMANTIC_EVIDENCE_SCHEMA,
+                "findingId": "D0-B19",
+                "policyId": GATE.B19_POLICY_ID,
+                "kind": kind,
+                "context": context,
+                "predecessors": predecessors,
+                "payload": payloads[kind],
+            }
+        )
+        evidence_by_kind[kind] = [ref_id]
+        references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw), "_referenceClass": "decision"}
+        ref_ids[kind] = ref_id
+    return {
+        "findingId": "D0-B19",
+        "policyId": GATE.B19_POLICY_ID,
+        "disposition": "DEFERRED_REVIEWED",
+        "mode": "NO_LAN_SELECTED",
+        "_closureSetId": B19_CLOSURE_ID,
+        "_handoffId": "OP-D0-10",
+        "_operatorReturnedBy": SEMANTIC_OPERATOR,
+        "_operatorReturnedAt": SEMANTIC_RETURNED_AT,
+        "_evidenceByKind": evidence_by_kind,
+        "_references": references,
+        "claims": {
+            "factState": "ABSENT",
+            "rolloutScope": "THIS_ROLLOUT_STAGE",
+            "lanSelected": False,
+            "selectedInstances": [],
+            "universalEnvironmentAbsenceClaimed": False,
+            "currentRuntimeAbsenceClaimed": False,
+            "reviewedDeferralOnly": True,
+            "findingSatisfied": False,
+            "waiverApproved": False,
+            "allPreD13LanMutationsUnauthorized": True,
+            "publicInstanceReuseAllowed": False,
+            "placeholderOrImpliedDefaultsAllowed": False,
+            "reentryGate": "D13_LAN_SELECTION",
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "evidenceByKind": copy.deepcopy(evidence_by_kind),
+        },
+    }
+
+def rewrite_b19_document(candidate: dict[str, object], kind: str, mutate) -> None:
+    ref_id = candidate["_evidenceByKind"][kind][0]
+    document = GATE.parse_json(candidate["_references"][ref_id]["raw"], "B19 test document")
+    mutate(document)
+    raw = GATE.canonical_json(document)
+    candidate["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw), "_referenceClass": "decision"}
+
+
 def semantic_file_metadata(
     path: str,
     purpose: str,
@@ -1496,6 +1638,12 @@ os._exit(0)
 
     def assertB18Rejected(self, result: dict[str, object], text: str, verification_time=SEMANTIC_VERIFICATION_TIME, config=GATE.PRODUCTION_CONFIG) -> None:
         self.assertRejected(lambda: self.validateB18(result, verification_time, config), text)
+
+    def validateB19(self, result: dict[str, object], verification_time=SEMANTIC_VERIFICATION_TIME, config=GATE.PRODUCTION_CONFIG) -> None:
+        GATE.validate_b19("DEFERRED_REVIEWED", "NO_LAN_SELECTED", [result], verification_time, config)
+
+    def assertB19Rejected(self, result: dict[str, object], text: str, verification_time=SEMANTIC_VERIFICATION_TIME, config=GATE.PRODUCTION_CONFIG) -> None:
+        self.assertRejected(lambda: self.validateB19(result, verification_time, config), text)
 
     def validateB13Rephase(self, payloads: dict[str, dict[str, object]]) -> None:
         result = self.semanticResult("D0-B13", "OP-D0-06", payloads, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B13"])
@@ -2822,6 +2970,445 @@ os._exit(0)
                 payloads = valid_b18_payloads()
                 payloads[kind][field] = timestamp
                 self.assertB18Rejected(valid_b18_result(payloads), "invalid semantic-document chronology")
+
+    def test_b19_accepts_exact_reviewed_absence_and_d13_reentry_contract(self) -> None:
+        result = valid_b19_result()
+        self.validateB19(result)
+        self.validateB19(valid_b19_result(), GATE.parse_utc("2030-08-26T00:10:00Z", "later B19 verification time"))
+        self.assertEqual(set(result["_semanticPayloads"]), set(GATE.B19_SEMANTIC_EVIDENCE_KINDS))
+        self.assertEqual(set(result["_evidenceByKind"]), set(GATE.B19_REQUIRED_EVIDENCE_KINDS))
+        expected_lan_mutations = [
+            "lanSourceEdit",
+            "lanImplementation",
+            "lanConfiguration",
+            "lanCredential",
+            "lanDns",
+            "lanTls",
+            "lanDeployment",
+        ]
+        self.assertEqual(GATE.B19_PRE_D13_MUTATIONS, expected_lan_mutations)
+        self.assertEqual([mutation for mutation in GATE.AGENT_MUTATIONS if mutation.startswith("lan")], expected_lan_mutations)
+        self.assertEqual([mutation for mutation in GATE.OPERATOR_MUTATIONS if mutation.startswith("lan")], expected_lan_mutations)
+        for boundary in ("2026-08-25T00:10:00Z", "2026-08-26T00:10:30Z"):
+            with self.subTest(boundary=boundary):
+                payloads = valid_b19_payloads()
+                payloads["no-lan-confirmation"]["confirmedAt"] = boundary
+                payloads["d13-reentry-contract"]["reviewedAt"] = boundary
+                payloads["policy-disposition"]["approvedAt"] = boundary
+                candidate = valid_b19_result(payloads)
+                candidate["_operatorReturnedAt"] = boundary
+                self.validateB19(candidate)
+
+    def test_b19_rejects_wrong_closure_shape_reference_bindings_and_claims(self) -> None:
+        result = valid_b19_result()
+        self.assertRejected(lambda: GATE.validate_b19("SATISFIED", "NO_LAN_SELECTED", [result], SEMANTIC_VERIFICATION_TIME), "wrong reviewed deferral mode")
+        self.assertRejected(lambda: GATE.validate_b19("DEFERRED_REVIEWED", "CONTRIBUTION_ONLY", [result], SEMANTIC_VERIFICATION_TIME), "wrong reviewed deferral mode")
+        self.assertRejected(lambda: GATE.validate_b19("DEFERRED_REVIEWED", "NO_LAN_SELECTED", [], SEMANTIC_VERIFICATION_TIME), "single-handoff")
+        self.assertRejected(lambda: GATE.validate_b19("DEFERRED_REVIEWED", "NO_LAN_SELECTED", [result, copy.deepcopy(result)], SEMANTIC_VERIFICATION_TIME), "single-handoff")
+
+        cases = [
+            ("wrong-handoff", lambda row: row.__setitem__("_handoffId", "OP-D0-09"), "unexpected handoff"),
+            ("wrong-finding", lambda row: row.__setitem__("findingId", "D0-B18"), "finding or policy identity mismatch"),
+            ("wrong-policy", lambda row: row.__setitem__("policyId", "D0-B19-v0"), "finding or policy identity mismatch"),
+            ("missing-closure", lambda row: row.pop("_closureSetId"), "expected nonempty trimmed string"),
+            ("invalid-closure", lambda row: row.__setitem__("_closureSetId", "closure-1"), "invalid closure-set ID"),
+            ("missing-kind", lambda row: row["_evidenceByKind"].pop("policy-disposition"), "evidence-kind set must be exact"),
+            ("extra-kind", lambda row: row["_evidenceByKind"].__setitem__("narrative", ["b19-semantic-1"]), "evidence-kind set must be exact"),
+            ("empty-kind", lambda row: row["_evidenceByKind"].__setitem__("d13-reentry-contract", []), "exactly one evidence reference"),
+            ("multiple-kind-refs", lambda row: row["_evidenceByKind"].__setitem__("d13-reentry-contract", ["b19-semantic-2", "b19-semantic-2"]), "exactly one evidence reference"),
+            ("nonstring-ref", lambda row: row["_evidenceByKind"].__setitem__("d13-reentry-contract", [1]), "nonempty strings"),
+            ("cross-kind-reuse", lambda row: row["_evidenceByKind"].__setitem__("d13-reentry-contract", ["b19-semantic-1"]), "cannot be reused"),
+            ("unknown-ref", lambda row: row["_evidenceByKind"].__setitem__("d13-reentry-contract", ["unknown"]), "expected object"),
+            ("artifact-reference-class", lambda row: row["_references"]["b19-semantic-2"].__setitem__("_referenceClass", "artifact"), "decision reference"),
+            ("claim-kind-removed", lambda row: row["claims"]["evidenceByKind"].pop("d13-reentry-contract"), "object-key mismatch"),
+            ("claim-ref-changed", lambda row: row["claims"]["evidenceByKind"].__setitem__("d13-reentry-contract", ["b19-semantic-3"]), "frozen value mismatch"),
+            ("claim-fact-state", lambda row: row["claims"].__setitem__("factState", "OBSERVED"), "frozen value mismatch"),
+            ("claim-rollout-scope", lambda row: row["claims"].__setitem__("rolloutScope", "GLOBAL"), "frozen value mismatch"),
+            ("claim-selected", lambda row: row["claims"].__setitem__("lanSelected", True), "frozen value mismatch"),
+            ("claim-selected-instance", lambda row: row["claims"]["selectedInstances"].append("lan.pkg.re"), "expected exactly 0 entries"),
+            ("claim-universal-absence", lambda row: row["claims"].__setitem__("universalEnvironmentAbsenceClaimed", True), "frozen value mismatch"),
+            ("claim-current-absence", lambda row: row["claims"].__setitem__("currentRuntimeAbsenceClaimed", True), "frozen value mismatch"),
+            ("claim-mutation", lambda row: row["claims"].__setitem__("allPreD13LanMutationsUnauthorized", False), "frozen value mismatch"),
+            ("claim-reentry", lambda row: row["claims"].__setitem__("reentryGate", "PRE_D1_REFETCH"), "frozen value mismatch"),
+            ("claim-extra", lambda row: row["claims"].__setitem__("narrative", "trust me"), "object-key mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                candidate = valid_b19_result()
+                mutate(candidate)
+                self.assertB19Rejected(candidate, expected)
+
+    def test_b19_decision_reference_class_is_derived_from_operator_return_lists(self) -> None:
+        def load(reference_class: str) -> dict[str, object]:
+            temporary, fixture = self.temporary_fixture()
+            self.addCleanup(temporary.cleanup)
+            source = valid_b19_result()
+            prefix = f"evidence/d0-closure/{B19_CLOSURE_ID}/OP-D0-10"
+            declared_refs = []
+            evidence = []
+            for kind in GATE.B19_SEMANTIC_EVIDENCE_KINDS:
+                ref_id = source["_evidenceByKind"][kind][0]
+                raw = source["_references"][ref_id]["raw"]
+                path = f"{prefix}/{kind}.json"
+                write(fixture.repository, path, raw)
+                declared_refs.append({"id": ref_id, "path": path, "sha256": GATE.sha256(raw)})
+                evidence.append({"kind": kind, "refId": ref_id})
+            operator = {
+                "schema": "pkgre-d0-operator-return-v1",
+                "closureSetId": B19_CLOSURE_ID,
+                "handoffId": "OP-D0-10",
+                "aggregateSha256": GATE.PRODUCTION_CONFIG.historical_aggregate_sha256,
+                "returnedBy": SEMANTIC_OPERATOR,
+                "returnedAt": SEMANTIC_RETURNED_AT,
+                "artifactRefs": declared_refs if reference_class == "artifact" else [],
+                "decisionRefs": declared_refs if reference_class == "decision" else [],
+                "findingResults": [
+                    {
+                        "findingId": "D0-B19",
+                        "policyId": GATE.B19_POLICY_ID,
+                        "disposition": "DEFERRED_REVIEWED",
+                        "mode": "NO_LAN_SELECTED",
+                        "evidence": evidence,
+                        "claims": copy.deepcopy(source["claims"]),
+                    }
+                ],
+            }
+            operator_ref = write_canonical_json(fixture.repository, f"{prefix}/operator-return.json", operator)
+            agent = {
+                "schema": "pkgre-d0-agent-verification-v1",
+                "closureSetId": B19_CLOSURE_ID,
+                "handoffId": "OP-D0-10",
+                "aggregateSha256": GATE.PRODUCTION_CONFIG.historical_aggregate_sha256,
+                "operatorReturnSha256": operator_ref["sha256"],
+                "actor": "pkgre-agent",
+                "completedAt": SEMANTIC_RETURNED_AT,
+                "result": "VERIFIED",
+            }
+            agent_ref = write_canonical_json(fixture.repository, f"{prefix}/agent-verification.json", agent)
+            review = {
+                "schema": "pkgre-d0-procedural-review-v1",
+                "closureSetId": B19_CLOSURE_ID,
+                "handoffId": "OP-D0-10",
+                "aggregateSha256": GATE.PRODUCTION_CONFIG.historical_aggregate_sha256,
+                "operatorReturnSha256": operator_ref["sha256"],
+                "agentVerificationSha256": agent_ref["sha256"],
+                "reviewer": "pkgre-reviewer",
+                "reviewedAt": SEMANTIC_RETURNED_AT,
+                "result": "ACCEPTED",
+            }
+            review_ref = write_canonical_json(fixture.repository, f"{prefix}/procedural-review.json", review)
+            evidence_commit = fixture.commit(f"B19 {reference_class} reference fixture")
+            assignments = {
+                "operatorReturn": {"principalLabel": SEMANTIC_OPERATOR, "role": GATE.PROCEDURAL_ROLES["operatorReturn"]},
+                "agentVerification": {"principalLabel": "pkgre-agent", "role": GATE.PROCEDURAL_ROLES["agentVerification"]},
+                "proceduralReview": {"principalLabel": "pkgre-reviewer", "role": GATE.PROCEDURAL_ROLES["proceduralReview"]},
+            }
+            loaded = GATE.verify_handoff_evidence(
+                fixture.ops,
+                fixture.repository,
+                evidence_commit,
+                B19_CLOSURE_ID,
+                GATE.PRODUCTION_CONFIG.historical_aggregate_sha256,
+                "OP-D0-10",
+                {"operatorReturn": operator_ref, "agentVerification": agent_ref, "proceduralReview": review_ref},
+                assignments,
+                SEMANTIC_VERIFICATION_TIME,
+            )
+            result = loaded["results"]["D0-B19"]
+            result["_closureSetId"] = B19_CLOSURE_ID
+            return result
+
+        self.validateB19(load("decision"))
+        self.assertB19Rejected(load("artifact"), "decision reference")
+
+    def test_b19_lan_mutation_authority_remains_false_before_and_after_d1_authorization(self) -> None:
+        closure_result = {
+            "d0Pass": False,
+            "openFindings": ["D0-B19"],
+            "handoffComplete": False,
+            "completeHandoffs": [],
+            "waivedFindings": [],
+            "proceduralAuthority": None,
+        }
+        for d0_pass, receipt_path in ((False, None), (True, Path("/tmp/pre-d1-receipt.json"))):
+            with self.subTest(d0_pass=d0_pass):
+                closure_result["d0Pass"] = d0_pass
+                state = {"closureSet": {}} if d0_pass else {}
+                with (
+                    mock.patch.object(GATE, "verify_repository_anchor", return_value=(b"aggregate\n", b"state\n", state)),
+                    mock.patch.object(GATE, "validate_state_shape", return_value=({}, {})),
+                    mock.patch.object(GATE, "verify_closure", return_value=copy.deepcopy(closure_result)),
+                    mock.patch.object(GATE, "verify_pre_d1_receipt"),
+                    mock.patch.object(GATE.GitOps, "text", return_value="1" * 40),
+                ):
+                    verdict = GATE.verify_gate(REPO_ROOT, Path("aggregate.md"), Path("state.json"), receipt_path=receipt_path, now=SEMANTIC_VERIFICATION_TIME)
+                for mutation in GATE.B19_PRE_D13_MUTATIONS:
+                    self.assertIs(verdict["mutationAuthority"]["agent"][mutation], False)
+                    self.assertIs(verdict["mutationAuthority"]["operatorRollout"][mutation], False)
+
+    def test_b19_rejects_malformed_noncanonical_unbound_or_transplanted_documents(self) -> None:
+        candidate = valid_b19_result()
+        ref_id = candidate["_evidenceByKind"]["d13-reentry-contract"][0]
+        candidate["_references"][ref_id] = {"raw": b"operator says deferred\n", "sha256": GATE.sha256(b"operator says deferred\n"), "_referenceClass": "decision"}
+        self.assertB19Rejected(candidate, "invalid strict JSON")
+
+        candidate = valid_b19_result()
+        ref_id = candidate["_evidenceByKind"]["d13-reentry-contract"][0]
+        raw = candidate["_references"][ref_id]["raw"] + b" "
+        candidate["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw), "_referenceClass": "decision"}
+        self.assertB19Rejected(candidate, "JSON is not canonical")
+
+        envelope_cases = [
+            ("extra-key", lambda document: document.__setitem__("narrative", "trust me"), "object-key mismatch"),
+            ("schema", lambda document: document.__setitem__("schema", "pkgre-d0-b19-semantic-evidence-v0"), "envelope binding mismatch"),
+            ("finding", lambda document: document.__setitem__("findingId", "D0-B18"), "envelope binding mismatch"),
+            ("policy", lambda document: document.__setitem__("policyId", "D0-B19-v0"), "envelope binding mismatch"),
+            ("kind", lambda document: document.__setitem__("kind", "policy-disposition"), "envelope binding mismatch"),
+            ("payload-not-object", lambda document: document.__setitem__("payload", "deferred"), "expected object"),
+            ("closure", lambda document: document["context"].__setitem__("closureSetId", "d0-closure-fedcba9876543210"), "frozen value mismatch"),
+            ("handoff", lambda document: document["context"].__setitem__("handoffId", "OP-D0-09"), "frozen value mismatch"),
+            ("aggregate-commit", lambda document: document["context"]["historicalAggregate"].__setitem__("commit", "0" * 40), "frozen value mismatch"),
+            ("aggregate-digest", lambda document: document["context"]["historicalAggregate"].__setitem__("sha256", "0" * 64), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in envelope_cases:
+            with self.subTest(name=name):
+                candidate = valid_b19_result()
+                rewrite_b19_document(candidate, "d13-reentry-contract", mutate)
+                self.assertB19Rejected(candidate, expected)
+
+        candidate = valid_b19_result()
+        ref_id = candidate["_evidenceByKind"]["d13-reentry-contract"][0]
+        candidate["_references"][ref_id]["sha256"] = "0" * 64
+        self.assertB19Rejected(candidate, "evidence-reference digest mismatch")
+
+        candidate = valid_b19_result()
+        candidate["_closureSetId"] = "d0-closure-fedcba9876543210"
+        self.assertB19Rejected(candidate, "frozen value mismatch")
+
+        alternate_config = replace(GATE.PRODUCTION_CONFIG, historical_aggregate_sha256="0" * 64)
+        self.assertB19Rejected(valid_b19_result(), "frozen value mismatch", config=alternate_config)
+
+    def test_b19_rejects_missing_reordered_or_rebound_predecessors(self) -> None:
+        cases = [
+            ("confirmation-extra", "no-lan-confirmation", lambda document: document["predecessors"].append({"kind": "no-lan-confirmation", "refId": "b19-semantic-1", "sha256": "0" * 64})),
+            ("reentry-missing", "d13-reentry-contract", lambda document: document["predecessors"].clear()),
+            ("reentry-kind", "d13-reentry-contract", lambda document: document["predecessors"][0].__setitem__("kind", "d13-reentry-contract")),
+            ("reentry-ref", "d13-reentry-contract", lambda document: document["predecessors"][0].__setitem__("refId", "b19-semantic-2")),
+            ("reentry-digest", "d13-reentry-contract", lambda document: document["predecessors"][0].__setitem__("sha256", "0" * 64)),
+            ("disposition-missing", "policy-disposition", lambda document: document["predecessors"].pop()),
+            ("disposition-reordered", "policy-disposition", lambda document: document["predecessors"].reverse()),
+            ("disposition-extra", "policy-disposition", lambda document: document["predecessors"].append(copy.deepcopy(document["predecessors"][0]))),
+        ]
+        for name, kind, mutate in cases:
+            with self.subTest(name=name):
+                candidate = valid_b19_result()
+                rewrite_b19_document(candidate, kind, mutate)
+                self.assertB19Rejected(candidate, "predecessors")
+
+    def test_b19_rejects_weakened_absence_selection_and_reentry_claims(self) -> None:
+        cases = [
+            ("fact-observed", lambda p: p["no-lan-confirmation"].__setitem__("factState", "OBSERVED")),
+            ("unbounded-rollout-scope", lambda p: p["no-lan-confirmation"].__setitem__("rolloutScope", "ALL_ENVIRONMENTS_FOREVER")),
+            ("live-basis-claim", lambda p: p["no-lan-confirmation"].__setitem__("basisScope", "CONTINUOUS_LIVE_DISCOVERY")),
+            ("selection-placeholder", lambda p: p["no-lan-confirmation"].__setitem__("selectionState", "PLACEHOLDER_SELECTED")),
+            ("selected-instance", lambda p: p["no-lan-confirmation"]["selectedInstances"].append("lan.pkg.re")),
+            ("universal-absence", lambda p: p["no-lan-confirmation"].__setitem__("universalEnvironmentAbsenceClaimed", True)),
+            ("current-runtime-absence", lambda p: p["no-lan-confirmation"].__setitem__("currentRuntimeAbsenceClaimed", True)),
+            ("missing-row", lambda p: p["no-lan-confirmation"]["absentRows"].pop()),
+            ("extra-row", lambda p: p["no-lan-confirmation"]["absentRows"].append("lan-default")),
+            ("reordered-rows", lambda p: p["no-lan-confirmation"]["absentRows"].reverse()),
+            ("wrong-classification", lambda p: p["no-lan-confirmation"].__setitem__("evidenceClassification", "SATISFIED")),
+            ("placeholder", lambda p: p["no-lan-confirmation"].__setitem__("placeholderInvented", True)),
+            ("implied-default", lambda p: p["no-lan-confirmation"].__setitem__("impliedDefaultSelected", True)),
+            ("public-reuse", lambda p: p["no-lan-confirmation"].__setitem__("publicInstanceReused", True)),
+            ("authorization", lambda p: p["no-lan-confirmation"].__setitem__("authorizationGranted", True)),
+            ("confirmation-result", lambda p: p["no-lan-confirmation"].__setitem__("result", "SELECTED")),
+            ("gate-id", lambda p: p["d13-reentry-contract"]["gate"].__setitem__("id", "PRE_D1_REFETCH")),
+            ("gate-requirement", lambda p: p["d13-reentry-contract"]["gate"].__setitem__("requirement", "select some LAN rows later")),
+            ("first-edit-trigger", lambda p: p["d13-reentry-contract"].__setitem__("trigger", "AFTER_FIRST_LAN_EDIT")),
+            ("missing-mutation", lambda p: p["d13-reentry-contract"]["requiredBefore"].pop()),
+            ("extra-mutation", lambda p: p["d13-reentry-contract"]["requiredBefore"].append("lan-documentation-edit")),
+            ("reordered-mutations", lambda p: p["d13-reentry-contract"]["requiredBefore"].reverse()),
+            ("missing-selection-requirement", lambda p: p["d13-reentry-contract"]["selectionRequirements"].pop()),
+            ("missing-shared-constraint", lambda p: p["d13-reentry-contract"]["sharedAbstractConstraints"].pop()),
+            ("shared-selects", lambda p: p["d13-reentry-contract"].__setitem__("sharedConstraintsSelectConcreteRows", True)),
+            ("concrete-selected", lambda p: p["d13-reentry-contract"].__setitem__("concreteRowsSelected", True)),
+            ("d13-complete", lambda p: p["d13-reentry-contract"].__setitem__("d13Completed", True)),
+            ("future-activation", lambda p: p["d13-reentry-contract"].__setitem__("futureLanActivationAuthorized", True)),
+            ("reentry-public-reuse", lambda p: p["d13-reentry-contract"].__setitem__("publicInstanceReuseAllowed", True)),
+            ("reentry-placeholders", lambda p: p["d13-reentry-contract"].__setitem__("placeholderOrImpliedDefaultsAllowed", True)),
+            ("reentry-d0-authority", lambda p: p["d13-reentry-contract"].__setitem__("d0MutationAuthorized", True)),
+            ("reentry-d1-authority", lambda p: p["d13-reentry-contract"].__setitem__("d1ImplementationAuthorized", True)),
+            ("reentry-result", lambda p: p["d13-reentry-contract"].__setitem__("result", "OPTIONAL")),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                payloads = valid_b19_payloads()
+                mutate(payloads)
+                expected = {
+                    "selected-instance": "expected exactly 0 entries",
+                    "missing-row": "expected exactly",
+                    "extra-row": "expected exactly",
+                    "missing-mutation": "expected exactly",
+                    "extra-mutation": "expected exactly",
+                    "missing-selection-requirement": "expected exactly",
+                    "missing-shared-constraint": "expected exactly",
+                }.get(name, "frozen value mismatch")
+                self.assertB19Rejected(valid_b19_result(payloads), expected)
+
+    def test_b19_rejects_satisfaction_waiver_mutation_or_phase_authority(self) -> None:
+        cases = [
+            ("decision", lambda p: p["policy-disposition"].__setitem__("decision", "CLOSE_AS_SATISFIED")),
+            ("disposition", lambda p: p["policy-disposition"].__setitem__("disposition", "SATISFIED")),
+            ("mode", lambda p: p["policy-disposition"].__setitem__("mode", "LAN_SELECTED")),
+            ("fact-state", lambda p: p["policy-disposition"].__setitem__("factState", "SELECTED")),
+            ("rollout-scope", lambda p: p["policy-disposition"].__setitem__("rolloutScope", "GLOBAL")),
+            ("selected-instance", lambda p: p["policy-disposition"]["selectedInstances"].append("lan.pkg.re")),
+            ("not-deferral-only", lambda p: p["policy-disposition"].__setitem__("reviewedDeferralOnly", False)),
+            ("deferral-as-approval", lambda p: p["policy-disposition"].__setitem__("deferralNotApproval", False)),
+            ("finding-satisfied", lambda p: p["policy-disposition"].__setitem__("findingSatisfied", True)),
+            ("waiver", lambda p: p["policy-disposition"].__setitem__("waiverApproved", True)),
+            ("lan-selected", lambda p: p["policy-disposition"].__setitem__("lanSelected", True)),
+            ("mutation-authorized", lambda p: p["policy-disposition"].__setitem__("allPreD13LanMutationsUnauthorized", False)),
+            ("future-activation", lambda p: p["policy-disposition"].__setitem__("futureLanActivationAuthorized", True)),
+            ("phase-authority", lambda p: p["policy-disposition"].__setitem__("independentPhaseAuthority", True)),
+            ("d0-authority", lambda p: p["policy-disposition"].__setitem__("d0MutationAuthorized", True)),
+            ("d1-authority", lambda p: p["policy-disposition"].__setitem__("d1ImplementationAuthorized", True)),
+            ("result", lambda p: p["policy-disposition"].__setitem__("result", "WAIVED")),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                payloads = valid_b19_payloads()
+                mutate(payloads)
+                expected = "expected exactly 0 entries" if name == "selected-instance" else "frozen value mismatch"
+                self.assertB19Rejected(valid_b19_result(payloads), expected)
+
+    def test_b19_requires_fresh_operator_bound_chronological_documents(self) -> None:
+        actor_cases = [
+            ("confirmation", "no-lan-confirmation", "confirmedBy"),
+            ("reentry", "d13-reentry-contract", "reviewedBy"),
+            ("disposition", "policy-disposition", "approvedBy"),
+        ]
+        for name, kind, field in actor_cases:
+            with self.subTest(name=name):
+                payloads = valid_b19_payloads()
+                payloads[kind][field] = "other-operator"
+                self.assertB19Rejected(valid_b19_result(payloads), "operator identity mismatch")
+
+        boundary_payloads = valid_b19_payloads()
+        for kind, field in (
+            ("no-lan-confirmation", "confirmedAt"),
+            ("d13-reentry-contract", "reviewedAt"),
+            ("policy-disposition", "approvedAt"),
+        ):
+            boundary_payloads[kind][field] = "2026-08-25T00:10:00Z"
+        self.validateB19(valid_b19_result(boundary_payloads))
+
+        stale_payloads = copy.deepcopy(boundary_payloads)
+        for kind, field in (
+            ("no-lan-confirmation", "confirmedAt"),
+            ("d13-reentry-contract", "reviewedAt"),
+            ("policy-disposition", "approvedAt"),
+        ):
+            stale_payloads[kind][field] = "2026-08-25T00:09:59Z"
+        self.assertB19Rejected(valid_b19_result(stale_payloads), "older than 86400 seconds at operator return")
+
+        future_payloads = valid_b19_payloads()
+        for kind, field in (
+            ("no-lan-confirmation", "confirmedAt"),
+            ("d13-reentry-contract", "reviewedAt"),
+            ("policy-disposition", "approvedAt"),
+        ):
+            future_payloads[kind][field] = "2026-08-26T00:10:31Z"
+        future = valid_b19_result(future_payloads)
+        future["_operatorReturnedAt"] = "2026-08-26T00:10:31Z"
+        self.assertB19Rejected(future, "too far in the future")
+
+        candidate = valid_b19_result()
+        candidate["_operatorReturnedAt"] = "2026-08-26T00:09:59Z"
+        self.assertB19Rejected(candidate, "later than its attested upper bound")
+
+        chronology_cases = [
+            ("reentry-before-confirmation", "d13-reentry-contract", "reviewedAt", "2026-08-26T00:07:59Z"),
+            ("disposition-before-reentry", "policy-disposition", "approvedAt", "2026-08-26T00:08:59Z"),
+        ]
+        for name, kind, field, timestamp in chronology_cases:
+            with self.subTest(name=name):
+                payloads = valid_b19_payloads()
+                payloads[kind][field] = timestamp
+                self.assertB19Rejected(valid_b19_result(payloads), "invalid semantic-document chronology")
+
+    def test_verify_closure_dispatches_b19_with_time_and_config(self) -> None:
+        evidence_reference = {"fixture": "b19-evidence"}
+        payload_result = valid_b19_result()
+        state = {
+            "closureSet": {
+                "id": B19_CLOSURE_ID,
+                "closureEvidenceCommit": "1" * 40,
+                "evidenceTreeSha256": "2" * 64,
+            }
+        }
+        findings = {
+            "D0-B19": {
+                "closure": {
+                    "disposition": "DEFERRED_REVIEWED",
+                    "result": {
+                        "mode": "NO_LAN_SELECTED",
+                        "contributions": [{"handoffId": "OP-D0-10", "evidence": evidence_reference}],
+                    },
+                }
+            }
+        }
+        items = {"OP-D0-10": {"evidence": evidence_reference}}
+        ops = mock.Mock()
+        ops.text.return_value = "3" * 40
+        with (
+            mock.patch.object(GATE, "committed_evidence_tree", return_value=("2" * 64, [])),
+            mock.patch.object(GATE, "verify_procedural_authority", return_value={"report": {}, "assignments": {"OP-D0-10": {}}}),
+            mock.patch.object(GATE, "verify_handoff_evidence", return_value={"reference": evidence_reference, "results": {"D0-B19": payload_result}}),
+            mock.patch.object(GATE, "validate_gate_state_history", return_value={"evidenceChangedPaths": []}),
+            mock.patch.object(GATE, "validate_b19") as validator,
+        ):
+            GATE.verify_closure(ops, REPO_ROOT, b"{}\n", state, findings, items, Path("/tmp/procedural-authority.json"), GATE.PRODUCTION_CONFIG, SEMANTIC_VERIFICATION_TIME)
+        validator.assert_called_once_with("DEFERRED_REVIEWED", "NO_LAN_SELECTED", [payload_result], SEMANTIC_VERIFICATION_TIME, GATE.PRODUCTION_CONFIG)
+
+    def test_verify_closure_rejects_counterfeit_b19_semantics(self) -> None:
+        evidence_reference = {"fixture": "b19-counterfeit-evidence"}
+        payload_result = valid_b19_result()
+        ref_id = payload_result["_evidenceByKind"]["no-lan-confirmation"][0]
+        counterfeit = GATE.canonical_json({"selectedInstances": ["lan.pkg.re"], "futureLanActivationAuthorized": True})
+        payload_result["_references"][ref_id] = {"raw": counterfeit, "sha256": GATE.sha256(counterfeit), "_referenceClass": "decision"}
+        state = {
+            "closureSet": {
+                "id": B19_CLOSURE_ID,
+                "closureEvidenceCommit": "1" * 40,
+                "evidenceTreeSha256": "2" * 64,
+            }
+        }
+        findings = {
+            "D0-B19": {
+                "closure": {
+                    "disposition": "DEFERRED_REVIEWED",
+                    "result": {
+                        "mode": "NO_LAN_SELECTED",
+                        "contributions": [{"handoffId": "OP-D0-10", "evidence": evidence_reference}],
+                    },
+                }
+            }
+        }
+        items = {"OP-D0-10": {"evidence": evidence_reference}}
+        ops = mock.Mock()
+        ops.text.return_value = "3" * 40
+        with (
+            mock.patch.object(GATE, "committed_evidence_tree", return_value=("2" * 64, [])),
+            mock.patch.object(GATE, "verify_procedural_authority", return_value={"report": {}, "assignments": {"OP-D0-10": {}}}),
+            mock.patch.object(GATE, "verify_handoff_evidence", return_value={"reference": evidence_reference, "results": {"D0-B19": payload_result}}),
+            mock.patch.object(GATE, "validate_gate_state_history", return_value={"evidenceChangedPaths": []}),
+        ):
+            self.assertRejected(
+                lambda: GATE.verify_closure(ops, REPO_ROOT, b"{}\n", state, findings, items, Path("/tmp/procedural-authority.json"), GATE.PRODUCTION_CONFIG, SEMANTIC_VERIFICATION_TIME),
+                "object-key mismatch",
+            )
 
     def test_b01_and_b02_accept_exact_semantic_proof(self) -> None:
         self.validateSemanticPayloads("D0-B01", "OP-D0-01", valid_b01_payloads())

@@ -128,6 +128,55 @@ B18_CORRECTED_BUN_INVOCATION = {
     "subcommand": "install",
     "registryScope": "LOOPBACK_ONLY",
 }
+B19_POLICY_ID = "D0-B19-v1"
+B19_SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-b19-semantic-evidence-v1"
+B19_SEMANTIC_EVIDENCE_KINDS = ("no-lan-confirmation", "d13-reentry-contract", "policy-disposition")
+B19_REQUIRED_EVIDENCE_KINDS = frozenset(B19_SEMANTIC_EVIDENCE_KINDS)
+B19_PREDECESSOR_KINDS = {
+    "no-lan-confirmation": (),
+    "d13-reentry-contract": ("no-lan-confirmation",),
+    "policy-disposition": ("no-lan-confirmation", "d13-reentry-contract"),
+}
+B19_ABSENT_ROWS = [
+    "lan-instance",
+    "hostname",
+    "origin",
+    "vhost",
+    "listener",
+    "address",
+    "range",
+    "firewall-row",
+    "dns-view",
+    "tls-identity",
+    "catalog-origin",
+    "catalog-full-ref",
+    "catalog-bootstrap",
+    "config",
+    "state-root",
+    "credential",
+    "signer",
+    "trust-set",
+    "public-base-mode",
+]
+B19_PRE_D13_MUTATIONS = [
+    "lanSourceEdit",
+    "lanImplementation",
+    "lanConfiguration",
+    "lanCredential",
+    "lanDns",
+    "lanTls",
+    "lanDeployment",
+]
+B19_SHARED_ABSTRACT_CONSTRAINTS = [
+    "separate-service-identity",
+    "separate-state-root",
+    "separate-trust-set",
+    "separate-credential-path-and-readers",
+    "read-only-provider",
+    "network-admission",
+    "no-public-instance-reuse",
+    "no-catalog-selected-trust-or-credential-mechanism",
+]
 B21_TARGETS = ["https://rust.pkg.re/config.json", "https://js.pkg.re/pkgre-js"]
 B21_PROTOCOLS = ["HTTP/1.1", "HTTP/2"]
 GITHUB_GOVERNANCE_BASELINE_PATH = "fixtures/d0-v1/basis-inventory/github-governance/actual-vs-d2.json"
@@ -358,8 +407,8 @@ LATER_GATES = [
     {"id": "D13_LAN_SELECTION", "findingRefs": ["D0-B19"], "conditionalOnAmendment": False, "requirement": "Select and freeze every LAN identity,authority,credential,network,DNS,TLS,and state row before any LAN edit"},
 ]
 MUTATION_POLICY = {"id": "D0-MUTATION-POLICY-v1", "operatorEmergencyExceptions": [{"id": "GANDI_CREDENTIAL_CONTAINMENT", "scope": "credential-containment-only", "returnedEvidence": "metadata-only", "forbidden": ["token-bytes", "token-hash", "private-key-bytes", "private-key-hash"]}]}
-AGENT_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "credentialValueRead", "credentialMutation", "privateKeyValueRead", "lanSourceEdit", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
-OPERATOR_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "lanSourceEdit", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
+AGENT_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "credentialValueRead", "credentialMutation", "privateKeyValueRead", "lanSourceEdit", "lanImplementation", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
+OPERATOR_MUTATIONS = ["rainDeployment", "dnsChange", "githubSettingsChange", "signerInstallation", "catalogRefAdvance", "bodyImport", "cargoConfigEdit", "d1Implementation", "lanSourceEdit", "lanImplementation", "lanConfiguration", "lanCredential", "lanDns", "lanTls", "lanDeployment"]
 PROCEDURAL_AUTHORITY_SCHEMA = "pkgre-d0-procedural-authority-v1"
 PROCEDURAL_AUTHORITY_ASSURANCE = {"artifactAuthorshipProven": False, "cryptographicIdentityAuthentication": False, "roleAssignmentAuthority": "CALLER_OUT_OF_BAND_PROCEDURE", "verifierAssurance": "CONTENT_BINDING_ORDERING_AND_CONSISTENCY_WITH_EXTERNAL_ASSIGNMENT_ONLY"}
 PROCEDURAL_ROLES = {"operatorReturn": "PROCEDURAL_OPERATOR_RETURNER", "agentVerification": "PROCEDURAL_AGENT_VERIFIER", "proceduralReview": "PROCEDURAL_REVIEWER"}
@@ -928,6 +977,10 @@ REPHASE_TARGETS = {
     "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B13": ["D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
 }
 LATER_GATES_BY_ID = {row["id"]: row for row in LATER_GATES}
+B19_REENTRY_GATE = {
+    "id": "D13_LAN_SELECTION",
+    "requirement": LATER_GATES_BY_ID["D13_LAN_SELECTION"]["requirement"],
+}
 RAIN_SSH_HOST = "rain.pacna.org"
 RAIN_SSH_FINGERPRINT = "SHA256:+lFmS5DwoVcWRZduvk+R0zSnHJ++C8JRL1kopXnidiI"
 INFRA_REPOSITORY_ID = "infra/infra"
@@ -2433,7 +2486,10 @@ def verify_handoff_evidence(ops: GitOps, repo: Path, evidence_commit: str, closu
     artifact_refs = validate_and_load_refs(ops, repo, evidence_commit, operator["artifactRefs"], f"{handoff_id} artifactRefs", prefix)
     decision_refs = validate_and_load_refs(ops, repo, evidence_commit, operator["decisionRefs"], f"{handoff_id} decisionRefs", prefix)
     require(set(artifact_refs).isdisjoint(decision_refs), f"{handoff_id}: duplicate ID across artifact and decision references")
-    references = {**artifact_refs, **decision_refs}
+    references = {
+        **{ref_id: {**reference, "_referenceClass": "artifact"} for ref_id, reference in artifact_refs.items()},
+        **{ref_id: {**reference, "_referenceClass": "decision"} for ref_id, reference in decision_refs.items()},
+    }
     attestation_paths = {operator_ref["path"], agent_ref["path"], review_ref["path"]}
     require(attestation_paths.isdisjoint(reference["path"] for reference in references.values()), f"{handoff_id}: attestation and content paths overlap")
     raw_results = arr(operator["findingResults"], f"{handoff_id} findingResults")
@@ -5985,14 +6041,200 @@ def validate_b18(
     require(acknowledged_at <= containment_at <= remediation_at <= approved_at, "D0-B18: invalid semantic-document chronology")
 
 
-def validate_b19(disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
+def validate_b19_reference(result: dict[str, Any], kind: str, label: str) -> tuple[str, dict[str, Any]]:
+    ref_ids = evidence_ids(result, kind)
+    require(len(ref_ids) == 1, f"{label}: exactly one evidence reference is required for {kind!r}")
+    ref_id = ref_ids[0]
+    require(isinstance(ref_id, str) and ref_id != "", f"{label}: evidence reference ID must be a nonempty string")
+    references = obj(result.get("_references"), f"{label} references")
+    reference = obj(references.get(ref_id), f"{label} {kind} reference")
+    require(reference.get("_referenceClass") == "decision", f"{label} {kind}: semantic document must be returned as a decision reference")
+    raw = reference.get("raw")
+    require(isinstance(raw, bytes), f"{label} {kind}: expected raw bytes")
+    digest = hex_digest(reference.get("sha256"), f"{label} {kind}.sha256")
+    require(digest == sha256(raw), f"{label} {kind}: evidence-reference digest mismatch")
+    return ref_id, reference
+
+
+def validate_b19_semantic_documents(result: dict[str, Any], config: GateConfig) -> dict[str, dict[str, Any]]:
+    label = "D0-B19/OP-D0-10"
+    handoff_id = nonempty(result.get("_handoffId"), f"{label} handoff")
+    require(handoff_id == "OP-D0-10", "D0-B19: reviewed LAN deferral belongs to an unexpected handoff")
+    require(result.get("findingId") == "D0-B19" and result.get("policyId") == B19_POLICY_ID, "D0-B19: finding or policy identity mismatch")
+    closure_id = nonempty(result.get("_closureSetId"), f"{label} closure-set ID")
+    require(CLOSURE_SET_RE.fullmatch(closure_id) is not None, f"{label}: invalid closure-set ID")
+    evidence_by_kind = obj(result.get("_evidenceByKind"), f"{label} evidence")
+    require(set(evidence_by_kind) == B19_REQUIRED_EVIDENCE_KINDS, f"{label}: evidence-kind set must be exact;expected={sorted(B19_REQUIRED_EVIDENCE_KINDS)!r}")
+    require(all(isinstance(ref_ids, list) and len(ref_ids) == 1 for ref_ids in evidence_by_kind.values()), f"{label}: exactly one evidence reference is required per kind")
+    all_ref_ids = [ref_ids[0] for ref_ids in evidence_by_kind.values()]
+    require(all(isinstance(ref_id, str) and ref_id != "" for ref_id in all_ref_ids), f"{label}: evidence reference IDs must be nonempty strings")
+    require(len(all_ref_ids) == len(set(all_ref_ids)), f"{label}: an evidence reference cannot be reused across kinds")
+
+    ref_bindings: dict[str, dict[str, str]] = {}
+    for kind in B19_SEMANTIC_EVIDENCE_KINDS:
+        ref_id, reference = validate_b19_reference(result, kind, label)
+        ref_bindings[kind] = {"kind": kind, "refId": ref_id, "sha256": reference["sha256"]}
+
+    expected_context = {
+        "closureSetId": closure_id,
+        "handoffId": handoff_id,
+        "historicalAggregate": {
+            "commit": config.historical_aggregate_commit,
+            "sha256": config.historical_aggregate_sha256,
+        },
+    }
+    payloads: dict[str, dict[str, Any]] = {}
+    for kind in B19_SEMANTIC_EVIDENCE_KINDS:
+        reference = result["_references"][ref_bindings[kind]["refId"]]
+        document = obj(parse_json(reference["raw"], f"{label} {kind} semantic document"), f"{label} {kind} semantic document")
+        exact_keys(document, {"schema", "findingId", "policyId", "kind", "context", "predecessors", "payload"}, f"{label} {kind} semantic document")
+        require(
+            document["schema"] == B19_SEMANTIC_EVIDENCE_SCHEMA
+            and document["findingId"] == "D0-B19"
+            and document["policyId"] == B19_POLICY_ID
+            and document["kind"] == kind,
+            f"{label} {kind}: semantic envelope binding mismatch",
+        )
+        exact_json_value(document["context"], expected_context, f"{label} {kind}.context")
+        expected_predecessors = [ref_bindings[predecessor_kind] for predecessor_kind in B19_PREDECESSOR_KINDS[kind]]
+        exact_json_value(document["predecessors"], expected_predecessors, f"{label} {kind}.predecessors")
+        payloads[kind] = obj(document["payload"], f"{label} {kind} payload")
+    result["_semanticPayloads"] = payloads
+    return payloads
+
+
+def validate_b19_operator_event(
+    payload: dict[str, Any],
+    actor_field: str,
+    time_field: str,
+    label: str,
+    operator: str,
+    returned_at: datetime,
+    verification_time: datetime,
+) -> datetime:
+    actor = security_text(payload[actor_field], f"{label}.{actor_field}", 128)
+    require(actor == operator, f"{label}: operator identity mismatch")
+    event_time = parse_utc(payload[time_field], f"{label}.{time_field}")
+    require_no_later(event_time, returned_at, label)
+    require((returned_at - event_time).total_seconds() <= D0_LIVE_EVIDENCE_MAX_AGE_SECONDS, f"{label}: evidence is older than {D0_LIVE_EVIDENCE_MAX_AGE_SECONDS} seconds at operator return")
+    require(event_time <= verification_time + timedelta(seconds=D0_EVIDENCE_FUTURE_SKEW_SECONDS), f"{label}: timestamp is too far in the future at verification time")
+    return event_time
+
+
+def validate_b19(
+    disposition: str,
+    mode: str,
+    results: list[dict[str, Any]],
+    verification_time: datetime,
+    config: GateConfig = PRODUCTION_CONFIG,
+) -> None:
     require(disposition == "DEFERRED_REVIEWED" and mode == "NO_LAN_SELECTED", "D0-B19: wrong reviewed deferral mode")
-    for result in results:
-        claims = obj(result["claims"], "D0-B19 claims")
-        exact_keys(claims, {"lanSelected", "allLanMutationsUnauthorized", "reentryGate", "confirmationRefIds", "reentryContractRefIds"}, "D0-B19 claims")
-        require(claims["lanSelected"] is False and claims["allLanMutationsUnauthorized"] is True and claims["reentryGate"] == "D13_LAN_SELECTION", "D0-B19: no-LAN contract mismatch")
-        require_claim_ref_ids(result, claims["confirmationRefIds"], "no-lan-confirmation", "D0-B19 confirmation")
-        require_claim_ref_ids(result, claims["reentryContractRefIds"], "d13-reentry-contract", "D0-B19 reentry")
+    require(len(results) == 1, "D0-B19: exact single-handoff contribution required")
+    result = results[0]
+    payloads = validate_b19_semantic_documents(result, config)
+    claims = obj(result["claims"], "D0-B19 claims")
+    exact_json_value(
+        claims,
+        {
+            "factState": "ABSENT",
+            "rolloutScope": "THIS_ROLLOUT_STAGE",
+            "lanSelected": False,
+            "selectedInstances": [],
+            "universalEnvironmentAbsenceClaimed": False,
+            "currentRuntimeAbsenceClaimed": False,
+            "reviewedDeferralOnly": True,
+            "findingSatisfied": False,
+            "waiverApproved": False,
+            "allPreD13LanMutationsUnauthorized": True,
+            "publicInstanceReuseAllowed": False,
+            "placeholderOrImpliedDefaultsAllowed": False,
+            "reentryGate": "D13_LAN_SELECTION",
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "evidenceByKind": result["_evidenceByKind"],
+        },
+        "D0-B19 claims",
+    )
+
+    operator, returned_at = operator_return_context(result, "D0-B19")
+    confirmation = payloads["no-lan-confirmation"]
+    exact_json_value(
+        confirmation,
+        {
+            "confirmedBy": confirmation.get("confirmedBy"),
+            "confirmedAt": confirmation.get("confirmedAt"),
+            "factState": "ABSENT",
+            "rolloutScope": "THIS_ROLLOUT_STAGE",
+            "basisScope": "PINNED_HISTORICAL_D0_AGGREGATE",
+            "selectionState": "NO_LAN_SELECTED",
+            "selectedInstances": [],
+            "absentRows": B19_ABSENT_ROWS,
+            "universalEnvironmentAbsenceClaimed": False,
+            "currentRuntimeAbsenceClaimed": False,
+            "evidenceClassification": "EXPLICIT_D0_DEFERRAL",
+            "placeholderInvented": False,
+            "impliedDefaultSelected": False,
+            "publicInstanceReused": False,
+            "authorizationGranted": False,
+            "result": "CONFIRMED_ABSENT",
+        },
+        "D0-B19 no-lan-confirmation",
+    )
+    confirmed_at = validate_b19_operator_event(confirmation, "confirmedBy", "confirmedAt", "D0-B19 no-lan-confirmation", operator, returned_at, verification_time)
+
+    reentry = payloads["d13-reentry-contract"]
+    exact_json_value(
+        reentry,
+        {
+            "reviewedBy": reentry.get("reviewedBy"),
+            "reviewedAt": reentry.get("reviewedAt"),
+            "gate": B19_REENTRY_GATE,
+            "trigger": "BEFORE_FIRST_LAN_SOURCE_IMPLEMENTATION_CONFIGURATION_CREDENTIAL_DNS_TLS_OR_DEPLOYMENT_EDIT",
+            "requiredBefore": B19_PRE_D13_MUTATIONS,
+            "selectionRequirements": B19_ABSENT_ROWS,
+            "sharedAbstractConstraints": B19_SHARED_ABSTRACT_CONSTRAINTS,
+            "sharedConstraintsSelectConcreteRows": False,
+            "concreteRowsSelected": False,
+            "d13Completed": False,
+            "futureLanActivationAuthorized": False,
+            "publicInstanceReuseAllowed": False,
+            "placeholderOrImpliedDefaultsAllowed": False,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "REENTRY_REQUIRED",
+        },
+        "D0-B19 d13-reentry-contract",
+    )
+    reviewed_at = validate_b19_operator_event(reentry, "reviewedBy", "reviewedAt", "D0-B19 d13-reentry-contract", operator, returned_at, verification_time)
+
+    policy = payloads["policy-disposition"]
+    exact_json_value(
+        policy,
+        {
+            "approvedBy": policy.get("approvedBy"),
+            "approvedAt": policy.get("approvedAt"),
+            "decision": "CLOSE_AS_REVIEWED_DEFERRAL",
+            "disposition": "DEFERRED_REVIEWED",
+            "mode": "NO_LAN_SELECTED",
+            "factState": "ABSENT",
+            "rolloutScope": "THIS_ROLLOUT_STAGE",
+            "selectedInstances": [],
+            "reviewedDeferralOnly": True,
+            "deferralNotApproval": True,
+            "findingSatisfied": False,
+            "waiverApproved": False,
+            "lanSelected": False,
+            "allPreD13LanMutationsUnauthorized": True,
+            "futureLanActivationAuthorized": False,
+            "independentPhaseAuthority": False,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "APPROVED",
+        },
+        "D0-B19 policy-disposition",
+    )
+    approved_at = validate_b19_operator_event(policy, "approvedBy", "approvedAt", "D0-B19 policy-disposition", operator, returned_at, verification_time)
+    require(confirmed_at <= reviewed_at <= approved_at, "D0-B19: invalid semantic-document chronology")
 
 
 def decode_bounded_base64(value: Any, label: str, max_decoded: int = 1024 * 1024) -> bytes:
@@ -6546,7 +6788,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         if finding_id == "D0-B18":
             validate_b18(disposition, mode, result_rows, verification_time, config)
         elif finding_id == "D0-B19":
-            validate_b19(disposition, mode, result_rows)
+            validate_b19(disposition, mode, result_rows, verification_time, config)
         elif finding_id == "D0-B21":
             validate_b21(disposition, mode, result_rows, history["evidenceChangedPaths"], config)
         elif finding_id == "D0-B22":
