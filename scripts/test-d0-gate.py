@@ -676,6 +676,7 @@ def valid_b13_instance_profiles_projection(protocol_digest: str, maxima_digest: 
         "activationRequirements": {
             "d1RuntimeInstanceContractRequired": True,
             "runtimeInstanceDigestRequired": True,
+            "physicalIdentityDigestRequired": True,
             "signingAuthorityRequired": True,
             "exactPhysicalRealizationRequired": True,
             "profileContractAloneAuthorizesActivation": False,
@@ -732,7 +733,11 @@ def valid_b13_rephase_payloads() -> dict[str, dict[str, object]]:
             for kind in ("protocol-enums", "hard-maxima", "instance-profiles")
         ],
         "runtimeInstanceDigestsPresent": False,
+        "physicalIdentityDigestsPresent": False,
         "trustDigestsPresent": False,
+        "semanticRuntimeDigestSchemaFrozen": True,
+        "physicalIdentityDigestSchemaFrozen": True,
+        "gateClosureSequenceFrozen": True,
         "profileContractsSatisfyRuntimeDigestRequirement": False,
         "boundedInputsAuthorizeActivation": False,
         "boundedInputsAuthorizeD1Implementation": False,
@@ -1889,6 +1894,9 @@ class GateCoreTests(unittest.TestCase):
     def test_strict_json_and_paths(self) -> None:
         self.assertRejected(lambda: GATE.parse_json(b'{"x":1,"x":2}\n', "duplicate"), "duplicate JSON object key")
         self.assertRejected(lambda: GATE.parse_json(b'{"x":"\\ud800"}\n', "surrogate"), "invalid Unicode scalar value")
+        self.assertRejected(lambda: GATE.parse_json(b'{"x":1.5}\n', "float"), "floating-point numbers are forbidden")
+        self.assertRejected(lambda: GATE.parse_json(b'{"x":NaN}\n', "non-finite"), "non-finite JSON constant is forbidden")
+        self.assertRejected(lambda: GATE.parse_json(b'{"z":1,"a":2}\n', "key-order"), "JSON is not canonical")
         self.assertRejected(lambda: GATE.safe_path("evidence/d0-closure/../x", "path"), "noncanonical")
         self.assertRejected(lambda: GATE.safe_path("evidence/d0-closureevil/x", "path", "evidence/d0-closure/"), "strictly under")
         self.assertRejected(lambda: GATE.safe_path("evidence/d0-closure/x y", "path"), "unsupported path component")
@@ -3139,8 +3147,30 @@ class GateCoreTests(unittest.TestCase):
         self.assertFalse(profiles["runtimeIdentityContract"]["runtimeInstanceDigestPresent"])
         self.assertFalse(profiles["runtimeIdentityContract"]["concreteSigningAuthorityPresent"])
         self.assertFalse(profiles["runtimeIdentityContract"]["concreteDeploymentAuthorityPresent"])
-        self.assertEqual(profiles["runtimeIdentityContract"]["compatibilityBodyRuntimeIdentityRule"], "distinct")
+        self.assertEqual(profiles["runtimeIdentityContract"]["compatibilityBodyRuntimeIdentityRule"], "distinct-per-ecosystem")
         self.assertEqual(profiles["runtimeIdentityContract"]["rollbackRuntimeIdentityRule"], "inherit-selected-anchor-exact")
+        identity = profiles["runtimeIdentityContract"]
+        semantic = identity["semanticRuntimeDigest"]
+        physical = identity["physicalIdentityDigest"]
+        self.assertEqual([row["id"] for row in semantic["categories"]], ["catalog-config", "trust", "source-policy", "executable-build", "protocol-state-schemas", "limits"])
+        self.assertTrue(all(row["required"] for row in semantic["categories"]))
+        self.assertEqual(semantic["rootPreimage"]["categoryDigestOrder"], [row["id"] for row in semantic["categories"]])
+        self.assertEqual(semantic["resultField"], "runtimeInstanceSha256")
+        self.assertEqual(physical["resultField"], "physicalIdentitySha256")
+        self.assertNotEqual(semantic["resultField"], physical["resultField"])
+        self.assertEqual([row["gateId"] for row in identity["gateClosureSequence"]], ["D1", "D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"])
+        trust_category = next(row for row in semantic["categories"] if row["id"] == "trust")
+        self.assertEqual(trust_category["requiredContent"], identity["gateClosureSequence"][1]["owns"])
+        self.assertEqual(physical["concreteDigestOwnerGatesByProfile"]["public-rust-rollback"], ["PRE_D7_FRONTEND_CHANGE_ROLLBACK"])
+        self.assertEqual(physical["replacementRealizationOwnerGatesByProfile"], {"public-rust-rollback": ["PRE_D9_RUST_BODIES"], "public-js-rollback": ["PRE_D12_JS_BODIES"]})
+        self.assertEqual(identity["gateClosureSequence"][2]["rollbackAnchorRoles"], ["compatibility"])
+        self.assertFalse(identity["gateClosureSequence"][2]["authorizesBodyProfiles"])
+        self.assertEqual(identity["rollbackIdentity"]["semanticRuntimeDigestRule"], "rollback-runtimeInstanceSha256-equals-selected-anchor-runtimeInstanceSha256-exactly")
+        self.assertIn("all-six-selected-anchor-category-values-and-digests-exactly", identity["rollbackIdentity"]["rollbackSemanticCategoryDigests"])
+        self.assertIn("never-replace-inherited-anchor-catalog-config-update-policy", identity["rollbackIdentity"]["rollbackUpdatePolicyRule"])
+        self.assertIn("distinct", identity["rollbackIdentity"]["physicalIdentityRule"])
+        self.assertEqual(identity["rollbackIdentity"]["requiredPhysicalIsolationFields"], ["unitName", "listenerIdentity", "stateRootIdentity"])
+        self.assertFalse(identity["profileContractAloneAuthorizesD1"])
         self.assertEqual(GATE.REPHASE_TARGETS["D0-B13"], ["D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"])
 
         satisfied_payloads = valid_b13_payloads()
@@ -3188,12 +3218,51 @@ class GateCoreTests(unittest.TestCase):
             ("rollback-new-runtime-identity", lambda value: value["profiles"][4]["semanticBinding"].__setitem__("runtimeInstanceIdentityRule", "distinct-new-runtime"), "frozen value mismatch", False),
             ("rollback-watcher", lambda value: value["profiles"][4].__setitem__("updatePolicy", "watch-fixed-ref"), "frozen value mismatch", False),
             ("compatibility-watcher-disabled", lambda value: value["profiles"][0].__setitem__("updatePolicy", "frozen-no-watcher"), "frozen value mismatch", False),
-            ("runtime-digest-claimed-present", lambda value: value["runtimeIdentityContract"].__setitem__("runtimeInstanceDigestPresent", True), "frozen value mismatch", False),
-            ("runtime-digest-injected", lambda value: value["profiles"][0].__setitem__("runtimeInstanceDigest", "0" * 64), "object-key mismatch", False),
+            ("runtime-digest-claimed-present", lambda value: value["runtimeIdentityContract"].__setitem__("runtimeInstanceDigestPresent", True), "concrete runtime and physical identity digests must remain absent at D0", False),
+            ("physical-digest-claimed-present", lambda value: value["runtimeIdentityContract"].__setitem__("physicalIdentityDigestPresent", True), "concrete runtime and physical identity digests must remain absent at D0", False),
+            ("runtime-digest-injected", lambda value: value["profiles"][0].__setitem__("runtimeInstanceSha256", "0" * 64), "object-key mismatch", False),
+            ("physical-digest-injected", lambda value: value["profiles"][0].__setitem__("physicalIdentitySha256", "0" * 64), "object-key mismatch", False),
             ("trust-digest-injected", lambda value: value["signingAuthorityRequirement"].__setitem__("trustedKeySetSha256", "0" * 64), "object-key mismatch", False),
-            ("concrete-signing-authority-claimed", lambda value: value["runtimeIdentityContract"].__setitem__("concreteSigningAuthorityPresent", True), "frozen value mismatch", False),
+            ("concrete-signing-authority-claimed", lambda value: value["runtimeIdentityContract"].__setitem__("concreteSigningAuthorityPresent", True), "concrete signing and deployment authority must remain absent at D0", False),
             ("activation-authority", lambda value: value["activationRequirements"].__setitem__("profileContractAloneAuthorizesActivation", True), "frozen value mismatch", False),
             ("d1-authority", lambda value: value["activationRequirements"].__setitem__("profileContractAloneAuthorizesD1", True), "frozen value mismatch", False),
+            ("missing-semantic-category", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"].pop(), "expected exactly 6 entries", False),
+            ("extra-semantic-category", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"].append(copy.deepcopy(value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][0])), "expected exactly 6 entries", False),
+            ("duplicate-semantic-category", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][1].__setitem__("id", value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][0]["id"]), "exact frozen IDs and order", False),
+            ("renamed-semantic-category", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][0].__setitem__("id", "catalog"), "exact frozen IDs and order", False),
+            ("reordered-semantic-categories", lambda value: (value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][0].__setitem__("id", "limits"), value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][5].__setitem__("id", "catalog-config")), "exact frozen IDs and order", False),
+            ("category-domain-collision", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][1].__setitem__("domain", value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][0]["domain"]), "domains must be pairwise distinct", False),
+            ("wrong-semantic-root-domain-bytes", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["rootDomain"].__setitem__("bytesHex", "00"), "literal domain and domain bytes hex disagree", False),
+            ("semantic-root-copies-profile-domain", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"].__setitem__("rootDomain", {"encoding": "literal-utf8", "value": GATE.B13_INSTANCE_PROFILE_CONTRACT_DOMAIN.decode(), "bytesHex": GATE.B13_INSTANCE_PROFILE_CONTRACT_DOMAIN.hex()}), "domains must be pairwise distinct", False),
+            ("semantic-root-copies-physical-domain", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"].__setitem__("rootDomain", copy.deepcopy(value["runtimeIdentityContract"]["physicalIdentityDigest"]["domain"])), "domains must be pairwise distinct", False),
+            ("semantic-output-aliases-physical", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"].__setitem__("resultField", "physicalIdentitySha256"), "digest fields must be distinct", False),
+            ("physical-output-aliases-semantic", lambda value: value["runtimeIdentityContract"]["physicalIdentityDigest"].__setitem__("resultField", "runtimeInstanceSha256"), "digest fields must be distinct", False),
+            ("physical-identity-admitted-as-semantic-content", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][0]["requiredContent"].__setitem__(0, "physicalIdentitySha256"), "frozen value mismatch", False),
+            ("credential-admitted-as-semantic-content", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][1]["requiredContent"].__setitem__(0, "credential-material"), "D2_SIGNING owned fields must exactly equal", False),
+            ("private-key-admitted-as-semantic-content", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][1]["requiredContent"].__setitem__(1, "private-key-material"), "D2_SIGNING owned fields must exactly equal", False),
+            ("poll-schedule-admitted-as-semantic-content", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][5]["requiredContent"].__setitem__(0, "watcher-poll-schedule"), "frozen value mismatch", False),
+            ("retry-jitter-admitted-as-semantic-content", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][5]["requiredContent"].__setitem__(1, "retry-jitter"), "frozen value mismatch", False),
+            ("d1-category-set-change", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"].__setitem__("categorySetChangeAllowedAtD1", True), "frozen value mismatch", False),
+            ("d1-concrete-runtime-value", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][0].__setitem__("maySupplyConcreteRuntimeInstanceSha256", True), "frozen value mismatch", False),
+            ("d1-concrete-physical-value", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][0].__setitem__("maySupplyConcretePhysicalIdentitySha256", True), "frozen value mismatch", False),
+            ("d1-activation-authority-in-sequence", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][0].__setitem__("authorizesActivation", True), "must not authorize activation", False),
+            ("d2-claims-complete-runtime", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][1].__setitem__("mayClaimCompleteRuntimeInstanceSha256", True), "frozen value mismatch", False),
+            ("d2-trust-owner-name-drift", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][1]["owns"].__setitem__(2, "trusted-key-set-sha256"), "D2_SIGNING owned fields must exactly equal", False),
+            ("trust-category-name-drift", lambda value: value["runtimeIdentityContract"]["semanticRuntimeDigest"]["categories"][1]["requiredContent"].__setitem__(2, "trusted-key-set-sha256"), "D2_SIGNING owned fields must exactly equal", False),
+            ("pre-d7-closes-body", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][2]["closesProfiles"].__setitem__(0, "public-rust-body"), "frozen value mismatch", False),
+            ("pre-d7-allows-body-anchor", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][2]["rollbackAnchorRoles"].__setitem__(0, "body"), "frozen value mismatch", False),
+            ("body-gates-swapped", lambda value: (value["runtimeIdentityContract"]["gateClosureSequence"][3]["closesProfiles"].__setitem__(0, "public-js-body"), value["runtimeIdentityContract"]["gateClosureSequence"][4]["closesProfiles"].__setitem__(0, "public-rust-body")), "frozen value mismatch", False),
+            ("missing-gate-prerequisite", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][3]["requires"].pop(), "expected exactly 3 entries", False),
+            ("reordered-gate-prerequisites", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][3]["requires"].reverse(), "frozen value mismatch", False),
+            ("weakened-runtime-physical-separation", lambda value: value["runtimeIdentityContract"].__setitem__("runtimeAndPhysicalDigestFieldsMustDiffer", False), "digest fields must be distinct", False),
+            ("changed-rollback-semantic-inheritance", lambda value: value["runtimeIdentityContract"]["rollbackIdentity"].__setitem__("semanticRuntimeDigestRule", "rollback-has-distinct-runtimeInstanceSha256"), "frozen value mismatch", False),
+            ("rollback-category-recomputation", lambda value: value["runtimeIdentityContract"]["rollbackIdentity"].__setitem__("rollbackSemanticCategoryDigests", "recompute-from-rollback-profile"), "frozen value mismatch", False),
+            ("rollback-watcher-enters-semantic-digest", lambda value: value["runtimeIdentityContract"]["rollbackIdentity"].__setitem__("rollbackUpdatePolicyRule", "replace-anchor-update-policy-with-frozen-no-watcher"), "frozen value mismatch", False),
+            ("weakened-rollback-physical-distinctness", lambda value: value["runtimeIdentityContract"]["rollbackIdentity"].__setitem__("physicalIdentityRule", "distinct-from-selected-anchor-only"), "frozen value mismatch", False),
+            ("weakened-physical-pairwise-scope", lambda value: value["runtimeIdentityContract"]["physicalIdentityDigest"].__setitem__("pairwiseDistinctScope", "same-ecosystem-only"), "frozen value mismatch", False),
+            ("initial-physical-owner-mismatch", lambda value: value["runtimeIdentityContract"]["physicalIdentityDigest"]["concreteDigestOwnerGatesByProfile"]["public-rust-body"].__setitem__(0, "PRE_D12_JS_BODIES"), "initial physical-identity ownership must exactly match", False),
+            ("replacement-physical-owner-mismatch", lambda value: value["runtimeIdentityContract"]["physicalIdentityDigest"]["replacementRealizationOwnerGatesByProfile"]["public-rust-rollback"].__setitem__(0, "PRE_D7_FRONTEND_CHANGE_ROLLBACK"), "replacement physical-identity ownership must exactly match", False),
+            ("replacement-event-owner-mismatch", lambda value: value["runtimeIdentityContract"]["gateClosureSequence"][3].__setitem__("mayCreateNewRollbackRealizationFor", "public-js-rollback"), "replacement physical-identity ownership must exactly match", False),
             ("rust-origin", lambda value: value["sources"]["rust"].__setitem__("canonicalOrigin", "https://github.com/attacker/rust.git"), "frozen value mismatch", False),
             ("js-origin", lambda value: value["sources"]["js"].__setitem__("canonicalOrigin", "https://github.com/attacker/js.git"), "frozen value mismatch", False),
             ("source-transport", lambda value: value["sources"]["rust"].__setitem__("transport", "ssh"), "frozen value mismatch", False),
@@ -3238,7 +3307,8 @@ class GateCoreTests(unittest.TestCase):
 
     def test_b13_phase_amendment_exactly_binds_partial_approvals_without_authority(self) -> None:
         cases: list[tuple[str, object, str]] = [
-            ("binding-schema", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("schema", "pkgre-d0-b13-rephase-binding-v0"), "frozen value mismatch"),
+            ("binding-schema-v1", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("schema", "pkgre-d0-b13-rephase-binding-v1"), "frozen value mismatch"),
+            ("binding-schema-v0", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("schema", "pkgre-d0-b13-rephase-binding-v0"), "frozen value mismatch"),
             ("missing-input", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"].pop(), "expected exactly 3 entries"),
             ("extra-input", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"].append(copy.deepcopy(value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0])), "expected exactly 3 entries"),
             ("reordered-inputs", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"].reverse(), "frozen value mismatch"),
@@ -3247,7 +3317,11 @@ class GateCoreTests(unittest.TestCase):
             ("input-kind-substitution", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0].__setitem__("kind", "runtime-instance-digests"), "frozen value mismatch"),
             ("input-schema-substitution", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0].__setitem__("projectionSchema", "pkgre-d0-protocol-enums-projection-v0"), "frozen value mismatch"),
             ("runtime-digests-claimed", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("runtimeInstanceDigestsPresent", True), "frozen value mismatch"),
+            ("physical-digests-claimed", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("physicalIdentityDigestsPresent", True), "frozen value mismatch"),
             ("trust-digests-claimed", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("trustDigestsPresent", True), "frozen value mismatch"),
+            ("semantic-runtime-schema-not-frozen", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("semanticRuntimeDigestSchemaFrozen", False), "frozen value mismatch"),
+            ("physical-identity-schema-not-frozen", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("physicalIdentityDigestSchemaFrozen", False), "frozen value mismatch"),
+            ("gate-closure-sequence-not-frozen", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("gateClosureSequenceFrozen", False), "frozen value mismatch"),
             ("profile-contract-satisfies-runtime", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("profileContractsSatisfyRuntimeDigestRequirement", True), "frozen value mismatch"),
             ("activation-authority", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("boundedInputsAuthorizeActivation", True), "frozen value mismatch"),
             ("d1-authority-in-binding", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("boundedInputsAuthorizeD1Implementation", True), "frozen value mismatch"),
@@ -3262,6 +3336,41 @@ class GateCoreTests(unittest.TestCase):
                 payloads = valid_b13_rephase_payloads()
                 mutate(payloads)
                 self.assertB13RephaseRejected(payloads, expected)
+
+
+    def test_b13_v2_identity_contract_migration_rejects_v1_artifacts(self) -> None:
+        self.assertEqual(GATE.B13_APPROVAL_POLICY["instance-profiles"]["projectionSchema"], "pkgre-d0-instance-profiles-projection-v2")
+        self.assertEqual(GATE.B13_INSTANCE_PROFILE_CONTRACT_SCHEMA, "pkgre-d0-public-instance-profile-contract-v2")
+        self.assertEqual(GATE.B13_INSTANCE_PROFILE_CONTRACT_DOMAIN, b"pkgre-d0-public-instance-profile-contract-v2\0")
+        self.assertEqual(GATE.B13_REPHASE_BINDING_SCHEMA, "pkgre-d0-b13-rephase-binding-v2")
+
+        def validate_profiles(payloads: dict[str, dict[str, object]]) -> None:
+            result = {"_semanticPayloads": payloads, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT}
+            _protocol, protocol_digest = GATE.validate_b13_protocol_enums(result, SEMANTIC_VERIFICATION_TIME)
+            _maxima, maxima_digest = GATE.validate_b13_hard_maxima(result, SEMANTIC_VERIFICATION_TIME)
+            GATE.validate_b13_instance_profiles(result, SEMANTIC_VERIFICATION_TIME, protocol_digest, maxima_digest)
+
+        payloads = valid_b13_payloads()
+        approval = payloads["instance-profiles"]
+        legacy_projection_digest = GATE.sha256(GATE.canonical_json({"schema": "pkgre-d0-instance-profiles-projection-v1", "projection": approval["projection"]}))
+        approval["projectionSha256"] = legacy_projection_digest
+        approval["operatorDecision"]["projectionSha256"] = legacy_projection_digest
+        self.assertRejected(lambda: validate_profiles(payloads), "projection digest mismatch")
+
+        payloads = valid_b13_payloads()
+        projection = payloads["instance-profiles"]["projection"]
+        projection["contractSchema"] = "pkgre-d0-public-instance-profile-contract-v1"
+        with mock.patch.object(GATE, "B13_INSTANCE_PROFILE_CONTRACT_DOMAIN", b"pkgre-d0-public-instance-profile-contract-v1\0"):
+            refresh_b13_instance_profile_contracts(projection)
+        payloads["instance-profiles"] = valid_b13_approval("instance-profiles", projection)
+        self.assertRejected(lambda: validate_profiles(payloads), "contract schema mismatch")
+
+        payloads = valid_b13_payloads()
+        projection = payloads["instance-profiles"]["projection"]
+        with mock.patch.object(GATE, "B13_INSTANCE_PROFILE_CONTRACT_DOMAIN", b"pkgre-d0-public-instance-profile-contract-v1\0"):
+            refresh_b13_instance_profile_contracts(projection)
+        payloads["instance-profiles"] = valid_b13_approval("instance-profiles", projection)
+        self.assertRejected(lambda: validate_profiles(payloads), "profile contract digest mismatch")
 
     def test_b13_profile_digest_cannot_be_recomputed_to_authorize_mutated_contract(self) -> None:
         payloads = valid_b13_payloads()

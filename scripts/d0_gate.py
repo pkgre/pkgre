@@ -221,19 +221,19 @@ FINDING_HANDOFFS = {finding: sorted(handoff for handoff, (_, _, findings) in HAN
 LATER_GATES = [
     {"id": "PRE_D1_REFETCH", "findingRefs": [], "conditionalOnAmendment": False, "requirement": "Fresh fetch --prune and live Git verification of all four repositories immediately before the first D1 edit"},
     {"id": "PRE_D2_STORAGE", "findingRefs": ["D0-B11"], "conditionalOnAmendment": False, "requirement": "Agent-owned provider and storage feasibility passes against operator-reviewed capacity ceilings"},
-    {"id": "D2_SIGNING", "findingRefs": ["D0-B03", "D0-B04", "D0-B13"], "conditionalOnAmendment": False, "requirement": "Commit the exact release workflow;close provider-governance evidence;freeze the signer principal,trusted SSH-Ed25519 key-set digest,and revocation digest;and bind that trust authority into each applicable runtime instance identity before the D2 signing handoff"},
+    {"id": "D2_SIGNING", "findingRefs": ["D0-B03", "D0-B04", "D0-B13"], "conditionalOnAmendment": False, "requirement": "Freeze the signer principal,exact SSH-Ed25519 verifier contract,trusted SSH-Ed25519 public-key-set SHA-256,and revocation-set SHA-256 as the complete mandatory trust-category input for every later semantic runtime digest;close provider-governance evidence and commit the exact release workflow before the D2 signing handoff;D2 does not claim a complete compatibility,body,or rollback runtime identity"},
     {"id": "PRE_D3_SERVER_CLOSURE", "findingRefs": ["D0-B15"], "conditionalOnAmendment": False, "requirement": "Admit the exact pkgre-rust-serve feature and lock closure before server implementation"},
     {"id": "PRE_D5_CARGO_OFFLINE", "findingRefs": ["D0-B15"], "conditionalOnAmendment": False, "requirement": "Set and prove Cargo net.offline for self-host and cold-replay fixtures"},
     {"id": "PRE_D6_CLIENT_MATRIX", "findingRefs": ["D0-B17"], "conditionalOnAmendment": False, "requirement": "Pin an independently current Deno and add the scoped npm production fixture unless a reviewed replacement contract says otherwise"},
     {"id": "PRE_D6_EDGE", "findingRefs": ["D0-B09", "D0-B21"], "conditionalOnAmendment": True, "requirement": "Complete production-equivalent edge and explicit no-1xx proof before D6 completion"},
     {"id": "D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH", "findingRefs": ["D0-B10", "D0-B12"], "conditionalOnAmendment": True, "requirement": "Complete native resource,time,clock,lifecycle,and crash proofs plus reviewed hard maxima before D7"},
     {"id": "PRE_D7_REAL_RAIN_EDGE", "findingRefs": ["D0-B06", "D0-B09", "D0-B21"], "conditionalOnAmendment": True, "requirement": "Complete real-Rain H1/H2 edge,identity,denial,and no-1xx integration proof before public cutover"},
-    {"id": "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "findingRefs": ["D0-B06", "D0-B08", "D0-B13"], "conditionalOnAmendment": True, "requirement": "Freeze exact Rust+JS compatibility runtime instance digests;complete isolated compatibility+rollback units,listeners,and state roots;bind each rollback to the exact selected anchor runtime identity;and complete immutable rollback bundles plus restore rehearsal before the first frontend change"},
+    {"id": "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "findingRefs": ["D0-B06", "D0-B08", "D0-B13"], "conditionalOnAmendment": True, "requirement": "Freeze exact Rust+JS compatibility runtimeInstanceSha256 values;complete isolated compatibility+rollback units,listeners,state roots,and physicalIdentitySha256 values;require each rollback to inherit its selected compatibility anchor runtimeInstanceSha256 exactly while retaining a distinct physicalIdentitySha256;and complete immutable rollback bundles plus restore rehearsal before the first frontend change"},
     {"id": "PRE_D8_RUST_ACCESS_LOG", "findingRefs": ["D0-B20"], "conditionalOnAmendment": True, "requirement": "Complete authorized bounded Rust access-log discovery and route reconciliation before D8"},
-    {"id": "PRE_D9_RUST_BODIES", "findingRefs": ["D0-B07", "D0-B13", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete Rust archive bodies;freeze the Rust body runtime instance digest distinct from Rust compatibility;and complete its isolated physical body profile before D9 body activation"},
+    {"id": "PRE_D9_RUST_BODIES", "findingRefs": ["D0-B07", "D0-B13", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete Rust archive bodies;freeze the Rust body runtimeInstanceSha256 distinct from Rust compatibility;complete its isolated physicalIdentitySha256;and require any body-anchor rollback rebinding to use a new physical realization before D9 body activation"},
     {"id": "PRE_D11_JS_INITIAL_ANCHOR", "findingRefs": ["D0-B08", "D0-B16"], "conditionalOnAmendment": False, "requirement": "Build,reconstruct,and prove the immutable JS-INITIAL-ANCHOR"},
     {"id": "PRE_D11_JS_ACCESS_LOG", "findingRefs": ["D0-B20"], "conditionalOnAmendment": True, "requirement": "Complete authorized bounded JS access-log discovery and route reconciliation before D11"},
-    {"id": "PRE_D12_JS_BODIES", "findingRefs": ["D0-B07", "D0-B13", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete JS archive bodies;freeze the JS body runtime instance digest distinct from JS compatibility;and complete its isolated physical body profile before D12 body activation"},
+    {"id": "PRE_D12_JS_BODIES", "findingRefs": ["D0-B07", "D0-B13", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete JS archive bodies;freeze the JS body runtimeInstanceSha256 distinct from JS compatibility;complete its isolated physicalIdentitySha256;and require any body-anchor rollback rebinding to use a new physical realization before D12 body activation"},
     {"id": "D13_LAN_SELECTION", "findingRefs": ["D0-B19"], "conditionalOnAmendment": False, "requirement": "Select and freeze every LAN identity,authority,credential,network,DNS,TLS,and state row before any LAN edit"},
 ]
 MUTATION_POLICY = {"id": "D0-MUTATION-POLICY-v1", "operatorEmergencyExceptions": [{"id": "GANDI_CREDENTIAL_CONTAINMENT", "scope": "credential-containment-only", "returnedEvidence": "metadata-only", "forbidden": ["token-bytes", "token-hash", "private-key-bytes", "private-key-hash"]}]}
@@ -246,24 +246,218 @@ SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-semantic-evidence-v1"
 PHASE_AMENDMENT_SCHEMA = "pkgre-d0-phase-amendment-v2"
 B13_APPROVAL_SCHEMA = "pkgre-d0-b13-approval-v1"
 B13_REPHASE_MODE = "EXACT_PARTIAL_APPROVALS_AND_PHASE_AMENDMENT"
-B13_REPHASE_BINDING_SCHEMA = "pkgre-d0-b13-rephase-binding-v1"
+B13_REPHASE_BINDING_SCHEMA = "pkgre-d0-b13-rephase-binding-v2"
 B13_APPROVAL_POLICY = {
     "protocol-enums": {"decision": "APPROVE_EXACT_PROTOCOL_ENUMS", "scope": "D0_B13_PROTOCOL_ENUMS", "projectionSchema": "pkgre-d0-protocol-enums-projection-v1"},
     "hard-maxima": {"decision": "APPROVE_EXACT_HARD_MAXIMA", "scope": "D0_B13_HARD_MAXIMA", "projectionSchema": "pkgre-d0-hard-maxima-projection-v1"},
-    "instance-profiles": {"decision": "APPROVE_EXACT_SIX_INSTANCE_PROFILE_CONTRACTS", "scope": "D0_B13_INSTANCE_PROFILES", "projectionSchema": "pkgre-d0-instance-profiles-projection-v1"},
+    "instance-profiles": {"decision": "APPROVE_EXACT_SIX_INSTANCE_PROFILE_CONTRACTS", "scope": "D0_B13_INSTANCE_PROFILES", "projectionSchema": "pkgre-d0-instance-profiles-projection-v2"},
 }
 B13_REPHASE_EVIDENCE_BY_HANDOFF = {"OP-D0-06": {"protocol-enums", "hard-maxima", "instance-profiles", "phase-amendment"}}
 B13_REPHASE_EVIDENCE = set().union(*B13_REPHASE_EVIDENCE_BY_HANDOFF.values())
-B13_INSTANCE_PROFILE_CONTRACT_SCHEMA = "pkgre-d0-public-instance-profile-contract-v1"
-B13_INSTANCE_PROFILE_CONTRACT_DOMAIN = b"pkgre-d0-public-instance-profile-contract-v1\0"
+B13_INSTANCE_PROFILE_CONTRACT_SCHEMA = "pkgre-d0-public-instance-profile-contract-v2"
+B13_INSTANCE_PROFILE_CONTRACT_DOMAIN = b"pkgre-d0-public-instance-profile-contract-v2\0"
+B13_CANONICAL_JSON_CONTRACT = {
+    "schema": "pkgre-canonical-json-v1",
+    "encoding": "utf-8",
+    "objectKeyOrder": "unicode-code-point-ascending",
+    "separators": {"item": ",", "keyValue": ":"},
+    "ensureAscii": False,
+    "terminalLf": True,
+    "integersOnly": True,
+    "duplicateObjectKeys": "reject",
+    "nonFiniteNumbers": "reject",
+    "unicodeScalarValuesOnly": True,
+}
+B13_SEMANTIC_RUNTIME_DIGEST_CONTRACT = {
+    "schema": "pkgre-semantic-runtime-instance-digest-v1",
+    "algorithm": "sha256",
+    "canonicalEncoding": B13_CANONICAL_JSON_CONTRACT,
+    "rootDomain": {
+        "encoding": "literal-utf8",
+        "value": "pkgre-semantic-runtime-instance-digest-v1\0",
+        "bytesHex": "706b6772652d73656d616e7469632d72756e74696d652d696e7374616e63652d6469676573742d763100",
+    },
+    "resultField": "runtimeInstanceSha256",
+    "schemaImplementationOwnerGate": "D1",
+    "valuesPresentAtD0": False,
+    "preimageForm": "ordered-domain-separated-category-digests",
+    "categories": [
+        {
+            "id": "catalog-config",
+            "domain": "pkgre-semantic-runtime-instance-digest-v1/catalog-config\0",
+            "required": True,
+            "requiredContent": ["ecosystem", "serving-origin", "mode", "audience", "delivery-mode", "update-policy", "bootstrap-commit", "catalog-schema-generation"],
+        },
+        {
+            "id": "trust",
+            "domain": "pkgre-semantic-runtime-instance-digest-v1/trust\0",
+            "required": True,
+            "requiredContent": ["signer-principal", "ssh-ed25519-verifier-contract", "trusted-ssh-ed25519-public-key-set-sha256", "revocation-set-sha256"],
+        },
+        {
+            "id": "source-policy",
+            "domain": "pkgre-semantic-runtime-instance-digest-v1/source-policy\0",
+            "required": True,
+            "requiredContent": ["canonical-git-origin", "transport", "full-source-ref", "fetch-refspec", "remote-tracking-ref", "git-object-format", "credential-mechanism-identity-without-values"],
+        },
+        {
+            "id": "executable-build",
+            "domain": "pkgre-semantic-runtime-instance-digest-v1/executable-build\0",
+            "required": True,
+            "requiredContent": ["executable-sha256", "nix-derivation-identity", "nix-closure-identity", "runtime-toolchain-identity"],
+        },
+        {
+            "id": "protocol-state-schemas",
+            "domain": "pkgre-semantic-runtime-instance-digest-v1/protocol-state-schemas\0",
+            "required": True,
+            "requiredContent": ["state-contract", "redirect-marker-schema-literal-null", "protocol-header-contract", "audience-projection-schema", "projection-manifest-schema", "active-manifest-schema", "generation-record-schema"],
+        },
+        {
+            "id": "limits",
+            "domain": "pkgre-semantic-runtime-instance-digest-v1/limits\0",
+            "required": True,
+            "requiredContent": ["admission-limits", "accepted-state-limits", "response-availability-limits", "resource-rejection-limits"],
+        },
+    ],
+    "categoryDigestRule": "sha256(category-domain-utf8-bytes||canonical-json-category-value)",
+    "categorySetChangeAllowedAtD1": False,
+    "rootPreimage": {
+        "schema": "pkgre-semantic-runtime-instance-preimage-v1",
+        "exactKeys": ["schema", "categoryDigests"],
+        "categoryDigestEntryExactKeys": ["id", "sha256"],
+        "categoryDigestOrder": ["catalog-config", "trust", "source-policy", "executable-build", "protocol-state-schemas", "limits"],
+        "extraCategoriesAllowed": False,
+    },
+    "rootDigestRule": "sha256(root-domain-bytes||canonical-json-root-preimage)",
+    "forbiddenInputs": [
+        "credential-material",
+        "private-key-material",
+        "physical-deployment-identity",
+        "unit-name",
+        "listener-address-or-port",
+        "state-root",
+        "watcher-poll-schedule",
+        "retry-jitter",
+        "telemetry-labels",
+    ],
+}
+B13_PHYSICAL_IDENTITY_DIGEST_CONTRACT = {
+    "schema": "pkgre-physical-identity-digest-v1",
+    "algorithm": "sha256",
+    "canonicalEncoding": B13_CANONICAL_JSON_CONTRACT,
+    "domain": {
+        "encoding": "literal-utf8",
+        "value": "pkgre-physical-identity-digest-v1\0",
+        "bytesHex": "706b6772652d706879736963616c2d6964656e746974792d6469676573742d763100",
+    },
+    "resultField": "physicalIdentitySha256",
+    "schemaImplementationOwnerGate": "D1",
+    "valuesPresentAtD0": False,
+    "preimage": {
+        "schema": "pkgre-physical-identity-preimage-v1",
+        "exactKeys": ["schema", "profileContractSha256", "hostIdentity", "containerIdentity", "unitName", "runtimeUid", "runtimeGid", "listenerIdentity", "stateRootIdentity"],
+        "requiredIsolationFields": ["unitName", "listenerIdentity", "stateRootIdentity"],
+    },
+    "digestRule": "sha256(domain-bytes||canonical-json-physical-preimage)",
+    "pairwiseDistinctScope": "all-concurrently-retained-public-profile-realizations",
+    "forbiddenInputs": ["runtimeInstanceSha256", "credential-material", "private-key-material"],
+    "concreteDigestOwnerGatesByProfile": {
+        "public-rust-compatibility": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK"],
+        "public-js-compatibility": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK"],
+        "public-rust-body": ["PRE_D9_RUST_BODIES"],
+        "public-js-body": ["PRE_D12_JS_BODIES"],
+        "public-rust-rollback": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK"],
+        "public-js-rollback": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK"],
+    },
+    "replacementRealizationOwnerGatesByProfile": {
+        "public-rust-rollback": ["PRE_D9_RUST_BODIES"],
+        "public-js-rollback": ["PRE_D12_JS_BODIES"],
+    },
+}
+B13_IDENTITY_GATE_SEQUENCE = [
+    {
+        "gateId": "D1",
+        "requires": [],
+        "owns": ["category-value-schemas", "semantic-runtime-digest-fixtures", "physical-identity-digest-fixtures"],
+        "maySupplyConcreteRuntimeInstanceSha256": False,
+        "maySupplyConcretePhysicalIdentitySha256": False,
+        "authorizesActivation": False,
+    },
+    {
+        "gateId": "D2_SIGNING",
+        "requires": ["D1"],
+        "owns": ["signer-principal", "ssh-ed25519-verifier-contract", "trusted-ssh-ed25519-public-key-set-sha256", "revocation-set-sha256"],
+        "closesCategory": "trust",
+        "mayClaimCompleteRuntimeInstanceSha256": False,
+        "authorizesActivation": False,
+    },
+    {
+        "gateId": "PRE_D7_FRONTEND_CHANGE_ROLLBACK",
+        "requires": ["D1", "D2_SIGNING"],
+        "closesProfiles": ["public-rust-compatibility", "public-js-compatibility"],
+        "physicallyRealizesProfiles": ["public-rust-compatibility", "public-js-compatibility", "public-rust-rollback", "public-js-rollback"],
+        "rollbackAnchorRoles": ["compatibility"],
+        "authorizesBodyProfiles": False,
+        "authorizesActivation": False,
+    },
+    {
+        "gateId": "PRE_D9_RUST_BODIES",
+        "requires": ["D1", "D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK"],
+        "ecosystem": "rust",
+        "closesProfiles": ["public-rust-body"],
+        "physicallyRealizesProfiles": ["public-rust-body"],
+        "mayCreateNewRollbackRealizationFor": "public-rust-rollback",
+        "rollbackAnchorRoles": ["compatibility", "body"],
+        "authorizesActivation": False,
+    },
+    {
+        "gateId": "PRE_D12_JS_BODIES",
+        "requires": ["D1", "D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK"],
+        "ecosystem": "js",
+        "closesProfiles": ["public-js-body"],
+        "physicallyRealizesProfiles": ["public-js-body"],
+        "mayCreateNewRollbackRealizationFor": "public-js-rollback",
+        "rollbackAnchorRoles": ["compatibility", "body"],
+        "authorizesActivation": False,
+    },
+]
+B13_ROLLBACK_IDENTITY_CONTRACT = {
+    "closureRecordSchema": "pkgre-runtime-profile-closure-v1",
+    "fixedProfileRequiredFields": ["schema", "profileId", "profileContractSha256", "runtimeInstanceSha256", "physicalIdentitySha256", "semanticCategorySha256", "selectedAnchor", "closedAtGate", "activationAuthorized"],
+    "rollbackSelectedAnchorRequiredFields": ["profileId", "profileContractSha256", "runtimeInstanceSha256", "physicalIdentitySha256", "closureGate"],
+    "selectedAnchorMustMatchEcosystem": True,
+    "selectedAnchorMustAlreadyBeValidlyClosed": True,
+    "allowedAnchorRolesByGate": {
+        "PRE_D7_FRONTEND_CHANGE_ROLLBACK": ["compatibility"],
+        "PRE_D9_RUST_BODIES": ["compatibility", "body"],
+        "PRE_D12_JS_BODIES": ["compatibility", "body"],
+    },
+    "semanticRuntimeDigestRule": "rollback-runtimeInstanceSha256-equals-selected-anchor-runtimeInstanceSha256-exactly",
+    "rollbackSemanticCategoryDigests": "null-inherit-all-six-selected-anchor-category-values-and-digests-exactly-never-recompute-from-rollback-profile",
+    "rollbackUpdatePolicyRule": "profile-frozen-no-watcher-bound-through-profileContractSha256-only-never-replace-inherited-anchor-catalog-config-update-policy",
+    "physicalIdentityRule": "rollback-physicalIdentitySha256-distinct-from-selected-anchor-and-every-other-retained-realization",
+    "requiredPhysicalIsolationFields": ["unitName", "listenerIdentity", "stateRootIdentity"],
+    "anchorChangeRule": "new-physical-realization-or-reviewed-offline-migration-never-reinterpret-existing-state-root",
+    "activationAuthorizedValue": False,
+}
 B13_RUNTIME_IDENTITY_CONTRACT = {
-    "profileContractDigestMeaning": "d0-approved-contract-only-not-runtime-instance-digest",
-    "runtimeInstanceDigestSchemaOwner": "D1",
+    "profileContractDigestMeaning": "d0-approved-contract-only-not-runtime-or-physical-instance-digest",
+    "semanticRuntimeDigest": B13_SEMANTIC_RUNTIME_DIGEST_CONTRACT,
+    "physicalIdentityDigest": B13_PHYSICAL_IDENTITY_DIGEST_CONTRACT,
+    "gateClosureSequence": B13_IDENTITY_GATE_SEQUENCE,
+    "rollbackIdentity": B13_ROLLBACK_IDENTITY_CONTRACT,
     "runtimeInstanceDigestPresent": False,
+    "physicalIdentityDigestPresent": False,
     "runtimeInstanceDigestRequiredBeforeActivation": True,
-    "compatibilityBodyRuntimeIdentityRule": "distinct",
+    "physicalIdentityDigestRequiredBeforeActivation": True,
+    "compatibilityBodyRuntimeIdentityRule": "distinct-per-ecosystem",
     "rollbackRuntimeIdentityRule": "inherit-selected-anchor-exact",
     "physicalProfileIsolationRule": "distinct-unit-listener-state-root",
+    "runtimeAndPhysicalDigestFieldsMustDiffer": True,
+    "profileContractAloneAuthorizesRuntimeDigest": False,
+    "profileContractAloneAuthorizesPhysicalIdentity": False,
+    "profileContractAloneAuthorizesActivation": False,
+    "profileContractAloneAuthorizesD1": False,
     "concreteSigningAuthorityPresent": False,
     "concreteDeploymentAuthorityPresent": False,
 }
@@ -2049,6 +2243,94 @@ def validate_b13_hard_maxima(result: dict[str, Any], verification_time: datetime
     return copy.deepcopy(projection), projection_digest
 
 
+def b13_literal_domain_bytes(raw: Any, label: str) -> bytes:
+    domain = obj(raw, label)
+    exact_keys(domain, {"encoding", "value", "bytesHex"}, label)
+    require(domain["encoding"] == "literal-utf8", f"{label}: domain encoding must be literal UTF-8")
+    value = domain["value"]
+    require(type(value) is str and value.endswith("\0") and value.count("\0") == 1, f"{label}: domain must contain exactly one trailing NUL")
+    bytes_hex = domain["bytesHex"]
+    require(type(bytes_hex) is str and re.fullmatch(r"(?:[0-9a-f]{2})+", bytes_hex) is not None, f"{label}: invalid lower-case domain bytes hex")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise GateVerificationError(f"{label}: invalid Unicode scalar value in domain") from error
+    require(encoded.hex() == bytes_hex, f"{label}: literal domain and domain bytes hex disagree")
+    return encoded
+
+
+def b13_category_domain_bytes(raw: Any, label: str) -> bytes:
+    require(type(raw) is str and raw.endswith("\0") and raw.count("\0") == 1, f"{label}: category domain must contain exactly one trailing NUL")
+    try:
+        return raw.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise GateVerificationError(f"{label}: invalid Unicode scalar value in category domain") from error
+
+
+def validate_b13_runtime_identity_contract(raw: Any, label: str) -> None:
+    contract = obj(raw, label)
+    exact_json_shape(contract, B13_RUNTIME_IDENTITY_CONTRACT, label)
+    semantic = obj(contract["semanticRuntimeDigest"], f"{label}.semanticRuntimeDigest")
+    physical = obj(contract["physicalIdentityDigest"], f"{label}.physicalIdentityDigest")
+    semantic_root_domain = b13_literal_domain_bytes(semantic["rootDomain"], f"{label}.semanticRuntimeDigest.rootDomain")
+    physical_domain = b13_literal_domain_bytes(physical["domain"], f"{label}.physicalIdentityDigest.domain")
+    categories = arr(semantic["categories"], f"{label}.semanticRuntimeDigest.categories")
+    expected_category_ids = [row["id"] for row in B13_SEMANTIC_RUNTIME_DIGEST_CONTRACT["categories"]]
+    actual_category_ids = [obj(row, f"{label}.semanticRuntimeDigest.categories[{index}]")["id"] for index, row in enumerate(categories)]
+    require(actual_category_ids == expected_category_ids, f"{label}: semantic digest categories must have the exact frozen IDs and order")
+    require(semantic["rootPreimage"]["categoryDigestOrder"] == actual_category_ids, f"{label}: semantic root category order must exactly match category declaration order")
+    category_domains: list[bytes] = []
+    for index, row in enumerate(categories):
+        category = obj(row, f"{label}.semanticRuntimeDigest.categories[{index}]")
+        require(strict_bool(category["required"], f"{label}.semanticRuntimeDigest.categories[{index}].required") is True, f"{label}: every semantic digest category must be required")
+        category_domains.append(b13_category_domain_bytes(category["domain"], f"{label}.semanticRuntimeDigest.categories[{index}].domain"))
+    all_domains = [B13_INSTANCE_PROFILE_CONTRACT_DOMAIN, semantic_root_domain, physical_domain, *category_domains]
+    require(len(all_domains) == len(set(all_domains)), f"{label}: profile,semantic-root,physical,and category domains must be pairwise distinct")
+    require(semantic["resultField"] != physical["resultField"] and contract["runtimeAndPhysicalDigestFieldsMustDiffer"] is True, f"{label}: runtime and physical identity digest fields must be distinct")
+    sequence = arr(contract["gateClosureSequence"], f"{label}.gateClosureSequence")
+    gate_ids = [obj(row, f"{label}.gateClosureSequence[{index}]")["gateId"] for index, row in enumerate(sequence)]
+    require(gate_ids == ["D1", "D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], f"{label}: identity closure gates must have the exact frozen order")
+    seen_gates: set[str] = set()
+    gates_by_id: dict[str, dict[str, Any]] = {}
+    initial_realization_pairs: set[tuple[str, str]] = set()
+    replacement_realization_pairs: set[tuple[str, str]] = set()
+    for index, row in enumerate(sequence):
+        gate = obj(row, f"{label}.gateClosureSequence[{index}]")
+        gate_id = gate["gateId"]
+        dependencies = arr(gate["requires"], f"{label}.gateClosureSequence[{index}].requires")
+        require(len(dependencies) == len(set(dependencies)) and set(dependencies) <= seen_gates, f"{label}: identity closure gate prerequisites must be unique and precede their owner gate")
+        require(strict_bool(gate["authorizesActivation"], f"{label}.gateClosureSequence[{index}].authorizesActivation") is False, f"{label}: identity closure contract must not authorize activation")
+        for profile_id in arr(gate.get("physicallyRealizesProfiles", []), f"{label}.gateClosureSequence[{index}].physicallyRealizesProfiles"):
+            initial_realization_pairs.add((profile_id, gate_id))
+        replacement_profile_id = gate.get("mayCreateNewRollbackRealizationFor")
+        if replacement_profile_id is not None:
+            require(type(replacement_profile_id) is str, f"{label}.gateClosureSequence[{index}].mayCreateNewRollbackRealizationFor: expected string")
+            replacement_realization_pairs.add((replacement_profile_id, gate_id))
+        gates_by_id[gate_id] = gate
+        seen_gates.add(gate_id)
+    trust_category = obj(categories[1], f"{label}.semanticRuntimeDigest.categories[1]")
+    trust_content = arr(trust_category["requiredContent"], f"{label}.semanticRuntimeDigest.categories[1].requiredContent")
+    d2_owned = arr(gates_by_id["D2_SIGNING"]["owns"], f"{label}.gateClosureSequence[1].owns")
+    require(trust_content == d2_owned, f"{label}: D2_SIGNING owned fields must exactly equal the semantic trust-category content")
+    declared_initial_pairs: set[tuple[str, str]] = set()
+    initial_owners = obj(physical["concreteDigestOwnerGatesByProfile"], f"{label}.physicalIdentityDigest.concreteDigestOwnerGatesByProfile")
+    for profile_id, raw_owner_gates in initial_owners.items():
+        owner_gates = arr(raw_owner_gates, f"{label}.physicalIdentityDigest.concreteDigestOwnerGatesByProfile.{profile_id}")
+        require(len(owner_gates) == len(set(owner_gates)) and set(owner_gates) <= set(gate_ids), f"{label}: initial physical-identity owner gates must be unique known gates")
+        declared_initial_pairs.update((profile_id, gate_id) for gate_id in owner_gates)
+    require(declared_initial_pairs == initial_realization_pairs, f"{label}: initial physical-identity ownership must exactly match physically realized profiles")
+    declared_replacement_pairs: set[tuple[str, str]] = set()
+    replacement_owners = obj(physical["replacementRealizationOwnerGatesByProfile"], f"{label}.physicalIdentityDigest.replacementRealizationOwnerGatesByProfile")
+    for profile_id, raw_owner_gates in replacement_owners.items():
+        owner_gates = arr(raw_owner_gates, f"{label}.physicalIdentityDigest.replacementRealizationOwnerGatesByProfile.{profile_id}")
+        require(len(owner_gates) == len(set(owner_gates)) and set(owner_gates) <= set(gate_ids), f"{label}: replacement physical-identity owner gates must be unique known gates")
+        declared_replacement_pairs.update((profile_id, gate_id) for gate_id in owner_gates)
+    require(declared_replacement_pairs == replacement_realization_pairs, f"{label}: replacement physical-identity ownership must exactly match rollback realization events")
+    require(contract["runtimeInstanceDigestPresent"] is False and contract["physicalIdentityDigestPresent"] is False, f"{label}: concrete runtime and physical identity digests must remain absent at D0")
+    require(contract["concreteSigningAuthorityPresent"] is False and contract["concreteDeploymentAuthorityPresent"] is False, f"{label}: concrete signing and deployment authority must remain absent at D0")
+    exact_json_value(contract, B13_RUNTIME_IDENTITY_CONTRACT, label)
+
+
 def b13_instance_profile_contract_sha256(projection: Any, profile: Any) -> str:
     projection_object = obj(projection, "D0-B13 instance-profiles projection digest input")
     profile_object = obj(profile, "D0-B13 instance profile contract digest input")
@@ -2107,7 +2389,7 @@ def validate_b13_instance_profiles(result: dict[str, Any], verification_time: da
     require(hex_digest(maxima["projectionSha256"], f"{label}.hardMaximaAuthority.projectionSha256") == maxima_projection_digest, f"{label}: hard-maxima projection digest mismatch")
 
     runtime_identity = obj(projection["runtimeIdentityContract"], f"{label}.runtimeIdentityContract")
-    exact_json_value(runtime_identity, B13_RUNTIME_IDENTITY_CONTRACT, f"{label}.runtimeIdentityContract")
+    validate_b13_runtime_identity_contract(runtime_identity, f"{label}.runtimeIdentityContract")
     signing = obj(projection["signingAuthorityRequirement"], f"{label}.signingAuthorityRequirement")
     exact_json_value(signing, B13_SIGNING_AUTHORITY_REQUIREMENT, f"{label}.signingAuthorityRequirement")
 
@@ -2122,6 +2404,7 @@ def validate_b13_instance_profiles(result: dict[str, Any], verification_time: da
     expected_activation = {
         "d1RuntimeInstanceContractRequired": True,
         "runtimeInstanceDigestRequired": True,
+        "physicalIdentityDigestRequired": True,
         "signingAuthorityRequired": True,
         "exactPhysicalRealizationRequired": True,
         "profileContractAloneAuthorizesActivation": False,
@@ -2162,7 +2445,11 @@ def validate_b13_rephase_binding(payload: Any, approval_digests: dict[str, str])
         "schema": B13_REPHASE_BINDING_SCHEMA,
         "boundedD0Inputs": expected_inputs,
         "runtimeInstanceDigestsPresent": False,
+        "physicalIdentityDigestsPresent": False,
         "trustDigestsPresent": False,
+        "semanticRuntimeDigestSchemaFrozen": True,
+        "physicalIdentityDigestSchemaFrozen": True,
+        "gateClosureSequenceFrozen": True,
         "profileContractsSatisfyRuntimeDigestRequirement": False,
         "boundedInputsAuthorizeActivation": False,
         "boundedInputsAuthorizeD1Implementation": False,
