@@ -18,10 +18,12 @@ import shlex
 import stat
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 from urllib.parse import urlsplit
 
 SCHEMA = "pkgre-d0-gate-state-v2"
@@ -61,6 +63,14 @@ MAX_DRV_BYTES = 4 * 1024 * 1024
 MAX_DRV_DEPTH = 32
 MAX_DRV_ITEMS = 100_000
 MAX_DRV_STRING_BYTES = 2 * 1024 * 1024
+D0_B05_MAX_SOURCE_COMMIT_BYTES = 1024 * 1024
+D0_B05_MAX_SOURCE_TREE_BYTES = 16 * 1024 * 1024
+D0_B05_MAX_SOURCE_BLOB_BYTES = 16 * 1024 * 1024
+D0_B05_MAX_SOURCE_TOTAL_BYTES = 256 * 1024 * 1024
+D0_B05_MAX_SOURCE_ENTRIES = 10_000
+D0_B05_MAX_SOURCE_TREES = 10_000
+D0_B05_MAX_SOURCE_DEPTH = 64
+D0_B05_MAX_GIT_METADATA_ENTRIES = 100_000
 RECEIPT_FUTURE_SKEW_SECONDS = 30
 B18_RECEIPT_MAX_AGE_SECONDS = 600
 PRE_D1_RECEIPT_MAX_AGE_SECONDS = 600
@@ -70,6 +80,7 @@ D0_CREDENTIAL_MAX_BYTES = 4 * 1024
 D0_PRIVATE_KEY_MAX_BYTES = 64 * 1024
 D0_CERTIFICATE_MAX_BYTES = 1024 * 1024
 EVIDENCE_TREE_DOMAIN = b"pkgre-d0-evidence-tree-v1\0"
+EXTERNAL_INFRA_SOURCE_MANIFEST_DOMAIN = b"pkgre-d0-external-infra-source-manifest-v1\0"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 B18_INCIDENT_SHA256 = "9d06853e9fa692c4b6347af8ac4bb85049d76322c41330768b5782e5df888efe"
 B18_INCIDENT_PATH = "fixtures/d0-v1/basis-inventory/js-client-policy/raw/incident.txt"
@@ -178,6 +189,49 @@ class RepositoryBasis:
         }
 
 
+@dataclass(frozen=True)
+class ExternalInfraSourcePolicy:
+    repository_id: str
+    canonical_origin: str
+    commit: str
+    commit_size: int
+    tree: str
+    parent: str
+    commit_content_sha256: str
+    commit_object_sha256: str
+    tree_size: int
+    tree_content_sha256: str
+    tree_object_sha256: str
+    flake_lock_path: str
+    flake_lock_mode: str
+    flake_lock_blob: str
+    flake_lock_size: int
+    flake_lock_sha256: str
+    flake_lock_version: int
+    source_manifest_sha256: str
+    source_entry_count: int
+    source_total_bytes: int
+
+
+@dataclass(frozen=True)
+class ExternalInfraSourceEntry:
+    path: str
+    mode: str
+    git_blob_oid: str
+    byte_length: int
+    sha256: str
+
+    def manifest_row(self) -> dict[str, Any]:
+        return {"byteLength": self.byte_length, "gitBlobOid": self.git_blob_oid, "mode": self.mode, "path": self.path, "sha256": self.sha256}
+
+
+@dataclass(frozen=True)
+class VerifiedExternalInfraSource:
+    policy: ExternalInfraSourcePolicy
+    root: Path
+    entries: tuple[ExternalInfraSourceEntry, ...]
+
+
 PRODUCTION_REPOSITORIES = (
     RepositoryBasis("pkgre/pkgre", "pkgre", "origin", "git@github.com:pkgre/pkgre.git", "refs/heads/main", "origin/main", "066293df21743cbf41fb571a38f2bb94059e7274"),
     RepositoryBasis("pkgre/rust", "pkgre-rust", "origin", "git@github.com:pkgre/rust.git", "refs/heads/main", "origin/main", "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b"),
@@ -187,12 +241,36 @@ PRODUCTION_REPOSITORIES = (
 EXPECTED_BASIS = [row.state_row() for row in PRODUCTION_REPOSITORIES]
 INFRA_REVIEWED_COMMIT = next(row.reviewed_commit for row in PRODUCTION_REPOSITORIES if row.id == "infra")
 
+PRODUCTION_EXTERNAL_INFRA_SOURCE_POLICY = ExternalInfraSourcePolicy(
+    repository_id="infra/infra",
+    canonical_origin="git@gitlab.pacna.net:infra/infra.git",
+    commit="5f68539bd99c6952b6d73fe2596c27ad4a319f57",
+    commit_size=372,
+    tree="a86a0b30a7f0b1bd1bdd6bcc79132447da9dd8ee",
+    parent="e450feb98c312b289b552399bb15b7033f9cd5fb",
+    commit_content_sha256="dd292b6c756f82137f63daa10d66b2543f18a9d6d65159c732315f553e1e754c",
+    commit_object_sha256="aec3c28b450c81ea6baa4fa7b2821c214407abb5824c613bbc74a520141d7233",
+    tree_size=340,
+    tree_content_sha256="0e6a6d5a8cdfd513389b74da222d4109bbc8def775f10c53c42b9af5714c7d9d",
+    tree_object_sha256="8f19fddf67ff19c71f8d7e60e5b32c0e3da53484b3dd177a384e4164bc4d906d",
+    flake_lock_path="flake.lock",
+    flake_lock_mode="100644",
+    flake_lock_blob="915074a67d79bc09fdddbc19688b1ef731baa2a6",
+    flake_lock_size=10683,
+    flake_lock_sha256="a2650a2eb10e91dd09774c52acbcc0fcf6c87fbcf63369e0345a11b63243a2d4",
+    flake_lock_version=7,
+    source_manifest_sha256="1fbc17e8fbd35d09cd012a1b5079689cc127c929cad4d7c6eb2c8f787124d62a",
+    source_entry_count=278,
+    source_total_bytes=770983,
+)
+
 
 @dataclass(frozen=True)
 class GateConfig:
     historical_aggregate_commit: str = HISTORICAL_AGGREGATE_COMMIT
     historical_aggregate_sha256: str = HISTORICAL_AGGREGATE_SHA256
     repositories: tuple[RepositoryBasis, ...] = PRODUCTION_REPOSITORIES
+    external_infra_source_policy: ExternalInfraSourcePolicy | None = PRODUCTION_EXTERNAL_INFRA_SOURCE_POLICY
     allow_git_transport_overrides: bool = False
 
 
@@ -5874,6 +5952,448 @@ def validate_local_config(config_values: dict[str, list[str]], expected: Reposit
     require(singleton_config(config_values, f"remote.{expected.remote}.url", label) == expected.remote_url, f"{label}: literal remote URL mismatch")
     expected_fetch = f"+refs/heads/*:refs/remotes/{expected.remote}/*"
     require(singleton_config(config_values, f"remote.{expected.remote}.fetch", label) == expected_fetch, f"{label}: remote fetch refspec mismatch")
+
+
+def validate_external_infra_source_policy(policy: ExternalInfraSourcePolicy, label: str = "D0-B05 external infra source policy") -> ExternalInfraSourcePolicy:
+    require(isinstance(policy, ExternalInfraSourcePolicy), f"{label}: expected immutable ExternalInfraSourcePolicy")
+    require(nonempty(policy.repository_id, f"{label}.repositoryId") == INFRA_REPOSITORY_ID, f"{label}: repository identity mismatch")
+    origin = nonempty(policy.canonical_origin, f"{label}.canonicalOrigin")
+    require(origin == "git@gitlab.pacna.net:infra/infra.git", f"{label}: canonical origin mismatch")
+    hex_digest(policy.commit, f"{label}.commit", "sha1")
+    bounded_integer(policy.commit_size, f"{label}.commitSize", 1, D0_B05_MAX_SOURCE_COMMIT_BYTES)
+    hex_digest(policy.tree, f"{label}.tree", "sha1")
+    hex_digest(policy.parent, f"{label}.parent", "sha1")
+    require(policy.parent != policy.commit and policy.tree not in {policy.commit, policy.parent}, f"{label}: Git object identities must be distinct")
+    hex_digest(policy.commit_content_sha256, f"{label}.commitContentSha256")
+    hex_digest(policy.commit_object_sha256, f"{label}.commitObjectSha256")
+    require(policy.commit_content_sha256 != policy.commit_object_sha256, f"{label}: commit content and object digests must be distinct")
+    bounded_integer(policy.tree_size, f"{label}.treeSize", 1, D0_B05_MAX_SOURCE_TREE_BYTES)
+    hex_digest(policy.tree_content_sha256, f"{label}.treeContentSha256")
+    hex_digest(policy.tree_object_sha256, f"{label}.treeObjectSha256")
+    require(policy.tree_content_sha256 != policy.tree_object_sha256, f"{label}: tree content and object digests must be distinct")
+    lock_path = safe_path(policy.flake_lock_path, f"{label}.flakeLockPath")
+    require(all(part.casefold() != ".git" for part in lock_path.split("/")), f"{label}: flake lock path must not contain .git")
+    require(policy.flake_lock_mode == "100644", f"{label}: flake lock must be a non-executable regular blob")
+    hex_digest(policy.flake_lock_blob, f"{label}.flakeLockBlob", "sha1")
+    bounded_integer(policy.flake_lock_size, f"{label}.flakeLockSize", 1, D0_B05_MAX_SOURCE_BLOB_BYTES)
+    hex_digest(policy.flake_lock_sha256, f"{label}.flakeLockSha256")
+    require(type(policy.flake_lock_version) is int and policy.flake_lock_version == 7, f"{label}.flakeLockVersion: only version 7 is supported")
+    hex_digest(policy.source_manifest_sha256, f"{label}.sourceManifestSha256")
+    bounded_integer(policy.source_entry_count, f"{label}.sourceEntryCount", 1, D0_B05_MAX_SOURCE_ENTRIES)
+    bounded_integer(policy.source_total_bytes, f"{label}.sourceTotalBytes", 1, D0_B05_MAX_SOURCE_TOTAL_BYTES)
+    require(policy.source_total_bytes >= policy.flake_lock_size, f"{label}: source total is smaller than flake lock")
+    return policy
+
+
+def external_infra_source_claim(policy: ExternalInfraSourcePolicy) -> dict[str, Any]:
+    validated = validate_external_infra_source_policy(policy)
+    return {
+        "repositoryId": validated.repository_id,
+        "canonicalOrigin": validated.canonical_origin,
+        "commit": validated.commit,
+        "commitSize": validated.commit_size,
+        "tree": validated.tree,
+        "parent": validated.parent,
+        "commitContentSha256": validated.commit_content_sha256,
+        "commitObjectSha256": validated.commit_object_sha256,
+        "treeSize": validated.tree_size,
+        "treeContentSha256": validated.tree_content_sha256,
+        "treeObjectSha256": validated.tree_object_sha256,
+        "flakeLockPath": validated.flake_lock_path,
+        "flakeLockMode": validated.flake_lock_mode,
+        "flakeLockBlob": validated.flake_lock_blob,
+        "flakeLockSize": validated.flake_lock_size,
+        "flakeLockSha256": validated.flake_lock_sha256,
+        "flakeLockVersion": validated.flake_lock_version,
+        "sourceManifestSha256": validated.source_manifest_sha256,
+        "sourceEntryCount": validated.source_entry_count,
+        "sourceTotalBytes": validated.source_total_bytes,
+    }
+
+
+def read_literal_git_object(ops: GitOps, repository: Path, object_id: str, expected_type: str, maximum_bytes: int, label: str) -> bytes:
+    hex_digest(object_id, f"{label} object ID", "sha1")
+    require(expected_type in {"blob", "commit", "tree"}, f"{label}: unsupported expected Git object type")
+    require(type(maximum_bytes) is int and 0 <= maximum_bytes <= D0_B05_MAX_SOURCE_TOTAL_BYTES, f"{label}: invalid object-size bound")
+    require(ops.text(repository, "cat-file", "-t", object_id) == expected_type, f"{label}: Git object type mismatch")
+    size_text = ops.text(repository, "cat-file", "-s", object_id)
+    require(size_text.isascii() and size_text.isdigit(), f"{label}: invalid Git object size")
+    size = int(size_text)
+    require(size <= maximum_bytes, f"{label}: Git object exceeds {maximum_bytes} bytes")
+    raw = ops.run(repository, "cat-file", expected_type, object_id).stdout
+    require(len(raw) == size, f"{label}: Git object length changed while reading")
+    header = f"{expected_type} {size}\0".encode("ascii")
+    require(hashlib.sha1(header + raw).hexdigest() == object_id, f"{label}: Git SHA-1 object identity mismatch")
+    return raw
+
+
+def parse_literal_git_tree(raw: bytes, label: str) -> list[tuple[str, bytes, str]]:
+    entries: list[tuple[str, bytes, str]] = []
+    offset = 0
+    seen: set[bytes] = set()
+    previous_sort_key: bytes | None = None
+    while offset < len(raw):
+        mode_end = raw.find(b" ", offset)
+        require(mode_end > offset, f"{label}: malformed tree mode")
+        name_end = raw.find(b"\0", mode_end + 1)
+        require(name_end > mode_end + 1 and name_end + 21 <= len(raw), f"{label}: malformed tree entry")
+        mode_raw = raw[offset:mode_end]
+        name_raw = raw[mode_end + 1:name_end]
+        object_id = raw[name_end + 1:name_end + 21].hex()
+        require(mode_raw in {b"40000", b"100644", b"100755"}, f"{label}: symlink,submodule,or unsupported Git mode is forbidden")
+        require(b"/" not in name_raw and name_raw not in {b".", b".."}, f"{label}: unsafe Git tree name")
+        require(name_raw not in seen, f"{label}: duplicate Git tree name")
+        seen.add(name_raw)
+        sort_key = name_raw + (b"/" if mode_raw == b"40000" else b"\0")
+        require(previous_sort_key is None or previous_sort_key < sort_key, f"{label}: Git tree entries are not in canonical order")
+        previous_sort_key = sort_key
+        try:
+            name = name_raw.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise GateVerificationError(f"{label}: non-UTF-8 Git tree name") from error
+        require(safe_path(name, f"{label} name") == name, f"{label}: noncanonical Git tree name")
+        require(name.casefold() != ".git", f"{label}: .git path component is forbidden")
+        entries.append((mode_raw.decode("ascii"), name_raw, object_id))
+        offset = name_end + 21
+    require(offset == len(raw), f"{label}: trailing or truncated Git tree data")
+    return entries
+
+
+def snapshot_direct_git_metadata(dot_git: Path, label: str) -> tuple[tuple[str, int, int, int, int, int, int, int, int], ...]:
+    require(hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"), f"{label}: no-follow directory APIs are unavailable")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    rows: list[tuple[str, int, int, int, int, int, int, int, int]] = []
+
+    def record(relative: str, metadata: os.stat_result) -> None:
+        require(stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode), f"{label}: symlink or special Git metadata is forbidden: {relative}")
+        require(metadata.st_uid == os.geteuid(), f"{label}: Git metadata must be owned by the verifier user: {relative}")
+        require(metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0, f"{label}: Git metadata must not be group- or world-writable: {relative}")
+        if stat.S_ISREG(metadata.st_mode):
+            require(metadata.st_nlink == 1, f"{label}: hard-linked Git metadata is forbidden: {relative}")
+        rows.append((relative, metadata.st_mode, metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_nlink, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns))
+        require(len(rows) <= D0_B05_MAX_GIT_METADATA_ENTRIES, f"{label}: Git metadata entry count exceeds {D0_B05_MAX_GIT_METADATA_ENTRIES}")
+
+    def walk(directory_fd: int, relative: str, depth: int) -> None:
+        require(depth <= D0_B05_MAX_SOURCE_DEPTH, f"{label}: Git metadata depth exceeds {D0_B05_MAX_SOURCE_DEPTH}")
+        record(relative, os.fstat(directory_fd))
+        with os.scandir(directory_fd) as iterator:
+            children = sorted(iterator, key=lambda entry: os.fsencode(entry.name))
+        for child in children:
+            encoded_name = os.fsencode(child.name)
+            try:
+                name = encoded_name.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as error:
+                raise GateVerificationError(f"{label}: non-UTF-8 Git metadata name under {relative}") from error
+            require(name not in {"", ".", ".."} and "/" not in name and "\x00" not in name, f"{label}: unsafe Git metadata name under {relative}")
+            child_relative = name if relative == "." else f"{relative}/{name}"
+            metadata = child.stat(follow_symlinks=False)
+            if stat.S_ISDIR(metadata.st_mode):
+                child_fd = os.open(name, directory_flags, dir_fd=directory_fd)
+                try:
+                    opened = os.fstat(child_fd)
+                    require((opened.st_dev, opened.st_ino) == (metadata.st_dev, metadata.st_ino), f"{label}: Git metadata directory changed while opening: {child_relative}")
+                    walk(child_fd, child_relative, depth + 1)
+                finally:
+                    os.close(child_fd)
+            else:
+                record(child_relative, metadata)
+
+    root_fd = -1
+    try:
+        root_fd = os.open(dot_git, directory_flags)
+        walk(root_fd, ".", 0)
+    except (OSError, GateVerificationError) as error:
+        if isinstance(error, GateVerificationError):
+            raise
+        raise GateVerificationError(f"{label}: cannot safely inspect direct Git metadata: {error}") from error
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+    rows.sort(key=lambda row: row[0].encode("utf-8"))
+    return tuple(rows)
+
+
+def verify_external_infra_source_repository_safety(ops: GitOps, repository: Path, policy: ExternalInfraSourcePolicy) -> tuple[Path, tuple[tuple[str, int, int, int, int, int, int, int, int], ...]]:
+    label = "D0-B05 external infra source repository"
+    validated = validate_external_infra_source_policy(policy)
+    require(ops.environment.get("GIT_NO_REPLACE_OBJECTS") == "1", f"{label}: GIT_NO_REPLACE_OBJECTS=1 is mandatory")
+    require(repository.is_absolute(), f"{label}: repository path must be absolute")
+    try:
+        resolved = repository.resolve(strict=True)
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot resolve repository path: {error}") from error
+    require(resolved == repository, f"{label}: repository path must be canonical and non-symlinked")
+    dot_git = resolved / ".git"
+    metadata_before = snapshot_direct_git_metadata(dot_git, label)
+    metadata_paths = {row[0] for row in metadata_before}
+    for forbidden, forbidden_label in (
+        ("config.worktree", "worktree config"),
+        ("shallow", "shallow boundary"),
+        ("objects/info/alternates", "alternates"),
+        ("info/grafts", "grafts"),
+        ("commondir", "common-dir indirection"),
+        ("worktrees", "linked worktrees"),
+    ):
+        require(forbidden not in metadata_paths, f"{label} {forbidden_label}: forbidden path exists: {dot_git / forbidden}")
+    require(not any(path.startswith("objects/pack/") and path.endswith(".promisor") for path in metadata_paths), f"{label}: promisor pack state is forbidden")
+    require(ops.text(resolved, "for-each-ref", "--format=%(refname)", "refs/replace") == "", f"{label}: replace refs are forbidden")
+    require(ops.text(resolved, "rev-parse", "--show-object-format") == "sha1", f"{label}: object format is not SHA-1")
+    require(ops.text(resolved, "rev-parse", "--is-shallow-repository") == "false", f"{label}: shallow repository is forbidden")
+    git_dir = Path(ops.text(resolved, "rev-parse", "--absolute-git-dir"))
+    common_dir = Path(ops.text(resolved, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    try:
+        resolved_git_dir = git_dir.resolve(strict=True)
+        resolved_dot_git = dot_git.resolve(strict=True)
+        resolved_common_dir = common_dir.resolve(strict=True)
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot resolve direct/common Git directories: {error}") from error
+    require(resolved_git_dir == resolved_dot_git == resolved_common_dir, f"{label}: linked/common Git directories are forbidden")
+    expected = RepositoryBasis(validated.repository_id, resolved.name, "origin", validated.canonical_origin, "refs/heads/master", "origin/master", validated.commit)
+    validate_local_config(direct_local_config(ops, resolved, dot_git, label), expected, label)
+    for path, mode, *_rest in metadata_before:
+        if not path.startswith("hooks/"):
+            continue
+        hook_name = path.removeprefix("hooks/")
+        require("/" not in hook_name and hook_name.endswith(".sample") and stat.S_ISREG(mode), f"{label}: active or unrecognized Git hook is forbidden: {dot_git / path}")
+    return resolved, metadata_before
+
+
+def reconstruct_external_infra_source(ops: GitOps, repository: Path, policy: ExternalInfraSourcePolicy) -> tuple[tuple[ExternalInfraSourceEntry, ...], dict[str, bytes]]:
+    label = "D0-B05 external infra source"
+    validated = validate_external_infra_source_policy(policy)
+    source, metadata_before = verify_external_infra_source_repository_safety(ops, repository, validated)
+    object_cache: dict[tuple[str, str], bytes] = {}
+
+    def git_object(object_id: str, object_type: str, maximum_bytes: int, object_label: str) -> bytes:
+        key = (object_type, object_id)
+        if key not in object_cache:
+            object_cache[key] = read_literal_git_object(ops, source, object_id, object_type, maximum_bytes, object_label)
+        return object_cache[key]
+
+    commit_raw = git_object(validated.commit, "commit", D0_B05_MAX_SOURCE_COMMIT_BYTES, f"{label} commit")
+    require(len(commit_raw) == validated.commit_size, f"{label}: commit size mismatch")
+    require(sha256(commit_raw) == validated.commit_content_sha256, f"{label}: commit content SHA-256 mismatch")
+    commit_object = f"commit {len(commit_raw)}\0".encode("ascii") + commit_raw
+    require(sha256(commit_object) == validated.commit_object_sha256, f"{label}: commit object SHA-256 mismatch")
+    header_raw = commit_raw.split(b"\n\n", 1)[0]
+    try:
+        header_lines = header_raw.decode("utf-8", errors="strict").splitlines()
+    except UnicodeDecodeError as error:
+        raise GateVerificationError(f"{label}: commit headers are not UTF-8") from error
+    tree_headers = [line.removeprefix("tree ") for line in header_lines if line.startswith("tree ")]
+    parent_headers = [line.removeprefix("parent ") for line in header_lines if line.startswith("parent ")]
+    require(tree_headers == [validated.tree], f"{label}: commit tree header mismatch")
+    require(parent_headers == [validated.parent], f"{label}: commit must have the exact single parent")
+
+    root_tree = git_object(validated.tree, "tree", D0_B05_MAX_SOURCE_TREE_BYTES, f"{label} root tree")
+    require(len(root_tree) == validated.tree_size, f"{label}: root tree size mismatch")
+    require(sha256(root_tree) == validated.tree_content_sha256, f"{label}: root tree content SHA-256 mismatch")
+    tree_object = f"tree {len(root_tree)}\0".encode("ascii") + root_tree
+    require(sha256(tree_object) == validated.tree_object_sha256, f"{label}: root tree object SHA-256 mismatch")
+
+    result: list[ExternalInfraSourceEntry] = []
+    blobs: dict[str, bytes] = {}
+    canonical_paths: set[str] = set()
+    casefold_paths: set[str] = set()
+    tree_visits = 0
+    tree_bytes = 0
+    total_bytes = 0
+
+    def walk(tree_id: str, prefix: str, depth: int, tree_raw: bytes | None = None) -> None:
+        nonlocal tree_visits, tree_bytes, total_bytes
+        require(depth <= D0_B05_MAX_SOURCE_DEPTH, f"{label}: tree depth exceeds {D0_B05_MAX_SOURCE_DEPTH}")
+        tree_visits += 1
+        require(tree_visits <= D0_B05_MAX_SOURCE_TREES, f"{label}: tree count exceeds {D0_B05_MAX_SOURCE_TREES}")
+        raw = git_object(tree_id, "tree", D0_B05_MAX_SOURCE_TREE_BYTES, f"{label} tree {tree_id}") if tree_raw is None else tree_raw
+        tree_bytes += len(raw)
+        require(tree_bytes <= D0_B05_MAX_SOURCE_TREE_BYTES, f"{label}: aggregate tree bytes exceed {D0_B05_MAX_SOURCE_TREE_BYTES}")
+        for mode, name_raw, object_id in parse_literal_git_tree(raw, f"{label} tree {tree_id}"):
+            name = name_raw.decode("utf-8")
+            path = name if prefix == "" else f"{prefix}/{name}"
+            canonical = safe_path(path, f"{label} path")
+            folded = canonical.casefold()
+            require(canonical not in canonical_paths and folded not in casefold_paths, f"{label}: duplicate or case-colliding source path {canonical!r}")
+            canonical_paths.add(canonical)
+            casefold_paths.add(folded)
+            if mode == "40000":
+                walk(object_id, canonical, depth + 1)
+                continue
+            require(len(result) < D0_B05_MAX_SOURCE_ENTRIES, f"{label}: source entry count exceeds {D0_B05_MAX_SOURCE_ENTRIES}")
+            blob = git_object(object_id, "blob", D0_B05_MAX_SOURCE_BLOB_BYTES, f"{label} blob {canonical}")
+            total_bytes += len(blob)
+            require(total_bytes <= D0_B05_MAX_SOURCE_TOTAL_BYTES, f"{label}: source bytes exceed {D0_B05_MAX_SOURCE_TOTAL_BYTES}")
+            entry = ExternalInfraSourceEntry(canonical, mode, object_id, len(blob), sha256(blob))
+            result.append(entry)
+            blobs[canonical] = blob
+
+    walk(validated.tree, "", 0, root_tree)
+    result.sort(key=lambda entry: entry.path.encode("utf-8"))
+    entries = tuple(result)
+    require(len(entries) == validated.source_entry_count, f"{label}: source entry count mismatch")
+    require(total_bytes == validated.source_total_bytes, f"{label}: source byte total mismatch")
+    manifest = sha256(EXTERNAL_INFRA_SOURCE_MANIFEST_DOMAIN + canonical_json([entry.manifest_row() for entry in entries]))
+    require(manifest == validated.source_manifest_sha256, f"{label}: source manifest SHA-256 mismatch")
+    lock_entries = [entry for entry in entries if entry.path == validated.flake_lock_path]
+    require(len(lock_entries) == 1, f"{label}: exact flake lock path is missing or ambiguous")
+    lock_entry = lock_entries[0]
+    require(lock_entry.mode == validated.flake_lock_mode, f"{label}: flake lock mode mismatch")
+    require(lock_entry.git_blob_oid == validated.flake_lock_blob, f"{label}: flake lock blob mismatch")
+    require(lock_entry.byte_length == validated.flake_lock_size, f"{label}: flake lock size mismatch")
+    require(lock_entry.sha256 == validated.flake_lock_sha256, f"{label}: flake lock SHA-256 mismatch")
+    lock = obj(parse_json(blobs[validated.flake_lock_path], f"{label} flake lock", canonical=False), f"{label} flake lock")
+    exact_keys(lock, {"nodes", "root", "version"}, f"{label} flake lock")
+    require(type(lock["version"]) is int and lock["version"] == validated.flake_lock_version, f"{label}: flake lock version mismatch")
+    obj(lock["nodes"], f"{label} flake lock.nodes")
+    nonempty(lock["root"], f"{label} flake lock.root")
+    metadata_after = snapshot_direct_git_metadata(source / ".git", "D0-B05 external infra source repository")
+    require(metadata_after == metadata_before, f"{label}: direct Git metadata changed during reconstruction")
+    return entries, blobs
+
+
+def validate_external_infra_source_materialization(entries: tuple[ExternalInfraSourceEntry, ...], blobs: Mapping[str, bytes]) -> None:
+    label = "D0-B05 external infra snapshot input"
+    require(type(entries) is tuple and 0 < len(entries) <= D0_B05_MAX_SOURCE_ENTRIES, f"{label}: entries must be a nonempty bounded tuple")
+    require(type(blobs) is dict, f"{label}: blobs must be a plain verifier-owned dictionary")
+    require(0 < len(blobs) <= D0_B05_MAX_SOURCE_ENTRIES and all(type(path) is str for path in blobs), f"{label}: blob keys must be a nonempty bounded set of plain strings")
+    paths: list[str] = []
+    canonical_paths: set[str] = set()
+    folded_paths: set[str] = set()
+    total_bytes = 0
+    for index, entry in enumerate(entries):
+        entry_label = f"{label} entry[{index}]"
+        require(type(entry) is ExternalInfraSourceEntry, f"{entry_label}: expected immutable ExternalInfraSourceEntry")
+        path = safe_path(entry.path, f"{entry_label}.path")
+        require(all(part.casefold() != ".git" for part in path.split("/")), f"{entry_label}: .git path component is forbidden")
+        require(entry.mode in {"100644", "100755"}, f"{entry_label}: unsupported regular-file mode")
+        hex_digest(entry.git_blob_oid, f"{entry_label}.gitBlobOid", "sha1")
+        bounded_integer(entry.byte_length, f"{entry_label}.byteLength", 0, D0_B05_MAX_SOURCE_BLOB_BYTES)
+        hex_digest(entry.sha256, f"{entry_label}.sha256")
+        require(path not in canonical_paths and path.casefold() not in folded_paths, f"{label}: duplicate or case-colliding path {path!r}")
+        paths.append(path)
+        canonical_paths.add(path)
+        folded_paths.add(path.casefold())
+        require(path in blobs and type(blobs[path]) is bytes, f"{entry_label}: missing plain verified bytes")
+        raw = blobs[path]
+        require(len(raw) == entry.byte_length and sha256(raw) == entry.sha256, f"{entry_label}: byte length or SHA-256 mismatch")
+        require(hashlib.sha1(f"blob {len(raw)}\0".encode("ascii") + raw).hexdigest() == entry.git_blob_oid, f"{entry_label}: Git blob identity mismatch")
+        total_bytes += len(raw)
+        require(total_bytes <= D0_B05_MAX_SOURCE_TOTAL_BYTES, f"{label}: source bytes exceed {D0_B05_MAX_SOURCE_TOTAL_BYTES}")
+    require(paths == sorted(paths, key=lambda path: path.encode("utf-8")), f"{label}: entries are not in canonical path order")
+    for path in paths:
+        parts = path.split("/")
+        require(not any("/".join(parts[:index]) in canonical_paths for index in range(1, len(parts))), f"{label}: file/directory path collision at {path!r}")
+    require(set(blobs) == canonical_paths, f"{label}: unbound source bytes are forbidden")
+
+
+def materialize_external_infra_source(root: Path, entries: tuple[ExternalInfraSourceEntry, ...], blobs: Mapping[str, bytes]) -> None:
+    label = "D0-B05 external infra snapshot"
+    directory_fds: dict[tuple[str, ...], int] = {}
+    try:
+        require(hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"), f"{label}: no-follow directory APIs are unavailable")
+        validate_external_infra_source_materialization(entries, blobs)
+        require(isinstance(root, Path) and root.is_absolute(), f"{label}: temporary root path must be absolute")
+        resolved = root.resolve(strict=True)
+        require(resolved == root, f"{label}: temporary root path must be canonical and non-symlinked")
+        metadata = root.lstat()
+        require(stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode), f"{label}: temporary root is not a direct directory")
+        require(metadata.st_uid == os.geteuid() and stat.S_IMODE(metadata.st_mode) == 0o700, f"{label}: temporary root must be verifier-owned mode 0700")
+        require(list(root.iterdir()) == [], f"{label}: temporary root is not empty")
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        directory_fds[()] = os.open(root, directory_flags)
+        opened_root = os.fstat(directory_fds[()])
+        require((opened_root.st_dev, opened_root.st_ino) == (metadata.st_dev, metadata.st_ino), f"{label}: temporary root changed while opening")
+        for entry in entries:
+            parts = tuple(entry.path.split("/"))
+            parent_parts: tuple[str, ...] = ()
+            for part in parts[:-1]:
+                child_parts = (*parent_parts, part)
+                if child_parts not in directory_fds:
+                    os.mkdir(part, 0o700, dir_fd=directory_fds[parent_parts])
+                    child_fd = os.open(part, directory_flags, dir_fd=directory_fds[parent_parts])
+                    child_metadata = os.fstat(child_fd)
+                    require(stat.S_ISDIR(child_metadata.st_mode) and child_metadata.st_uid == os.geteuid() and stat.S_IMODE(child_metadata.st_mode) == 0o700, f"{label}: unsafe created directory for {entry.path!r}")
+                    directory_fds[child_parts] = child_fd
+                parent_parts = child_parts
+            raw = blobs[entry.path]
+            file_fd = os.open(parts[-1], file_flags, 0o600, dir_fd=directory_fds[parent_parts])
+            try:
+                os.fchmod(file_fd, 0o600)
+                offset = 0
+                while offset < len(raw):
+                    written = os.write(file_fd, raw[offset:])
+                    require(written > 0, f"{label}: zero-length write for {entry.path!r}")
+                    offset += written
+                written_metadata = os.fstat(file_fd)
+                require(stat.S_ISREG(written_metadata.st_mode) and written_metadata.st_uid == os.geteuid(), f"{label}: created path is not a verifier-owned regular file: {entry.path!r}")
+                require(written_metadata.st_nlink == 1 and written_metadata.st_size == entry.byte_length, f"{label}: created file link count or length mismatch: {entry.path!r}")
+                os.fchmod(file_fd, 0o555 if entry.mode == "100755" else 0o444)
+            finally:
+                os.close(file_fd)
+        for parts, directory_fd in sorted(directory_fds.items(), key=lambda row: len(row[0]), reverse=True):
+            os.fchmod(directory_fd, 0o555)
+    except (OSError, GateVerificationError) as error:
+        if isinstance(error, GateVerificationError):
+            raise
+        raise GateVerificationError(f"{label}: secure materialization failed: {error}") from error
+    finally:
+        for directory_fd in directory_fds.values():
+            os.close(directory_fd)
+
+
+def restore_snapshot_permissions(root: Path) -> None:
+    label = "D0-B05 external infra snapshot cleanup"
+    try:
+        root.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot inspect temporary root: {error}") from error
+    try:
+        def raise_walk_error(error: OSError) -> None:
+            raise error
+
+        for directory, subdirectories, _files in os.walk(root, topdown=True, onerror=raise_walk_error, followlinks=False):
+            os.chmod(directory, 0o700, follow_symlinks=False)
+            for name in subdirectories:
+                child = Path(directory) / name
+                require(not child.is_symlink(), f"{label}: unexpected symlink {child}")
+    except (OSError, GateVerificationError) as error:
+        if isinstance(error, GateVerificationError):
+            raise
+        raise GateVerificationError(f"{label}: cannot restore temporary directory permissions: {error}") from error
+
+
+@contextmanager
+def verified_external_infra_source_snapshot(ops: GitOps, repository: Path, policy: ExternalInfraSourcePolicy) -> Iterator[VerifiedExternalInfraSource]:
+    validated = validate_external_infra_source_policy(policy)
+    entries, blobs = reconstruct_external_infra_source(ops, repository, validated)
+    try:
+        temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-b05-source-", dir="/tmp")
+    except OSError as error:
+        raise GateVerificationError(f"D0-B05 external infra snapshot: cannot create private temporary root: {error}") from error
+    root = Path(temporary.name)
+    active_error: BaseException | None = None
+    try:
+        materialize_external_infra_source(root, entries, blobs)
+        yield VerifiedExternalInfraSource(validated, root, entries)
+    except BaseException as error:
+        active_error = error
+        raise
+    finally:
+        cleanup_errors: list[str] = []
+        try:
+            restore_snapshot_permissions(root)
+        except Exception as error:
+            cleanup_errors.append(str(error))
+        try:
+            temporary.cleanup()
+        except Exception as error:
+            cleanup_errors.append(f"temporary deletion failed: {error}")
+        if cleanup_errors and active_error is None:
+            raise GateVerificationError(f"D0-B05 external infra snapshot cleanup failed: {'; '.join(cleanup_errors)}")
+        if cleanup_errors and active_error is not None:
+            active_error.add_note(f"D0-B05 external infra snapshot cleanup also failed: {'; '.join(cleanup_errors)}")
 
 
 def require_absent_path(path: Path, label: str) -> None:

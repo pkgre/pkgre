@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 from unittest import mock
@@ -65,6 +67,90 @@ def commit(repository: Path, message: str) -> str:
     git(repository, "add", "-A")
     git(repository, "commit", "-m", message)
     return git(repository, "rev-parse", "HEAD").stdout.decode().strip()
+
+
+def external_source_policy(repository: Path, source_commit: str) -> object:
+    commit_raw = git(repository, "cat-file", "commit", source_commit).stdout
+    tree = git(repository, "rev-parse", f"{source_commit}^{{tree}}").stdout.decode().strip()
+    parent = git(repository, "rev-parse", f"{source_commit}^").stdout.decode().strip()
+    tree_raw = git(repository, "cat-file", "tree", tree).stdout
+    rows = git(repository, "ls-tree", "--full-tree", "-r", "-l", "-z", source_commit).stdout.split(b"\0")
+    entries: list[dict[str, object]] = []
+    total = 0
+    lock_entry: tuple[str, str, int, str] | None = None
+    for encoded in rows:
+        if encoded == b"":
+            continue
+        metadata, encoded_path = encoded.split(b"\t", 1)
+        mode, object_type, object_id, size_text = metadata.decode("ascii").split()
+        if object_type != "blob":
+            raise AssertionError(f"unexpected recursive tree object type: {object_type}")
+        path = encoded_path.decode("utf-8")
+        raw = git(repository, "cat-file", "blob", object_id).stdout
+        size = int(size_text)
+        if len(raw) != size:
+            raise AssertionError("fixture Git blob size mismatch")
+        digest = hashlib.sha256(raw).hexdigest()
+        entries.append({"byteLength": size, "gitBlobOid": object_id, "mode": mode, "path": path, "sha256": digest})
+        total += size
+        if path == "flake.lock":
+            lock_entry = (mode, object_id, size, digest)
+    if lock_entry is None:
+        raise AssertionError("fixture is missing flake.lock")
+    entries.sort(key=lambda entry: str(entry["path"]).encode("utf-8"))
+    manifest = GATE.sha256(GATE.EXTERNAL_INFRA_SOURCE_MANIFEST_DOMAIN + GATE.canonical_json(entries))
+    lock = json.loads(git(repository, "cat-file", "blob", lock_entry[1]).stdout)
+    return GATE.ExternalInfraSourcePolicy(
+        repository_id=GATE.INFRA_REPOSITORY_ID,
+        canonical_origin="git@gitlab.pacna.net:infra/infra.git",
+        commit=source_commit,
+        commit_size=len(commit_raw),
+        tree=tree,
+        parent=parent,
+        commit_content_sha256=hashlib.sha256(commit_raw).hexdigest(),
+        commit_object_sha256=hashlib.sha256(f"commit {len(commit_raw)}\0".encode("ascii") + commit_raw).hexdigest(),
+        tree_size=len(tree_raw),
+        tree_content_sha256=hashlib.sha256(tree_raw).hexdigest(),
+        tree_object_sha256=hashlib.sha256(f"tree {len(tree_raw)}\0".encode("ascii") + tree_raw).hexdigest(),
+        flake_lock_path="flake.lock",
+        flake_lock_mode=lock_entry[0],
+        flake_lock_blob=lock_entry[1],
+        flake_lock_size=lock_entry[2],
+        flake_lock_sha256=lock_entry[3],
+        flake_lock_version=lock["version"],
+        source_manifest_sha256=manifest,
+        source_entry_count=len(entries),
+        source_total_bytes=total,
+    )
+
+
+class ExternalSourceFixture:
+    def __init__(self, root: Path) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        self.repository = root.resolve()
+        git(self.repository, "init", "-b", "master")
+        git(self.repository, "config", "user.name", "D0 Test")
+        git(self.repository, "config", "user.email", "d0@example.invalid")
+        git(self.repository, "config", "remote.origin.url", "git@gitlab.pacna.net:infra/infra.git")
+        git(self.repository, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        git(self.repository, "config", "branch.master.remote", "origin")
+        git(self.repository, "config", "branch.master.merge", "refs/heads/master")
+        self.environment = dict(os.environ)
+        self.environment.update({"GIT_AUTHOR_NAME": "D0 Test", "GIT_AUTHOR_EMAIL": "d0@example.invalid", "GIT_COMMITTER_NAME": "D0 Test", "GIT_COMMITTER_EMAIL": "d0@example.invalid"})
+        write(self.repository, "flake.lock", b'{"nodes":{},"root":"root","version":7}\n')
+        write(self.repository, "flake.nix", b"{ outputs = _: {}; }\n")
+        git(self.repository, "add", "-A")
+        subprocess.run(["git", "-C", str(self.repository), "commit", "-m", "parent"], env=self.environment, check=True, stdout=subprocess.PIPE)
+        write(self.repository, "bin/run", b"#!/bin/sh\nexit 0\n")
+        (self.repository / "bin/run").chmod(0o755)
+        write(self.repository, "modules/service.nix", b"{ ... }: {}\n")
+        git(self.repository, "add", "-A")
+        subprocess.run(["git", "-C", str(self.repository), "commit", "-m", "source"], env=self.environment, check=True, stdout=subprocess.PIPE)
+        git(self.repository, "config", "--unset-all", "user.name")
+        git(self.repository, "config", "--unset-all", "user.email")
+        self.commit = git(self.repository, "rev-parse", "HEAD").stdout.decode().strip()
+        self.policy = external_source_policy(self.repository, self.commit)
+        self.ops = GATE.GitOps(environment=self.environment)
 
 
 class RepositoryFixture:
@@ -3409,6 +3495,301 @@ class GateCoreTests(unittest.TestCase):
             lambda: GATE.validate_generic_policy("D0-B05", "SATISFIED", "EVIDENCE_SATISFIED", [result], SEMANTIC_VERIFICATION_TIME),
             "authenticated deployment-ledger and independent live-observer authorities are not installed",
         )
+
+    def test_b05_production_source_policy_pins_exact_reviewed_infra_snapshot(self) -> None:
+        policy = GATE.PRODUCTION_EXTERNAL_INFRA_SOURCE_POLICY
+        self.assertIs(GATE.PRODUCTION_CONFIG.external_infra_source_policy, policy)
+        self.assertEqual(GATE.external_infra_source_claim(policy), {
+            "repositoryId": "infra/infra",
+            "canonicalOrigin": "git@gitlab.pacna.net:infra/infra.git",
+            "commit": "5f68539bd99c6952b6d73fe2596c27ad4a319f57",
+            "commitSize": 372,
+            "tree": "a86a0b30a7f0b1bd1bdd6bcc79132447da9dd8ee",
+            "parent": "e450feb98c312b289b552399bb15b7033f9cd5fb",
+            "commitContentSha256": "dd292b6c756f82137f63daa10d66b2543f18a9d6d65159c732315f553e1e754c",
+            "commitObjectSha256": "aec3c28b450c81ea6baa4fa7b2821c214407abb5824c613bbc74a520141d7233",
+            "treeSize": 340,
+            "treeContentSha256": "0e6a6d5a8cdfd513389b74da222d4109bbc8def775f10c53c42b9af5714c7d9d",
+            "treeObjectSha256": "8f19fddf67ff19c71f8d7e60e5b32c0e3da53484b3dd177a384e4164bc4d906d",
+            "flakeLockPath": "flake.lock",
+            "flakeLockMode": "100644",
+            "flakeLockBlob": "915074a67d79bc09fdddbc19688b1ef731baa2a6",
+            "flakeLockSize": 10683,
+            "flakeLockSha256": "a2650a2eb10e91dd09774c52acbcc0fcf6c87fbcf63369e0345a11b63243a2d4",
+            "flakeLockVersion": 7,
+            "sourceManifestSha256": "1fbc17e8fbd35d09cd012a1b5079689cc127c929cad4d7c6eb2c8f787124d62a",
+            "sourceEntryCount": 278,
+            "sourceTotalBytes": 770983,
+        })
+        self.assertEqual(GATE.EXPECTED_FACT_STATES["D0-B05"], "UNPROVED")
+
+    def test_b05_source_policy_strictly_validates_every_field(self) -> None:
+        policy = GATE.PRODUCTION_EXTERNAL_INFRA_SOURCE_POLICY
+        cases = [
+            ("repository_id", "other/repository", "repository identity mismatch"),
+            ("canonical_origin", "https://example.invalid/infra.git", "canonical origin mismatch"),
+            ("commit", "g" * 40, "invalid SHA1 digest"),
+            ("commit_size", 0, "expected integer"),
+            ("tree", "g" * 40, "invalid SHA1 digest"),
+            ("parent", "g" * 40, "invalid SHA1 digest"),
+            ("parent", policy.commit, "identities must be distinct"),
+            ("commit_content_sha256", "0" * 63, "invalid SHA256 digest"),
+            ("commit_object_sha256", policy.commit_content_sha256, "digests must be distinct"),
+            ("tree_size", 0, "expected integer"),
+            ("tree_content_sha256", "0" * 63, "invalid SHA256 digest"),
+            ("tree_object_sha256", policy.tree_content_sha256, "digests must be distinct"),
+            ("flake_lock_path", ".git/config", "must not contain .git"),
+            ("flake_lock_mode", "100755", "non-executable regular blob"),
+            ("flake_lock_blob", "0" * 39, "invalid SHA1 digest"),
+            ("flake_lock_size", 0, "expected integer"),
+            ("flake_lock_sha256", "0" * 63, "invalid SHA256 digest"),
+            ("flake_lock_version", 6, "only version 7"),
+            ("source_manifest_sha256", "0" * 63, "invalid SHA256 digest"),
+            ("source_entry_count", 0, "expected integer"),
+            ("source_total_bytes", policy.flake_lock_size - 1, "source total is smaller"),
+        ]
+        for field, value, expected in cases:
+            with self.subTest(field=field, value=value):
+                self.assertRejected(lambda field=field, value=value: GATE.validate_external_infra_source_policy(replace(policy, **{field: value})), expected)
+        self.assertRejected(lambda: GATE.validate_external_infra_source_policy(None), "expected immutable")
+
+    def test_b05_source_reconstruction_materializes_only_verified_immutable_files(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+        try:
+            fixture = ExternalSourceFixture(Path(temporary.name))
+            entries, blobs = GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, fixture.policy)
+            self.assertEqual([entry.path for entry in entries], ["bin/run", "flake.lock", "flake.nix", "modules/service.nix"])
+            self.assertEqual(set(blobs), {entry.path for entry in entries})
+            snapshot_root: Path | None = None
+            with GATE.verified_external_infra_source_snapshot(fixture.ops, fixture.repository, fixture.policy) as verified:
+                snapshot_root = verified.root
+                self.assertEqual(verified.policy, fixture.policy)
+                self.assertEqual(verified.entries, entries)
+                self.assertEqual(stat.S_IMODE(verified.root.lstat().st_mode), 0o555)
+                self.assertFalse((verified.root / ".git").exists())
+                for entry in entries:
+                    path = verified.root / entry.path
+                    self.assertEqual(path.read_bytes(), blobs[entry.path])
+                    self.assertEqual(stat.S_IMODE(path.lstat().st_mode), 0o555 if entry.mode == "100755" else 0o444)
+                    self.assertTrue(all(stat.S_IMODE(parent.lstat().st_mode) == 0o555 for parent in path.parents if parent == verified.root or verified.root in parent.parents))
+            self.assertIsNotNone(snapshot_root)
+            self.assertFalse(snapshot_root.exists())
+        finally:
+            temporary.cleanup()
+
+    def test_b05_source_snapshot_cleanup_is_unconditional_and_preserves_primary_failure(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+        try:
+            fixture = ExternalSourceFixture(Path(temporary.name))
+            snapshot_root: Path | None = None
+            cleanup_error = GATE.GateVerificationError("injected permission restoration failure")
+            with mock.patch.object(GATE, "restore_snapshot_permissions", side_effect=cleanup_error):
+                with self.assertRaisesRegex(RuntimeError, "primary verifier failure") as caught:
+                    with GATE.verified_external_infra_source_snapshot(fixture.ops, fixture.repository, fixture.policy) as verified:
+                        snapshot_root = verified.root
+                        raise RuntimeError("primary verifier failure")
+            self.assertIsNotNone(snapshot_root)
+            self.assertFalse(snapshot_root.exists())
+            self.assertTrue(any("cleanup also failed" in note for note in getattr(caught.exception, "__notes__", [])))
+
+            snapshot_root = None
+            with mock.patch.object(GATE, "restore_snapshot_permissions", side_effect=cleanup_error):
+                with self.assertRaisesRegex(GATE.GateVerificationError, "snapshot cleanup failed"):
+                    with GATE.verified_external_infra_source_snapshot(fixture.ops, fixture.repository, fixture.policy) as verified:
+                        snapshot_root = verified.root
+            self.assertIsNotNone(snapshot_root)
+            self.assertFalse(snapshot_root.exists())
+        finally:
+            temporary.cleanup()
+
+    def test_b05_source_reconstruction_rejects_recomputed_policy_mismatches(self) -> None:
+        cases = [
+            ("commit_content_sha256", "0" * 64, "commit content SHA-256 mismatch"),
+            ("commit_object_sha256", "1" * 64, "commit object SHA-256 mismatch"),
+            ("tree_content_sha256", "2" * 64, "root tree content SHA-256 mismatch"),
+            ("tree_object_sha256", "3" * 64, "root tree object SHA-256 mismatch"),
+            ("source_manifest_sha256", "4" * 64, "source manifest SHA-256 mismatch"),
+            ("source_entry_count", 5, "source entry count mismatch"),
+            ("source_total_bytes", 1, "source total is smaller"),
+            ("flake_lock_blob", "5" * 40, "flake lock blob mismatch"),
+            ("flake_lock_sha256", "6" * 64, "flake lock SHA-256 mismatch"),
+            ("flake_lock_version", 6, "only version 7"),
+        ]
+        for field, value, expected in cases:
+            with self.subTest(field=field):
+                temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+                try:
+                    fixture = ExternalSourceFixture(Path(temporary.name))
+                    mutated = replace(fixture.policy, **{field: value})
+                    self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, mutated), expected)
+                finally:
+                    temporary.cleanup()
+
+    def test_b05_source_reconstruction_rejects_special_modes_and_unsafe_paths(self) -> None:
+        for name, add_path, expected in [
+            ("symlink", "link", "symlink,submodule,or unsupported Git mode"),
+            ("unsafe-name", "unsafe name", "unsupported path component"),
+        ]:
+            with self.subTest(name=name):
+                temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+                try:
+                    fixture = ExternalSourceFixture(Path(temporary.name))
+                    path = fixture.repository / add_path
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if name == "symlink":
+                        path.symlink_to("flake.lock")
+                    else:
+                        path.write_bytes(b"unsafe\n")
+                    git(fixture.repository, "add", "-A")
+                    subprocess.run(["git", "-C", str(fixture.repository), "commit", "-m", name], env=fixture.environment, check=True, stdout=subprocess.PIPE)
+                    source_commit = git(fixture.repository, "rev-parse", "HEAD").stdout.decode().strip()
+                    policy = external_source_policy(fixture.repository, source_commit)
+                    self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, policy), expected)
+                finally:
+                    temporary.cleanup()
+
+        raw_tree = b"100644 .GIT\0" + bytes.fromhex("0" * 40)
+        self.assertRejected(lambda: GATE.parse_literal_git_tree(raw_tree, "fixture tree"), ".git path component is forbidden")
+
+    def test_b05_source_repository_rejects_git_indirection_and_partial_state(self) -> None:
+        cases = ["replace", "grafts", "alternates", "shallow", "promisor", "active-hook", "wrong-origin"]
+        for name in cases:
+            with self.subTest(name=name):
+                temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+                try:
+                    fixture = ExternalSourceFixture(Path(temporary.name))
+                    git_dir = fixture.repository / ".git"
+                    if name == "replace":
+                        parent = git(fixture.repository, "rev-parse", "HEAD^").stdout.decode().strip()
+                        git(fixture.repository, "replace", fixture.commit, parent)
+                    elif name == "grafts":
+                        (git_dir / "info/grafts").write_text(f"{fixture.commit}\n")
+                    elif name == "alternates":
+                        (git_dir / "objects/info/alternates").write_text("/tmp/nonexistent\n")
+                    elif name == "shallow":
+                        (git_dir / "shallow").write_text(f"{fixture.commit}\n")
+                    elif name == "promisor":
+                        (git_dir / "objects/pack/fixture.promisor").write_bytes(b"")
+                    elif name == "active-hook":
+                        (git_dir / "hooks/pre-commit").write_text("#!/bin/sh\nexit 0\n")
+                    else:
+                        git(fixture.repository, "config", "remote.origin.url", "https://example.invalid/infra.git")
+                    expected = {
+                        "replace": "replace refs are forbidden",
+                        "grafts": "grafts: forbidden path exists",
+                        "alternates": "alternates: forbidden path exists",
+                        "shallow": "shallow boundary: forbidden path exists",
+                        "promisor": "promisor pack state is forbidden",
+                        "active-hook": "active or unrecognized Git hook is forbidden",
+                        "wrong-origin": "literal remote URL mismatch",
+                    }[name]
+                    self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, fixture.policy), expected)
+                finally:
+                    temporary.cleanup()
+
+    def test_b05_source_repository_rejects_symlinked_or_writable_git_metadata(self) -> None:
+        cases = ["objects-symlink", "loose-object-symlink", "writable-metadata"]
+        for name in cases:
+            with self.subTest(name=name):
+                temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+                try:
+                    fixture = ExternalSourceFixture(Path(temporary.name) / "repo")
+                    git_dir = fixture.repository / ".git"
+                    if name == "objects-symlink":
+                        external = Path(temporary.name) / "external-objects"
+                        shutil.copytree(git_dir / "objects", external)
+                        shutil.rmtree(git_dir / "objects")
+                        (git_dir / "objects").symlink_to(external, target_is_directory=True)
+                    elif name == "loose-object-symlink":
+                        object_path = git_dir / "objects" / fixture.commit[:2] / fixture.commit[2:]
+                        external = Path(temporary.name) / "external-object"
+                        shutil.copyfile(object_path, external)
+                        object_path.unlink()
+                        object_path.symlink_to(external)
+                    else:
+                        (git_dir / "objects").chmod(0o775)
+                    expected = "symlink or special Git metadata is forbidden" if name != "writable-metadata" else "must not be group- or world-writable"
+                    self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, fixture.policy), expected)
+                finally:
+                    temporary.cleanup()
+
+    def test_b05_source_reconstruction_rejects_git_metadata_change_during_read(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+        try:
+            fixture = ExternalSourceFixture(Path(temporary.name))
+            marker = fixture.repository / ".git" / "metadata-race"
+            changed = False
+
+            def changing_runner(repository: Path, arguments: tuple[str, ...], environment: object) -> subprocess.CompletedProcess[bytes]:
+                nonlocal changed
+                process = GATE.default_git_runner(repository, arguments, environment)
+                if not changed and arguments[:2] == ("cat-file", "-t"):
+                    marker.write_bytes(b"changed\n")
+                    changed = True
+                return process
+
+            ops = GATE.GitOps(changing_runner, fixture.environment)
+            self.assertRejected(lambda: GATE.reconstruct_external_infra_source(ops, fixture.repository, fixture.policy), "direct Git metadata changed during reconstruction")
+            self.assertTrue(changed)
+        finally:
+            temporary.cleanup()
+
+    def test_b05_source_repository_requires_literal_git_and_canonical_repository_path(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+        try:
+            fixture = ExternalSourceFixture(Path(temporary.name) / "repo")
+            fixture.ops.environment["GIT_NO_REPLACE_OBJECTS"] = "0"
+            self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, fixture.policy), "GIT_NO_REPLACE_OBJECTS=1 is mandatory")
+            fixture.ops.environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+            alias = Path(temporary.name) / "alias"
+            alias.symlink_to(fixture.repository, target_is_directory=True)
+            self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, alias, fixture.policy), "repository path must be canonical")
+            missing = Path(temporary.name) / "missing"
+            self.assertRejected(lambda: GATE.reconstruct_external_infra_source(fixture.ops, missing, fixture.policy), "cannot resolve repository path")
+        finally:
+            temporary.cleanup()
+
+    def test_b05_source_materializer_refuses_nonempty_root(self) -> None:
+        source = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+        destination = tempfile.TemporaryDirectory(prefix="pkgre-d0-snapshot-test-")
+        try:
+            fixture = ExternalSourceFixture(Path(source.name))
+            entries, blobs = GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, fixture.policy)
+            Path(destination.name, "attacker").write_bytes(b"do not overwrite\n")
+            self.assertRejected(lambda: GATE.materialize_external_infra_source(Path(destination.name), entries, blobs), "temporary root is not empty")
+            self.assertEqual(Path(destination.name, "attacker").read_bytes(), b"do not overwrite\n")
+        finally:
+            source.cleanup()
+            destination.cleanup()
+
+    def test_b05_source_materializer_revalidates_all_in_memory_inputs(self) -> None:
+        source = tempfile.TemporaryDirectory(prefix="pkgre-d0-source-test-")
+        try:
+            fixture = ExternalSourceFixture(Path(source.name))
+            entries, blobs = GATE.reconstruct_external_infra_source(fixture.ops, fixture.repository, fixture.policy)
+            first = entries[0]
+            second = entries[1]
+            cases = [
+                ((replace(first, path="../escape"), *entries[1:]), blobs, "noncanonical path"),
+                ((replace(first, mode="120000"), *entries[1:]), blobs, "unsupported regular-file mode"),
+                ((replace(first, git_blob_oid="0" * 40), *entries[1:]), blobs, "Git blob identity mismatch"),
+                ((replace(first, sha256="0" * 64), *entries[1:]), blobs, "byte length or SHA-256 mismatch"),
+                (tuple(reversed(entries)), blobs, "canonical path order"),
+                ((first, replace(second, path=first.path.upper()), *entries[2:]), blobs, "case-colliding path"),
+                (entries, {**blobs, "extra": b"unbound\n"}, "unbound source bytes"),
+            ]
+            for mutated_entries, mutated_blobs, expected in cases:
+                with self.subTest(expected=expected):
+                    self.assertRejected(lambda mutated_entries=mutated_entries, mutated_blobs=mutated_blobs: GATE.validate_external_infra_source_materialization(mutated_entries, mutated_blobs), expected)
+
+            collision_entries = (replace(first, path="a"), replace(second, path="a/b"))
+            collision_blobs = {"a": blobs[first.path], "a/b": blobs[second.path]}
+            self.assertRejected(lambda: GATE.validate_external_infra_source_materialization(collision_entries, collision_blobs), "file/directory path collision")
+
+            missing_root = Path(source.name) / "missing-snapshot-root"
+            self.assertRejected(lambda: GATE.materialize_external_infra_source(missing_root, entries, blobs), "secure materialization failed")
+        finally:
+            source.cleanup()
 
     def test_generic_semantic_envelopes_bind_exact_handoff_kinds_and_claims(self) -> None:
         limits = self.semanticResult("D0-B10", "OP-D0-06", {"approved-limits": {"test": True}})
