@@ -97,8 +97,8 @@
     },
     {
       "detail": [
-        861929472,
-        861929472
+        912261120,
+        912261120
       ],
       "name": "js-candidate-peak-formula",
       "pass": true
@@ -144,29 +144,63 @@
       "pass": true
     },
     {
-      "detail": 1,
-      "name": "js-worker-exactly-one",
-      "pass": true
-    },
-    {
       "detail": [
-        251658240,
-        251658240
+        1,
+        false
       ],
-      "name": "js-worker-heap-resident-formula",
+      "name": "js-worker-exactly-one-path",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-runtime-contract",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-forbidden-parent-options",
+      "pass": true
+    },
+    {
+      "detail": {
+        "codeRangeSizeMb": 32,
+        "maxOldGenerationSizeMb": 192,
+        "maxYoungGenerationSizeMb": 32,
+        "stackSizeMb": 4
+      },
+      "name": "js-worker-resource-limits-exact",
+      "pass": true
+    },
+    {
+      "detail": {
+        "beforeCatalogBytesProcessed": true,
+        "failureAction": "terminate-worker-and-reject-candidate",
+        "requestedResourceLimitsReadbackRequired": true,
+        "requiredInitialHeapSizeLimitBytes": 251658240,
+        "workerHeapStatisticsReadbackRequired": true
+      },
+      "name": "js-worker-startup-handshake",
       "pass": true
     },
     {
       "detail": [
-        390070272,
-        390070272
+        268435456,
+        268435456
+      ],
+      "name": "js-worker-heap-maximum-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        440401920,
+        440401920
       ],
       "name": "js-worker-resident-envelope-formula",
       "pass": true
     },
     {
       "detail": null,
-      "name": "js-worker-code-range-virtual-only",
+      "name": "js-worker-code-range-resident-budget",
       "pass": true
     },
     {
@@ -246,12 +280,12 @@
     },
     {
       "detail": null,
-      "name": "markdown-token-390,070,272B",
+      "name": "markdown-token-440,401,920B",
       "pass": true
     },
     {
       "detail": null,
-      "name": "markdown-token-861,929,472B",
+      "name": "markdown-token-912,261,120B",
       "pass": true
     },
     {
@@ -292,6 +326,67 @@
     {
       "detail": null,
       "name": "markdown-token-30d",
+      "pass": true
+    },
+    {
+      "detail": {
+        "mode": "baseline",
+        "nodeOptionsPresent": false,
+        "nodeVersion": "v24.19.0",
+        "parentExecArgv": [],
+        "parentResourceLimitsReadback": {
+          "codeRangeSizeMb": 32,
+          "maxOldGenerationSizeMb": 192,
+          "maxYoungGenerationSizeMb": 32,
+          "stackSizeMb": 4
+        },
+        "transfer": {
+          "expectedSha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+          "receiverByteLength": 32,
+          "receiverSha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+          "senderArrayBufferByteLength": 0,
+          "senderByteViewByteLength": 0,
+          "senderWordViewByteLength": 0
+        },
+        "workerExecArgv": [],
+        "workerHeapSizeLimitBytes": 251658240,
+        "workerResourceLimitsReadback": {
+          "codeRangeSizeMb": 32,
+          "maxOldGenerationSizeMb": 192,
+          "maxYoungGenerationSizeMb": 32,
+          "stackSizeMb": 4
+        }
+      },
+      "name": "node-worker-baseline-probe-exact",
+      "pass": true
+    },
+    {
+      "detail": {
+        "mode": "override",
+        "nodeOptionsPresent": true,
+        "nodeVersion": "v24.19.0",
+        "parentExecArgv": [],
+        "parentResourceLimitsReadback": {
+          "codeRangeSizeMb": 32,
+          "maxOldGenerationSizeMb": 192,
+          "maxYoungGenerationSizeMb": 32,
+          "stackSizeMb": 4
+        },
+        "workerExecArgv": [],
+        "workerHeapSizeLimitBytes": 117440512,
+        "workerResourceLimitsReadback": {
+          "codeRangeSizeMb": 32,
+          "maxOldGenerationSizeMb": 192,
+          "maxYoungGenerationSizeMb": 32,
+          "stackSizeMb": 4
+        }
+      },
+      "name": "node-worker-parent-override-probe-exact",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "node-worker-readback-alone-insufficient",
       "pass": true
     },
     {
@@ -341,8 +436,9 @@
     }
   },
   "validatedFiles": {
-    "README.md": "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774",
-    "proposal.json": "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90",
-    "validate.py": "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22"
+    "README.md": "02b43064561a34629f340f0f99b34005f080c0a51267705d41b0ca47d03acdaf",
+    "node-worker-contract-probe.cjs": "bc425c240fd1dcfb7c17d84d0ac2000ab9919a6b75bdcec08290ceb5f47ce73e",
+    "proposal.json": "b0daedd105834ff081bd87e1f912681d24756260cb27cc004a8015fe0e4422ee",
+    "validate.py": "f8b8ea710ece897354d6232aa2025d7be81c4f5d50a495edb9a3eb84b6265e28"
   }
 }

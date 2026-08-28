@@ -1,5 +1,5 @@
 {
-  "checkCount": 463,
+  "checkCount": 469,
   "checks": [
     {
       "detail": null,
@@ -112,24 +112,32 @@
     },
     {
       "detail": [
-        "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774",
-        "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774"
+        "02b43064561a34629f340f0f99b34005f080c0a51267705d41b0ca47d03acdaf",
+        "02b43064561a34629f340f0f99b34005f080c0a51267705d41b0ca47d03acdaf"
       ],
       "name": "reused-proposal-hash-README.md",
       "pass": true
     },
     {
       "detail": [
-        "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90",
-        "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90"
+        "bc425c240fd1dcfb7c17d84d0ac2000ab9919a6b75bdcec08290ceb5f47ce73e",
+        "bc425c240fd1dcfb7c17d84d0ac2000ab9919a6b75bdcec08290ceb5f47ce73e"
+      ],
+      "name": "reused-proposal-hash-node-worker-contract-probe.cjs",
+      "pass": true
+    },
+    {
+      "detail": [
+        "b0daedd105834ff081bd87e1f912681d24756260cb27cc004a8015fe0e4422ee",
+        "b0daedd105834ff081bd87e1f912681d24756260cb27cc004a8015fe0e4422ee"
       ],
       "name": "reused-proposal-hash-proposal.json",
       "pass": true
     },
     {
       "detail": [
-        "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22",
-        "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22"
+        "f8b8ea710ece897354d6232aa2025d7be81c4f5d50a495edb9a3eb84b6265e28",
+        "f8b8ea710ece897354d6232aa2025d7be81c4f5d50a495edb9a3eb84b6265e28"
       ],
       "name": "reused-proposal-hash-validate.py",
       "pass": true
@@ -1715,8 +1723,8 @@
     },
     {
       "detail": [
-        861929472,
-        861929472
+        912261120,
+        912261120
       ],
       "name": "js-candidate-peak-formula",
       "pass": true
@@ -1742,29 +1750,63 @@
       "pass": true
     },
     {
-      "detail": 1,
-      "name": "js-worker-exactly-one",
-      "pass": true
-    },
-    {
       "detail": [
-        251658240,
-        251658240
+        1,
+        false
       ],
-      "name": "js-worker-heap-resident-formula",
+      "name": "js-worker-exactly-one-path",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-runtime-contract",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-forbidden-parent-options",
+      "pass": true
+    },
+    {
+      "detail": {
+        "codeRangeSizeMb": 32,
+        "maxOldGenerationSizeMb": 192,
+        "maxYoungGenerationSizeMb": 32,
+        "stackSizeMb": 4
+      },
+      "name": "js-worker-resource-limits-exact",
+      "pass": true
+    },
+    {
+      "detail": {
+        "beforeCatalogBytesProcessed": true,
+        "failureAction": "terminate-worker-and-reject-candidate",
+        "requestedResourceLimitsReadbackRequired": true,
+        "requiredInitialHeapSizeLimitBytes": 251658240,
+        "workerHeapStatisticsReadbackRequired": true
+      },
+      "name": "js-worker-startup-handshake",
       "pass": true
     },
     {
       "detail": [
-        390070272,
-        390070272
+        268435456,
+        268435456
+      ],
+      "name": "js-worker-heap-maximum-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        440401920,
+        440401920
       ],
       "name": "js-worker-resident-envelope-formula",
       "pass": true
     },
     {
       "detail": null,
-      "name": "js-worker-code-range-virtual-only",
+      "name": "js-worker-code-range-resident-budget",
       "pass": true
     },
     {
@@ -2524,6 +2566,11 @@
     },
     {
       "detail": null,
+      "name": "report-reference-node-worker-contract-probe.cjs",
+      "pass": true
+    },
+    {
+      "detail": null,
       "name": "report-reference-validate.py",
       "pass": true
     },
@@ -2547,7 +2594,7 @@
   "result": "PASS",
   "schema": "pkgre-d0-resource-time-lifecycle-validation-v1",
   "secretScan": {
-    "filesScanned": 9,
+    "filesScanned": 10,
     "matches": 0,
     "patterns": [
       "aws-access-key",
@@ -2559,14 +2606,15 @@
     "result": "PASS"
   },
   "validatedFiles": {
-    "basis-inventory/resource-time-lifecycle/REPORT.md": "a21203c6226f162efcc461b8919f238c2b4753e3409b78803eceb912c23ffc19",
-    "basis-inventory/resource-time-lifecycle/resource-limit-fixtures.json": "5910dbf44b19b340a2063b35a5ff212c9d11b21029d238a46e1fe8fd074da800",
+    "basis-inventory/resource-time-lifecycle/REPORT.md": "6f1bd3d815bab38a21d78432c91c63480fbfa4fc1567ea09caa2d02b0c753379",
+    "basis-inventory/resource-time-lifecycle/resource-limit-fixtures.json": "5e985df0d482715d40582303d22d2ca23e36dc1c941ad945c6a540089cc919e1",
     "basis-inventory/resource-time-lifecycle/shutdown-drain-fixtures.json": "3d0f1fba1dcb5818bce42ba764adf395bc3df9897f0db141c8629a1cb4d15c9b",
     "basis-inventory/resource-time-lifecycle/timestamp-fixtures.json": "292193f1c51a8a262d4da3e3ddf27871472e2b54e7a7f999acfe9238e0147a01",
-    "basis-inventory/resource-time-lifecycle/validate.py": "4db76ccabb7ef7a76723c6330d9ae40e0251b02064fbb31815a6c4a42001834e",
-    "d0-time-resource-proposal/README.md": "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774",
-    "d0-time-resource-proposal/proposal.json": "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90",
-    "d0-time-resource-proposal/validate.py": "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22",
-    "d0-time-resource-proposal/validation.json": "f7d85051396f53a4aea70841de6476dab286febd0c7b31f85a5f940d859f70ce"
+    "basis-inventory/resource-time-lifecycle/validate.py": "e1cc36c764d42d25ec0f6d727caaa69a26c4ae104c0750f546500a875b984ff2",
+    "d0-time-resource-proposal/README.md": "02b43064561a34629f340f0f99b34005f080c0a51267705d41b0ca47d03acdaf",
+    "d0-time-resource-proposal/node-worker-contract-probe.cjs": "bc425c240fd1dcfb7c17d84d0ac2000ab9919a6b75bdcec08290ceb5f47ce73e",
+    "d0-time-resource-proposal/proposal.json": "b0daedd105834ff081bd87e1f912681d24756260cb27cc004a8015fe0e4422ee",
+    "d0-time-resource-proposal/validate.py": "f8b8ea710ece897354d6232aa2025d7be81c4f5d50a495edb9a3eb84b6265e28",
+    "d0-time-resource-proposal/validation.json": "0a35d33dd342b5a13ac6a77d3eccaac83ce1c831ed5788be578ab94f0d3f1fa4"
   }
 }
