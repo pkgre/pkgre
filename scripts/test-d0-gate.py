@@ -1652,6 +1652,21 @@ os._exit(0)
     def assertB13RephaseRejected(self, payloads: dict[str, dict[str, object]], text: str) -> None:
         self.assertRejected(lambda: self.validateB13Rephase(payloads), text)
 
+    def validB21RephaseResult(self) -> dict[str, object]:
+        payloads = {"phase-amendment": valid_phase_amendment("D0-B21")}
+        result = self.semanticResult("D0-B21", "OP-D0-07", payloads, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B21"])
+        result["findingId"] = "D0-B21"
+        result["policyId"] = "D0-B21-v1"
+        result["disposition"] = "REPHASED"
+        result["mode"] = "EXACT_PHASE_AMENDMENT"
+        return result
+
+    def validateB21Rephase(self, result: dict[str, object], verification_time=SEMANTIC_VERIFICATION_TIME) -> None:
+        GATE.validate_b21("REPHASED", "EXACT_PHASE_AMENDMENT", [result], verification_time)
+
+    def assertB21RephaseRejected(self, result: dict[str, object], text: str, verification_time=SEMANTIC_VERIFICATION_TIME) -> None:
+        self.assertRejected(lambda: self.validateB21Rephase(result, verification_time), text)
+
     def temporary_fixture(self) -> tuple[tempfile.TemporaryDirectory[str], RepositoryFixture]:
         temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-gate-test-")
         return temporary, RepositoryFixture(Path(temporary.name))
@@ -2734,7 +2749,7 @@ os._exit(0)
             schema = GATE.PHASE_AMENDMENT_SCHEMA if kind == "phase-amendment" else GATE.SEMANTIC_EVIDENCE_SCHEMA
             raw = GATE.canonical_json({"schema": schema, "findingId": finding_id, "kind": kind, "payload": payload})
             evidence_by_kind[kind] = [ref_id]
-            references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
+            references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw), **({"_referenceClass": "decision"} if kind == "phase-amendment" else {})}
         return {"_handoffId": handoff_id, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT, "_evidenceByKind": evidence_by_kind, "_references": references, "claims": {"evidenceByKind": evidence_by_kind, "targetGates": [] if target_gates is None else target_gates}}
 
     def test_b18_accepts_exact_context_predecessors_acknowledgment_containment_and_remediation(self) -> None:
@@ -3409,6 +3424,146 @@ os._exit(0)
                 lambda: GATE.verify_closure(ops, REPO_ROOT, b"{}\n", state, findings, items, Path("/tmp/procedural-authority.json"), GATE.PRODUCTION_CONFIG, SEMANTIC_VERIFICATION_TIME),
                 "object-key mismatch",
             )
+
+    def test_b21_satisfaction_is_fail_closed_for_legacy_wire_counterfeits(self) -> None:
+        source = GATE_PATH.read_text(encoding="utf-8")
+        for obsolete_identifier in ("pkgre-d0-no-1xx-wire-proof-v1", "raw-wire-http1", "raw-wire-http2", "PRE_D1_NO_1XX_PROOF"):
+            self.assertNotIn(obsolete_identifier, source)
+        captures = {
+            "isolated-http1-status": b"HTTP/1.1 200 OK\r\n",
+            "textual-http2-status": b":status: 200\r\n",
+            "prefixed-early-hints": b"xHTTP/1.1 103 Early Hints\r\nHTTP/1.1 200 OK\r\n",
+            "http10-status": b"HTTP/1.0 200 OK\r\n",
+            "truncated-http2-frame": b"\x00\x00\x05\x01\x04\x00\x00\x00\x01\x88",
+        }
+        self.assertFalse(hasattr(GATE, "parse_b21_wire_artifact"))
+        for name, capture in captures.items():
+            with self.subTest(name=name):
+                counterfeit = {"claims": {"capture": capture}}
+                self.assertRejected(
+                    lambda counterfeit=counterfeit: GATE.validate_b21("SATISFIED", "PRE_D1_NO_1XX_PROOF", [counterfeit], SEMANTIC_VERIFICATION_TIME),
+                    "satisfaction is fail-closed",
+                )
+
+    def test_b21_accepts_only_exact_reviewed_rephase_decision(self) -> None:
+        self.assertEqual(GATE.REPHASE_TARGETS["D0-B21"], ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"])
+        result = self.validB21RephaseResult()
+        self.validateB21Rephase(result)
+        payload = result["_semanticPayloads"]["phase-amendment"]
+        self.assertFalse(payload["currentEvidenceSatisfied"])
+        self.assertFalse(payload["d0WorkAuthorized"])
+        self.assertFalse(payload["d1ImplementationAuthorized"])
+        self.assertEqual(
+            payload["deferredRequirements"],
+            [
+                {"gateId": gate_id, "requirement": GATE.LATER_GATES_BY_ID[gate_id]["requirement"]}
+                for gate_id in GATE.REPHASE_TARGETS["D0-B21"]
+            ],
+        )
+
+        self.assertRejected(lambda: GATE.validate_b21("REPHASED", "EXACT_PHASE_AMENDMENT", [], SEMANTIC_VERIFICATION_TIME), "single OP-D0-07 contribution")
+        self.assertRejected(lambda: GATE.validate_b21("REPHASED", "EXACT_PHASE_AMENDMENT", [result, copy.deepcopy(result)], SEMANTIC_VERIFICATION_TIME), "single OP-D0-07 contribution")
+        self.assertRejected(lambda: GATE.validate_b21("REPHASED", "EVIDENCE_SATISFIED", [result], SEMANTIC_VERIFICATION_TIME), "only exact D6/D7 rephasing")
+        self.assertRejected(lambda: GATE.validate_b21("WAIVED_BY_POLICY", "POLICY_WAIVER", [result], SEMANTIC_VERIFICATION_TIME), "only exact D6/D7 rephasing")
+
+    def test_b21_rephase_rejects_wrong_identity_kind_class_claim_and_digest(self) -> None:
+        cases = [
+            ("wrong-handoff", lambda row: row.__setitem__("_handoffId", "OP-D0-06"), "exact OP-D0-07 handoff"),
+            ("wrong-finding", lambda row: row.__setitem__("findingId", "D0-B09"), "finding or policy identity mismatch"),
+            ("wrong-policy", lambda row: row.__setitem__("policyId", "D0-B21-v0"), "finding or policy identity mismatch"),
+            ("wrong-target-claim", lambda row: row["claims"].__setitem__("targetGates", ["PRE_D6_EDGE"]), "target-gate claim mismatch"),
+            ("extra-claim", lambda row: row["claims"].__setitem__("reason", "labels are not authority"), "object-key mismatch"),
+            ("extra-kind", lambda row: row["_evidenceByKind"].__setitem__("raw-wire-http2", [row["_evidenceByKind"]["phase-amendment"][0]]), "evidence-kind set must be exact"),
+            ("artifact-class", lambda row: row["_references"][row["_evidenceByKind"]["phase-amendment"][0]].__setitem__("_referenceClass", "artifact"), "decision reference"),
+            ("missing-class", lambda row: row["_references"][row["_evidenceByKind"]["phase-amendment"][0]].pop("_referenceClass"), "decision reference"),
+            ("stale-digest", lambda row: row["_references"][row["_evidenceByKind"]["phase-amendment"][0]].__setitem__("sha256", "0" * 64), "digest mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                candidate = self.validB21RephaseResult()
+                mutate(candidate)
+                self.assertB21RephaseRejected(candidate, expected)
+
+    def test_b21_rephase_parses_exact_v2_amendment_and_rejects_unsafe_payloads(self) -> None:
+        def replace_payload(candidate: dict[str, object], payload: object, schema: str = GATE.PHASE_AMENDMENT_SCHEMA) -> None:
+            ref_id = candidate["_evidenceByKind"]["phase-amendment"][0]
+            raw = GATE.canonical_json({"schema": schema, "findingId": "D0-B21", "kind": "phase-amendment", "payload": payload})
+            candidate["_references"][ref_id]["raw"] = raw
+            candidate["_references"][ref_id]["sha256"] = GATE.sha256(raw)
+
+        cases = []
+        candidate = self.validB21RephaseResult()
+        replace_payload(candidate, {"targetGates": GATE.REPHASE_TARGETS["D0-B21"]})
+        cases.append(("arbitrary-amendment", candidate, "object-key mismatch"))
+
+        candidate = self.validB21RephaseResult()
+        payload = valid_phase_amendment("D0-B21")
+        payload["findingId"] = "D0-B09"
+        replace_payload(candidate, payload)
+        cases.append(("wrong-finding", candidate, "finding binding mismatch"))
+
+        candidate = self.validB21RephaseResult()
+        payload = valid_phase_amendment("D0-B21")
+        payload["targetGates"] = ["PRE_D6_EDGE"]
+        replace_payload(candidate, payload)
+        cases.append(("wrong-target", candidate, "target-gate list mismatch"))
+
+        for field in ("currentEvidenceSatisfied", "d0WorkAuthorized", "d1ImplementationAuthorized"):
+            candidate = self.validB21RephaseResult()
+            payload = valid_phase_amendment("D0-B21")
+            payload[field] = True
+            replace_payload(candidate, payload)
+            cases.append((field, candidate, "must"))
+
+        candidate = self.validB21RephaseResult()
+        replace_payload(candidate, valid_phase_amendment("D0-B21"), schema="pkgre-d0-phase-amendment-v1")
+        cases.append(("legacy-envelope", candidate, "semantic envelope binding mismatch"))
+
+        candidate = self.validB21RephaseResult()
+        ref_id = candidate["_evidenceByKind"]["phase-amendment"][0]
+        candidate["_references"][ref_id]["raw"] = b"arbitrary phase-amendment bytes\n"
+        candidate["_references"][ref_id]["sha256"] = GATE.sha256(candidate["_references"][ref_id]["raw"])
+        cases.append(("arbitrary-bytes", candidate, "invalid strict JSON"))
+
+        for name, candidate, expected in cases:
+            with self.subTest(name=name):
+                self.assertB21RephaseRejected(candidate, expected)
+
+    def test_verify_closure_dispatches_and_enforces_b21_rephase(self) -> None:
+        def closure_inputs(payload_result: dict[str, object]) -> tuple[dict[str, object], dict[str, object], dict[str, object], dict[str, object]]:
+            evidence_reference = {"fixture": "b21-evidence"}
+            state = {"closureSet": {"id": "d0-closure-abcdef0123456789", "closureEvidenceCommit": "1" * 40, "evidenceTreeSha256": "2" * 64}}
+            findings = {
+                "D0-B21": {
+                    "closure": {
+                        "disposition": "REPHASED",
+                        "result": {
+                            "mode": "EXACT_PHASE_AMENDMENT",
+                            "contributions": [{"handoffId": "OP-D0-07", "evidence": evidence_reference}],
+                        },
+                    }
+                }
+            }
+            items = {"OP-D0-07": {"evidence": evidence_reference}}
+            return evidence_reference, state, findings, items
+
+        def verify(payload_result: dict[str, object]) -> None:
+            evidence_reference, state, findings, items = closure_inputs(payload_result)
+            ops = mock.Mock()
+            ops.text.return_value = "3" * 40
+            with (
+                mock.patch.object(GATE, "committed_evidence_tree", return_value=("2" * 64, [])),
+                mock.patch.object(GATE, "verify_procedural_authority", return_value={"report": {}, "assignments": {"OP-D0-07": {}}}),
+                mock.patch.object(GATE, "verify_handoff_evidence", return_value={"reference": evidence_reference, "results": {"D0-B21": payload_result}}),
+                mock.patch.object(GATE, "validate_gate_state_history", return_value={"evidenceChangedPaths": []}),
+            ):
+                GATE.verify_closure(ops, REPO_ROOT, b"{}\n", state, findings, items, Path("/tmp/procedural-authority.json"), GATE.PRODUCTION_CONFIG, SEMANTIC_VERIFICATION_TIME)
+
+        verify(self.validB21RephaseResult())
+        counterfeit = self.validB21RephaseResult()
+        ref_id = counterfeit["_evidenceByKind"]["phase-amendment"][0]
+        counterfeit["_references"][ref_id]["_referenceClass"] = "artifact"
+        self.assertRejected(lambda: verify(counterfeit), "decision reference")
 
     def test_b01_and_b02_accept_exact_semantic_proof(self) -> None:
         self.validateSemanticPayloads("D0-B01", "OP-D0-01", valid_b01_payloads())
@@ -5234,6 +5389,13 @@ os._exit(0)
         amendment = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": amendment_payload}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
         self.assertEqual(GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), {"phase-amendment": amendment_payload})
         GATE.validate_generic_policy("D0-B09", "REPHASED", "EXACT_PHASE_AMENDMENT", [amendment], SEMANTIC_VERIFICATION_TIME)
+        ref_id = amendment["_evidenceByKind"]["phase-amendment"][0]
+        artifact_amendment = copy.deepcopy(amendment)
+        artifact_amendment["_references"][ref_id]["_referenceClass"] = "artifact"
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", artifact_amendment), "decision reference")
+        unclassified_amendment = copy.deepcopy(amendment)
+        unclassified_amendment["_references"][ref_id].pop("_referenceClass")
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", unclassified_amendment), "decision reference")
         amendment["claims"]["targetGates"] = ["PRE_D6_EDGE"]
         self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), "target-gate claim mismatch")
 
@@ -5243,7 +5405,7 @@ os._exit(0)
         legacy_envelope = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": payload}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
         ref_id = legacy_envelope["_evidenceByKind"]["phase-amendment"][0]
         raw = GATE.canonical_json({"schema": "pkgre-d0-phase-amendment-v1", "findingId": "D0-B09", "kind": "phase-amendment", "payload": payload})
-        legacy_envelope["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
+        legacy_envelope["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw), "_referenceClass": "decision"}
         self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", legacy_envelope), "semantic envelope binding mismatch")
 
         legacy_payload = valid_phase_amendment("D0-B09")

@@ -177,8 +177,6 @@ B19_SHARED_ABSTRACT_CONSTRAINTS = [
     "no-public-instance-reuse",
     "no-catalog-selected-trust-or-credential-mechanism",
 ]
-B21_TARGETS = ["https://rust.pkg.re/config.json", "https://js.pkg.re/pkgre-js"]
-B21_PROTOCOLS = ["HTTP/1.1", "HTTP/2"]
 GITHUB_GOVERNANCE_BASELINE_PATH = "fixtures/d0-v1/basis-inventory/github-governance/actual-vs-d2.json"
 GITHUB_GOVERNANCE_BASELINE_SHA256 = "f4522a842f9e041773014b3d7d7d78556536988a196918dc2e5c72ffd8b9d9e8"
 GITHUB_CHECKOUT_ACTION = "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
@@ -974,7 +972,7 @@ SAT_EVIDENCE_BY_HANDOFF = {
 }
 SAT_EVIDENCE = {finding_id: set().union(*by_handoff.values()) for finding_id, by_handoff in SAT_EVIDENCE_BY_HANDOFF.items()}
 REPHASE_TARGETS = {
-    "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B13": ["D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
+    "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B13": ["D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"], "D0-B21": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"],
 }
 LATER_GATES_BY_ID = {row["id"]: row for row in LATER_GATES}
 B19_REENTRY_GATE = {
@@ -2565,10 +2563,15 @@ def validate_semantic_documents(finding_id: str, disposition: str, result: dict[
     require(claimed_evidence == evidence_by_kind, f"{finding_id}/{handoff_id}: claims must exactly bind every evidence kind and reference")
     require(claims["targetGates"] == expected_targets, f"{finding_id}/{handoff_id}: target-gate claim mismatch")
     documents: dict[str, dict[str, Any]] = {}
+    references = obj(result.get("_references"), f"{finding_id}/{handoff_id} references")
     for kind in sorted(expected_kinds):
         ref_id = evidence_by_kind[kind][0]
-        reference = result["_references"][ref_id]
-        document = obj(parse_json(reference["raw"], f"{finding_id}/{handoff_id} {kind} semantic document"), f"{finding_id}/{handoff_id} {kind} semantic document")
+        reference = obj(references.get(ref_id), f"{finding_id}/{handoff_id} {kind} reference")
+        if kind == "phase-amendment":
+            require(reference.get("_referenceClass") == "decision", f"{finding_id}/{handoff_id} {kind}: semantic document must be returned as a decision reference")
+        raw = reference.get("raw")
+        require(isinstance(raw, bytes), f"{finding_id}/{handoff_id} {kind}: semantic document must contain bytes")
+        document = obj(parse_json(raw, f"{finding_id}/{handoff_id} {kind} semantic document"), f"{finding_id}/{handoff_id} {kind} semantic document")
         exact_keys(document, {"schema", "findingId", "kind", "payload"}, f"{finding_id}/{handoff_id} {kind} semantic document")
         expected_schema = PHASE_AMENDMENT_SCHEMA if kind == "phase-amendment" else SEMANTIC_EVIDENCE_SCHEMA
         require(document["schema"] == expected_schema and document["findingId"] == finding_id and document["kind"] == kind, f"{finding_id}/{handoff_id} {kind}: semantic envelope binding mismatch")
@@ -5788,8 +5791,8 @@ def validate_generic_policy(finding_id: str, disposition: str, mode: str, result
         require(disposition == "REPHASED", "D0-B13: profile contracts are bounded D0 inputs,not runtime/trust digests;only exact rephasing is allowed")
         require(mode == B13_REPHASE_MODE, "D0-B13: wrong rephase mode")
     else:
-        require(finding_id in SAT_EVIDENCE, f"{finding_id}: no generic terminal policy")
         if disposition == "SATISFIED":
+            require(finding_id in SAT_EVIDENCE, f"{finding_id}: no generic terminal policy")
             require(mode == "EVIDENCE_SATISFIED", f"{finding_id}: wrong satisfaction mode")
         elif disposition == "REPHASED":
             require(finding_id in REPHASE_TARGETS and mode == "EXACT_PHASE_AMENDMENT", f"{finding_id}: rephasing is not allowed by policy")
@@ -6478,62 +6481,26 @@ def sri_from_drv_hash(value: str, label: str) -> str:
     return "sha256-" + base64.b64encode(bytes.fromhex(value)).decode("ascii")
 
 
-def parse_b21_wire_artifact(raw: bytes, expected_ref: str) -> tuple[str, str]:
-    proof = obj(parse_json(raw, f"D0-B21 wire proof {expected_ref}"), f"D0-B21 wire proof {expected_ref}")
-    exact_keys(proof, {"schema", "capturedAt", "captureTool", "target", "protocol", "rawResponseBase64", "rawResponseSha256", "finalStatus", "verificationResult"}, f"D0-B21 wire proof {expected_ref}")
-    require(proof["schema"] == "pkgre-d0-no-1xx-wire-proof-v1" and proof["target"] in B21_TARGETS and proof["protocol"] in B21_PROTOCOLS and proof["verificationResult"] == "PASS", "D0-B21: wire-proof identity/result mismatch")
-    parse_utc(proof["capturedAt"], "D0-B21 capturedAt")
-    nonempty(proof["captureTool"], "D0-B21 captureTool")
-    capture = decode_bounded_base64(proof["rawResponseBase64"], "D0-B21 rawResponseBase64")
-    require(HEX64_RE.fullmatch(nonempty(proof["rawResponseSha256"], "D0-B21 rawResponseSha256")) is not None and sha256(capture) == proof["rawResponseSha256"], "D0-B21: raw response digest mismatch")
-    if proof["protocol"] == "HTTP/1.1":
-        statuses = [int(value) for value in re.findall(rb"(?m)^HTTP/1\.[01] ([0-9]{3})(?:[ \r]|$)", capture)]
-    else:
-        statuses = [int(value) for value in re.findall(rb"(?m)^:status: ([0-9]{3})\r?$", capture)]
-    require(statuses and all(status < 100 or status >= 200 for status in statuses), "D0-B21: informational 1xx response observed or status evidence absent")
-    require(nonnegative_integer(proof["finalStatus"], "D0-B21 finalStatus") == statuses[-1] == 200, "D0-B21: final response status must be exact 200")
-    return proof["target"], proof["protocol"]
-
-
 def changed_paths(ops: GitOps, repo: Path, base: str, head: str) -> list[str]:
     raw = ops.run(repo, "diff", "--no-ext-diff", "--name-only", "-z", f"{base}..{head}").stdout
     return sorted(parse_nul_paths(raw, "D0 changed paths"))
 
 
-def validate_b21(disposition: str, mode: str, results: list[dict[str, Any]], history_changed_paths: list[str], config: GateConfig) -> None:
+def validate_b21(disposition: str, mode: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
     if disposition == "SATISFIED":
-        require(mode == "PRE_D1_NO_1XX_PROOF", "D0-B21: wrong pre-D1 proof mode")
-        actual_paths = history_changed_paths
-        require(actual_paths and all(is_d0_path(path) and path != GATE_STATE_PATH for path in actual_paths), "D0-B21: closure evidence contains forbidden D1-path history")
-        coverage: dict[tuple[str, str], str] = {}
-        for result in results:
-            claims = obj(result["claims"], "D0-B21 proof claims")
-            exact_keys(claims, {"targets", "protocols", "no1xxObserved", "verificationResult", "d1WorkExcluded", "wireProofRefIds", "noD1WorkRefId"}, "D0-B21 proof claims")
-            require(claims["targets"] == B21_TARGETS and claims["protocols"] == B21_PROTOCOLS and claims["no1xxObserved"] is True and claims["verificationResult"] == "PASS" and claims["d1WorkExcluded"] is True, "D0-B21: incomplete no-1xx claims")
-            wire_ids = sorted(evidence_ids(result, "raw-wire-http1") + evidence_ids(result, "raw-wire-http2"))
-            require(claims["wireProofRefIds"] == wire_ids and len(wire_ids) == len(B21_TARGETS) * len(B21_PROTOCOLS), "D0-B21: wire proof reference coverage mismatch")
-            for ref_id in wire_ids:
-                target, protocol = parse_b21_wire_artifact(result["_references"][ref_id]["raw"], ref_id)
-                expected_kind = "raw-wire-http1" if protocol == "HTTP/1.1" else "raw-wire-http2"
-                require(ref_id in evidence_ids(result, expected_kind), "D0-B21: protocol evidence kind mismatch")
-                require((target, protocol) not in coverage, "D0-B21: duplicate target/protocol proof")
-                coverage[(target, protocol)] = ref_id
-            no_d1_ids = evidence_ids(result, "no-d1-work-proof")
-            require(len(no_d1_ids) == 1 and claims["noD1WorkRefId"] == no_d1_ids[0], "D0-B21: no-D1-work reference mismatch")
-            proof = obj(parse_json(result["_references"][no_d1_ids[0]]["raw"], "D0-B21 no-D1-work proof"), "D0-B21 no-D1-work proof")
-            exact_keys(proof, {"schema", "closureSetId", "historicalCommit", "changedPaths", "verificationResult"}, "D0-B21 no-D1-work proof")
-            require(proof == {"schema": "pkgre-d0-no-d1-work-proof-v1", "closureSetId": result.get("_closureSetId"), "historicalCommit": config.historical_aggregate_commit, "changedPaths": actual_paths, "verificationResult": "PASS"}, "D0-B21: no-D1-work proof does not match independently computed diff")
-        require(set(coverage) == {(target, protocol) for target in B21_TARGETS for protocol in B21_PROTOCOLS}, "D0-B21: HTTP/1.1+HTTP/2 target coverage is incomplete")
-    elif disposition == "REPHASED":
-        require(mode == "EXACT_PHASE_AMENDMENT", "D0-B21: invalid rephase mode")
-        for result in results:
-            claims = obj(result["claims"], "D0-B21 rephase claims")
-            exact_keys(claims, {"targetGates", "reason", "amendmentRefIds"}, "D0-B21 rephase claims")
-            require(claims["targetGates"] == ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B21: wrong rephase targets")
-            nonempty(claims["reason"], "D0-B21 rephase reason")
-            require_claim_ref_ids(result, claims["amendmentRefIds"], "phase-amendment", "D0-B21 rephase")
-    else:
-        raise GateVerificationError("D0-B21: only bounded pre-D1 proof or exact D6/D7 rephase is allowed")
+        raise GateVerificationError("D0-B21: satisfaction is fail-closed until a reviewed bounded binary HTTP/2 capture contract is installed")
+    require(disposition == "REPHASED" and mode == "EXACT_PHASE_AMENDMENT", "D0-B21: only exact D6/D7 rephasing is allowed")
+    require(len(results) == 1, "D0-B21: exact single OP-D0-07 contribution required")
+    result = results[0]
+    require(result.get("_handoffId") == "OP-D0-07", "D0-B21: exact OP-D0-07 handoff required")
+    require(result.get("findingId") == "D0-B21" and result.get("policyId") == "D0-B21-v1", "D0-B21: finding or policy identity mismatch")
+    validate_generic_policy("D0-B21", disposition, mode, results, verification_time)
+    ref_id = evidence_ids(result, "phase-amendment")[0]
+    reference = obj(obj(result.get("_references"), "D0-B21 references").get(ref_id), "D0-B21 phase-amendment reference")
+    require(reference.get("_referenceClass") == "decision", "D0-B21: phase amendment must be returned as a decision reference")
+    raw = reference.get("raw")
+    require(isinstance(raw, bytes), "D0-B21: phase-amendment reference must contain bytes")
+    require(hex_digest(reference.get("sha256"), "D0-B21 phase-amendment reference SHA-256") == sha256(raw), "D0-B21: phase-amendment reference digest mismatch")
 
 
 def validate_https_source_url(value: Any, label: str) -> str:
@@ -6746,7 +6713,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         require(handoff_evidence, "closure set must contain at least one reviewed operator return")
     current_head = ops.text(repo, "rev-parse", "HEAD")
     require(HEX40_RE.fullmatch(current_head) is not None, "repository HEAD is not SHA-1")
-    history = validate_gate_state_history(ops, repo, config.historical_aggregate_commit, current_head, state_raw, evidence_commit, config)
+    validate_gate_state_history(ops, repo, config.historical_aggregate_commit, current_head, state_raw, evidence_commit, config)
     open_findings: list[str] = []
     waived_findings: list[str] = []
     terminal_dispositions = {"SATISFIED", "REPHASED", "ACKNOWLEDGED_CONTAINED", "DEFERRED_REVIEWED", "WAIVED_BY_POLICY"}
@@ -6790,7 +6757,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         elif finding_id == "D0-B19":
             validate_b19(disposition, mode, result_rows, verification_time, config)
         elif finding_id == "D0-B21":
-            validate_b21(disposition, mode, result_rows, history["evidenceChangedPaths"], config)
+            validate_b21(disposition, mode, result_rows, verification_time)
         elif finding_id == "D0-B22":
             validate_b22(disposition, mode, result_rows)
         else:
