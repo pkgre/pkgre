@@ -4097,6 +4097,8 @@ def validate_generic_payloads(finding_id: str, disposition: str, results: list[d
         validate_b02_payloads(results, verification_time)
     elif disposition == "SATISFIED" and finding_id == "D0-B03":
         validate_b03_payloads(results, verification_time)
+    elif disposition == "SATISFIED" and finding_id == "D0-B05":
+        raise GateVerificationError("D0-B05: authenticated deployment-ledger and independent live-observer authorities are not installed")
     else:
         raise GateVerificationError(f"{finding_id}: strict semantic payload validation is not installed")
 

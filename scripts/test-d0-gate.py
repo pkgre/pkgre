@@ -2729,6 +2729,33 @@ class GateCoreTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertSemanticPayloadsRejected("D0-B02", "OP-D0-02", payloads, expected)
 
+    def test_b05_rejects_self_consistent_operator_labels_without_authenticated_authorities(self) -> None:
+        generation = "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a"
+        ledger_statement = {
+            "infraCommit": "5f68539bd99c6952b6d73fe2596c27ad4a319f57",
+            "generation": generation,
+            "builtBy": "deployment-operator",
+            "deployedBy": "deployment-operator",
+        }
+        ledger_digest = GATE.sha256(GATE.canonical_json(ledger_statement))
+        payload = {
+            "deploymentLedger": {**ledger_statement, "statementSha256": ledger_digest},
+            "liveObservation": {
+                "generation": generation,
+                "deploymentLedgerSha256": ledger_digest,
+                "observedAt": SEMANTIC_RETURNED_AT,
+                "observer": "live-observer",
+            },
+            "operatorDecision": {"returnedBy": SEMANTIC_OPERATOR, "returnedAt": SEMANTIC_RETURNED_AT},
+            "result": "PROVEN",
+        }
+        result = self.semanticResult("D0-B05", "OP-D0-03", {"deployment-provenance": payload})
+        self.assertEqual(GATE.validate_semantic_documents("D0-B05", "SATISFIED", result), {"deployment-provenance": payload})
+        self.assertRejected(
+            lambda: GATE.validate_generic_policy("D0-B05", "SATISFIED", "EVIDENCE_SATISFIED", [result], SEMANTIC_VERIFICATION_TIME),
+            "authenticated deployment-ledger and independent live-observer authorities are not installed",
+        )
+
     def test_generic_semantic_envelopes_bind_exact_handoff_kinds_and_claims(self) -> None:
         limits = self.semanticResult("D0-B10", "OP-D0-06", {"approved-limits": {"test": True}})
         resources = self.semanticResult("D0-B10", "OP-D0-07", {"native-resource-proof": {"test": True}})
