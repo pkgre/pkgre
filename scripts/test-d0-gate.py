@@ -643,6 +643,16 @@ def valid_b13_approval(kind: str, projection: dict[str, object]) -> dict[str, ob
     }
 
 
+def refresh_b13_approval(kind: str, payload: dict[str, object]) -> None:
+    projection_digest = GATE.b13_projection_sha256(kind, payload["projection"])
+    payload["projectionSha256"] = projection_digest
+    payload["operatorDecision"]["projectionSha256"] = projection_digest
+
+
+def valid_b13_protocol_projection() -> dict[str, object]:
+    return copy.deepcopy(GATE.B13_PROTOCOL_ENUMS_PROJECTION)
+
+
 def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
     target_gates = GATE.REPHASE_TARGETS[finding_id]
     return {
@@ -2820,6 +2830,44 @@ class GateCoreTests(unittest.TestCase):
         for name, case_kind, payload, returned_at, expected in cases:
             with self.subTest(name=name):
                 self.assertRejected(lambda payload=payload, case_kind=case_kind, returned_at=returned_at: GATE.validate_b13_approval(result_for(case_kind, payload, returned_at), case_kind, SEMANTIC_VERIFICATION_TIME), expected)
+
+    def test_b13_protocol_projection_is_closed_and_exact(self) -> None:
+        def result_for(payload: dict[str, object]) -> dict[str, object]:
+            return {"_semanticPayloads": {"protocol-enums": payload}, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT}
+
+        projection = valid_b13_protocol_projection()
+        payload = valid_b13_approval("protocol-enums", projection)
+        self.assertEqual(GATE.validate_b13_protocol_enums(result_for(payload), SEMANTIC_VERIFICATION_TIME), (projection, payload["projectionSha256"]))
+
+        cases = [
+            ("extra-key", lambda value: value.__setitem__("unexpected", True), "object-key mismatch"),
+            ("config-schema-alias", lambda value: value.__setitem__("configSchema", "pkgre-instance-config-v1"), "frozen value mismatch"),
+            ("unresolved-value", lambda value: value.__setitem__("protocolContract", "UNRESOLVED_IMPLEMENTATION_VALUE"), "frozen value mismatch"),
+            ("state-contract-alias", lambda value: value["stateContracts"].__setitem__(0, "state-v1"), "frozen value mismatch"),
+            ("dynamic-legacy-marker", lambda value: value["redirectMarkerSchemas"]["dynamic"].__setitem__(0, "redirect-marker-v1"), "expected JSON type NoneType"),
+            ("legacy-null-marker", lambda value: value["redirectMarkerSchemas"]["legacyAdapter"].__setitem__(0, None), "expected JSON type str"),
+            ("git-sha256", lambda value: value["gitObjectFormats"].__setitem__(0, "sha256"), "frozen value mismatch"),
+            ("lan-ecosystem", lambda value: value["ecosystems"].append("lan"), "expected exactly 2 entries"),
+            ("private-mode", lambda value: value["modes"].__setitem__(0, "private"), "frozen value mismatch"),
+            ("credentialed-source", lambda value: value["sourceTransports"].append("https-credentialed"), "expected exactly 1 entries"),
+            ("http2", lambda value: value["applicationProtocols"].append("HTTP/2"), "expected exactly 1 entries"),
+            ("method-order", lambda value: value["methods"].reverse(), "frozen value mismatch"),
+            ("method-addition", lambda value: value["methods"].append("POST"), "expected exactly 2 entries"),
+            ("boolean-status", lambda value: value["responseStatuses"].__setitem__(0, True), "expected JSON type int"),
+            ("status-omission", lambda value: value["responseStatuses"].pop(), "expected exactly 11 entries"),
+            ("archive-content-type", lambda value: value["contentTypes"].__setitem__("archive", "application/gzip"), "frozen value mismatch"),
+            ("unsupported-allow", lambda value: value["unsupportedMethod"].__setitem__("allow", "HEAD, GET"), "frozen value mismatch"),
+            ("redirect-status", lambda value: value["compatibilityRedirect"].__setitem__("status", 302), "frozen value mismatch"),
+            ("redirect-body", lambda value: value["compatibilityRedirect"].__setitem__("bodyBytes", 1), "frozen value mismatch"),
+            ("reject-code-order", lambda value: value["boundedRejectCodes"].reverse(), "frozen value mismatch"),
+            ("reject-code-addition", lambda value: value["boundedRejectCodes"].append("UNKNOWN"), "expected exactly 14 entries"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                projection = valid_b13_protocol_projection()
+                mutate(projection)
+                payload = valid_b13_approval("protocol-enums", projection)
+                self.assertRejected(lambda payload=payload: GATE.validate_b13_protocol_enums(result_for(payload), SEMANTIC_VERIFICATION_TIME), expected)
 
     def test_b05_rejects_self_consistent_operator_labels_without_authenticated_authorities(self) -> None:
         generation = "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a"

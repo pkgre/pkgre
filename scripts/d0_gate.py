@@ -250,6 +250,28 @@ B13_APPROVAL_POLICY = {
     "hard-maxima": {"decision": "APPROVE_EXACT_HARD_MAXIMA", "scope": "D0_B13_HARD_MAXIMA", "projectionSchema": "pkgre-d0-hard-maxima-projection-v1"},
     "instance-digests": {"decision": "APPROVE_EXACT_SIX_INSTANCE_PROFILES", "scope": "D0_B13_INSTANCE_DIGESTS", "projectionSchema": "pkgre-d0-instance-profiles-projection-v1"},
 }
+B13_PROTOCOL_ENUMS_PROJECTION = {
+    "configSchema": "pkgre-dynamic-instance-config-v1",
+    "protocolContract": "pkgre-public-http-contract-v1",
+    "stateContracts": ["state-contract-v1"],
+    "redirectMarkerSchemas": {"dynamic": [None], "legacyAdapter": ["redirect-marker-v1"]},
+    "gitObjectFormats": ["sha1"],
+    "ecosystems": ["rust", "js"],
+    "modes": ["public"],
+    "audiences": ["public"],
+    "instanceRoles": ["compatibility", "body", "rollback"],
+    "deliveryModes": ["redirect", "body"],
+    "updatePolicies": ["watch-fixed-ref", "frozen-no-watcher"],
+    "sourceTransports": ["https-anonymous"],
+    "applicationProtocols": ["HTTP/1.1"],
+    "networkTransports": ["tcp"],
+    "methods": ["GET", "HEAD"],
+    "responseStatuses": [200, 304, 307, 400, 404, 405, 408, 413, 414, 431, 503],
+    "contentTypes": {"archive": "application/octet-stream", "json": "application/json; charset=utf-8", "rustSparse": "text/plain; charset=utf-8"},
+    "unsupportedMethod": {"status": 405, "allow": "GET, HEAD"},
+    "compatibilityRedirect": {"status": 307, "bodyBytes": 0},
+    "boundedRejectCodes": ["TIME_CLOCK_UNTRUSTED", "FETCH_TIMEOUT", "FETCH_BYTES", "GIT_OBJECT_LIMIT", "TREE_LIMIT", "FILE_LIMIT", "CATALOG_LIMIT", "ARCHIVE_LIMIT", "ROUTE_LIMIT", "SNAPSHOT_LIMIT", "MEMORY_ESTIMATE", "RELOAD_TIMEOUT", "STATE_SPACE", "RESOURCE_FAILURE"],
+}
 SAT_EVIDENCE_BY_HANDOFF = {
     "D0-B01": {"OP-D0-01": {"credential-containment", "credential-lifecycle"}},
     "D0-B02": {"OP-D0-02": {"ssh-attestation", "ssh-lifecycle"}},
@@ -1471,6 +1493,12 @@ def validate_b13_approval(result: dict[str, Any], kind: str, verification_time: 
     expected_digest = b13_projection_sha256(kind, projection)
     require(projection_digest == expected_digest, f"{label}: projection digest mismatch")
     return projection, projection_digest
+
+
+def validate_b13_protocol_enums(result: dict[str, Any], verification_time: datetime) -> tuple[dict[str, Any], str]:
+    projection, projection_digest = validate_b13_approval(result, "protocol-enums", verification_time)
+    exact_json_value(projection, B13_PROTOCOL_ENUMS_PROJECTION, "D0-B13 protocol-enums projection")
+    return copy.deepcopy(projection), projection_digest
 
 
 def require_no_later(when: datetime, upper_bound: datetime, label: str) -> None:
