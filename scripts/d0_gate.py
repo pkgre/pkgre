@@ -1139,20 +1139,45 @@ def validate_attestation_reference_shape(raw: dict[str, Any], label: str) -> Non
         validate_content_reference(raw[key], f"{label}.{key}")
 
 
-def verify_procedural_authority(ops: GitOps, repo: Path, state_raw: bytes, closure: dict[str, Any], items: dict[str, dict[str, Any]], authority_path: Path) -> dict[str, Any]:
+def validate_procedural_authority_raw(raw: bytes, *, state_raw: bytes, closure_state_commit: str, label: str) -> dict[str, Any]:
+    """Validate authority content against prevalidated canonical state bytes.
+
+    This validates only the authority-relevant closure/handoff projection and byte binding;
+    callers must establish the complete gate-state semantics separately. No filesystem assurance.
+    """
+    require(isinstance(raw, bytes) and 0 < len(raw) <= MAX_PROCEDURAL_AUTHORITY_BYTES, f"{label}: content must be 1..{MAX_PROCEDURAL_AUTHORITY_BYTES} bytes")
+    require(isinstance(state_raw, bytes) and 0 < len(state_raw) <= MAX_JSON_BYTES, f"{label}: gate-state content must be 1..{MAX_JSON_BYTES} bytes")
+    state = obj(parse_json(state_raw, f"{label} gate-state binding"), f"{label} gate-state binding")
+    exact_keys(state, {"schema", "aggregate", "basis", "closureSet", "findings", "handoff", "laterGates", "preD1Refetch", "mutationPolicy"}, f"{label} gate-state binding")
+    require(state["schema"] == SCHEMA, f"{label} gate-state binding: wrong schema")
+    closure = obj(state["closureSet"], f"{label} gate-state closure set")
+    exact_keys(closure, {"id", "closureEvidenceCommit", "evidenceTreeSha256"}, "closure set")
     closure_id = nonempty(closure["id"], "procedural authority closure ID")
+    evidence_commit = hex_digest(closure["closureEvidenceCommit"], "procedural authority closure evidence commit", "sha1")
+    evidence_tree_sha256 = hex_digest(closure["evidenceTreeSha256"], "procedural authority evidence-tree digest")
+    require(CLOSURE_SET_RE.fullmatch(closure_id) is not None, "procedural authority: invalid closure ID")
+    handoff = obj(state["handoff"], f"{label} gate-state handoff")
+    exact_keys(handoff, {"id", "phase", "items"}, f"{label} gate-state handoff")
+    require(handoff["id"] == "OPERATOR-HANDOFF-D0" and handoff["phase"] == "D0", f"{label} gate-state handoff: wrong identity")
+    item_rows = arr(handoff["items"], f"{label} gate-state handoff items")
+    require([obj(row, f"{label} gate-state handoff items[{index}]").get("id") for index, row in enumerate(item_rows)] == list(HANDOFFS), f"{label} gate-state handoff items must use canonical order")
+    items = indexed(item_rows, "id", f"{label} gate-state handoff items")
+    for handoff_id, item in items.items():
+        exact_keys(item, {"id", "aggregateItem", "title", "findingRefs", "evidence"}, f"{label} gate-state handoff {handoff_id}")
+        number, title, finding_refs = HANDOFFS[handoff_id]
+        require(item["aggregateItem"] == number and item["title"] == title and item["findingRefs"] == finding_refs, f"{label} gate-state handoff {handoff_id}: immutable mapping mismatch")
+        if item["evidence"] is not None:
+            validate_attestation_reference_shape(obj(item["evidence"], f"{label} gate-state handoff {handoff_id} evidence"), f"{label} gate-state handoff {handoff_id} evidence")
+    closure_state_commit = hex_digest(closure_state_commit, "procedural authority closure-state commit", "sha1")
     expected_name = f"d0-procedural-authority-{closure_id}.json"
-    require(authority_path.name == expected_name, f"procedural authority: file name must be {expected_name!r}")
-    raw = load_external_gate_file(ops, repo, authority_path, "procedural authority", MAX_PROCEDURAL_AUTHORITY_BYTES)
-    document = obj(parse_json(raw, str(authority_path)), "procedural authority")
+    document = obj(parse_json(raw, label), "procedural authority")
     exact_keys(document, {"schema", "closureSet", "assurance", "handoffs"}, "procedural authority")
     require(document["schema"] == PROCEDURAL_AUTHORITY_SCHEMA, "procedural authority: wrong schema")
     require(document["assurance"] == PROCEDURAL_AUTHORITY_ASSURANCE, "procedural authority: assurance limitations must exactly disclaim identity authentication and artifact authorship")
-    closure_state_commit = ops.text(repo, "rev-parse", "HEAD")
     expected_closure = {
         "id": closure_id,
-        "closureEvidenceCommit": closure["closureEvidenceCommit"],
-        "evidenceTreeSha256": closure["evidenceTreeSha256"],
+        "closureEvidenceCommit": evidence_commit,
+        "evidenceTreeSha256": evidence_tree_sha256,
         "closureStateCommit": closure_state_commit,
         "gateStateSha256": sha256(state_raw),
     }
@@ -1175,28 +1200,50 @@ def verify_procedural_authority(ops: GitOps, repo: Path, state_raw: bytes, closu
         verified_assignments: dict[str, dict[str, str]] = {}
         handoff_principals: set[str] = set()
         for artifact_kind in ("operatorReturn", "agentVerification", "proceduralReview"):
-            label = f"procedural authority {handoff_id}.{artifact_kind}"
-            assignment = obj(assignments[artifact_kind], label)
-            exact_keys(assignment, {"artifact", "principalLabel", "role"}, label)
-            require(assignment["role"] == PROCEDURAL_ROLES[artifact_kind], f"{label}: wrong procedural role")
-            principal = procedural_principal(assignment["principalLabel"], f"{label}.principalLabel")
+            assignment_label = f"procedural authority {handoff_id}.{artifact_kind}"
+            assignment = obj(assignments[artifact_kind], assignment_label)
+            exact_keys(assignment, {"artifact", "principalLabel", "role"}, assignment_label)
+            require(assignment["role"] == PROCEDURAL_ROLES[artifact_kind], f"{assignment_label}: wrong procedural role")
+            principal = procedural_principal(assignment["principalLabel"], f"{assignment_label}.principalLabel")
             require(principal not in handoff_principals, f"procedural authority {handoff_id}: procedural roles must have pairwise-distinct principal labels")
             handoff_principals.add(principal)
             previous_role = principal_roles.setdefault(principal, assignment["role"])
             require(previous_role == assignment["role"], f"procedural authority: principal label {principal!r} is assigned conflicting roles across handoffs")
-            artifact = validate_content_reference(assignment["artifact"], f"{label}.artifact", f"evidence/d0-closure/{closure_id}/{handoff_id}/")
+            artifact = validate_content_reference(assignment["artifact"], f"{assignment_label}.artifact", f"evidence/d0-closure/{closure_id}/{handoff_id}/")
             expected_artifact = validate_content_reference(evidence_reference[artifact_kind], f"{handoff_id} evidence reference.{artifact_kind}")
-            require(artifact == expected_artifact, f"{label}: artifact path or digest differs from closure state")
+            require(artifact == expected_artifact, f"{assignment_label}: artifact path or digest differs from closure state")
             verified_assignments[artifact_kind] = {"principalLabel": principal, "role": assignment["role"]}
         assignments_by_handoff[handoff_id] = verified_assignments
+    return {"assignments": assignments_by_handoff, "contentBindingVerified": True, "expectedExternalFile": expected_name, "sha256": sha256(raw)}
+
+
+def verify_procedural_authority(ops: GitOps, repo: Path, state_raw: bytes, closure: dict[str, Any], items: dict[str, dict[str, Any]], authority_path: Path) -> dict[str, Any]:
+    closure_id = nonempty(closure.get("id"), "procedural authority closure ID")
+    expected_name = f"d0-procedural-authority-{closure_id}.json"
+    require(authority_path.name == expected_name, f"procedural authority: file name must be {expected_name!r}")
+    raw = load_external_gate_file(ops, repo, authority_path, "procedural authority", MAX_PROCEDURAL_AUTHORITY_BYTES)
+    validated = validate_procedural_authority_raw(
+        raw,
+        state_raw=state_raw,
+        closure_state_commit=ops.text(repo, "rev-parse", "HEAD"),
+        label=str(authority_path),
+    )
+    state = obj(parse_json(state_raw, "procedural authority gate-state consistency"), "procedural authority gate-state consistency")
+    state_closure = obj(state.get("closureSet"), "procedural authority gate-state closure consistency")
+    state_handoff = obj(state.get("handoff"), "procedural authority gate-state handoff consistency")
+    state_items = indexed(arr(state_handoff.get("items"), "procedural authority gate-state handoff consistency items"), "id", "procedural authority gate-state handoff consistency items")
+    require(state_closure == closure, "procedural authority: caller closure view differs from canonical gate state")
+    require(state_items == items, "procedural authority: caller handoff view differs from canonical gate state")
+    require(validated["expectedExternalFile"] == expected_name, "procedural authority: derived external file name mismatch")
+    require(set(validated["assignments"]) == {handoff_id for handoff_id, item in items.items() if item["evidence"] is not None}, "procedural authority: completed handoff assignment mismatch")
     return {
-        "assignments": assignments_by_handoff,
+        "assignments": validated["assignments"],
         "report": {
             **PROCEDURAL_AUTHORITY_ASSURANCE,
             "externalFile": expected_name,
             "required": True,
-            "sha256": sha256(raw),
-            "contentBindingVerified": True,
+            "sha256": validated["sha256"],
+            "contentBindingVerified": validated["contentBindingVerified"],
         },
     }
 

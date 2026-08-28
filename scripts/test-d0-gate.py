@@ -786,21 +786,37 @@ class GateCoreTests(unittest.TestCase):
     def verifyProceduralAuthority(self, fixture: RepositoryFixture, data: dict[str, object], *, path: Path | None = None, items: dict[str, dict[str, object]] | None = None) -> dict[str, object]:
         return GATE.verify_procedural_authority(fixture.ops, fixture.repository, data["stateRaw"], data["closure"], data["items"] if items is None else items, data["authorityPath"] if path is None else path)
 
+    def validateProceduralAuthorityContent(self, data: dict[str, object], *, authority_raw: bytes | None = None, state_raw: bytes | None = None, closure_state_commit: str | None = None) -> dict[str, object]:
+        return GATE.validate_procedural_authority_raw(
+            GATE.canonical_json(data["authority"]) if authority_raw is None else authority_raw,
+            state_raw=data["stateRaw"] if state_raw is None else state_raw,
+            closure_state_commit=data["authority"]["closureSet"]["closureStateCommit"] if closure_state_commit is None else closure_state_commit,
+            label="fixture procedural authority",
+        )
+
     def verifyProceduralHandoff(self, fixture: RepositoryFixture, data: dict[str, object], authority: dict[str, object]) -> dict[str, object]:
         return GATE.verify_handoff_evidence(fixture.ops, fixture.repository, data["evidenceCommit"], data["closure"]["id"], "a" * 64, "OP-D0-01", data["items"]["OP-D0-01"]["evidence"], authority["assignments"]["OP-D0-01"], data["verificationTime"])
 
     def secondProceduralHandoff(self, data: dict[str, object]) -> tuple[dict[str, dict[str, object]], dict[str, object]]:
-        items = copy.deepcopy(data["items"])
+        state = copy.deepcopy(data["state"])
         authority = copy.deepcopy(data["authority"])
         reference = {
             kind: {"path": value["path"].replace("/OP-D0-01/", "/OP-D0-02/"), "sha256": value["sha256"]}
             for kind, value in data["reference"].items()
         }
-        items["OP-D0-02"]["evidence"] = reference
+        for item in state["handoff"]["items"]:
+            if item["id"] == "OP-D0-02":
+                item["evidence"] = copy.deepcopy(reference)
+        state_raw = GATE.canonical_json(state)
+        items = GATE.indexed(state["handoff"]["items"], "id", "fixture handoffs")
         assignments = copy.deepcopy(authority["handoffs"][0]["assignments"])
         for kind in assignments:
             assignments[kind]["artifact"] = copy.deepcopy(reference[kind])
         authority["handoffs"].append({"handoffId": "OP-D0-02", "assignments": assignments})
+        authority["closureSet"]["gateStateSha256"] = GATE.sha256(state_raw)
+        data["state"] = state
+        data["stateRaw"] = state_raw
+        data["items"] = items
         return items, authority
 
     def fixtureGateConfig(self, fixture: RepositoryFixture) -> object:
@@ -1059,6 +1075,165 @@ class GateCoreTests(unittest.TestCase):
             outside.chmod(0o600)
             with mock.patch.object(fixture.ops, "blob", return_value=b"state\n"):
                 self.assertRejected(lambda: GATE.verify_pre_d1_receipt(fixture.ops, fixture.repository, b"state\n", fixture.base, outside, GATE.GateConfig(repositories=()), GATE.parse_utc("2026-08-26T00:00:00Z", "fixture time")), "file must be directly under")
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_raw_accepts_exact_content_binding_without_publication_claim(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            head = fixture.ops.text(fixture.repository, "rev-parse", "HEAD")
+            self.assertEqual(head, data["authority"]["closureSet"]["closureStateCommit"])
+            verified = self.validateProceduralAuthorityContent(data, closure_state_commit=head)
+            self.assertEqual(verified, {
+                "assignments": {
+                    "OP-D0-01": {
+                        "operatorReturn": {"principalLabel": "operator.primary", "role": "PROCEDURAL_OPERATOR_RETURNER"},
+                        "agentVerification": {"principalLabel": "agent.verifier", "role": "PROCEDURAL_AGENT_VERIFIER"},
+                        "proceduralReview": {"principalLabel": "reviewer.external", "role": "PROCEDURAL_REVIEWER"},
+                    },
+                },
+                "contentBindingVerified": True,
+                "expectedExternalFile": "d0-procedural-authority-d0-closure-0123456789abcdef.json",
+                "sha256": GATE.sha256(GATE.canonical_json(data["authority"])),
+            })
+            self.assertNotIn("report", verified)
+            self.assertNotIn("required", verified)
+            self.assertNotIn("externalFile", verified)
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_raw_rejects_empty_or_oversized_inputs(self) -> None:
+        temporary, _fixture, data = self.proceduralClosureFixture()
+        try:
+            authority_raw = GATE.canonical_json(data["authority"])
+            for name, raw in (("empty", b""), ("oversized", b"x" * (GATE.MAX_PROCEDURAL_AUTHORITY_BYTES + 1))):
+                with self.subTest(input="authority", case=name):
+                    self.assertRejected(lambda raw=raw: self.validateProceduralAuthorityContent(data, authority_raw=raw), "content must be")
+            for name, raw in (("empty", b""), ("oversized", b"x" * (GATE.MAX_JSON_BYTES + 1))):
+                with self.subTest(input="state", case=name):
+                    self.assertRejected(lambda raw=raw: self.validateProceduralAuthorityContent(data, authority_raw=authority_raw, state_raw=raw), "gate-state content must be")
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_raw_rejects_malformed_noncanonical_or_duplicate_state_json(self) -> None:
+        temporary, _fixture, data = self.proceduralClosureFixture()
+        try:
+            cases = (
+                ("malformed", b"{", "invalid strict JSON"),
+                ("noncanonical", json.dumps(data["state"], indent=2).encode() + b"\n", "JSON is not canonical"),
+                ("duplicate", b'{"schema":"duplicate",' + data["stateRaw"][1:], "duplicate JSON object key"),
+            )
+            for name, state_raw, expected in cases:
+                with self.subTest(case=name):
+                    self.assertRejected(lambda state_raw=state_raw: self.validateProceduralAuthorityContent(data, state_raw=state_raw), expected)
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_raw_requires_exact_gate_state_envelope(self) -> None:
+        mutations = (
+            ("wrong-schema", lambda state: state.__setitem__("schema", "pkgre-d0-gate-state-v0"), "wrong schema"),
+            ("missing-key", lambda state: state.pop("basis"), "object-key mismatch"),
+            ("extra-key", lambda state: state.__setitem__("publicationVerified", True), "object-key mismatch"),
+        )
+        for name, mutate, expected in mutations:
+            with self.subTest(case=name):
+                temporary, _fixture, data = self.proceduralClosureFixture()
+                try:
+                    state = copy.deepcopy(data["state"])
+                    mutate(state)
+                    self.assertRejected(lambda: self.validateProceduralAuthorityContent(data, state_raw=GATE.canonical_json(state)), expected)
+                finally:
+                    temporary.cleanup()
+
+    def test_procedural_authority_raw_rejects_invalid_closure_state_bindings(self) -> None:
+        state_cases = (
+            ("null-closure", lambda state: state.__setitem__("closureSet", None), "expected object"),
+            ("array-closure", lambda state: state.__setitem__("closureSet", []), "expected object"),
+            ("extra-closure-field", lambda state: state["closureSet"].__setitem__("published", True), "object-key mismatch"),
+            ("empty-closure-id", lambda state: state["closureSet"].__setitem__("id", ""), "expected nonempty trimmed string"),
+            ("malformed-closure-id", lambda state: state["closureSet"].__setitem__("id", "d0-closure-NOTHEX000"), "invalid closure ID"),
+            ("malformed-evidence-commit", lambda state: state["closureSet"].__setitem__("closureEvidenceCommit", "0" * 39), "invalid SHA1 digest"),
+            ("malformed-tree-digest", lambda state: state["closureSet"].__setitem__("evidenceTreeSha256", "0" * 63), "invalid SHA256 digest"),
+        )
+        for name, mutate, expected in state_cases:
+            with self.subTest(case=name):
+                temporary, _fixture, data = self.proceduralClosureFixture()
+                try:
+                    state = copy.deepcopy(data["state"])
+                    mutate(state)
+                    self.assertRejected(lambda: self.validateProceduralAuthorityContent(data, state_raw=GATE.canonical_json(state)), expected)
+                finally:
+                    temporary.cleanup()
+        temporary, _fixture, data = self.proceduralClosureFixture()
+        try:
+            self.assertRejected(lambda: self.validateProceduralAuthorityContent(data, closure_state_commit="0" * 39), "invalid SHA1 digest")
+            self.assertRejected(lambda: self.validateProceduralAuthorityContent(data, closure_state_commit="0" * 40), "closure ID, commit, state, or tree binding mismatch")
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_raw_requires_exact_state_handoff_coverage_and_shape(self) -> None:
+        def mutate_items(state: dict[str, object], operation: str) -> None:
+            items = state["handoff"]["items"]
+            if operation == "missing":
+                items.pop()
+            elif operation == "reordered":
+                items.reverse()
+            elif operation == "duplicate":
+                items.append(copy.deepcopy(items[0]))
+            elif operation == "wrong-row-type":
+                items[0] = "OP-D0-01"
+            else:
+                state["handoff"]["items"] = {}
+
+        mutations = (
+            ("null-handoff", lambda state: state.__setitem__("handoff", None), "expected object"),
+            ("wrong-handoff-id", lambda state: state["handoff"].__setitem__("id", "OTHER"), "wrong identity"),
+            ("missing-item", lambda state: mutate_items(state, "missing"), "canonical order"),
+            ("reordered-items", lambda state: mutate_items(state, "reordered"), "canonical order"),
+            ("duplicate-item", lambda state: mutate_items(state, "duplicate"), "canonical order"),
+            ("wrong-row-type", lambda state: mutate_items(state, "wrong-row-type"), "expected object"),
+            ("wrong-items-type", lambda state: mutate_items(state, "wrong-items-type"), "expected array"),
+        )
+        for name, mutate, expected in mutations:
+            with self.subTest(case=name):
+                temporary, _fixture, data = self.proceduralClosureFixture()
+                try:
+                    state = copy.deepcopy(data["state"])
+                    mutate(state)
+                    self.assertRejected(lambda: self.validateProceduralAuthorityContent(data, state_raw=GATE.canonical_json(state)), expected)
+                finally:
+                    temporary.cleanup()
+
+    def test_procedural_authority_raw_rejects_state_artifact_substitution(self) -> None:
+        temporary, _fixture, data = self.proceduralClosureFixture()
+        try:
+            state = copy.deepcopy(data["state"])
+            state["handoff"]["items"][0]["evidence"]["operatorReturn"]["sha256"] = "0" * 64
+            state_raw = GATE.canonical_json(state)
+            authority = copy.deepcopy(data["authority"])
+            authority["closureSet"]["gateStateSha256"] = GATE.sha256(state_raw)
+            self.assertRejected(
+                lambda: self.validateProceduralAuthorityContent(data, authority_raw=GATE.canonical_json(authority), state_raw=state_raw),
+                "artifact path or digest differs from closure state",
+            )
+        finally:
+            temporary.cleanup()
+
+    def test_procedural_authority_wrapper_rejects_stale_caller_views(self) -> None:
+        temporary, fixture, data = self.proceduralClosureFixture()
+        try:
+            closure = copy.deepcopy(data["closure"])
+            closure["evidenceTreeSha256"] = "0" * 64
+            self.assertRejected(
+                lambda: GATE.verify_procedural_authority(fixture.ops, fixture.repository, data["stateRaw"], closure, data["items"], data["authorityPath"]),
+                "caller closure view differs from canonical gate state",
+            )
+            items = copy.deepcopy(data["items"])
+            items["OP-D0-02"]["title"] = "substituted title"
+            self.assertRejected(
+                lambda: GATE.verify_procedural_authority(fixture.ops, fixture.repository, data["stateRaw"], data["closure"], items, data["authorityPath"]),
+                "caller handoff view differs from canonical gate state",
+            )
         finally:
             temporary.cleanup()
 
