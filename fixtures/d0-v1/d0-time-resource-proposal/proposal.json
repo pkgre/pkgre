@@ -14,13 +14,14 @@
     "processCandidatePeakEstimateBytes": {
       "admissionRule": "reject candidate before construction unless estimate <= MemoryMaxBytes-67108864;MemoryHigh is soft pressure threshold,not admission ceiling",
       "formula": "3*singleSnapshotResidentEstimateBytes + runtimeReserveBytes + loaderWorkerReserveBytes + maxConcurrentRequests*requestBufferBytes + maxConcurrentArchiveStreams*streamBufferBytes",
+      "jsLoaderWorkerResidentEnvelope": "1*(251658240B initial heap limit+16777216B near-limit allowance+33554432B code-range resident budget+4194304B stack+134217728B nonheap reserve)=440401920B",
+      "jsStartupRule": "Node 24.19.0;parent process.execArgv and Worker execArgv empty;NODE_OPTIONS absent before Node exec;no operator/catalog Node options;exact resourceLimits constructor;startup readbacks must match before any catalog bytes or terminate Worker and reject candidate",
+      "jsTransferRule": "one Worker;fresh exclusively owned ArrayBuffer must be transferred,not copied;SharedArrayBuffer forbidden;sender buffer and all aliases must detach",
       "threeSnapshots": [
         "live",
         "candidate",
         "old-in-flight"
-      ],
-      "jsLoaderWorkerResidentEnvelope": "1*(192MiB old+32MiB young+16MiB near-limit allowance+4MiB stack+128MiB nonheap reserve)=390070272B;32MiB code range is virtual-address reservation and excluded from resident arithmetic",
-      "jsTransferRule": "one Worker;exclusive owned ArrayBuffer must be listed in transferList;SharedArrayBuffer and structured-clone paths forbidden"
+      ]
     },
     "singleSnapshotResidentEstimateBytes": {
       "archivePayloadBytesIncluded": false,
@@ -41,7 +42,7 @@
     {
       "effect": "values remain proposal;D7 activation blocked",
       "id": "DYNAMIC-MEASUREMENTS",
-      "missing": "actual live+candidate+old-stream RSS,FDs,100-cycle reload latency,shutdown/drain and lease-expiry evidence for native servers;JS proof must measure one Worker including heap,near-limit,stack,native/external memory and owned-ArrayBuffer transfer without clone/SharedArrayBuffer",
+      "missing": "actual live+candidate+old-stream RSS,FDs,100-cycle reload latency,shutdown/drain and lease-expiry evidence for native servers;JS proof must verify the exact Node startup flag/readback contract and measure one Worker including heap,near-limit,code-range,stack,native/external memory plus exclusive-ArrayBuffer transfer without copy/SharedArrayBuffer",
       "severity": "hard"
     },
     {
@@ -90,7 +91,7 @@
       ],
       "calculatedAtMaxima": {
         "admissionCeilingBytes": 1006632960,
-        "processCandidatePeakEstimateBytes": 861929472,
+        "processCandidatePeakEstimateBytes": 912261120,
         "requestAndStreamBuffersBytes": 12582912,
         "singleSnapshotResidentEstimateBytes": 119537664
       },
@@ -143,21 +144,43 @@
         "streamBufferBytes": 65536
       },
       "nodeWorker": {
-        "codeRangeIncludedInResidentEnvelope": false,
+        "alternateWorkerConstructorAllowed": false,
+        "codeRangeResidentBudgetBytes": 33554432,
+        "forbiddenParentV8OptionsNormalized": [
+          "--max-heap-size",
+          "--max-old-space-size",
+          "--max-old-space-size-percentage",
+          "--max-semi-space-size"
+        ],
         "maxTransferableSnapshotBytes": 33554432,
-        "nearHeapLimitAllowanceMiB": 16,
-        "resourceLimitsCodeRangeSizeMiB": 32,
-        "resourceLimitsMaxOldGenerationSizeMiB": 192,
-        "resourceLimitsMaxYoungGenerationSizeMiB": 32,
-        "resourceLimitsStackSizeMiB": 4,
+        "nearHeapLimitAllowanceBytes": 16777216,
+        "nodeOptionNameNormalization": "token-before-equals;underscore-to-dash;exact-name-match",
+        "nodeOptionsEnvironment": "absent-before-node-exec",
+        "nodeVersion": "24.19.0",
+        "operatorOrCatalogSuppliedNodeOptionsAllowed": false,
+        "parentExecArgv": [],
+        "resourceLimits": {
+          "codeRangeSizeMb": 32,
+          "maxOldGenerationSizeMb": 192,
+          "maxYoungGenerationSizeMb": 32,
+          "stackSizeMb": 4
+        },
         "sharedArrayBufferAllowed": false,
-        "snapshotArrayBufferOwnership": "owned",
-        "snapshotTransferListRequired": true,
-        "structuredCloneAllowed": false,
+        "snapshotArrayBufferCloneAllowed": false,
+        "snapshotArrayBufferOwnership": "exclusive",
+        "snapshotArrayBufferTransferRequired": true,
+        "startupHandshake": {
+          "beforeCatalogBytesProcessed": true,
+          "failureAction": "terminate-worker-and-reject-candidate",
+          "requestedResourceLimitsReadbackRequired": true,
+          "requiredInitialHeapSizeLimitBytes": 251658240,
+          "workerHeapStatisticsReadbackRequired": true
+        },
         "workerCount": 1,
-        "workerHeapResidentBudgetBytes": 251658240,
+        "workerExecArgv": [],
+        "workerHeapMaximumBytes": 268435456,
         "workerNonHeapResidentReserveBytes": 134217728,
-        "workerResidentEnvelopeBytes": 390070272
+        "workerResidentEnvelopeBytes": 440401920
       },
       "systemd": {
         "LimitNOFILE": 2048,
@@ -524,11 +547,11 @@
     "gitStorage": "d0-git-storage-inventory/repositories.json + filesystem.json",
     "httpEdge": "evidence/d0-public-http-edge-2026-08-26/REPORT.md",
     "js": "d0-js-child-report.md",
+    "nodeWorkerMemory": "Node v24.19.0 exact worker/resourceLimits and transfer APIs:https://nodejs.org/download/release/v24.19.0/docs/api/worker_threads.html#new-workerfilename-options and #portpostmessagevalue-transferlist;NODE_OPTIONS precedence:https://nodejs.org/download/release/v24.19.0/docs/api/cli.html#node_optionsoptions;allowed V8 flags:https://github.com/nodejs/node/blob/v24.19.0/src/node_options.cc#L1207-L1224;constraint override order:https://github.com/nodejs/node/blob/v24.19.0/deps/v8/src/heap/heap.cc#L4946-L5017;Worker limits and 16MiB near-limit allowance:https://github.com/nodejs/node/blob/v24.19.0/src/node_worker.cc#L133-L159 and #L275-L295;local regression:node-worker-contract-probe.cjs",
     "plan": "plans/pkgre-dynamic-registry-rollout.md \u00a7\u00a75,11,24",
     "rainDesign": "evidence/d0-rain-identity-design/{README.md,design.json}",
     "renderer": "d0-pkgre-066293df/REPORT.md",
-    "routes": "d0-route-inventory/validation.json + routes.json",
-    "nodeWorkerMemory": "Node v24 worker_threads resourceLimits+transfer semantics:https://nodejs.org/docs/latest-v24.x/api/worker_threads.html#new-workerfilename-options and #portpostmessagevalue-transferlist;16MiB near-limit allowance:https://github.com/nodejs/node/blob/v24.19.0/src/node_worker.cc"
+    "routes": "d0-route-inventory/validation.json + routes.json"
   },
   "status": "proposal-not-approved-not-deployment-authority",
   "units": {

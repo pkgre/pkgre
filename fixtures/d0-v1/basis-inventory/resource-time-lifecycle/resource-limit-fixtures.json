@@ -169,26 +169,48 @@
         },
         "calculatedAtMaxima": {
           "admissionCeilingBytes": 1006632960,
-          "processCandidatePeakEstimateBytes": 861929472,
+          "processCandidatePeakEstimateBytes": 912261120,
           "requestAndStreamBuffersBytes": 12582912,
           "singleSnapshotResidentEstimateBytes": 119537664
         },
         "nodeWorker": {
-          "codeRangeIncludedInResidentEnvelope": false,
+          "alternateWorkerConstructorAllowed": false,
+          "codeRangeResidentBudgetBytes": 33554432,
+          "forbiddenParentV8OptionsNormalized": [
+            "--max-heap-size",
+            "--max-old-space-size",
+            "--max-old-space-size-percentage",
+            "--max-semi-space-size"
+          ],
           "maxTransferableSnapshotBytes": 33554432,
-          "nearHeapLimitAllowanceMiB": 16,
-          "resourceLimitsCodeRangeSizeMiB": 32,
-          "resourceLimitsMaxOldGenerationSizeMiB": 192,
-          "resourceLimitsMaxYoungGenerationSizeMiB": 32,
-          "resourceLimitsStackSizeMiB": 4,
+          "nearHeapLimitAllowanceBytes": 16777216,
+          "nodeOptionNameNormalization": "token-before-equals;underscore-to-dash;exact-name-match",
+          "nodeOptionsEnvironment": "absent-before-node-exec",
+          "nodeVersion": "24.19.0",
+          "operatorOrCatalogSuppliedNodeOptionsAllowed": false,
+          "parentExecArgv": [],
+          "resourceLimits": {
+            "codeRangeSizeMb": 32,
+            "maxOldGenerationSizeMb": 192,
+            "maxYoungGenerationSizeMb": 32,
+            "stackSizeMb": 4
+          },
           "sharedArrayBufferAllowed": false,
-          "snapshotArrayBufferOwnership": "owned",
-          "snapshotTransferListRequired": true,
-          "structuredCloneAllowed": false,
+          "snapshotArrayBufferCloneAllowed": false,
+          "snapshotArrayBufferOwnership": "exclusive",
+          "snapshotArrayBufferTransferRequired": true,
+          "startupHandshake": {
+            "beforeCatalogBytesProcessed": true,
+            "failureAction": "terminate-worker-and-reject-candidate",
+            "requestedResourceLimitsReadbackRequired": true,
+            "requiredInitialHeapSizeLimitBytes": 251658240,
+            "workerHeapStatisticsReadbackRequired": true
+          },
           "workerCount": 1,
-          "workerHeapResidentBudgetBytes": 251658240,
+          "workerExecArgv": [],
+          "workerHeapMaximumBytes": 268435456,
           "workerNonHeapResidentReserveBytes": 134217728,
-          "workerResidentEnvelopeBytes": 390070272
+          "workerResidentEnvelopeBytes": 440401920
         }
       }
     },

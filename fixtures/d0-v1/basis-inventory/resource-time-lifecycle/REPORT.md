@@ -7,7 +7,7 @@ Classification:`OBSERVED`=captured bounded measurement/inventory;`PROPOSED`=exac
 ## Evidence basis
 
 - Plan:`plans/pkgre-dynamic-registry-rollout.md` §§5,7,11,15,26.
-- Reused proposal:`d0-time-resource-proposal/{README.md,proposal.json,validate.py,validation.json}`;no expensive rerun.
+- Reused proposal:`d0-time-resource-proposal/{README.md,proposal.json,node-worker-contract-probe.cjs,validate.py,validation.json}`;no expensive rerun.
 - Rust inventory+renderer:`d0-pkgre-066293df/REPORT.md`;basis commit=`f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b`.
 - JS inventory+renderer:`d0-js-child-report.md`;basis commit=`f43bd58bd3d4e36f8b3f4df3c002735c977acd17`.
 - Git/filesystem:`d0-git-storage-inventory/{REPORT.md,filesystem.json,repositories.json,validation.json}`.
@@ -92,13 +92,13 @@ Archive total excludes history-growth authority:these are candidate maxima,not e
 | item | Rust | JS |
 |---|---:|---:|
 | one-snapshot conservative resident estimate at maxima | 61,210,624B | 119,537,664B |
-| three-snapshot candidate peak estimate at maxima | 397,541,376B | 861,929,472B |
+| three-snapshot candidate peak estimate at maxima | 397,541,376B | 912,261,120B |
 | admission ceiling=`MemoryMax-67,108,864B` | 469,762,048B | 1,006,632,960B |
 | `MemoryHigh`/`MemoryMax` | 402,653,184B/536,870,912B | 805,306,368B/1,073,741,824B |
 | `TasksMax`/`LimitNOFILE` | 64/2,048 | 64/2,048 |
 | ZFS quota | 4,294,967,296B | 2,147,483,648B |
 
-Formula:`singleSnapshot=2,097,152+2*snapshotBytes+256*routes+128*versions+96*edges+256*packages+96*archives`;archive payload excluded/file-backed. Formula:`candidatePeak=3*singleSnapshot+runtimeReserve+loaderWorkerResidentEnvelope+256*32,768+64*65,536`;three snapshots=`live+candidate+old leased`. JS loader proposal:exactly one Worker;resident envelope=`390,070,272B`=`192MiB old+32MiB young+16MiB near-limit allowance+4MiB stack+128MiB nonheap reserve`;32MiB code range tracked as virtual-address reservation,not RSS;transferable snapshot≤33,554,432B must use an exclusively owned `ArrayBuffer` in `transferList`;clone+`SharedArrayBuffer` forbidden. Node `resourceLimits` constrain only the JS engine,not external memory;the 128MiB nonheap term is conservative policy,not measurement. `MemoryHigh`=alert+candidate throttle,not kill/admission threshold;any `MemoryMax` OOM fails qualification.
+Formula:`singleSnapshot=2,097,152+2*snapshotBytes+256*routes+128*versions+96*edges+256*packages+96*archives`;archive payload excluded/file-backed. Formula:`candidatePeak=3*singleSnapshot+runtimeReserve+loaderWorkerResidentEnvelope+256*32,768+64*65,536`;three snapshots=`live+candidate+old leased`. JS loader proposal:exactly one Node `24.19.0` Worker;resident envelope=`440,401,920B`=`251,658,240B initial heap limit+16,777,216B near-limit allowance+33,554,432B code-range resident budget+4,194,304B stack+134,217,728B nonheap reserve`. Parent+Worker `execArgv=[]`;`NODE_OPTIONS` absent before Node exec;operator/catalog Node options forbidden;normalized `--max-heap-size`,`--max-old-space-size`,`--max-old-space-size-percentage`,`--max-semi-space-size` parent flags rejected. Before catalog bytes:requested resource-limit readbacks exact and `worker.getHeapStatistics().heap_size_limit=251,658,240`;mismatch→terminate Worker+reject candidate. Transferable snapshot≤33,554,432B must use a fresh exclusively owned `ArrayBuffer` transferred rather than copied;sender buffer+all aliases detach;`SharedArrayBuffer` forbidden. Node `resourceLimits` constrain only the JS engine,not external memory;the 128MiB nonheap term is conservative policy and the entire configured 32MiB code-range amount is conservatively budgeted as resident memory,not claimed as measured RSS. Executable baseline+parent-override regression:`d0-time-resource-proposal/node-worker-contract-probe.cjs`. `MemoryHigh`=alert+candidate throttle,not kill/admission threshold;any `MemoryMax` OOM fails qualification.
 
 FD estimate:`64 fixed/listeners/logs+256 request sockets+64 archive FDs+128 Git/loader+16 admin/status+512 reserve=1,040<2,048`;task estimate=`16 runtime+1 watcher+8 loader/Git+4 JS-worker allowance+35 reserve=64`. These are formulas,not measurements.
 
@@ -132,7 +132,7 @@ Clock qualification=86,400s(24h);resource stress=100 reload cycles+21,600s(6h)/i
 
 ## UNRESOLVED — blockers/decisions
 
-1. `DYNAMIC-MEASUREMENTS`:native steady/two-snapshot/three-snapshot RSS,FD peak,100-cycle reload distribution,SIGTERM/SIGKILL/drain/lease evidence absent;JS qualification must include the one-Worker heap/near-limit/stack/native/external envelope and prove owned-`ArrayBuffer` transfer without clone/`SharedArrayBuffer`.
+1. `DYNAMIC-MEASUREMENTS`:native steady/two-snapshot/three-snapshot RSS,FD peak,100-cycle reload distribution,SIGTERM/SIGKILL/drain/lease evidence absent;JS qualification must enforce the exact Node startup flag+readback contract and measure the one-Worker heap/near-limit/code-range/stack/native/external envelope plus exclusive-`ArrayBuffer` transfer without copy/`SharedArrayBuffer`.
 2. `PROJECTION-BASELINE`:canonical active manifest absent;actual current `snapshotBytes` unknown;prove Rust≤16,777,216B and JS≤33,554,432B.
 3. `HTTP-LIMIT-PROOF`:production-equivalent raw edge/backend 413/414/431,body-framing,header,target,and 256/64 saturation evidence absent.
 4. `ARCHIVE-HISTORY-CAPACITY`:append-only growth model,provider ceiling,production ZFS create/fill/failure/recovery,backup+restore duration absent.
@@ -147,7 +147,7 @@ Clock qualification=86,400s(24h);resource stress=100 reload cycles+21,600s(6h)/i
 - `timestamp-fixtures.json`:observed ecosystem-specific spellings/order+proposed syntax,future-skew,sync,rollback,startup vectors.
 - `shutdown-drain-fixtures.json`:proposed signal/cut-point,drain,old-snapshot FD/lease,state-lock,restart vectors;explicitly not measured behavior.
 - `resource-limit-fixtures.json`:observed baselines+exact proposed ceilings,limit/limit+1 rejects,quota,Memory,HTTP saturation vectors.
-- Validation:`python3 validate.py && sha256sum -c SHA256SUMS`;`validation.json` records JSON/schema,exact state enum,archive byte total,fixture boundaries,formulas/invariants,classification,and secret-scan checks;`SHA256SUMS` intentionally excludes itself.
+- Validation:`python3 validate.py && sha256sum -c SHA256SUMS`;proposal validation requires pinned Node `24.19.0` and runs `node-worker-contract-probe.cjs` with clean+overridden parent option environments;`validation.json` records JSON/schema,exact state enum,archive byte total,fixture boundaries,formulas/invariants,classification,and secret-scan checks;`SHA256SUMS` intentionally excludes itself.
 
 ## Harness
 

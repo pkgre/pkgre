@@ -71,13 +71,17 @@ try:
   check(f'{eco}-memory-invariants',systemd['MemoryHighBytes']<systemd['MemoryMaxBytes'] and peak<=calc['admissionCeilingBytes'])
   check(f'{eco}-fd-task-invariants',systemd['TasksMax']==64 and systemd['LimitNOFILE']==2048 and 1040<systemd['LimitNOFILE'])
   if eco=='js':
-   w=source['nodeWorker'];mib=1048576;heap=(w['resourceLimitsMaxOldGenerationSizeMiB']+w['resourceLimitsMaxYoungGenerationSizeMiB']+w['nearHeapLimitAllowanceMiB'])*mib;resident=heap+w['resourceLimitsStackSizeMiB']*mib+w['workerNonHeapResidentReserveBytes']
+   w=source['nodeWorker'];mib=1048576;r=w['resourceLimits'];h=w['startupHandshake'];heap=h['requiredInitialHeapSizeLimitBytes']+w['nearHeapLimitAllowanceBytes'];resident=heap+r['stackSizeMb']*mib+w['codeRangeResidentBudgetBytes']+w['workerNonHeapResidentReserveBytes']
    check('js-fixture-node-worker-equal-proposal',fx['nodeWorker']==w)
-   check('js-worker-exactly-one',w['workerCount']==1,w['workerCount'])
-   check('js-worker-heap-resident-formula',heap==w['workerHeapResidentBudgetBytes'],[heap,w['workerHeapResidentBudgetBytes']])
+   check('js-worker-exactly-one-path',w['workerCount']==1 and w['alternateWorkerConstructorAllowed'] is False,[w['workerCount'],w['alternateWorkerConstructorAllowed']])
+   check('js-worker-runtime-contract',w['nodeVersion']=='24.19.0' and w['parentExecArgv']==[] and w['workerExecArgv']==[] and w['nodeOptionsEnvironment']=='absent-before-node-exec' and w['operatorOrCatalogSuppliedNodeOptionsAllowed'] is False)
+   check('js-worker-forbidden-parent-options',w['nodeOptionNameNormalization']=='token-before-equals;underscore-to-dash;exact-name-match' and w['forbiddenParentV8OptionsNormalized']==['--max-heap-size','--max-old-space-size','--max-old-space-size-percentage','--max-semi-space-size'])
+   check('js-worker-resource-limits-exact',r=={'maxOldGenerationSizeMb':192,'maxYoungGenerationSizeMb':32,'codeRangeSizeMb':32,'stackSizeMb':4},r)
+   check('js-worker-startup-handshake',h=={'beforeCatalogBytesProcessed':True,'failureAction':'terminate-worker-and-reject-candidate','requestedResourceLimitsReadbackRequired':True,'requiredInitialHeapSizeLimitBytes':251658240,'workerHeapStatisticsReadbackRequired':True},h)
+   check('js-worker-heap-maximum-formula',heap==w['workerHeapMaximumBytes'],[heap,w['workerHeapMaximumBytes']])
    check('js-worker-resident-envelope-formula',resident==w['workerResidentEnvelopeBytes'],[resident,w['workerResidentEnvelopeBytes']])
-   check('js-worker-code-range-virtual-only',w['resourceLimitsCodeRangeSizeMiB']==32 and w['codeRangeIncludedInResidentEnvelope'] is False)
-   check('js-worker-transfer-contract',w['maxTransferableSnapshotBytes']==limits['maxSnapshotBytes'] and w['snapshotArrayBufferOwnership']=='owned' and w['snapshotTransferListRequired'] is True and w['sharedArrayBufferAllowed'] is False and w['structuredCloneAllowed'] is False)
+   check('js-worker-code-range-resident-budget',w['codeRangeResidentBudgetBytes']==r['codeRangeSizeMb']*mib)
+   check('js-worker-transfer-contract',w['maxTransferableSnapshotBytes']==limits['maxSnapshotBytes'] and w['snapshotArrayBufferOwnership']=='exclusive' and w['snapshotArrayBufferTransferRequired'] is True and w['snapshotArrayBufferCloneAllowed'] is False and w['sharedArrayBufferAllowed'] is False)
    check('js-worker-systemd-envelope',systemd['MemoryHighBytes']==805306368 and systemd['MemoryMaxBytes']==1073741824 and resident<systemd['MemoryMaxBytes'])
    at=rcases['js-memory-estimate-at-admission-ceiling']['input'];over=rcases['js-memory-estimate-one-over-admission-ceiling']['input']
    check('js-memory-admission-boundary-vector',at=={'estimatedCandidatePeakBytes':calc['admissionCeilingBytes'],'MemoryMaxBytes':systemd['MemoryMaxBytes'],'reserveBytes':67108864},at)
@@ -115,17 +119,17 @@ try:
   for c in d['cases']:
    e=c['expected']
    if e.get('result')=='reject' and 'acceptedMutation' in e: check(f'{name}-{c["id"]}-reject-no-accepted-mutation',e['acceptedMutation'] is False)
- report_refs=('timestamp-fixtures.json','shutdown-drain-fixtures.json','resource-limit-fixtures.json','validate.py','validation.json','SHA256SUMS')
+ report_refs=('timestamp-fixtures.json','shutdown-drain-fixtures.json','resource-limit-fixtures.json','node-worker-contract-probe.cjs','validate.py','validation.json','SHA256SUMS')
  for ref in report_refs: check(f'report-reference-{ref}',ref in report)
  patterns={'private-key':re.compile(r'BEGIN (?:OPENSSH|RSA|EC|DSA) PRIVATE KEY'),'aws-access-key':re.compile(r'AKIA[0-9A-Z]{16}'),'github-token':re.compile(r'gh[pousr]_[A-Za-z0-9]{20,}'),'slack-token':re.compile(r'xox[baprs]-[A-Za-z0-9-]{10,}'),'generic-secret-assignment':re.compile(r'(?i)(?:password|passwd|api[_-]?key|secret|token)\s*[:=]\s*["\'][^"\'\n]{12,}["\']')}
- scanned=[REPORT,ROOT/'validate.py',*(ROOT/name for name in FIXTURES),PROPOSAL/'README.md',PROPOSAL/'proposal.json',PROPOSAL/'validate.py',PROPOSAL/'validation.json']
+ scanned=[REPORT,ROOT/'validate.py',*(ROOT/name for name in FIXTURES),PROPOSAL/'README.md',PROPOSAL/'proposal.json',PROPOSAL/'node-worker-contract-probe.cjs',PROPOSAL/'validate.py',PROPOSAL/'validation.json']
  hits=[]
  for path in scanned:
   text=path.read_text(errors='replace')
   for label,pattern in patterns.items():
    for m in pattern.finditer(text): hits.append({'file':str(path.relative_to(WORK)),'pattern':label,'matchSha256':hashlib.sha256(m.group(0).encode()).hexdigest()})
  check('secret-scan-no-pattern-matches',not hits,hits)
- files=[REPORT,ROOT/'validate.py',*(ROOT/name for name in FIXTURES),PROPOSAL/'README.md',PROPOSAL/'proposal.json',PROPOSAL/'validate.py',PROPOSAL/'validation.json']
+ files=[REPORT,ROOT/'validate.py',*(ROOT/name for name in FIXTURES),PROPOSAL/'README.md',PROPOSAL/'proposal.json',PROPOSAL/'node-worker-contract-probe.cjs',PROPOSAL/'validate.py',PROPOSAL/'validation.json']
  result={'schema':'pkgre-d0-resource-time-lifecycle-validation-v1','result':'PASS','checkCount':len(checks),'checks':checks,'validatedFiles':{str(path.relative_to(WORK)):sha(path) for path in files},'secretScan':{'result':'PASS','patterns':sorted(patterns),'filesScanned':len(scanned),'matches':0},'repositoryMutation':'none;validation is artifact-only and does not invoke source builds/probes'}
  OUT.write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
  print(f'PASS {len(checks)} checks;secret-scan PASS;archiveBytes=129833713;stateContract=state-contract-v1')

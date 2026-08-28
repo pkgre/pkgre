@@ -20,7 +20,7 @@ M caveats:single warm-cache/local samples;Rust archive closure was imported into
 - `singleSnapshotResident=2MiB+2*snapshotBytes+256*routes+128*versions+96*edges+256*packages+96*archives`;archive payload bytes excluded→file-backed+bounded stream only.
 - `candidatePeak=3*singleSnapshotResident+runtimeReserve+loaderWorkerResidentEnvelope+256*32KiB+64*64KiB`;3 snapshots=`live+candidate+old leased`;admit only when `candidatePeak<=MemoryMax-64MiB`.
 - Rust maxima→single snapshot estimate=`61,210,624B`;candidate peak=`397,541,376B`;admission ceiling=`469,762,048B`.
-- JS maxima→single snapshot estimate=`119,537,664B`;candidate peak=`861,929,472B`;admission ceiling=`1,006,632,960B`;exactly one Node Worker:resident envelope=`390,070,272B`=`192MiB old+32MiB young+16MiB near-limit allowance+4MiB stack+128MiB nonheap reserve`;32MiB code range is virtual-address reservation,excluded from RSS arithmetic;resource limits cover only the JS engine,so the nonheap reserve remains mandatory. Snapshot≤32MiB uses an exclusively owned `ArrayBuffer` listed in `transferList`;clone and `SharedArrayBuffer` paths forbidden.
+- JS maxima→single snapshot estimate=`119,537,664B`;candidate peak=`912,261,120B`;admission ceiling=`1,006,632,960B`;exactly one Node `24.19.0` Worker:resident envelope=`440,401,920B`=`251,658,240B initial heap limit+16,777,216B near-limit allowance+33,554,432B code-range resident budget+4,194,304B stack+134,217,728B nonheap reserve`. Parent+Worker `execArgv=[]`;`NODE_OPTIONS` absent before Node exec;operator/catalog Node options forbidden;normalized parent heap flags rejected;constructor+requested-limit readbacks exact;`worker.getHeapStatistics().heap_size_limit=251,658,240` before catalog bytes or terminate Worker+reject candidate. Snapshot≤32MiB uses a fresh exclusively owned `ArrayBuffer` transferred via transfer list;sender buffer+all aliases detach;copy+`SharedArrayBuffer` forbidden.
 - FD budget=`64 fixed+256 sockets+64 archive FDs+128 Git/loader+16 admin+512 reserve=1,040<2,048`;tasks=`16 runtime+1 watcher+8 loader/Git+4 worker+35 reserve=64`.
 - ZFS Rust=`512MiB mirror+5*512MiB checkout slots(active,rollback,old lease,candidate,staging)+128MiB audit+896MiB reserve=4GiB`;JS=`256MiB mirror+5*256MiB slots+64MiB audit+448MiB reserve=2GiB`;preflight requires `used+2*maxCheckout<=85% quota` and equal filesystem free bytes.
 
@@ -95,7 +95,7 @@ Qualification:no unexplained restart/OOM/quota failure/state mismatch;bounded re
 
 ## B — hard blockers before freeze/activation
 
-1. `DYNAMIC-MEASUREMENTS`:native Rust+JS live/candidate/old-stream RSS,FD,100-cycle reload,shutdown/drain/lease-expiry proof absent;JS proof must measure one Worker including heap,near-limit,stack,native/external memory and owned-`ArrayBuffer` transfer with clone/`SharedArrayBuffer` forbidden.
+1. `DYNAMIC-MEASUREMENTS`:native Rust+JS live/candidate/old-stream RSS,FD,100-cycle reload,shutdown/drain/lease-expiry proof absent;JS proof must enforce the exact Node startup-flag+readback contract and measure the one-Worker heap/near-limit/code-range/stack/native/external envelope plus exclusive-`ArrayBuffer` transfer without copy/`SharedArrayBuffer`.
 2. `PROJECTION-BASELINE`:canonical manifest not implemented;current `snapshotBytes` unknown;prove≤16MiB Rust/32MiB JS.
 3. `HTTP-LIMIT-PROOF`:production-equivalent raw edge/backend 413/414/431/body-framing/256+64 overload evidence absent.
 4. `ARCHIVE-HISTORY-CAPACITY`:append-only history growth,provider ceiling,production ZFS create/fill/failure/recovery,backup+restore timing absent;successful current-closure rehearsal is insufficient.
@@ -109,11 +109,11 @@ Required before config/instance digest:approve integers independently;pin actual
 
 ## Validation
 
-Run:`python3 validate.py`;expected:JSON parse+schema/status/unit checks;formula arithmetic;limits>baselines;Memory/FD/task/quota invariants;Markdown exact-value tokens;read-only source status fingerprints;output containment. Detailed result:`validation.json`.
+Run:`python3 validate.py`;requires pinned Node `24.19.0`;expected:JSON parse+schema/status/unit checks;formula arithmetic;limits>baselines;Memory/FD/task/quota invariants;Markdown exact-value tokens;baseline+parent-override Worker probe with exact readbacks+transfer detachment;read-only source status fingerprints;output containment. Detailed result:`validation.json`.
 
 ## Sources
 
-Canonical:`plans/pkgre-dynamic-registry-rollout.md` §§5,11,24 | measurements:`d0-pkgre-066293df/REPORT.md`,`d0-route-inventory/`,`d0-git-storage-inventory/`,`d0-js-child-report.md`,`~/repos/pkgre/fixtures/d0-v1/archive-git-rehearsal/` | prior resource identity proposal:`evidence/d0-rain-identity-design/` | HTTP limitation:`evidence/d0-public-http-edge-2026-08-26/REPORT.md` | Node Worker semantics:`https://nodejs.org/docs/latest-v24.x/api/worker_threads.html#new-workerfilename-options`,`#portpostmessagevalue-transferlist`;near-limit allowance:`https://github.com/nodejs/node/blob/v24.19.0/src/node_worker.cc`
+Canonical:`plans/pkgre-dynamic-registry-rollout.md` §§5,11,24 | measurements:`d0-pkgre-066293df/REPORT.md`,`d0-route-inventory/`,`d0-git-storage-inventory/`,`d0-js-child-report.md`,`~/repos/pkgre/fixtures/d0-v1/archive-git-rehearsal/` | prior resource identity proposal:`evidence/d0-rain-identity-design/` | HTTP limitation:`evidence/d0-public-http-edge-2026-08-26/REPORT.md` | Node `24.19.0` Worker constructor/resource limits+transfer:`https://nodejs.org/download/release/v24.19.0/docs/api/worker_threads.html#new-workerfilename-options`,`#portpostmessagevalue-transferlist` | `NODE_OPTIONS` precedence:`https://nodejs.org/download/release/v24.19.0/docs/api/cli.html#node_optionsoptions` | allowed parent V8 flags:`https://github.com/nodejs/node/blob/v24.19.0/src/node_options.cc#L1207-L1224` | V8 override order:`https://github.com/nodejs/node/blob/v24.19.0/deps/v8/src/heap/heap.cc#L4946-L5017` | Worker mapping/readback+16MiB near-limit allowance:`https://github.com/nodejs/node/blob/v24.19.0/src/node_worker.cc` | executable regression:`node-worker-contract-probe.cjs`.
 
 ## Harness issues
 

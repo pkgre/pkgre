@@ -281,7 +281,7 @@ B13_HARD_MAXIMA_PROJECTION = {'units': {'bytes': 'exact-integer-bytes',
  'calculationConstants': {'memory': {'admissionReserveBytes': 67108864,
                                      'processCandidateSnapshotCount': 3,
                                      'runtimeReserveBytes': {'rust': 134217728, 'js': 100663296},
-                                     'loaderWorkerReserveBytes': {'rust': 67108864, 'js': 390070272},
+                                     'loaderWorkerReserveBytes': {'rust': 67108864, 'js': 440401920},
                                      'singleSnapshot': {'archivePayloadBytesIncluded': False,
                                                         'baseBytes': 2097152,
                                                         'snapshotCopies': 2,
@@ -388,24 +388,40 @@ B13_HARD_MAXIMA_PROJECTION = {'units': {'bytes': 'exact-integer-bytes',
                       'systemd': {'LimitNOFILE': 2048, 'MemoryHighBytes': 805306368, 'MemoryMaxBytes': 1073741824, 'TasksMax': 64},
                       'zfs': {'quotaBytes': 2147483648},
                       'calculatedAtMaxima': {'admissionCeilingBytes': 1006632960,
-                                             'processCandidatePeakEstimateBytes': 861929472,
+                                             'processCandidatePeakEstimateBytes': 912261120,
                                              'requestAndStreamBuffersBytes': 12582912,
                                              'singleSnapshotResidentEstimateBytes': 119537664},
-                      'nodeWorker': {'codeRangeIncludedInResidentEnvelope': False,
+                      'nodeWorker': {'alternateWorkerConstructorAllowed': False,
+                                     'codeRangeResidentBudgetBytes': 33554432,
+                                     'forbiddenParentV8OptionsNormalized': ['--max-heap-size',
+                                                                            '--max-old-space-size',
+                                                                            '--max-old-space-size-percentage',
+                                                                            '--max-semi-space-size'],
                                      'maxTransferableSnapshotBytes': 33554432,
-                                     'nearHeapLimitAllowanceMiB': 16,
-                                     'resourceLimitsCodeRangeSizeMiB': 32,
-                                     'resourceLimitsMaxOldGenerationSizeMiB': 192,
-                                     'resourceLimitsMaxYoungGenerationSizeMiB': 32,
-                                     'resourceLimitsStackSizeMiB': 4,
+                                     'nearHeapLimitAllowanceBytes': 16777216,
+                                     'nodeOptionNameNormalization': 'token-before-equals;underscore-to-dash;exact-name-match',
+                                     'nodeOptionsEnvironment': 'absent-before-node-exec',
+                                     'nodeVersion': '24.19.0',
+                                     'operatorOrCatalogSuppliedNodeOptionsAllowed': False,
+                                     'parentExecArgv': [],
+                                     'resourceLimits': {'codeRangeSizeMb': 32,
+                                                        'maxOldGenerationSizeMb': 192,
+                                                        'maxYoungGenerationSizeMb': 32,
+                                                        'stackSizeMb': 4},
                                      'sharedArrayBufferAllowed': False,
-                                     'snapshotArrayBufferOwnership': 'owned',
-                                     'snapshotTransferListRequired': True,
-                                     'structuredCloneAllowed': False,
+                                     'snapshotArrayBufferCloneAllowed': False,
+                                     'snapshotArrayBufferOwnership': 'exclusive',
+                                     'snapshotArrayBufferTransferRequired': True,
+                                     'startupHandshake': {'beforeCatalogBytesProcessed': True,
+                                                          'failureAction': 'terminate-worker-and-reject-candidate',
+                                                          'requestedResourceLimitsReadbackRequired': True,
+                                                          'requiredInitialHeapSizeLimitBytes': 251658240,
+                                                          'workerHeapStatisticsReadbackRequired': True},
                                      'workerCount': 1,
-                                     'workerHeapResidentBudgetBytes': 251658240,
+                                     'workerExecArgv': [],
+                                     'workerHeapMaximumBytes': 268435456,
                                      'workerNonHeapResidentReserveBytes': 134217728,
-                                     'workerResidentEnvelopeBytes': 390070272},
+                                     'workerResidentEnvelopeBytes': 440401920},
                       'statePreflightAtMaxima': {'quotaPercentFloorBytes': 1825361100}}},
  'sharedHttp': {'maxConcurrentArchiveStreams': 64,
                 'maxConcurrentRequests': 256,
@@ -1823,32 +1839,48 @@ def validate_b13_hard_maxima(result: dict[str, Any], verification_time: datetime
     require(instances["js"]["limits"]["maxSparseRowBytes"] == 0, f"{label}: JS sparse-row maximum must remain zero")
     node_worker = instances["js"]["nodeWorker"]
     mebibyte = projection["units"]["mebibyteBytes"]
+    node_label = f"{label}.instances.js.nodeWorker"
+    require(node_worker["nodeVersion"] == "24.19.0", f"{label}: JS loader Node version must be pinned to 24.19.0")
+    require(node_worker["parentExecArgv"] == [], f"{label}: parent process.execArgv must be empty")
+    require(node_worker["workerExecArgv"] == [], f"{label}: Worker execArgv must be empty")
+    require(node_worker["nodeOptionsEnvironment"] == "absent-before-node-exec", f"{label}: NODE_OPTIONS must be absent before Node exec")
+    require(strict_bool(node_worker["operatorOrCatalogSuppliedNodeOptionsAllowed"], f"{node_label}.operatorOrCatalogSuppliedNodeOptionsAllowed") is False, f"{label}: operator or catalog supplied Node options must be forbidden")
+    require(strict_bool(node_worker["alternateWorkerConstructorAllowed"], f"{node_label}.alternateWorkerConstructorAllowed") is False, f"{label}: alternate Worker constructors must be forbidden")
+    require(node_worker["nodeOptionNameNormalization"] == "token-before-equals;underscore-to-dash;exact-name-match", f"{label}: parent V8 option normalization mismatch")
+    require(
+        node_worker["forbiddenParentV8OptionsNormalized"] == ["--max-heap-size", "--max-old-space-size", "--max-old-space-size-percentage", "--max-semi-space-size"],
+        f"{label}: normalized parent V8 option denylist mismatch",
+    )
     require(node_worker["workerCount"] == 1, f"{label}: JS loader must use exactly one Worker")
     require(node_worker["maxTransferableSnapshotBytes"] == instances["js"]["limits"]["maxSnapshotBytes"], f"{label}: JS transferable-snapshot maximum must equal the JS snapshot maximum")
-    require(node_worker["snapshotArrayBufferOwnership"] == "owned", f"{label}: JS snapshot transfer requires an owned ArrayBuffer")
-    require(strict_bool(node_worker["snapshotTransferListRequired"], f"{label}.instances.js.nodeWorker.snapshotTransferListRequired") is True, f"{label}: JS snapshot ArrayBuffer must be listed in transferList")
-    require(strict_bool(node_worker["sharedArrayBufferAllowed"], f"{label}.instances.js.nodeWorker.sharedArrayBufferAllowed") is False, f"{label}: JS snapshot transfer must reject SharedArrayBuffer")
-    require(strict_bool(node_worker["structuredCloneAllowed"], f"{label}.instances.js.nodeWorker.structuredCloneAllowed") is False, f"{label}: JS snapshot transfer must reject the structured-clone path")
-    require(strict_bool(node_worker["codeRangeIncludedInResidentEnvelope"], f"{label}.instances.js.nodeWorker.codeRangeIncludedInResidentEnvelope") is False, f"{label}: JS code range is virtual-address reservation and must be excluded from resident arithmetic")
-    worker_heap_resident = checked_multiply(
-        [
-            checked_add(
-                [
-                    node_worker["resourceLimitsMaxOldGenerationSizeMiB"],
-                    node_worker["resourceLimitsMaxYoungGenerationSizeMiB"],
-                    node_worker["nearHeapLimitAllowanceMiB"],
-                ],
-                f"{label} JS Worker heap MiB",
-            ),
-            mebibyte,
-        ],
-        f"{label} JS Worker heap resident budget",
+    require(node_worker["snapshotArrayBufferOwnership"] == "exclusive", f"{label}: JS snapshot transfer requires an exclusively owned ArrayBuffer")
+    require(strict_bool(node_worker["snapshotArrayBufferTransferRequired"], f"{node_label}.snapshotArrayBufferTransferRequired") is True, f"{label}: JS snapshot ArrayBuffer must be transferred")
+    require(strict_bool(node_worker["snapshotArrayBufferCloneAllowed"], f"{node_label}.snapshotArrayBufferCloneAllowed") is False, f"{label}: JS snapshot transfer must reject the copy/clone path")
+    require(strict_bool(node_worker["sharedArrayBufferAllowed"], f"{node_label}.sharedArrayBufferAllowed") is False, f"{label}: JS snapshot transfer must reject SharedArrayBuffer")
+
+    resource_limits = node_worker["resourceLimits"]
+    require(
+        resource_limits == {"maxOldGenerationSizeMb": 192, "maxYoungGenerationSizeMb": 32, "codeRangeSizeMb": 32, "stackSizeMb": 4},
+        f"{label}: JS Worker resourceLimits constructor mismatch",
     )
-    require(worker_heap_resident == node_worker["workerHeapResidentBudgetBytes"], f"{label}: JS Worker heap resident budget mismatch")
+    startup = node_worker["startupHandshake"]
+    require(strict_bool(startup["beforeCatalogBytesProcessed"], f"{node_label}.startupHandshake.beforeCatalogBytesProcessed") is True, f"{label}: JS Worker startup handshake must finish before catalog bytes")
+    require(startup["failureAction"] == "terminate-worker-and-reject-candidate", f"{label}: JS Worker startup mismatch must terminate the Worker and reject the candidate")
+    require(strict_bool(startup["requestedResourceLimitsReadbackRequired"], f"{node_label}.startupHandshake.requestedResourceLimitsReadbackRequired") is True, f"{label}: JS Worker requested resourceLimits readback is mandatory")
+    require(strict_bool(startup["workerHeapStatisticsReadbackRequired"], f"{node_label}.startupHandshake.workerHeapStatisticsReadbackRequired") is True, f"{label}: JS Worker heap-statistics readback is mandatory")
+    require(startup["requiredInitialHeapSizeLimitBytes"] == 251658240, f"{label}: JS Worker initial heap-size limit must match the pinned Node probe")
+    worker_heap_maximum = checked_add(
+        [startup["requiredInitialHeapSizeLimitBytes"], node_worker["nearHeapLimitAllowanceBytes"]],
+        f"{label} JS Worker maximum heap budget",
+    )
+    require(worker_heap_maximum == node_worker["workerHeapMaximumBytes"], f"{label}: JS Worker maximum heap budget mismatch")
+    code_range_budget = checked_multiply([resource_limits["codeRangeSizeMb"], mebibyte], f"{label} JS Worker code-range resident budget")
+    require(code_range_budget == node_worker["codeRangeResidentBudgetBytes"], f"{label}: JS Worker code-range resident budget mismatch")
     worker_resident_envelope = checked_add(
         [
-            worker_heap_resident,
-            checked_multiply([node_worker["resourceLimitsStackSizeMiB"], mebibyte], f"{label} JS Worker stack bytes"),
+            worker_heap_maximum,
+            code_range_budget,
+            checked_multiply([resource_limits["stackSizeMb"], mebibyte], f"{label} JS Worker stack bytes"),
             node_worker["workerNonHeapResidentReserveBytes"],
         ],
         f"{label} JS Worker resident envelope",
@@ -1858,7 +1890,6 @@ def validate_b13_hard_maxima(result: dict[str, Any], verification_time: datetime
         checked_multiply([node_worker["workerCount"], worker_resident_envelope], f"{label} JS loader Worker envelope") == memory["loaderWorkerReserveBytes"]["js"],
         f"{label}: JS loader-Worker reserve does not cover the exact Worker envelope",
     )
-    require(node_worker["resourceLimitsCodeRangeSizeMiB"] > 0, f"{label}: JS Worker code-range reservation must be explicit")
     require(worker_resident_envelope < instances["js"]["systemd"]["MemoryMaxBytes"], f"{label}: JS Worker resident envelope must be lower than MemoryMax")
 
     shutdown = projection["shutdownDrain"]
