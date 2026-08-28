@@ -97,8 +97,8 @@
     },
     {
       "detail": [
-        606076928,
-        606076928
+        861929472,
+        861929472
       ],
       "name": "js-candidate-peak-formula",
       "pass": true
@@ -141,6 +141,42 @@
     {
       "detail": null,
       "name": "js-limits-positive",
+      "pass": true
+    },
+    {
+      "detail": 1,
+      "name": "js-worker-exactly-one",
+      "pass": true
+    },
+    {
+      "detail": [
+        251658240,
+        251658240
+      ],
+      "name": "js-worker-heap-resident-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        390070272,
+        390070272
+      ],
+      "name": "js-worker-resident-envelope-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-code-range-virtual-only",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-transfer-contract",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-systemd-envelope",
       "pass": true
     },
     {
@@ -205,7 +241,22 @@
     },
     {
       "detail": null,
-      "name": "markdown-token-512MiB/768MiB",
+      "name": "markdown-token-768MiB/1GiB",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-390,070,272B",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-861,929,472B",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "markdown-token-1,006,632,960B",
       "pass": true
     },
     {
@@ -290,8 +341,8 @@
     }
   },
   "validatedFiles": {
-    "README.md": "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d",
-    "proposal.json": "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da",
-    "validate.py": "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826"
+    "README.md": "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774",
+    "proposal.json": "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90",
+    "validate.py": "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22"
   }
 }

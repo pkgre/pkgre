@@ -1,5 +1,5 @@
 {
-  "checkCount": 454,
+  "checkCount": 463,
   "checks": [
     {
       "detail": null,
@@ -112,24 +112,24 @@
     },
     {
       "detail": [
-        "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d",
-        "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d"
+        "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774",
+        "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774"
       ],
       "name": "reused-proposal-hash-README.md",
       "pass": true
     },
     {
       "detail": [
-        "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da",
-        "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da"
+        "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90",
+        "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90"
       ],
       "name": "reused-proposal-hash-proposal.json",
       "pass": true
     },
     {
       "detail": [
-        "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826",
-        "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826"
+        "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22",
+        "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22"
       ],
       "name": "reused-proposal-hash-validate.py",
       "pass": true
@@ -1715,8 +1715,8 @@
     },
     {
       "detail": [
-        606076928,
-        606076928
+        861929472,
+        861929472
       ],
       "name": "js-candidate-peak-formula",
       "pass": true
@@ -1734,6 +1734,65 @@
     {
       "detail": null,
       "name": "js-fd-task-invariants",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-fixture-node-worker-equal-proposal",
+      "pass": true
+    },
+    {
+      "detail": 1,
+      "name": "js-worker-exactly-one",
+      "pass": true
+    },
+    {
+      "detail": [
+        251658240,
+        251658240
+      ],
+      "name": "js-worker-heap-resident-formula",
+      "pass": true
+    },
+    {
+      "detail": [
+        390070272,
+        390070272
+      ],
+      "name": "js-worker-resident-envelope-formula",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-code-range-virtual-only",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-transfer-contract",
+      "pass": true
+    },
+    {
+      "detail": null,
+      "name": "js-worker-systemd-envelope",
+      "pass": true
+    },
+    {
+      "detail": {
+        "MemoryMaxBytes": 1073741824,
+        "estimatedCandidatePeakBytes": 1006632960,
+        "reserveBytes": 67108864
+      },
+      "name": "js-memory-admission-boundary-vector",
+      "pass": true
+    },
+    {
+      "detail": {
+        "MemoryMaxBytes": 1073741824,
+        "estimatedCandidatePeakBytes": 1006632961,
+        "reserveBytes": 67108864
+      },
+      "name": "js-memory-admission-one-over-vector",
       "pass": true
     },
     {
@@ -2500,14 +2559,14 @@
     "result": "PASS"
   },
   "validatedFiles": {
-    "basis-inventory/resource-time-lifecycle/REPORT.md": "f0bf18c5540448f16037cdde8d6e419206c14fc56665b0106b843b5f45530a02",
-    "basis-inventory/resource-time-lifecycle/resource-limit-fixtures.json": "b737291d22d3f610324716de6208bbac6279c229d524f731e2f3ac7b9b09b845",
+    "basis-inventory/resource-time-lifecycle/REPORT.md": "a21203c6226f162efcc461b8919f238c2b4753e3409b78803eceb912c23ffc19",
+    "basis-inventory/resource-time-lifecycle/resource-limit-fixtures.json": "5910dbf44b19b340a2063b35a5ff212c9d11b21029d238a46e1fe8fd074da800",
     "basis-inventory/resource-time-lifecycle/shutdown-drain-fixtures.json": "3d0f1fba1dcb5818bce42ba764adf395bc3df9897f0db141c8629a1cb4d15c9b",
     "basis-inventory/resource-time-lifecycle/timestamp-fixtures.json": "292193f1c51a8a262d4da3e3ddf27871472e2b54e7a7f999acfe9238e0147a01",
-    "basis-inventory/resource-time-lifecycle/validate.py": "02cdc5a394b455f568d29eabb89049390bb999c6d8c93af683d546adac002fe1",
-    "d0-time-resource-proposal/README.md": "4488fb86a436b6dd5d41cb071d0343847c3715fcd32356414ec173ae5f6d4b2d",
-    "d0-time-resource-proposal/proposal.json": "3c8682eefba800c2dbee8cf18897a0eaa53c4e9a2fe52e7cabd336ab910c72da",
-    "d0-time-resource-proposal/validate.py": "7e9945ca72847285456717f5abd192b57f7172f36fa3792a199b60e37477c826",
-    "d0-time-resource-proposal/validation.json": "4c57f8e19c33a587d06c18fb1e49092a6623f4065677fab83ecc1c5374189259"
+    "basis-inventory/resource-time-lifecycle/validate.py": "4db76ccabb7ef7a76723c6330d9ae40e0251b02064fbb31815a6c4a42001834e",
+    "d0-time-resource-proposal/README.md": "84895809ccc7f2e50df1bc0d31299049609dfd1d5902ec6a4f03284f1728e774",
+    "d0-time-resource-proposal/proposal.json": "b22223b30c1fd50c1f8d43aaa57d78311dbf4c734ff86218401a8a0a67657d90",
+    "d0-time-resource-proposal/validate.py": "f5137419404f05769c5a20d78f1abf2a2e2d7c075b6c52da82024208cfb21b22",
+    "d0-time-resource-proposal/validation.json": "f7d85051396f53a4aea70841de6476dab286febd0c7b31f85a5f940d859f70ce"
   }
 }
