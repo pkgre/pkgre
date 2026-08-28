@@ -7,6 +7,7 @@ import argparse
 import base64
 import binascii
 import copy
+import ctypes
 import hashlib
 import ipaddress
 import json
@@ -14,11 +15,15 @@ import math
 import os
 import re
 import secrets
+import selectors
 import shlex
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -71,6 +76,16 @@ D0_B05_MAX_SOURCE_ENTRIES = 10_000
 D0_B05_MAX_SOURCE_TREES = 10_000
 D0_B05_MAX_SOURCE_DEPTH = 64
 D0_B05_MAX_GIT_METADATA_ENTRIES = 100_000
+BOUNDED_PROCESS_MAX_TIMEOUT_SECONDS = 24 * 60 * 60
+BOUNDED_PROCESS_MAX_STREAM_BYTES = 256 * 1024 * 1024
+BOUNDED_PROCESS_READ_CHUNK_BYTES = 64 * 1024
+BOUNDED_PROCESS_REAP_TIMEOUT_SECONDS = 5.0
+BOUNDED_PROCESS_PROC_CHILDREN_LIMIT_BYTES = 64 * 1024
+LINUX_PR_SET_CHILD_SUBREAPER = 36
+LINUX_PR_GET_CHILD_SUBREAPER = 37
+GIT_COMMAND_TIMEOUT_SECONDS = 120.0
+GIT_COMMAND_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
+GIT_COMMAND_STDERR_LIMIT_BYTES = 4 * 1024 * 1024
 RECEIPT_FUTURE_SKEW_SECONDS = 30
 B18_RECEIPT_MAX_AGE_SECONDS = 600
 PRE_D1_RECEIPT_MAX_AGE_SECONDS = 600
@@ -937,6 +952,7 @@ class GateVerificationError(RuntimeError):
 
 
 GitRunner = Callable[[Path, tuple[str, ...], Mapping[str, str]], subprocess.CompletedProcess[bytes]]
+BOUNDED_PROCESS_LOCK = threading.Lock()
 
 
 def trusted_executable(candidates: Sequence[str], label: str) -> Path:
@@ -949,7 +965,7 @@ def trusted_executable(candidates: Sequence[str], label: str) -> Path:
             continue
         if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
             continue
-        if metadata.st_uid != 0 or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        if metadata.st_uid != 0 or metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID):
             continue
         if not (str(resolved).startswith("/nix/store/") or str(resolved).startswith("/usr/") or str(resolved).startswith("/bin/")):
             continue
@@ -957,9 +973,444 @@ def trusted_executable(candidates: Sequence[str], label: str) -> Path:
     raise GateVerificationError(f"no root-owned non-writable trusted {label} executable is available")
 
 
+def validate_bounded_process_executable(executable: Path, label: str) -> Path:
+    require(isinstance(executable, Path), f"{label}: executable must be a pathlib Path")
+    try:
+        resolved = executable.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot resolve trusted executable") from error
+    require(executable.is_absolute() and executable == resolved, f"{label}: executable path must be absolute and canonical")
+    require(stat.S_ISREG(metadata.st_mode) and os.access(resolved, os.X_OK), f"{label}: executable must be a regular executable file")
+    require(metadata.st_uid == 0 and not metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID), f"{label}: executable must be root-owned, non-writable, and non-set-ID")
+    require(str(resolved).startswith("/nix/store/") or str(resolved).startswith("/usr/") or str(resolved).startswith("/bin/"), f"{label}: executable is outside trusted system roots")
+    return resolved
+
+
+def bounded_process_string(value: Any, label: str, maximum_bytes: int, *, allow_empty: bool = False) -> str:
+    require(type(value) is str and (allow_empty or value != ""), f"{label}: expected {'plain' if allow_empty else 'nonempty plain'} string")
+    require("\0" not in value, f"{label}: NUL byte is forbidden")
+    try:
+        encoded = value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise GateVerificationError(f"{label}: value is not valid UTF-8") from error
+    require(len(encoded) <= maximum_bytes, f"{label}: exceeds {maximum_bytes} bytes")
+    return value
+
+
+def linux_child_subreaper_state(label: str) -> bool:
+    require(sys.platform.startswith("linux") and Path("/proc/self/task").is_dir(), f"{label}: Linux child-process containment is unavailable")
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        prctl = libc.prctl
+        prctl.restype = ctypes.c_int
+    except (AttributeError, OSError) as error:
+        raise GateVerificationError(f"{label}: Linux child-subreaper control is unavailable") from error
+    state = ctypes.c_int(-1)
+    ctypes.set_errno(0)
+    result = prctl(ctypes.c_int(LINUX_PR_GET_CHILD_SUBREAPER), ctypes.byref(state), ctypes.c_ulong(0), ctypes.c_ulong(0), ctypes.c_ulong(0))
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise GateVerificationError(f"{label}: cannot read child-subreaper state: errno={error_number}")
+    require(state.value in {0, 1}, f"{label}: invalid child-subreaper state")
+    return state.value == 1
+
+
+def set_linux_child_subreaper(enabled: bool, label: str) -> None:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        prctl = libc.prctl
+        prctl.restype = ctypes.c_int
+    except (AttributeError, OSError) as error:
+        raise GateVerificationError(f"{label}: Linux child-subreaper control is unavailable") from error
+    ctypes.set_errno(0)
+    result = prctl(ctypes.c_int(LINUX_PR_SET_CHILD_SUBREAPER), ctypes.c_ulong(1 if enabled else 0), ctypes.c_ulong(0), ctypes.c_ulong(0), ctypes.c_ulong(0))
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise GateVerificationError(f"{label}: cannot {'enable' if enabled else 'restore'} child-subreaper state: errno={error_number}")
+    require(linux_child_subreaper_state(label) is enabled, f"{label}: child-subreaper state change did not take effect")
+
+
+def require_single_threaded_process_supervisor(label: str) -> None:
+    task_root = Path("/proc/self/task")
+    try:
+        task_ids = sorted(path.name for path in task_root.iterdir())
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot enumerate supervisor tasks") from error
+    require(task_ids == [str(os.getpid())], f"{label}: bounded process supervision requires a single-threaded process")
+    require(signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL, f"{label}: bounded process supervision requires the default SIGCHLD disposition")
+
+
+def visit_linux_direct_child_pids(label: str, visitor: Callable[[int], None], *, continue_after_size_limit: bool) -> bool:
+    task_root = Path("/proc/self/task")
+    try:
+        task_paths = sorted(task_root.iterdir(), key=lambda path: path.name)
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot enumerate supervisor tasks") from error
+    require(len(task_paths) <= 4096, f"{label}: supervisor has too many tasks")
+    aggregate_bytes = 0
+    oversized = False
+    for task_path in task_paths:
+        require(task_path.name.isascii() and task_path.name.isdecimal(), f"{label}: invalid supervisor task identifier")
+        token = bytearray()
+
+        def emit_pid() -> None:
+            if not token:
+                return
+            pid = int(token)
+            token.clear()
+            require(0 < pid <= 2**31 - 1 and pid != os.getpid(), f"{label}: direct-child process identifier is outside the supported range")
+            visitor(pid)
+
+        try:
+            with (task_path / "children").open("rb", buffering=0) as stream:
+                while True:
+                    raw = stream.read(BOUNDED_PROCESS_READ_CHUNK_BYTES)
+                    if raw == b"":
+                        break
+                    aggregate_bytes += len(raw)
+                    if aggregate_bytes > BOUNDED_PROCESS_PROC_CHILDREN_LIMIT_BYTES:
+                        if not continue_after_size_limit:
+                            raise GateVerificationError(f"{label}: direct-child process list is oversized")
+                        oversized = True
+                    for byte in raw:
+                        if 48 <= byte <= 57:
+                            require(len(token) < 10, f"{label}: direct-child process identifier is outside the supported range")
+                            token.append(byte)
+                        elif byte in b" \t\n\r\v\f":
+                            emit_pid()
+                        else:
+                            raise GateVerificationError(f"{label}: direct-child process list is malformed")
+                emit_pid()
+        except FileNotFoundError:
+            continue
+        except GateVerificationError:
+            raise
+        except OSError as error:
+            raise GateVerificationError(f"{label}: cannot enumerate direct child processes") from error
+    return oversized
+
+
+def linux_direct_child_pids(label: str) -> set[int]:
+    children: set[int] = set()
+    visit_linux_direct_child_pids(label, children.add, continue_after_size_limit=False)
+    return children
+
+
+def bounded_pid_summary(pids: set[int]) -> str:
+    ordered = sorted(pids)
+    shown = ordered[:64]
+    suffix = "" if len(ordered) <= len(shown) else f" (+{len(ordered) - len(shown)} more)"
+    return f"{shown!r}{suffix}"
+
+
+def terminate_and_reap_direct_children(label: str) -> tuple[set[int], list[str]]:
+    observed: set[int] = set()
+    failures: list[str] = []
+    recorded_failures: set[str] = set()
+    deadline = time.monotonic() + BOUNDED_PROCESS_REAP_TIMEOUT_SECONDS
+
+    def record_failure(detail: str) -> None:
+        if detail not in recorded_failures:
+            recorded_failures.add(detail)
+            failures.append(detail)
+
+    while True:
+        children: set[int] = set()
+
+        def terminate_child(pid: int) -> None:
+            children.add(pid)
+            observed.add(pid)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                record_failure(f"descendant {pid} kill failed: {error}")
+
+        try:
+            oversized = visit_linux_direct_child_pids(label, terminate_child, continue_after_size_limit=True)
+        except GateVerificationError as error:
+            record_failure(str(error))
+            break
+        if oversized:
+            record_failure(f"{label}: direct-child process list is oversized")
+
+        has_live_children = False
+        while True:
+            try:
+                waited_pid, _status = os.waitpid(-1, os.WNOHANG)
+            except ChildProcessError:
+                break
+            except InterruptedError:
+                continue
+            except OSError as error:
+                record_failure(f"descendant reap failed: {error}")
+                has_live_children = True
+                break
+            if waited_pid == 0:
+                has_live_children = True
+                break
+            observed.add(waited_pid)
+
+        if not has_live_children:
+            break
+        if time.monotonic() >= deadline:
+            detail = bounded_pid_summary(children) if children else "unidentified direct children"
+            record_failure(f"descendant cleanup timed out: {detail}")
+            break
+        time.sleep(0.005)
+    return observed, failures
+
+
+@contextmanager
+def bounded_process_containment(label: str) -> Iterator[None]:
+    bounded_process_string(label, "bounded process label", 128)
+    require(BOUNDED_PROCESS_LOCK.acquire(blocking=False), f"{label}: concurrent subprocess supervision is forbidden")
+    previous_subreaper: bool | None = None
+    primary_failure: BaseException | None = None
+    cleanup_failures: list[str] = []
+    observed_descendants: set[int] = set()
+    try:
+        require_single_threaded_process_supervisor(label)
+        initial_children = linux_direct_child_pids(label)
+        require(not initial_children, f"{label}: supervisor already owns child processes: {sorted(initial_children)!r}")
+        previous_subreaper = linux_child_subreaper_state(label)
+        try:
+            if not previous_subreaper:
+                set_linux_child_subreaper(True, label)
+            yield
+        except BaseException as error:
+            primary_failure = error
+            raise
+        finally:
+            try:
+                observed_descendants, cleanup_failures = terminate_and_reap_direct_children(label)
+            except BaseException as error:
+                cleanup_failures.append(f"descendant containment failed: {type(error).__name__}: {error}")
+            if previous_subreaper is False:
+                try:
+                    set_linux_child_subreaper(False, label)
+                except GateVerificationError as error:
+                    cleanup_failures.append(str(error))
+            if observed_descendants or cleanup_failures:
+                detail_parts = []
+                if observed_descendants:
+                    detail_parts.append(f"terminated lingering descendants {sorted(observed_descendants)!r}")
+                detail_parts.extend(cleanup_failures)
+                detail = "; ".join(detail_parts)
+                if primary_failure is None:
+                    raise GateVerificationError(f"{label}: subprocess containment failed: {detail}")
+                raise GateVerificationError(f"{primary_failure}; subprocess containment failed: {detail}") from primary_failure
+    finally:
+        BOUNDED_PROCESS_LOCK.release()
+
+
+def _run_bounded_subprocess_contained(executable: Path, arguments: Sequence[str], *, cwd: Path, environment: Mapping[str, str], timeout_seconds: float, stdout_limit: int, stderr_limit: int, label: str) -> subprocess.CompletedProcess[bytes]:
+    require(os.name == "posix" and hasattr(os, "killpg"), f"{label}: POSIX process-group isolation is unavailable")
+    bounded_process_string(label, "bounded process label", 128)
+    resolved_executable = validate_bounded_process_executable(executable, label)
+    require(isinstance(arguments, (tuple, list)), f"{label}: arguments must be a tuple or list")
+    require(len(arguments) <= 4096, f"{label}: too many arguments")
+    argv = [str(resolved_executable)]
+    argument_bytes = 0
+    for index, argument in enumerate(arguments):
+        value = bounded_process_string(argument, f"{label} argument[{index}]", MAX_PATH_BYTES * 16, allow_empty=True)
+        argument_bytes += len(value.encode("utf-8")) + 1
+        require(argument_bytes <= 1024 * 1024, f"{label}: aggregate arguments exceed 1048576 bytes")
+        argv.append(value)
+    require(isinstance(cwd, Path), f"{label}: working directory must be a pathlib Path")
+    try:
+        resolved_cwd = cwd.resolve(strict=True)
+        cwd_metadata = resolved_cwd.stat()
+    except OSError as error:
+        raise GateVerificationError(f"{label}: cannot resolve working directory") from error
+    require(cwd.is_absolute() and cwd == resolved_cwd, f"{label}: working directory path must be absolute and canonical")
+    require(stat.S_ISDIR(cwd_metadata.st_mode), f"{label}: working directory is not a directory")
+    require(isinstance(environment, Mapping), f"{label}: environment must be a mapping")
+    require(len(environment) <= 4096, f"{label}: environment has too many entries")
+    clean_environment: dict[str, str] = {}
+    environment_bytes = 0
+    for index, (raw_key, raw_value) in enumerate(environment.items()):
+        name = bounded_process_string(raw_key, f"{label} environment key[{index}]", 1024)
+        value = bounded_process_string(raw_value, f"{label} environment value[{index}]", 256 * 1024, allow_empty=True)
+        require("=" not in name, f"{label}: environment key contains '='")
+        require(name not in clean_environment, f"{label}: duplicate environment key")
+        environment_bytes += len(name.encode("utf-8")) + len(value.encode("utf-8")) + 2
+        require(environment_bytes <= 1024 * 1024, f"{label}: aggregate environment exceeds 1048576 bytes")
+        clean_environment[name] = value
+    require(type(timeout_seconds) in {int, float} and not isinstance(timeout_seconds, bool), f"{label}: timeout must be an integer or float")
+    if type(timeout_seconds) is float:
+        require(math.isfinite(timeout_seconds), f"{label}: timeout must be a finite number")
+    require(0 < timeout_seconds <= BOUNDED_PROCESS_MAX_TIMEOUT_SECONDS, f"{label}: timeout is outside the supported range")
+    require(type(stdout_limit) is int and 0 <= stdout_limit <= BOUNDED_PROCESS_MAX_STREAM_BYTES, f"{label}: invalid stdout limit")
+    require(type(stderr_limit) is int and 0 <= stderr_limit <= BOUNDED_PROCESS_MAX_STREAM_BYTES, f"{label}: invalid stderr limit")
+
+    try:
+        selector = selectors.DefaultSelector()
+    except (OSError, ValueError) as error:
+        raise GateVerificationError(f"{label}: selector setup failed") from error
+    process: subprocess.Popen[bytes] | None = None
+    returncode: int | None = None
+    failure: GateVerificationError | None = None
+    cleanup_failures: list[str] = []
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {"stdout": stdout_limit, "stderr": stderr_limit}
+    started_at = time.monotonic()
+    deadline = started_at + float(timeout_seconds)
+    try:
+        try:
+            process = subprocess.Popen(
+                argv,
+                cwd=str(resolved_cwd),
+                env=clean_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            failure = GateVerificationError(f"{label}: process spawn failed: {error}")
+        if process is not None:
+            if process.stdout is None or process.stderr is None:
+                failure = GateVerificationError(f"{label}: process pipes were not created")
+            else:
+                try:
+                    for stream_name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+                        os.set_blocking(stream.fileno(), False)
+                        selector.register(stream, selectors.EVENT_READ, stream_name)
+                except (OSError, ValueError, KeyError) as error:
+                    failure = GateVerificationError(f"{label}: process pipe setup failed: {error}")
+            while failure is None:
+                try:
+                    active_streams = bool(selector.get_map())
+                except (OSError, ValueError) as error:
+                    failure = GateVerificationError(f"{label}: process pipe state failed: {error}")
+                    break
+                if not active_streams:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    failure = GateVerificationError(f"{label}: timed out after {timeout_seconds} seconds")
+                    break
+                try:
+                    events = selector.select(remaining)
+                except (OSError, ValueError) as error:
+                    failure = GateVerificationError(f"{label}: process pipe read failed: {error}")
+                    break
+                if not events:
+                    failure = GateVerificationError(f"{label}: timed out after {timeout_seconds} seconds")
+                    break
+                for key, _event_mask in events:
+                    stream = key.fileobj
+                    stream_name = key.data
+                    try:
+                        remaining_capacity = limits[stream_name] - len(buffers[stream_name])
+                        chunk = os.read(stream.fileno(), min(BOUNDED_PROCESS_READ_CHUNK_BYTES, remaining_capacity + 1))
+                    except BlockingIOError:
+                        continue
+                    except OSError as error:
+                        failure = GateVerificationError(f"{label}: {stream_name} read failed: {error}")
+                        break
+                    if chunk == b"":
+                        try:
+                            selector.unregister(stream)
+                            stream.close()
+                        except (OSError, ValueError, KeyError) as error:
+                            failure = GateVerificationError(f"{label}: {stream_name} close failed: {error}")
+                            break
+                        continue
+                    if len(buffers[stream_name]) + len(chunk) > limits[stream_name]:
+                        failure = GateVerificationError(f"{label}: {stream_name} exceeded {limits[stream_name]} bytes")
+                        break
+                    buffers[stream_name].extend(chunk)
+            if failure is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    failure = GateVerificationError(f"{label}: timed out after {timeout_seconds} seconds")
+                else:
+                    try:
+                        returncode = process.wait(timeout=remaining)
+                    except subprocess.TimeoutExpired:
+                        failure = GateVerificationError(f"{label}: timed out after {timeout_seconds} seconds")
+                    except InterruptedError as error:
+                        failure = GateVerificationError(f"{label}: process wait interrupted: {error}")
+                    except (OSError, subprocess.SubprocessError) as error:
+                        failure = GateVerificationError(f"{label}: process wait failed: {error}")
+    finally:
+        if process is not None and (failure is not None or returncode is None):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                cleanup_failures.append(f"process-group kill failed: {error}")
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                except OSError as fallback_error:
+                    cleanup_failures.append(f"leader kill failed: {fallback_error}")
+            reap_deadline = time.monotonic() + BOUNDED_PROCESS_REAP_TIMEOUT_SECONDS
+            while returncode is None:
+                remaining = reap_deadline - time.monotonic()
+                if remaining <= 0:
+                    cleanup_failures.append("process reap timed out")
+                    break
+                try:
+                    returncode = process.wait(timeout=remaining)
+                except InterruptedError:
+                    continue
+                except subprocess.TimeoutExpired:
+                    cleanup_failures.append("process reap timed out")
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                    except OSError as error:
+                        cleanup_failures.append(f"final leader kill failed: {error}")
+                    break
+                except (OSError, subprocess.SubprocessError) as error:
+                    cleanup_failures.append(f"process reap failed: {error}")
+                    break
+        try:
+            selector.close()
+        except Exception as error:
+            cleanup_failures.append(f"selector close failed: {type(error).__name__}: {error}")
+        if process is not None:
+            for stream_name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+                if stream is not None and not stream.closed:
+                    try:
+                        stream.close()
+                    except Exception as error:
+                        cleanup_failures.append(f"{stream_name} close failed: {type(error).__name__}: {error}")
+    if cleanup_failures:
+        cleanup_detail = "; ".join(cleanup_failures)
+        if failure is None:
+            failure = GateVerificationError(f"{label}: subprocess cleanup failed: {cleanup_detail}")
+        else:
+            failure = GateVerificationError(f"{failure}; subprocess cleanup failed: {cleanup_detail}")
+    if failure is not None:
+        raise failure
+    require(type(returncode) is int, f"{label}: process did not produce an exit status")
+    return subprocess.CompletedProcess(argv, returncode, bytes(buffers["stdout"]), bytes(buffers["stderr"]))
+
+
+def run_bounded_subprocess(executable: Path, arguments: Sequence[str], *, cwd: Path, environment: Mapping[str, str], timeout_seconds: float, stdout_limit: int, stderr_limit: int, label: str) -> subprocess.CompletedProcess[bytes]:
+    try:
+        with bounded_process_containment(label):
+            return _run_bounded_subprocess_contained(executable, arguments, cwd=cwd, environment=environment, timeout_seconds=timeout_seconds, stdout_limit=stdout_limit, stderr_limit=stderr_limit, label=label)
+    except GateVerificationError:
+        raise
+    except Exception as error:
+        raise GateVerificationError(f"bounded subprocess supervision failed: {type(error).__name__}: {error}") from error
+
+
 def default_git_runner(repo: Path, arguments: tuple[str, ...], environment: Mapping[str, str]) -> subprocess.CompletedProcess[bytes]:
     executable = trusted_executable(TRUSTED_GIT_CANDIDATES, "Git")
-    return subprocess.run([str(executable), "-C", str(repo), *arguments], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, env=dict(environment))
+    return run_bounded_subprocess(executable, ("-C", str(repo), *arguments), cwd=repo, environment=environment, timeout_seconds=GIT_COMMAND_TIMEOUT_SECONDS, stdout_limit=GIT_COMMAND_STDOUT_LIMIT_BYTES, stderr_limit=GIT_COMMAND_STDERR_LIMIT_BYTES, label="Git command")
 
 
 class GitOps:
@@ -1002,9 +1453,22 @@ class GitOps:
         self.ssh_executable = ssh_executable
 
     def run(self, repo: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
-        process = self.runner(repo, tuple(arguments), self.environment)
+        try:
+            process = self.runner(repo, tuple(arguments), self.environment)
+        except GateVerificationError:
+            raise
+        except Exception as error:
+            raise GateVerificationError(f"git runner failed in {repo}: {type(error).__name__}: {error}") from error
+        operation_label = f"git {' '.join(arguments)}"
+        require(isinstance(process, subprocess.CompletedProcess), f"{operation_label} returned an invalid process result")
+        expected_argv = [str(self.git_executable), "-C", str(repo), *arguments]
+        require(process.args == expected_argv, f"{operation_label} returned invalid process arguments")
+        valid_signal_numbers = {int(candidate) for candidate in signal.valid_signals()}
+        require(type(process.returncode) is int and (0 <= process.returncode <= 255 or -process.returncode in valid_signal_numbers), f"{operation_label} returned an invalid exit status")
+        require(type(process.stdout) is bytes and len(process.stdout) <= GIT_COMMAND_STDOUT_LIMIT_BYTES, f"{operation_label} returned invalid or oversized stdout")
+        require(type(process.stderr) is bytes and len(process.stderr) <= GIT_COMMAND_STDERR_LIMIT_BYTES, f"{operation_label} returned invalid or oversized stderr")
         if check and process.returncode != 0:
-            stderr = process.stderr.decode("utf-8", errors="replace").strip()
+            stderr = process.stderr[-16 * 1024:].decode("utf-8", errors="replace").strip()
             raise GateVerificationError(f"git {' '.join(arguments)} failed in {repo}: exit={process.returncode}:{stderr}")
         return process
 

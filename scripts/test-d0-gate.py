@@ -10,10 +10,13 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -891,6 +894,390 @@ class GateCoreTests(unittest.TestCase):
         with self.assertRaises(GATE.GateVerificationError) as caught:
             callable_object()
         self.assertIn(text, str(caught.exception))
+
+    def runBoundedPython(self, script: str, *, timeout_seconds: float = 2.0, stdout_limit: int = 1024 * 1024, stderr_limit: int = 1024 * 1024) -> subprocess.CompletedProcess[bytes]:
+        return GATE.run_bounded_subprocess(Path(sys.executable).resolve(), ("-c", script), cwd=REPO_ROOT, environment={"LC_ALL": "C"}, timeout_seconds=timeout_seconds, stdout_limit=stdout_limit, stderr_limit=stderr_limit, label="fixture process")
+
+    def processIsExecuting(self, pid: int) -> bool:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+        except (OSError, IndexError):
+            return False
+        return state not in {"X", "Z"}
+
+    def terminateFixturePid(self, pid: int) -> None:
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            return
+        try:
+            os.waitpid(pid, 0)
+        except (ChildProcessError, ProcessLookupError):
+            pass
+
+    def assertLingeringDescendantRejected(self, *, create_session: bool, double_fork: bool) -> None:
+        with tempfile.TemporaryDirectory(prefix="pkgre-bounded-descendant-test-") as temporary:
+            descendant_path = Path(temporary) / "descendant-pid"
+            quoted_path = repr(str(descendant_path))
+            session_step = "os.setsid()" if create_session else "pass"
+            fork_step = "\n    pid2 = os.fork()\n    if pid2 != 0:\n        while not os.path.exists(path): time.sleep(0.001)\n        os._exit(0)" if double_fork else ""
+            script = f"""import os,time
+path = {quoted_path}
+pid = os.fork()
+if pid == 0:
+    {session_step}{fork_step}
+    with open(path, 'w') as stream:
+        stream.write(str(os.getpid()))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.close(1)
+    os.close(2)
+    time.sleep(60)
+    os._exit(0)
+while not os.path.exists(path):
+    time.sleep(0.001)
+os._exit(0)
+"""
+            descendant_pid: int | None = None
+            completed = False
+            try:
+                self.assertRejected(lambda: self.runBoundedPython(script), "terminated lingering descendants")
+                self.assertTrue(descendant_path.exists())
+                descendant_pid = int(descendant_path.read_text())
+                deadline = time.monotonic() + 2.0
+                while self.processIsExecuting(descendant_pid) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(self.processIsExecuting(descendant_pid))
+                self.assertEqual(GATE.linux_direct_child_pids("fixture postcondition"), set())
+                completed = True
+            finally:
+                if not completed:
+                    if descendant_pid is None and descendant_path.exists():
+                        descendant_pid = int(descendant_path.read_text())
+                    if descendant_pid is not None:
+                        self.terminateFixturePid(descendant_pid)
+
+    def test_bounded_subprocess_rejects_and_reaps_success_path_descendant(self) -> None:
+        self.assertLingeringDescendantRejected(create_session=False, double_fork=False)
+
+    def test_bounded_subprocess_rejects_and_reaps_setsid_descendant(self) -> None:
+        self.assertLingeringDescendantRejected(create_session=True, double_fork=False)
+
+    def test_bounded_subprocess_rejects_and_reaps_double_fork_setsid_descendant(self) -> None:
+        self.assertLingeringDescendantRejected(create_session=True, double_fork=True)
+
+    def test_bounded_subprocess_kills_descendant_when_proc_child_list_is_oversized(self) -> None:
+        with mock.patch.object(GATE, "BOUNDED_PROCESS_PROC_CHILDREN_LIMIT_BYTES", 1):
+            self.assertLingeringDescendantRejected(create_session=True, double_fork=False)
+
+    def test_bounded_subprocess_uses_exact_secure_spawn_contract(self) -> None:
+        observed: dict[str, object] = {}
+        original_popen = GATE.subprocess.Popen
+
+        def recording_popen(*arguments, **keywords):
+            observed["arguments"] = arguments
+            observed["keywords"] = keywords
+            return original_popen(*arguments, **keywords)
+
+        with mock.patch.object(GATE.subprocess, "Popen", side_effect=recording_popen):
+            process = self.runBoundedPython("pass")
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(observed["arguments"], ([str(Path(sys.executable).resolve()), "-c", "pass"],))
+        self.assertEqual(observed["keywords"], {"cwd": str(REPO_ROOT), "env": {"LC_ALL": "C"}, "stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "shell": False, "close_fds": True, "start_new_session": True})
+
+    def test_bounded_subprocess_zero_byte_limits_accept_empty_and_reject_one_byte(self) -> None:
+        process = self.runBoundedPython("pass", stdout_limit=0, stderr_limit=0)
+        self.assertEqual((process.stdout, process.stderr), (b"", b""))
+        for descriptor, stream_name in ((1, "stdout"), (2, "stderr")):
+            with self.subTest(stream=stream_name):
+                self.assertRejected(lambda: self.runBoundedPython(f"import os; os.write({descriptor}, b'x')", stdout_limit=0, stderr_limit=0), f"{stream_name} exceeded 0 bytes")
+
+    def test_bounded_subprocess_rejects_ambiguous_paths_and_invalid_values(self) -> None:
+        executable = Path(sys.executable).resolve()
+
+        def invoke(*, selected_executable: object = executable, arguments: object = ("-c", "pass"), cwd: object = REPO_ROOT, environment: object = {"LC_ALL": "C"}, timeout_seconds: object = 2.0, stdout_limit: object = 1024, stderr_limit: object = 1024):
+            return GATE.run_bounded_subprocess(selected_executable, arguments, cwd=cwd, environment=environment, timeout_seconds=timeout_seconds, stdout_limit=stdout_limit, stderr_limit=stderr_limit, label="fixture validation")
+
+        self.assertRejected(lambda: invoke(selected_executable=str(executable)), "pathlib Path")
+        self.assertRejected(lambda: invoke(selected_executable=Path(os.path.relpath(executable, REPO_ROOT))), "absolute and canonical")
+        self.assertRejected(lambda: invoke(selected_executable=executable.parent / ".." / executable.parent.name / executable.name), "absolute and canonical")
+        self.assertRejected(lambda: invoke(selected_executable=executable.parent), "regular executable file")
+        with tempfile.TemporaryDirectory(prefix="pkgre-bounded-validation-test-") as temporary:
+            root = Path(temporary)
+            executable_link = root / "python"
+            executable_link.symlink_to(executable)
+            self.assertRejected(lambda: invoke(selected_executable=executable_link), "absolute and canonical")
+            untrusted_executable = root / "program"
+            untrusted_executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+            untrusted_executable.chmod(0o755)
+            self.assertRejected(lambda: invoke(selected_executable=untrusted_executable), "root-owned")
+            directory_link = root / "repo"
+            directory_link.symlink_to(REPO_ROOT, target_is_directory=True)
+            self.assertRejected(lambda: invoke(cwd=directory_link), "absolute and canonical")
+            regular_file = root / "file"
+            regular_file.write_text("fixture")
+            self.assertRejected(lambda: invoke(cwd=regular_file), "not a directory")
+            self.assertRejected(lambda: invoke(cwd=root / "missing"), "cannot resolve working directory")
+        self.assertRejected(lambda: invoke(cwd=Path(".")), "absolute and canonical")
+        self.assertRejected(lambda: invoke(arguments="-c"), "tuple or list")
+        self.assertRejected(lambda: invoke(arguments=(object(),)), "plain string")
+        self.assertRejected(lambda: invoke(arguments=("x\0y",)), "NUL byte")
+        self.assertRejected(lambda: invoke(arguments=("\ud800",)), "valid UTF-8")
+        self.assertRejected(lambda: invoke(arguments=("x" * (GATE.MAX_PATH_BYTES * 16 + 1),)), "exceeds")
+        self.assertRejected(lambda: invoke(arguments=tuple("x" * (GATE.MAX_PATH_BYTES * 16) for _ in range(65))), "aggregate arguments")
+        self.assertRejected(lambda: invoke(environment=[]), "environment must be a mapping")
+        self.assertRejected(lambda: invoke(environment={"": "value"}), "nonempty plain string")
+        self.assertRejected(lambda: invoke(environment={"A=B": "value"}), "contains '='")
+        self.assertRejected(lambda: invoke(environment={"A": "x\0y"}), "NUL byte")
+        self.assertRejected(lambda: invoke(environment={"A": "\ud800"}), "valid UTF-8")
+        self.assertRejected(lambda: invoke(environment={"A": "x" * (256 * 1024 + 1)}), "exceeds")
+        self.assertRejected(lambda: invoke(environment={f"K{index}": "" for index in range(4097)}), "too many entries")
+        for timeout in (0, -1, float("nan"), float("inf"), True, GATE.BOUNDED_PROCESS_MAX_TIMEOUT_SECONDS + 1, 10**10000, "1"):
+            with self.subTest(timeout=timeout):
+                self.assertRejected(lambda timeout=timeout: invoke(timeout_seconds=timeout), "timeout")
+        for stream_name in ("stdout_limit", "stderr_limit"):
+            for limit in (-1, True, 1.5, GATE.BOUNDED_PROCESS_MAX_STREAM_BYTES + 1):
+                with self.subTest(stream=stream_name, limit=limit):
+                    keywords = {stream_name: limit}
+                    self.assertRejected(lambda keywords=keywords: invoke(**keywords), "invalid")
+
+    def test_bounded_subprocess_rejects_concurrent_thread_and_existing_child_ownership(self) -> None:
+        release_thread = threading.Event()
+        thread = threading.Thread(target=release_thread.wait, daemon=True)
+        thread.start()
+        try:
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "requires a single-threaded process")
+        finally:
+            release_thread.set()
+            thread.join(timeout=2.0)
+        child = subprocess.Popen([str(Path(sys.executable).resolve()), "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "supervisor already owns child processes")
+            self.assertIsNone(child.poll())
+        finally:
+            child.kill()
+            child.wait(timeout=2.0)
+
+    def test_bounded_subprocess_restores_subreaper_after_partial_enable_failure(self) -> None:
+        state = False
+        set_calls: list[bool] = []
+
+        def read_state(_label: str) -> bool:
+            return state
+
+        def mutate_then_fail(enabled: bool, _label: str) -> None:
+            nonlocal state
+            set_calls.append(enabled)
+            state = enabled
+            if enabled:
+                raise GATE.GateVerificationError("fixture enable verification failure")
+
+        with mock.patch.object(GATE, "linux_child_subreaper_state", side_effect=read_state), mock.patch.object(GATE, "set_linux_child_subreaper", side_effect=mutate_then_fail):
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "fixture enable verification failure")
+        self.assertFalse(state)
+        self.assertEqual(set_calls, [True, False])
+        self.assertTrue(GATE.BOUNDED_PROCESS_LOCK.acquire(blocking=False))
+        GATE.BOUNDED_PROCESS_LOCK.release()
+
+    def test_bounded_subprocess_preserves_preexisting_subreaper_and_rejects_nondefault_sigchld(self) -> None:
+        with mock.patch.object(GATE, "linux_child_subreaper_state", return_value=True), mock.patch.object(GATE, "set_linux_child_subreaper") as set_subreaper:
+            process = self.runBoundedPython("pass")
+        self.assertEqual(process.returncode, 0)
+        set_subreaper.assert_not_called()
+
+        previous_handler = signal.getsignal(signal.SIGCHLD)
+        signal.signal(signal.SIGCHLD, lambda _signal_number, _frame: None)
+        try:
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "default SIGCHLD disposition")
+        finally:
+            signal.signal(signal.SIGCHLD, previous_handler)
+
+        self.assertTrue(GATE.BOUNDED_PROCESS_LOCK.acquire(blocking=False))
+        try:
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "concurrent subprocess supervision")
+        finally:
+            GATE.BOUNDED_PROCESS_LOCK.release()
+
+    def test_bounded_subprocess_preserves_gate_error_and_normalizes_setup_cleanup_failures(self) -> None:
+        sentinel = GATE.GateVerificationError("fixture sentinel")
+        with mock.patch.object(GATE, "_run_bounded_subprocess_contained", side_effect=sentinel):
+            with self.assertRaises(GATE.GateVerificationError) as caught:
+                self.runBoundedPython("pass")
+        self.assertIs(caught.exception, sentinel)
+
+        with mock.patch.object(GATE.selectors, "DefaultSelector", side_effect=OSError("fixture selector setup failure")):
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "selector setup failed")
+
+        original_popen = GATE.subprocess.Popen
+        original_killpg = GATE.os.killpg
+
+        def recording_popen(*arguments, **keywords):
+            return original_popen(*arguments, **keywords)
+
+        def kill_then_report_failure(pid: int, requested_signal: int) -> None:
+            original_killpg(pid, requested_signal)
+            raise OSError("fixture kill report failure")
+
+        with mock.patch.object(GATE.subprocess, "Popen", side_effect=recording_popen), mock.patch.object(GATE.os, "killpg", side_effect=kill_then_report_failure):
+            with self.assertRaises(GATE.GateVerificationError) as caught:
+                self.runBoundedPython("import os,time; os.write(1, b'xx'); time.sleep(60)", stdout_limit=1)
+        self.assertIn("stdout exceeded 1 bytes", str(caught.exception))
+        self.assertIn("process-group kill failed", str(caught.exception))
+
+    def test_bounded_subprocess_captures_concurrent_exact_bound_streams(self) -> None:
+        limit = 64 * 1024
+        process = self.runBoundedPython("import os; os.write(1, b'o' * 65536); os.write(2, b'e' * 65536)", stdout_limit=limit, stderr_limit=limit)
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(process.stdout, b"o" * limit)
+        self.assertEqual(process.stderr, b"e" * limit)
+
+    def test_bounded_subprocess_preserves_bounded_nonzero_result(self) -> None:
+        process = self.runBoundedPython("import os; os.write(1, b'out'); os.write(2, b'err'); raise SystemExit(23)")
+        self.assertEqual((process.returncode, process.stdout, process.stderr), (23, b"out", b"err"))
+
+    def test_bounded_subprocess_rejects_stdout_and_stderr_overflow_immediately(self) -> None:
+        for descriptor, stream_name in ((1, "stdout"), (2, "stderr")):
+            with self.subTest(stream=stream_name):
+                holder: dict[str, subprocess.Popen[bytes]] = {}
+                original_popen = GATE.subprocess.Popen
+
+                def recording_popen(*arguments, **keywords):
+                    process = original_popen(*arguments, **keywords)
+                    holder["process"] = process
+                    return process
+
+                started_at = time.monotonic()
+                with mock.patch.object(GATE.subprocess, "Popen", side_effect=recording_popen):
+                    self.assertRejected(lambda: self.runBoundedPython(f"import os,time; os.write({descriptor}, b'x' * 4097); time.sleep(60)", timeout_seconds=10.0, stdout_limit=4096, stderr_limit=4096), f"{stream_name} exceeded 4096 bytes")
+                self.assertLess(time.monotonic() - started_at, 5.0)
+                process = holder["process"]
+                self.assertIsNotNone(process.returncode)
+                self.assertTrue(process.stdout is not None and process.stdout.closed)
+                self.assertTrue(process.stderr is not None and process.stderr.closed)
+
+    def test_bounded_subprocess_timeout_kills_descendant_process_group(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pkgre-bounded-process-test-") as temporary:
+            descendant_path = Path(temporary) / "descendant-pid"
+            quoted_path = repr(str(descendant_path))
+            script = f"import os,time; pid=os.fork(); (open({quoted_path}, 'w').write(str(os.getpid())), time.sleep(60)) if pid == 0 else os._exit(0)"
+            holder: dict[str, subprocess.Popen[bytes]] = {}
+            original_popen = GATE.subprocess.Popen
+
+            def recording_popen(*arguments, **keywords):
+                process = original_popen(*arguments, **keywords)
+                holder["process"] = process
+                return process
+
+            with mock.patch.object(GATE.subprocess, "Popen", side_effect=recording_popen):
+                self.assertRejected(lambda: self.runBoundedPython(script, timeout_seconds=0.5), "timed out")
+            process = holder["process"]
+            self.assertIsNotNone(process.returncode)
+            self.assertTrue(process.stdout is not None and process.stdout.closed)
+            self.assertTrue(process.stderr is not None and process.stderr.closed)
+            self.assertTrue(descendant_path.exists())
+            descendant_pid = int(descendant_path.read_text())
+            deadline = time.monotonic() + 2.0
+            while self.processIsExecuting(descendant_pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(self.processIsExecuting(descendant_pid))
+
+    def test_bounded_subprocess_normalizes_spawn_and_read_failures(self) -> None:
+        with mock.patch.object(GATE.subprocess, "Popen", side_effect=OSError("fixture spawn failure")):
+            self.assertRejected(lambda: self.runBoundedPython("pass"), "process spawn failed")
+
+        holder: dict[str, subprocess.Popen[bytes]] = {}
+        original_popen = GATE.subprocess.Popen
+
+        def recording_popen(*arguments, **keywords):
+            process = original_popen(*arguments, **keywords)
+            holder["process"] = process
+            return process
+
+        original_read = GATE.os.read
+
+        def failing_pipe_read(file_descriptor: int, byte_count: int) -> bytes:
+            process = holder.get("process")
+            pipe_descriptors = set() if process is None else {stream.fileno() for stream in (process.stdout, process.stderr) if stream is not None and not stream.closed}
+            if file_descriptor in pipe_descriptors:
+                raise OSError("fixture read failure")
+            return original_read(file_descriptor, byte_count)
+
+        with mock.patch.object(GATE.subprocess, "Popen", side_effect=recording_popen), mock.patch.object(GATE.os, "read", side_effect=failing_pipe_read):
+            self.assertRejected(lambda: self.runBoundedPython("import os,time; os.write(1, b'x'); time.sleep(60)"), "stdout read failed")
+        process = holder["process"]
+        self.assertIsNotNone(process.returncode)
+        self.assertTrue(process.stdout is not None and process.stdout.closed)
+        self.assertTrue(process.stderr is not None and process.stderr.closed)
+
+    def test_git_runner_accepts_maximum_supported_source_blob(self) -> None:
+        temporary, fixture = self.temporary_fixture()
+        try:
+            content = b"x" * GATE.D0_B05_MAX_SOURCE_BLOB_BYTES
+            write(fixture.repository, "maximum-source-blob", content)
+            source_commit = fixture.commit("maximum source blob")
+            observed = fixture.ops.blob(fixture.repository, source_commit, "maximum-source-blob", "maximum source blob", max_bytes=GATE.D0_B05_MAX_SOURCE_BLOB_BYTES, expected_mode="100644")
+            self.assertEqual(len(observed), GATE.D0_B05_MAX_SOURCE_BLOB_BYTES)
+            self.assertEqual(hashlib.sha256(observed).digest(), hashlib.sha256(content).digest())
+        finally:
+            temporary.cleanup()
+
+    def test_gitops_normalizes_and_validates_injected_runner_results(self) -> None:
+        def failing_runner(_repo: Path, _arguments: tuple[str, ...], _environment: object) -> subprocess.CompletedProcess[bytes]:
+            raise OSError("fixture runner failure")
+
+        operations = GATE.GitOps(failing_runner, environment={})
+        self.assertRejected(lambda: operations.run(REPO_ROOT, "status"), "git runner failed")
+
+        sentinel = GATE.GateVerificationError("fixture Git runner sentinel")
+
+        def gate_failing_runner(_repo: Path, _arguments: tuple[str, ...], _environment: object) -> subprocess.CompletedProcess[bytes]:
+            raise sentinel
+
+        operations = GATE.GitOps(gate_failing_runner, environment={})
+        with self.assertRaises(GATE.GateVerificationError) as caught:
+            operations.run(REPO_ROOT, "status")
+        self.assertIs(caught.exception, sentinel)
+
+        def injected_operations(*, process_args: object | None = None, returncode: object = 0, stdout: object = b"", stderr: object = b"", arbitrary_result: object | None = None) -> GATE.GitOps:
+            holder: dict[str, GATE.GitOps] = {}
+
+            def injected_runner(repo: Path, arguments: tuple[str, ...], _environment: object) -> subprocess.CompletedProcess[bytes]:
+                if arbitrary_result is not None:
+                    return arbitrary_result
+                expected_args = [str(holder["operations"].git_executable), "-C", str(repo), *arguments]
+                selected_args = expected_args if process_args is None else process_args
+                return subprocess.CompletedProcess(selected_args, returncode, stdout, stderr)
+
+            holder["operations"] = GATE.GitOps(injected_runner, environment={})
+            return holder["operations"]
+
+        operations = injected_operations(returncode=7, stdout=b"out", stderr=b"err")
+        process = operations.run(REPO_ROOT, "status", check=False)
+        self.assertEqual((process.returncode, process.stdout, process.stderr), (7, b"out", b"err"))
+        self.assertRejected(lambda: operations.run(REPO_ROOT, "status"), "exit=7")
+
+        for process_args in ([], ["git", "status"], object()):
+            with self.subTest(process_args=process_args):
+                operations = injected_operations(process_args=process_args)
+                self.assertRejected(lambda operations=operations: operations.run(REPO_ROOT, "status"), "invalid process arguments")
+        for returncode in (True, 256, -999, 10**100):
+            with self.subTest(returncode=returncode):
+                operations = injected_operations(returncode=returncode)
+                self.assertRejected(lambda operations=operations: operations.run(REPO_ROOT, "status", check=False), "invalid exit status")
+        for stream_name, value in (("stdout", "text"), ("stdout", bytearray()), ("stderr", "text"), ("stderr", bytearray())):
+            with self.subTest(stream=stream_name, value_type=type(value).__name__):
+                keywords = {stream_name: value}
+                operations = injected_operations(**keywords)
+                self.assertRejected(lambda operations=operations: operations.run(REPO_ROOT, "status"), f"invalid or oversized {stream_name}")
+
+        operations = injected_operations(stdout=b"x" * (GATE.GIT_COMMAND_STDOUT_LIMIT_BYTES + 1))
+        self.assertRejected(lambda: operations.run(REPO_ROOT, "status"), "oversized stdout")
+        operations = injected_operations(stderr=b"x" * (GATE.GIT_COMMAND_STDERR_LIMIT_BYTES + 1))
+        self.assertRejected(lambda: operations.run(REPO_ROOT, "status"), "oversized stderr")
+        for arbitrary_result in (object(), subprocess.Popen):
+            with self.subTest(result=repr(arbitrary_result)):
+                operations = injected_operations(arbitrary_result=arbitrary_result)
+                self.assertRejected(lambda operations=operations: operations.run(REPO_ROOT, "status"), "invalid process result")
 
     def validateB22(self, result: dict[str, object], package_paths: dict[str, str]) -> None:
         with mock.patch.object(GATE, "ORIGINAL_PACKAGE_DRVS", package_paths):
