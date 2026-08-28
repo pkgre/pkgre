@@ -370,6 +370,199 @@ SEMANTIC_RETURNED_AT = "2026-08-26T00:10:00Z"
 SEMANTIC_OPERATOR = "pkgre-operator"
 SEMANTIC_VERIFICATION_TIME = GATE.parse_utc(SEMANTIC_RETURNED_AT, "semantic verification time")
 ALT_SSH_FINGERPRINT = "SHA256:+uZsRMJhsMrNNuIpWh9wzwU8B9w5T6TMpEsmT2eBxvA"
+B18_CLOSURE_ID = "d0-closure-0123456789abcdef"
+B18_EVENT_TIMES = {
+    "incident-acknowledgment": "2026-08-26T00:07:00Z",
+    "containment": "2026-08-26T00:08:00Z",
+    "remediation": "2026-08-26T00:09:00Z",
+    "policy-disposition": SEMANTIC_RETURNED_AT,
+}
+B18_RAW_BY_KIND = {
+    "historical-incident": (REPO_ROOT / GATE.B18_INCIDENT_PATH).read_bytes(),
+    "loopback-result": (REPO_ROOT / GATE.B18_LOOPBACK_RESULT_PATH).read_bytes(),
+    "remediation-implementation": (REPO_ROOT / GATE.B18_POLICY_WRAPPER_PATH).read_bytes(),
+}
+for b18_kind, b18_raw in B18_RAW_BY_KIND.items():
+    if GATE.sha256(b18_raw) != GATE.B18_RAW_EVIDENCE[b18_kind]["sha256"]:
+        raise AssertionError(f"D0-B18 {b18_kind} fixture identity mismatch")
+B18_INCIDENT_RAW = B18_RAW_BY_KIND["historical-incident"]
+
+
+def valid_b18_payloads() -> dict[str, dict[str, object]]:
+    incident = copy.deepcopy(GATE.B18_RAW_EVIDENCE["historical-incident"])
+    return {
+        "incident-acknowledgment": {
+            "acknowledgedBy": SEMANTIC_OPERATOR,
+            "acknowledgedAt": B18_EVENT_TIMES["incident-acknowledgment"],
+            "historicalIncident": {
+                "constraint": "no-public-registry-contact",
+                "result": "FAIL",
+                "source": incident,
+                "observedContacts": [copy.deepcopy(GATE.B18_CONTACT)],
+                "contactCountSemantics": "AT_LEAST_ONE_OBSERVED_NOT_UNIVERSAL_COUNT",
+                "erroneousInvocation": {
+                    "client": "bun",
+                    "commandForm": "bun install --config /tmp/policy.toml ...",
+                    "argumentOrder": ["EXECUTABLE", "SUBCOMMAND", "CONFIG_FLAG", "CONFIG_PATH", "SUBCOMMAND_ARGUMENTS"],
+                    "configArgumentForm": "--config /tmp/policy.toml",
+                    "configPosition": "AFTER_SUBCOMMAND",
+                    "configValueEncoding": "SPACE_SEPARATED",
+                    "effect": "CONFIG_PATH_INTERPRETED_AS_DEPENDENCY_AND_POLICY_REGISTRY_NOT_APPLIED",
+                },
+            },
+            "effects": {
+                "publicNpmMetadataGetOccurred": True,
+                "packageInstallationOccurred": False,
+                "publishOccurred": False,
+                "loginOccurred": False,
+                "tokenUsedOrDisclosed": False,
+                "mutationOccurred": False,
+            },
+            "laterLoopbackRunsEraseIncident": False,
+            "result": "ACKNOWLEDGED",
+        },
+        "containment": {
+            "reviewedBy": SEMANTIC_OPERATOR,
+            "reviewedAt": B18_EVENT_TIMES["containment"],
+            "incident": {"source": incident, "contact": copy.deepcopy(GATE.B18_CONTACT)},
+            "boundedLoopbackEvidence": {
+                "source": copy.deepcopy(GATE.B18_RAW_EVIDENCE["loopback-result"]),
+                "schema": "pkgre-d0-js-client-policy-authoritative-subrun-v1",
+                "status": "PASS",
+                "cases": 66,
+                "accepted": 36,
+                "rejections": 30,
+                "networkConnects": 36,
+                "registryRequests": 36,
+                "unexpectedNetworkConnects": 0,
+                "sandboxEgressPossible": False,
+                "onlyLoopbackRegistryDestination": True,
+                "historicalIncidentUnaffected": True,
+            },
+            "evidenceScope": {
+                "temporalScope": "BOUNDED_HISTORICAL_SUBRUN",
+                "currentOperationalState": "NOT_CLAIMED",
+                "productionExecution": "NOT_CLAIMED",
+                "universalNoPublicRegistryContact": "NOT_CLAIMED",
+            },
+            "subsequentProbeRegistryScope": "LOOPBACK_ONLY",
+            "laterProofAuthority": "CORRECTED_RUNS_ONLY_HISTORICAL_INCIDENT_REMAINS_AUTHORITATIVE",
+            "publicRegistryContactAuthorized": False,
+            "historicalIncidentRetained": True,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "CONTAINED",
+        },
+        "remediation": {
+            "reviewedBy": SEMANTIC_OPERATOR,
+            "reviewedAt": B18_EVENT_TIMES["remediation"],
+            "cause": {
+                "invalidInvocation": {
+                    "client": "bun",
+                    "commandForm": "bun install --config /tmp/policy.toml ...",
+                    "argumentOrder": ["EXECUTABLE", "SUBCOMMAND", "CONFIG_FLAG", "CONFIG_PATH", "SUBCOMMAND_ARGUMENTS"],
+                    "configArgumentForm": "--config /tmp/policy.toml",
+                    "configPosition": "AFTER_SUBCOMMAND",
+                    "configValueEncoding": "SPACE_SEPARATED",
+                    "effect": "CONFIG_PATH_INTERPRETED_AS_DEPENDENCY_AND_POLICY_REGISTRY_NOT_APPLIED",
+                }
+            },
+            "correctedInvocation": copy.deepcopy(GATE.B18_CORRECTED_BUN_INVOCATION),
+            "implementation": copy.deepcopy(GATE.B18_RAW_EVIDENCE["remediation-implementation"]),
+            "subsequentRunPolicy": {
+                "correctedInvocationRequired": True,
+                "loopbackRegistryRequired": True,
+                "supersededFirstProbeIncludedInSuccessResults": False,
+                "historicalIncidentRetained": True,
+            },
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "REMEDIATED",
+        },
+        "policy-disposition": {
+            "approvedBy": SEMANTIC_OPERATOR,
+            "approvedAt": B18_EVENT_TIMES["policy-disposition"],
+            "decision": "CLOSE_AS_ACKNOWLEDGED_CONTAINED",
+            "disposition": "ACKNOWLEDGED_CONTAINED",
+            "findingSatisfied": False,
+            "waiverApproved": False,
+            "historicalFactStatus": "OBSERVED_IRREVERSIBLE_PRESERVED",
+            "containmentStatus": "CONTAINED_WITH_BOUNDED_HISTORICAL_EVIDENCE",
+            "remediationStatus": "CORRECTED_BUN_CONFIG_INVOCATION_AND_IMPLEMENTATION_FROZEN",
+            "laterLoopbackEvidenceCanSupersedeIncident": False,
+            "independentPhaseAuthority": False,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "APPROVED",
+        },
+    }
+
+
+def valid_b18_result(payloads: dict[str, dict[str, object]] | None = None) -> dict[str, object]:
+    payloads = valid_b18_payloads() if payloads is None else payloads
+    raw_ref_ids = {
+        "historical-incident": "b18-incident",
+        "loopback-result": "b18-loopback-result",
+        "remediation-implementation": "b18-policy-wrapper",
+    }
+    evidence_by_kind: dict[str, list[str]] = {kind: [ref_id] for kind, ref_id in raw_ref_ids.items()}
+    references: dict[str, dict[str, object]] = {
+        ref_id: {"raw": B18_RAW_BY_KIND[kind], "sha256": GATE.B18_RAW_EVIDENCE[kind]["sha256"]}
+        for kind, ref_id in raw_ref_ids.items()
+    }
+    ref_ids = dict(raw_ref_ids)
+    context = {
+        "closureSetId": B18_CLOSURE_ID,
+        "handoffId": "OP-D0-09",
+        "historicalAggregate": {
+            "commit": GATE.PRODUCTION_CONFIG.historical_aggregate_commit,
+            "sha256": GATE.PRODUCTION_CONFIG.historical_aggregate_sha256,
+        },
+    }
+    for index, kind in enumerate(GATE.B18_SEMANTIC_EVIDENCE_KINDS, 1):
+        ref_id = f"b18-semantic-{index}"
+        predecessors = [
+            {"kind": predecessor_kind, "refId": ref_ids[predecessor_kind], "sha256": references[ref_ids[predecessor_kind]]["sha256"]}
+            for predecessor_kind in GATE.B18_PREDECESSOR_KINDS[kind]
+        ]
+        raw = GATE.canonical_json(
+            {
+                "schema": GATE.B18_SEMANTIC_EVIDENCE_SCHEMA,
+                "findingId": "D0-B18",
+                "policyId": GATE.B18_POLICY_ID,
+                "kind": kind,
+                "context": context,
+                "predecessors": predecessors,
+                "payload": payloads[kind],
+            }
+        )
+        evidence_by_kind[kind] = [ref_id]
+        references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
+        ref_ids[kind] = ref_id
+    return {
+        "findingId": "D0-B18",
+        "policyId": GATE.B18_POLICY_ID,
+        "disposition": "ACKNOWLEDGED_CONTAINED",
+        "mode": "ACKNOWLEDGED_CONTAINED",
+        "_closureSetId": B18_CLOSURE_ID,
+        "_handoffId": "OP-D0-09",
+        "_operatorReturnedBy": SEMANTIC_OPERATOR,
+        "_operatorReturnedAt": SEMANTIC_RETURNED_AT,
+        "_evidenceByKind": evidence_by_kind,
+        "_references": references,
+        "claims": {
+            "historicalFactAcknowledged": True,
+            "contact": copy.deepcopy(GATE.B18_CONTACT),
+            "evidenceByKind": copy.deepcopy(evidence_by_kind),
+        },
+    }
+
+def rewrite_b18_document(candidate: dict[str, object], kind: str, mutate) -> None:
+    ref_id = candidate["_evidenceByKind"][kind][0]
+    document = GATE.parse_json(candidate["_references"][ref_id]["raw"], "B18 test document")
+    mutate(document)
+    raw = GATE.canonical_json(document)
+    candidate["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
 
 
 def semantic_file_metadata(
@@ -1297,6 +1490,12 @@ os._exit(0)
         payloads = valid_b03_payloads()
         mutate(b03_catalog(payloads))
         self.assertSemanticPayloadsRejected("D0-B03", "OP-D0-05", payloads, text)
+
+    def validateB18(self, result: dict[str, object], verification_time=SEMANTIC_VERIFICATION_TIME, config=GATE.PRODUCTION_CONFIG) -> None:
+        GATE.validate_b18("ACKNOWLEDGED_CONTAINED", "ACKNOWLEDGED_CONTAINED", [result], verification_time, config)
+
+    def assertB18Rejected(self, result: dict[str, object], text: str, verification_time=SEMANTIC_VERIFICATION_TIME, config=GATE.PRODUCTION_CONFIG) -> None:
+        self.assertRejected(lambda: self.validateB18(result, verification_time, config), text)
 
     def validateB13Rephase(self, payloads: dict[str, dict[str, object]]) -> None:
         result = self.semanticResult("D0-B13", "OP-D0-06", payloads, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B13"])
@@ -2389,6 +2588,240 @@ os._exit(0)
             evidence_by_kind[kind] = [ref_id]
             references[ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
         return {"_handoffId": handoff_id, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT, "_evidenceByKind": evidence_by_kind, "_references": references, "claims": {"evidenceByKind": evidence_by_kind, "targetGates": [] if target_gates is None else target_gates}}
+
+    def test_b18_accepts_exact_context_predecessors_acknowledgment_containment_and_remediation(self) -> None:
+        result = valid_b18_result()
+        self.validateB18(result)
+        self.assertEqual(set(result["_semanticPayloads"]), set(GATE.B18_SEMANTIC_EVIDENCE_KINDS))
+        self.assertEqual(set(result["_evidenceByKind"]), set(GATE.B18_REQUIRED_EVIDENCE_KINDS))
+        for kind, raw in B18_RAW_BY_KIND.items():
+            self.assertEqual(GATE.sha256(raw), GATE.B18_RAW_EVIDENCE[kind]["sha256"])
+        for boundary in ("2026-08-26T00:00:00Z", "2026-08-26T00:10:30Z"):
+            with self.subTest(boundary=boundary):
+                payloads = valid_b18_payloads()
+                payloads["incident-acknowledgment"]["acknowledgedAt"] = boundary
+                payloads["containment"]["reviewedAt"] = boundary
+                payloads["remediation"]["reviewedAt"] = boundary
+                payloads["policy-disposition"]["approvedAt"] = boundary
+                candidate = valid_b18_result(payloads)
+                candidate["_operatorReturnedAt"] = boundary
+                self.validateB18(candidate)
+
+    def test_b18_rejects_wrong_closure_shape_and_reference_bindings(self) -> None:
+        result = valid_b18_result()
+        self.assertRejected(lambda: GATE.validate_b18("SATISFIED", "ACKNOWLEDGED_CONTAINED", [result], SEMANTIC_VERIFICATION_TIME), "may only close as ACKNOWLEDGED_CONTAINED")
+        self.assertRejected(lambda: GATE.validate_b18("ACKNOWLEDGED_CONTAINED", "EVIDENCE_SATISFIED", [result], SEMANTIC_VERIFICATION_TIME), "may only close as ACKNOWLEDGED_CONTAINED")
+        self.assertRejected(lambda: GATE.validate_b18("ACKNOWLEDGED_CONTAINED", "ACKNOWLEDGED_CONTAINED", [], SEMANTIC_VERIFICATION_TIME), "single-handoff")
+        self.assertRejected(lambda: GATE.validate_b18("ACKNOWLEDGED_CONTAINED", "ACKNOWLEDGED_CONTAINED", [result, copy.deepcopy(result)], SEMANTIC_VERIFICATION_TIME), "single-handoff")
+
+        cases = [
+            ("wrong-handoff", lambda row: row.__setitem__("_handoffId", "OP-D0-10"), "unexpected handoff"),
+            ("wrong-policy", lambda row: row.__setitem__("policyId", "D0-B18-v0"), "policy identity mismatch"),
+            ("missing-closure", lambda row: row.pop("_closureSetId"), "expected nonempty trimmed string"),
+            ("invalid-closure", lambda row: row.__setitem__("_closureSetId", "closure-1"), "invalid closure-set ID"),
+            ("missing-kind", lambda row: row["_evidenceByKind"].pop("containment"), "evidence-kind set must be exact"),
+            ("extra-kind", lambda row: row["_evidenceByKind"].__setitem__("narrative", ["b18-semantic-1"]), "evidence-kind set must be exact"),
+            ("empty-kind", lambda row: row["_evidenceByKind"].__setitem__("containment", []), "exactly one evidence reference"),
+            ("duplicate-kind-ref", lambda row: row["_evidenceByKind"].__setitem__("containment", ["b18-semantic-2", "b18-semantic-2"]), "exactly one evidence reference"),
+            ("nonstring-ref", lambda row: row["_evidenceByKind"].__setitem__("containment", [1]), "nonempty strings"),
+            ("cross-kind-ref-reuse", lambda row: row["_evidenceByKind"].__setitem__("containment", ["b18-semantic-1"]), "cannot be reused"),
+            ("unknown-ref", lambda row: row["_evidenceByKind"].__setitem__("containment", ["unknown"]), "expected object"),
+            ("false-as-zero", lambda row: row["claims"].__setitem__("historicalFactAcknowledged", 0), "expected boolean"),
+            ("wrong-contact", lambda row: row["claims"]["contact"].__setitem__("url", "https://registry.npmjs.org/other"), "exact historical contact"),
+            ("claim-kind-removed", lambda row: row["claims"]["evidenceByKind"].pop("containment"), "claims must exactly bind"),
+            ("claim-ref-changed", lambda row: row["claims"]["evidenceByKind"].__setitem__("containment", ["b18-semantic-3"]), "claims must exactly bind"),
+            ("extra-claim", lambda row: row["claims"].__setitem__("narrative", "trust me"), "object-key mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                candidate = valid_b18_result()
+                mutate(candidate)
+                self.assertB18Rejected(candidate, expected)
+
+    def test_b18_rejects_unstructured_noncanonical_or_context_unbound_documents(self) -> None:
+        candidate = valid_b18_result()
+        semantic_ref = candidate["_evidenceByKind"]["containment"][0]
+        candidate["_references"][semantic_ref] = {"raw": b"operator says contained\n", "sha256": GATE.sha256(b"operator says contained\n")}
+        self.assertB18Rejected(candidate, "invalid strict JSON")
+
+        candidate = valid_b18_result()
+        semantic_ref = candidate["_evidenceByKind"]["containment"][0]
+        raw = candidate["_references"][semantic_ref]["raw"] + b" "
+        candidate["_references"][semantic_ref] = {"raw": raw, "sha256": GATE.sha256(raw)}
+        self.assertB18Rejected(candidate, "JSON is not canonical")
+
+        envelope_cases = [
+            ("extra-key", lambda document: document.__setitem__("narrative", "trust me"), "object-key mismatch"),
+            ("schema", lambda document: document.__setitem__("schema", "pkgre-d0-b18-semantic-evidence-v0"), "envelope binding mismatch"),
+            ("finding", lambda document: document.__setitem__("findingId", "D0-B17"), "envelope binding mismatch"),
+            ("policy", lambda document: document.__setitem__("policyId", "D0-B18-v0"), "envelope binding mismatch"),
+            ("kind", lambda document: document.__setitem__("kind", "remediation"), "envelope binding mismatch"),
+            ("payload-not-object", lambda document: document.__setitem__("payload", "contained"), "expected object"),
+            ("closure", lambda document: document["context"].__setitem__("closureSetId", "d0-closure-fedcba9876543210"), "frozen value mismatch"),
+            ("handoff", lambda document: document["context"].__setitem__("handoffId", "OP-D0-10"), "frozen value mismatch"),
+            ("aggregate-commit", lambda document: document["context"]["historicalAggregate"].__setitem__("commit", "0" * 40), "frozen value mismatch"),
+            ("aggregate-digest", lambda document: document["context"]["historicalAggregate"].__setitem__("sha256", "0" * 64), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in envelope_cases:
+            with self.subTest(name=name):
+                candidate = valid_b18_result()
+                rewrite_b18_document(candidate, "containment", mutate)
+                self.assertB18Rejected(candidate, expected)
+
+        candidate = valid_b18_result()
+        semantic_ref = candidate["_evidenceByKind"]["containment"][0]
+        candidate["_references"][semantic_ref]["sha256"] = "0" * 64
+        self.assertB18Rejected(candidate, "evidence-reference digest mismatch")
+
+        alternate_config = replace(GATE.PRODUCTION_CONFIG, historical_aggregate_commit="0" * 40)
+        self.assertB18Rejected(valid_b18_result(), "frozen value mismatch", config=alternate_config)
+
+    def test_b18_rejects_missing_reordered_or_rebound_predecessors(self) -> None:
+        cases = [
+            ("ack-kind", "incident-acknowledgment", lambda document: document["predecessors"][0].__setitem__("kind", "containment")),
+            ("ack-ref", "incident-acknowledgment", lambda document: document["predecessors"][0].__setitem__("refId", "b18-loopback-result")),
+            ("ack-digest", "incident-acknowledgment", lambda document: document["predecessors"][0].__setitem__("sha256", "0" * 64)),
+            ("containment-missing-loopback", "containment", lambda document: document["predecessors"].pop()),
+            ("containment-reordered", "containment", lambda document: document["predecessors"].reverse()),
+            ("remediation-missing-implementation", "remediation", lambda document: document["predecessors"].pop()),
+            ("remediation-rebound", "remediation", lambda document: document["predecessors"][2].__setitem__("refId", "b18-semantic-1")),
+            ("policy-missing-remediation", "policy-disposition", lambda document: document["predecessors"].pop()),
+            ("policy-extra", "policy-disposition", lambda document: document["predecessors"].append(copy.deepcopy(document["predecessors"][0]))),
+        ]
+        for name, kind, mutate in cases:
+            with self.subTest(name=name):
+                candidate = valid_b18_result()
+                rewrite_b18_document(candidate, kind, mutate)
+                self.assertB18Rejected(candidate, "predecessors")
+
+    def test_b18_rejects_replaced_or_unbound_raw_artifacts(self) -> None:
+        for kind in sorted(GATE.B18_RAW_EVIDENCE):
+            with self.subTest(kind=kind, mutation="claimed-digest"):
+                candidate = valid_b18_result()
+                ref_id = candidate["_evidenceByKind"][kind][0]
+                candidate["_references"][ref_id]["sha256"] = "0" * 64
+                self.assertB18Rejected(candidate, "evidence-reference digest mismatch")
+            with self.subTest(kind=kind, mutation="replacement-bytes"):
+                candidate = valid_b18_result()
+                ref_id = candidate["_evidenceByKind"][kind][0]
+                replacement_raw = f"replacement {kind}\n".encode()
+                candidate["_references"][ref_id] = {"raw": replacement_raw, "sha256": GATE.sha256(replacement_raw)}
+                self.assertB18Rejected(candidate, f"pinned {kind} digest mismatch")
+
+    def test_b18_rejects_revisionist_incident_side_effect_and_scope_claims(self) -> None:
+        cases = [
+            ("incident-constraint", lambda p: p["incident-acknowledgment"]["historicalIncident"].__setitem__("constraint", "best-effort-no-contact")),
+            ("incident-result", lambda p: p["incident-acknowledgment"]["historicalIncident"].__setitem__("result", "PASS")),
+            ("incident-path", lambda p: p["incident-acknowledgment"]["historicalIncident"]["source"].__setitem__("path", "fixtures/other/incident.txt")),
+            ("incident-sha", lambda p: p["incident-acknowledgment"]["historicalIncident"]["source"].__setitem__("sha256", "0" * 64)),
+            ("incident-contact", lambda p: p["incident-acknowledgment"]["historicalIncident"]["observedContacts"][0].__setitem__("responseStatus", 200)),
+            ("universal-contact-count", lambda p: p["incident-acknowledgment"]["historicalIncident"].__setitem__("contactCountSemantics", "EXACTLY_ONE_UNIVERSAL_COUNT")),
+            ("erroneous-command-rewritten", lambda p: p["incident-acknowledgment"]["historicalIncident"]["erroneousInvocation"].__setitem__("commandForm", "bun --config=/tmp/policy.toml install ...")),
+            ("metadata-get-denied", lambda p: p["incident-acknowledgment"]["effects"].__setitem__("publicNpmMetadataGetOccurred", False)),
+            ("installation-claimed", lambda p: p["incident-acknowledgment"]["effects"].__setitem__("packageInstallationOccurred", True)),
+            ("publish-claimed", lambda p: p["incident-acknowledgment"]["effects"].__setitem__("publishOccurred", True)),
+            ("login-claimed", lambda p: p["incident-acknowledgment"]["effects"].__setitem__("loginOccurred", True)),
+            ("token-claimed", lambda p: p["incident-acknowledgment"]["effects"].__setitem__("tokenUsedOrDisclosed", True)),
+            ("mutation-claimed", lambda p: p["incident-acknowledgment"]["effects"].__setitem__("mutationOccurred", True)),
+            ("later-runs-erase", lambda p: p["incident-acknowledgment"].__setitem__("laterLoopbackRunsEraseIncident", True)),
+            ("ack-result", lambda p: p["incident-acknowledgment"].__setitem__("result", "SUPERSEDED")),
+            ("containment-contact", lambda p: p["containment"]["incident"]["contact"].__setitem__("url", "https://registry.npmjs.org/other")),
+            ("public-subsequent-probes", lambda p: p["containment"].__setitem__("subsequentProbeRegistryScope", "PUBLIC_ALLOWED")),
+            ("later-proof-supersedes", lambda p: p["containment"].__setitem__("laterProofAuthority", "LATER_RUNS_SUPERSEDE_INCIDENT")),
+            ("current-operational-claim", lambda p: p["containment"]["evidenceScope"].__setitem__("currentOperationalState", "PROVED_SAFE")),
+            ("production-execution-claim", lambda p: p["containment"]["evidenceScope"].__setitem__("productionExecution", "PROVED")),
+            ("universal-no-contact-claim", lambda p: p["containment"]["evidenceScope"].__setitem__("universalNoPublicRegistryContact", "PROVED")),
+            ("contact-authorized", lambda p: p["containment"].__setitem__("publicRegistryContactAuthorized", True)),
+            ("incident-not-retained", lambda p: p["containment"].__setitem__("historicalIncidentRetained", False)),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                payloads = valid_b18_payloads()
+                mutate(payloads)
+                expected = {
+                    "later-runs-erase": "must not erase the historical incident",
+                    "ack-result": "incident acknowledgment result mismatch",
+                }.get(name, "frozen value mismatch")
+                self.assertB18Rejected(valid_b18_result(payloads), expected)
+
+    def test_b18_rejects_weakened_remediation_policy_or_implementation_authority(self) -> None:
+        cases = [
+            ("invalid-order-rewritten", lambda p: p["remediation"]["cause"]["invalidInvocation"].__setitem__("argumentOrder", ["EXECUTABLE", "CONFIG_FLAG", "SUBCOMMAND", "CONFIG_PATH", "SUBCOMMAND_ARGUMENTS"])),
+            ("invalid-config-form", lambda p: p["remediation"]["cause"]["invalidInvocation"].__setitem__("configArgumentForm", "--config=/absolute/path")),
+            ("invalid-config-position", lambda p: p["remediation"]["cause"]["invalidInvocation"].__setitem__("configPosition", "BEFORE_SUBCOMMAND")),
+            ("invalid-config-encoding", lambda p: p["remediation"]["cause"]["invalidInvocation"].__setitem__("configValueEncoding", "EQUALS_JOINED")),
+            ("corrected-order", lambda p: p["remediation"]["correctedInvocation"].__setitem__("argumentOrder", ["EXECUTABLE", "SUBCOMMAND", "CONFIG", "SUBCOMMAND_ARGUMENTS"])),
+            ("corrected-config-space", lambda p: p["remediation"]["correctedInvocation"].__setitem__("configArgumentForm", "--config /absolute/path")),
+            ("corrected-config-position", lambda p: p["remediation"]["correctedInvocation"].__setitem__("configPosition", "AFTER_SUBCOMMAND")),
+            ("corrected-config-encoding", lambda p: p["remediation"]["correctedInvocation"].__setitem__("configValueEncoding", "SPACE_SEPARATED")),
+            ("corrected-public-scope", lambda p: p["remediation"]["correctedInvocation"].__setitem__("registryScope", "PUBLIC_ALLOWED")),
+            ("corrected-subcommand", lambda p: p["remediation"]["correctedInvocation"].__setitem__("subcommand", "add")),
+            ("implementation-path", lambda p: p["remediation"]["implementation"].__setitem__("path", "fixtures/other/wrapper.py")),
+            ("implementation-digest", lambda p: p["remediation"]["implementation"].__setitem__("sha256", "0" * 64)),
+            ("correction-not-required", lambda p: p["remediation"]["subsequentRunPolicy"].__setitem__("correctedInvocationRequired", False)),
+            ("loopback-not-required", lambda p: p["remediation"]["subsequentRunPolicy"].__setitem__("loopbackRegistryRequired", False)),
+            ("first-probe-in-success", lambda p: p["remediation"]["subsequentRunPolicy"].__setitem__("supersededFirstProbeIncludedInSuccessResults", True)),
+            ("remediation-erases-incident", lambda p: p["remediation"]["subsequentRunPolicy"].__setitem__("historicalIncidentRetained", False)),
+            ("containment-d0-mutation", lambda p: p["containment"].__setitem__("d0MutationAuthorized", True)),
+            ("containment-d1", lambda p: p["containment"].__setitem__("d1ImplementationAuthorized", True)),
+            ("remediation-d0-mutation", lambda p: p["remediation"].__setitem__("d0MutationAuthorized", True)),
+            ("remediation-d1", lambda p: p["remediation"].__setitem__("d1ImplementationAuthorized", True)),
+            ("policy-satisfied", lambda p: p["policy-disposition"].__setitem__("disposition", "SATISFIED")),
+            ("policy-finding-satisfied", lambda p: p["policy-disposition"].__setitem__("findingSatisfied", True)),
+            ("policy-waiver", lambda p: p["policy-disposition"].__setitem__("waiverApproved", True)),
+            ("policy-historical-state", lambda p: p["policy-disposition"].__setitem__("historicalFactStatus", "SUPERSEDED")),
+            ("policy-supersedes", lambda p: p["policy-disposition"].__setitem__("laterLoopbackEvidenceCanSupersedeIncident", True)),
+            ("policy-phase-authority", lambda p: p["policy-disposition"].__setitem__("independentPhaseAuthority", True)),
+            ("policy-d0-mutation", lambda p: p["policy-disposition"].__setitem__("d0MutationAuthorized", True)),
+            ("policy-d1", lambda p: p["policy-disposition"].__setitem__("d1ImplementationAuthorized", True)),
+        ]
+        for name, mutate in cases:
+            with self.subTest(name=name):
+                payloads = valid_b18_payloads()
+                mutate(payloads)
+                self.assertB18Rejected(valid_b18_result(payloads), "frozen value mismatch")
+
+    def test_b18_requires_fresh_operator_bound_chronological_documents(self) -> None:
+        actor_cases = [
+            ("acknowledgment", "incident-acknowledgment", "acknowledgedBy"),
+            ("containment", "containment", "reviewedBy"),
+            ("remediation", "remediation", "reviewedBy"),
+            ("policy", "policy-disposition", "approvedBy"),
+        ]
+        for name, kind, field in actor_cases:
+            with self.subTest(name=name):
+                payloads = valid_b18_payloads()
+                payloads[kind][field] = "other-operator"
+                self.assertB18Rejected(valid_b18_result(payloads), "operator identity mismatch")
+
+        for name, timestamp, expected in (
+            ("stale", "2026-08-25T23:59:59Z", "older than 600 seconds"),
+            ("future", "2026-08-26T00:10:31Z", "too far in the future"),
+        ):
+            with self.subTest(name=name):
+                payloads = valid_b18_payloads()
+                payloads["incident-acknowledgment"]["acknowledgedAt"] = timestamp
+                payloads["containment"]["reviewedAt"] = timestamp
+                payloads["remediation"]["reviewedAt"] = timestamp
+                payloads["policy-disposition"]["approvedAt"] = timestamp
+                candidate = valid_b18_result(payloads)
+                candidate["_operatorReturnedAt"] = timestamp
+                self.assertB18Rejected(candidate, expected)
+
+        candidate = valid_b18_result()
+        candidate["_operatorReturnedAt"] = "2026-08-26T00:09:59Z"
+        self.assertB18Rejected(candidate, "event time is after the operator return")
+
+        chronology_cases = [
+            ("containment-before-ack", "containment", "reviewedAt", "2026-08-26T00:06:59Z"),
+            ("remediation-before-containment", "remediation", "reviewedAt", "2026-08-26T00:07:59Z"),
+            ("policy-before-remediation", "policy-disposition", "approvedAt", "2026-08-26T00:08:59Z"),
+        ]
+        for name, kind, field, timestamp in chronology_cases:
+            with self.subTest(name=name):
+                payloads = valid_b18_payloads()
+                payloads[kind][field] = timestamp
+                self.assertB18Rejected(valid_b18_result(payloads), "invalid semantic-document chronology")
 
     def test_b01_and_b02_accept_exact_semantic_proof(self) -> None:
         self.validateSemanticPayloads("D0-B01", "OP-D0-01", valid_b01_payloads())

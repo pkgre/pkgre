@@ -99,7 +99,35 @@ EXTERNAL_INFRA_SOURCE_MANIFEST_DOMAIN = b"pkgre-d0-external-infra-source-manifes
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 B18_INCIDENT_SHA256 = "9d06853e9fa692c4b6347af8ac4bb85049d76322c41330768b5782e5df888efe"
 B18_INCIDENT_PATH = "fixtures/d0-v1/basis-inventory/js-client-policy/raw/incident.txt"
+B18_LOOPBACK_RESULT_SHA256 = "ed3fa224b9305805c70ee5fcbc9680f6ec6287eeff482ef08f715952d9e7e525"
+B18_LOOPBACK_RESULT_PATH = "fixtures/d0-v1/basis-inventory/js-client-policy/raw/subrun/RESULT.json"
+B18_POLICY_WRAPPER_SHA256 = "38a1f34f3e381ad2b6c7801578133c7f7119d1f4b17cdeb02da18ebe960a8694"
+B18_POLICY_WRAPPER_PATH = "fixtures/d0-v1/basis-inventory/js-client-policy/wrappers/policy_wrapper.py"
 B18_CONTACT = {"method": "GET", "url": "https://registry.npmjs.org/probe-missing", "responseStatus": 404}
+B18_POLICY_ID = "D0-B18-v1"
+B18_SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-b18-semantic-evidence-v1"
+B18_RAW_EVIDENCE = {
+    "historical-incident": {"path": B18_INCIDENT_PATH, "sha256": B18_INCIDENT_SHA256},
+    "loopback-result": {"path": B18_LOOPBACK_RESULT_PATH, "sha256": B18_LOOPBACK_RESULT_SHA256},
+    "remediation-implementation": {"path": B18_POLICY_WRAPPER_PATH, "sha256": B18_POLICY_WRAPPER_SHA256},
+}
+B18_SEMANTIC_EVIDENCE_KINDS = ("incident-acknowledgment", "containment", "remediation", "policy-disposition")
+B18_REQUIRED_EVIDENCE_KINDS = frozenset(B18_RAW_EVIDENCE) | frozenset(B18_SEMANTIC_EVIDENCE_KINDS)
+B18_PREDECESSOR_KINDS = {
+    "incident-acknowledgment": ("historical-incident",),
+    "containment": ("historical-incident", "incident-acknowledgment", "loopback-result"),
+    "remediation": ("historical-incident", "incident-acknowledgment", "containment", "remediation-implementation"),
+    "policy-disposition": ("historical-incident", "incident-acknowledgment", "loopback-result", "containment", "remediation-implementation", "remediation"),
+}
+B18_CORRECTED_BUN_INVOCATION = {
+    "client": "bun",
+    "argumentOrder": ["EXECUTABLE", "CONFIG", "SUBCOMMAND", "SUBCOMMAND_ARGUMENTS"],
+    "configArgumentForm": "--config=/absolute/path",
+    "configPosition": "BEFORE_SUBCOMMAND",
+    "configValueEncoding": "EQUALS_JOINED",
+    "subcommand": "install",
+    "registryScope": "LOOPBACK_ONLY",
+}
 B21_TARGETS = ["https://rust.pkg.re/config.json", "https://js.pkg.re/pkgre-js"]
 B21_PROTOCOLS = ["HTTP/1.1", "HTTP/2"]
 GITHUB_GOVERNANCE_BASELINE_PATH = "fixtures/d0-v1/basis-inventory/github-governance/actual-vs-d2.json"
@@ -5724,23 +5752,237 @@ def validate_generic_policy(finding_id: str, disposition: str, mode: str, result
     validate_generic_payloads(finding_id, disposition, results, verification_time)
 
 
-def validate_b18(disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
+def validate_b18_reference(result: dict[str, Any], kind: str, label: str) -> tuple[str, dict[str, Any]]:
+    ref_ids = evidence_ids(result, kind)
+    require(len(ref_ids) == 1, f"{label}: exactly one evidence reference is required for {kind!r}")
+    ref_id = ref_ids[0]
+    references = obj(result.get("_references"), f"{label} references")
+    reference = obj(references.get(ref_id), f"{label} {kind} reference")
+    raw = reference.get("raw")
+    require(isinstance(raw, bytes), f"{label} {kind}: expected raw bytes")
+    digest = hex_digest(reference.get("sha256"), f"{label} {kind}.sha256")
+    require(digest == sha256(raw), f"{label} {kind}: evidence-reference digest mismatch")
+    return ref_id, reference
+
+
+def validate_b18_semantic_documents(result: dict[str, Any], config: GateConfig) -> dict[str, dict[str, Any]]:
+    label = "D0-B18/OP-D0-09"
+    handoff_id = nonempty(result.get("_handoffId"), f"{label} handoff")
+    require(handoff_id == "OP-D0-09", "D0-B18: historical incident closure belongs to an unexpected handoff")
+    require(result.get("policyId") == B18_POLICY_ID, "D0-B18: policy identity mismatch")
+    closure_id = nonempty(result.get("_closureSetId"), f"{label} closure-set ID")
+    require(CLOSURE_SET_RE.fullmatch(closure_id) is not None, f"{label}: invalid closure-set ID")
+    evidence_by_kind = obj(result.get("_evidenceByKind"), f"{label} evidence")
+    require(set(evidence_by_kind) == B18_REQUIRED_EVIDENCE_KINDS, f"{label}: evidence-kind set must be exact;expected={sorted(B18_REQUIRED_EVIDENCE_KINDS)!r}")
+    require(all(isinstance(ref_ids, list) and len(ref_ids) == 1 for ref_ids in evidence_by_kind.values()), f"{label}: exactly one evidence reference is required per kind")
+    all_ref_ids = [ref_ids[0] for ref_ids in evidence_by_kind.values()]
+    require(all(isinstance(ref_id, str) and ref_id != "" for ref_id in all_ref_ids), f"{label}: evidence reference IDs must be nonempty strings")
+    require(len(all_ref_ids) == len(set(all_ref_ids)), f"{label}: an evidence reference cannot be reused across kinds")
+
+    ref_bindings: dict[str, dict[str, str]] = {}
+    for kind in sorted(B18_REQUIRED_EVIDENCE_KINDS):
+        ref_id, reference = validate_b18_reference(result, kind, label)
+        ref_bindings[kind] = {"kind": kind, "refId": ref_id, "sha256": reference["sha256"]}
+    for kind, source in B18_RAW_EVIDENCE.items():
+        reference = result["_references"][ref_bindings[kind]["refId"]]
+        require(reference["sha256"] == source["sha256"], f"D0-B18: pinned {kind} digest mismatch")
+
+    expected_context = {
+        "closureSetId": closure_id,
+        "handoffId": handoff_id,
+        "historicalAggregate": {
+            "commit": config.historical_aggregate_commit,
+            "sha256": config.historical_aggregate_sha256,
+        },
+    }
+    payloads: dict[str, dict[str, Any]] = {}
+    for kind in B18_SEMANTIC_EVIDENCE_KINDS:
+        reference = result["_references"][ref_bindings[kind]["refId"]]
+        document = obj(parse_json(reference["raw"], f"{label} {kind} semantic document"), f"{label} {kind} semantic document")
+        exact_keys(document, {"schema", "findingId", "policyId", "kind", "context", "predecessors", "payload"}, f"{label} {kind} semantic document")
+        require(
+            document["schema"] == B18_SEMANTIC_EVIDENCE_SCHEMA
+            and document["findingId"] == "D0-B18"
+            and document["policyId"] == B18_POLICY_ID
+            and document["kind"] == kind,
+            f"{label} {kind}: semantic envelope binding mismatch",
+        )
+        exact_json_value(document["context"], expected_context, f"{label} {kind}.context")
+        expected_predecessors = [ref_bindings[predecessor_kind] for predecessor_kind in B18_PREDECESSOR_KINDS[kind]]
+        exact_json_value(document["predecessors"], expected_predecessors, f"{label} {kind}.predecessors")
+        payloads[kind] = obj(document["payload"], f"{label} {kind} payload")
+    result["_semanticPayloads"] = payloads
+    return payloads
+
+
+def validate_b18_operator_event(
+    payload: dict[str, Any],
+    actor_field: str,
+    time_field: str,
+    label: str,
+    operator: str,
+    returned_at: datetime,
+    verification_time: datetime,
+) -> datetime:
+    actor = security_text(payload[actor_field], f"{label}.{actor_field}", 128)
+    require(actor == operator, f"{label}: operator identity mismatch")
+    event_time = parse_utc(payload[time_field], f"{label}.{time_field}")
+    require(event_time <= returned_at, f"{label}: event time is after the operator return")
+    require(event_time <= verification_time + timedelta(seconds=RECEIPT_FUTURE_SKEW_SECONDS), f"{label}: event timestamp is too far in the future")
+    require(verification_time - event_time <= timedelta(seconds=B18_RECEIPT_MAX_AGE_SECONDS), f"{label}: event is older than {B18_RECEIPT_MAX_AGE_SECONDS} seconds")
+    return event_time
+
+
+def validate_b18(
+    disposition: str,
+    mode: str,
+    results: list[dict[str, Any]],
+    verification_time: datetime,
+    config: GateConfig = PRODUCTION_CONFIG,
+) -> None:
     require(disposition == "ACKNOWLEDGED_CONTAINED" and mode == "ACKNOWLEDGED_CONTAINED", "D0-B18: historical incident may only close as ACKNOWLEDGED_CONTAINED")
-    required = {"historical-incident", "incident-acknowledgment", "containment", "remediation", "policy-disposition"}
-    all_kinds = set().union(*(set(result["_evidenceByKind"]) for result in results))
-    require(required <= all_kinds, "D0-B18: historical incident,acknowledgment,containment,remediation,and policy evidence are mandatory")
-    for result in results:
-        claims = obj(result["claims"], "D0-B18 claims")
-        exact_keys(claims, {"historicalFactAcknowledged", "contact", "historicalIncidentRefId", "acknowledgmentRefIds", "containmentRefIds", "remediationRefIds", "policyDispositionRefIds"}, "D0-B18 claims")
-        require(claims["historicalFactAcknowledged"] is True and claims["contact"] == B18_CONTACT, "D0-B18: exact historical contact was not acknowledged")
-        incident_ids = evidence_ids(result, "historical-incident")
-        require(len(incident_ids) == 1 and claims["historicalIncidentRefId"] == incident_ids[0], "D0-B18: historical incident reference mismatch")
-        incident = result["_references"][incident_ids[0]]
-        require(incident["sha256"] == B18_INCIDENT_SHA256 and sha256(incident["raw"]) == B18_INCIDENT_SHA256, "D0-B18: historical raw incident digest mismatch")
-        require_claim_ref_ids(result, claims["acknowledgmentRefIds"], "incident-acknowledgment", "D0-B18 acknowledgment")
-        require_claim_ref_ids(result, claims["containmentRefIds"], "containment", "D0-B18 containment")
-        require_claim_ref_ids(result, claims["remediationRefIds"], "remediation", "D0-B18 remediation")
-        require_claim_ref_ids(result, claims["policyDispositionRefIds"], "policy-disposition", "D0-B18 policy disposition")
+    require(len(results) == 1, "D0-B18: exact single-handoff contribution required")
+    result = results[0]
+    payloads = validate_b18_semantic_documents(result, config)
+    claims = obj(result["claims"], "D0-B18 claims")
+    exact_keys(claims, {"historicalFactAcknowledged", "contact", "evidenceByKind"}, "D0-B18 claims")
+    require(strict_bool(claims["historicalFactAcknowledged"], "D0-B18 claims.historicalFactAcknowledged") is True and claims["contact"] == B18_CONTACT, "D0-B18: exact historical contact was not acknowledged")
+    require(claims["evidenceByKind"] == result["_evidenceByKind"], "D0-B18: claims must exactly bind every evidence kind and reference")
+
+    operator, returned_at = operator_return_context(result, "D0-B18")
+    acknowledgment = payloads["incident-acknowledgment"]
+    exact_keys(acknowledgment, {"acknowledgedBy", "acknowledgedAt", "historicalIncident", "effects", "laterLoopbackRunsEraseIncident", "result"}, "D0-B18 incident-acknowledgment")
+    exact_json_value(
+        acknowledgment["historicalIncident"],
+        {
+            "constraint": "no-public-registry-contact",
+            "result": "FAIL",
+            "source": B18_RAW_EVIDENCE["historical-incident"],
+            "observedContacts": [B18_CONTACT],
+            "contactCountSemantics": "AT_LEAST_ONE_OBSERVED_NOT_UNIVERSAL_COUNT",
+            "erroneousInvocation": {
+                "client": "bun",
+                "commandForm": "bun install --config /tmp/policy.toml ...",
+                "argumentOrder": ["EXECUTABLE", "SUBCOMMAND", "CONFIG_FLAG", "CONFIG_PATH", "SUBCOMMAND_ARGUMENTS"],
+                "configArgumentForm": "--config /tmp/policy.toml",
+                "configPosition": "AFTER_SUBCOMMAND",
+                "configValueEncoding": "SPACE_SEPARATED",
+                "effect": "CONFIG_PATH_INTERPRETED_AS_DEPENDENCY_AND_POLICY_REGISTRY_NOT_APPLIED",
+            },
+        },
+        "D0-B18 incident-acknowledgment.historicalIncident",
+    )
+    exact_json_value(
+        acknowledgment["effects"],
+        {
+            "publicNpmMetadataGetOccurred": True,
+            "packageInstallationOccurred": False,
+            "publishOccurred": False,
+            "loginOccurred": False,
+            "tokenUsedOrDisclosed": False,
+            "mutationOccurred": False,
+        },
+        "D0-B18 incident-acknowledgment.effects",
+    )
+    require(strict_bool(acknowledgment["laterLoopbackRunsEraseIncident"], "D0-B18 incident-acknowledgment.laterLoopbackRunsEraseIncident") is False, "D0-B18: later loopback runs must not erase the historical incident")
+    require(acknowledgment["result"] == "ACKNOWLEDGED", "D0-B18: incident acknowledgment result mismatch")
+    acknowledged_at = validate_b18_operator_event(acknowledgment, "acknowledgedBy", "acknowledgedAt", "D0-B18 incident-acknowledgment", operator, returned_at, verification_time)
+
+    containment = payloads["containment"]
+    exact_json_value(
+        containment,
+        {
+            "reviewedBy": containment.get("reviewedBy"),
+            "reviewedAt": containment.get("reviewedAt"),
+            "incident": {"source": B18_RAW_EVIDENCE["historical-incident"], "contact": B18_CONTACT},
+            "boundedLoopbackEvidence": {
+                "source": B18_RAW_EVIDENCE["loopback-result"],
+                "schema": "pkgre-d0-js-client-policy-authoritative-subrun-v1",
+                "status": "PASS",
+                "cases": 66,
+                "accepted": 36,
+                "rejections": 30,
+                "networkConnects": 36,
+                "registryRequests": 36,
+                "unexpectedNetworkConnects": 0,
+                "sandboxEgressPossible": False,
+                "onlyLoopbackRegistryDestination": True,
+                "historicalIncidentUnaffected": True,
+            },
+            "evidenceScope": {
+                "temporalScope": "BOUNDED_HISTORICAL_SUBRUN",
+                "currentOperationalState": "NOT_CLAIMED",
+                "productionExecution": "NOT_CLAIMED",
+                "universalNoPublicRegistryContact": "NOT_CLAIMED",
+            },
+            "subsequentProbeRegistryScope": "LOOPBACK_ONLY",
+            "laterProofAuthority": "CORRECTED_RUNS_ONLY_HISTORICAL_INCIDENT_REMAINS_AUTHORITATIVE",
+            "publicRegistryContactAuthorized": False,
+            "historicalIncidentRetained": True,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "CONTAINED",
+        },
+        "D0-B18 containment",
+    )
+    containment_at = validate_b18_operator_event(containment, "reviewedBy", "reviewedAt", "D0-B18 containment", operator, returned_at, verification_time)
+
+    remediation = payloads["remediation"]
+    exact_json_value(
+        remediation,
+        {
+            "reviewedBy": remediation.get("reviewedBy"),
+            "reviewedAt": remediation.get("reviewedAt"),
+            "cause": {
+                "invalidInvocation": {
+                    "client": "bun",
+                    "commandForm": "bun install --config /tmp/policy.toml ...",
+                    "argumentOrder": ["EXECUTABLE", "SUBCOMMAND", "CONFIG_FLAG", "CONFIG_PATH", "SUBCOMMAND_ARGUMENTS"],
+                    "configArgumentForm": "--config /tmp/policy.toml",
+                    "configPosition": "AFTER_SUBCOMMAND",
+                    "configValueEncoding": "SPACE_SEPARATED",
+                    "effect": "CONFIG_PATH_INTERPRETED_AS_DEPENDENCY_AND_POLICY_REGISTRY_NOT_APPLIED",
+                }
+            },
+            "correctedInvocation": B18_CORRECTED_BUN_INVOCATION,
+            "implementation": B18_RAW_EVIDENCE["remediation-implementation"],
+            "subsequentRunPolicy": {
+                "correctedInvocationRequired": True,
+                "loopbackRegistryRequired": True,
+                "supersededFirstProbeIncludedInSuccessResults": False,
+                "historicalIncidentRetained": True,
+            },
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "REMEDIATED",
+        },
+        "D0-B18 remediation",
+    )
+    remediation_at = validate_b18_operator_event(remediation, "reviewedBy", "reviewedAt", "D0-B18 remediation", operator, returned_at, verification_time)
+
+    policy = payloads["policy-disposition"]
+    exact_json_value(
+        policy,
+        {
+            "approvedBy": policy.get("approvedBy"),
+            "approvedAt": policy.get("approvedAt"),
+            "decision": "CLOSE_AS_ACKNOWLEDGED_CONTAINED",
+            "disposition": "ACKNOWLEDGED_CONTAINED",
+            "findingSatisfied": False,
+            "waiverApproved": False,
+            "historicalFactStatus": "OBSERVED_IRREVERSIBLE_PRESERVED",
+            "containmentStatus": "CONTAINED_WITH_BOUNDED_HISTORICAL_EVIDENCE",
+            "remediationStatus": "CORRECTED_BUN_CONFIG_INVOCATION_AND_IMPLEMENTATION_FROZEN",
+            "laterLoopbackEvidenceCanSupersedeIncident": False,
+            "independentPhaseAuthority": False,
+            "d0MutationAuthorized": False,
+            "d1ImplementationAuthorized": False,
+            "result": "APPROVED",
+        },
+        "D0-B18 policy-disposition",
+    )
+    approved_at = validate_b18_operator_event(policy, "approvedBy", "approvedAt", "D0-B18 policy-disposition", operator, returned_at, verification_time)
+    require(acknowledged_at <= containment_at <= remediation_at <= approved_at, "D0-B18: invalid semantic-document chronology")
 
 
 def validate_b19(disposition: str, mode: str, results: list[dict[str, Any]]) -> None:
@@ -6302,7 +6544,7 @@ def verify_closure(ops: GitOps, repo: Path, state_raw: bytes, state: dict[str, A
         require(contribution_ids == FINDING_HANDOFFS[finding_id], f"{finding_id}: contributions must exactly follow all handoff references")
         require(evidence_commit is not None, f"{finding_id}: terminal closure lacks evidence commit")
         if finding_id == "D0-B18":
-            validate_b18(disposition, mode, result_rows)
+            validate_b18(disposition, mode, result_rows, verification_time, config)
         elif finding_id == "D0-B19":
             validate_b19(disposition, mode, result_rows)
         elif finding_id == "D0-B21":
