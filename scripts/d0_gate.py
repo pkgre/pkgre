@@ -244,6 +244,12 @@ PROCEDURAL_AUTHORITY_ASSURANCE = {"artifactAuthorshipProven": False, "cryptograp
 PROCEDURAL_ROLES = {"operatorReturn": "PROCEDURAL_OPERATOR_RETURNER", "agentVerification": "PROCEDURAL_AGENT_VERIFIER", "proceduralReview": "PROCEDURAL_REVIEWER"}
 SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-semantic-evidence-v1"
 PHASE_AMENDMENT_SCHEMA = "pkgre-d0-phase-amendment-v1"
+B13_APPROVAL_SCHEMA = "pkgre-d0-b13-approval-v1"
+B13_APPROVAL_POLICY = {
+    "protocol-enums": {"decision": "APPROVE_EXACT_PROTOCOL_ENUMS", "scope": "D0_B13_PROTOCOL_ENUMS", "projectionSchema": "pkgre-d0-protocol-enums-projection-v1"},
+    "hard-maxima": {"decision": "APPROVE_EXACT_HARD_MAXIMA", "scope": "D0_B13_HARD_MAXIMA", "projectionSchema": "pkgre-d0-hard-maxima-projection-v1"},
+    "instance-digests": {"decision": "APPROVE_EXACT_SIX_INSTANCE_PROFILES", "scope": "D0_B13_INSTANCE_DIGESTS", "projectionSchema": "pkgre-d0-instance-profiles-projection-v1"},
+}
 SAT_EVIDENCE_BY_HANDOFF = {
     "D0-B01": {"OP-D0-01": {"credential-containment", "credential-lifecycle"}},
     "D0-B02": {"OP-D0-02": {"ssh-attestation", "ssh-lifecycle"}},
@@ -1433,6 +1439,38 @@ def operator_return_context(result: dict[str, Any], finding_id: str) -> tuple[st
     operator = security_text(result.get("_operatorReturnedBy"), f"{finding_id} operator return identity", 128)
     returned_at = parse_utc(result.get("_operatorReturnedAt"), f"{finding_id} operator return UTC")
     return operator, returned_at
+
+
+def b13_projection_sha256(kind: str, projection: Any) -> str:
+    policy = B13_APPROVAL_POLICY.get(kind)
+    require(policy is not None, "D0-B13: unsupported approval kind")
+    return sha256(canonical_json({"schema": policy["projectionSchema"], "projection": projection}))
+
+
+def validate_b13_approval(result: dict[str, Any], kind: str, verification_time: datetime) -> tuple[dict[str, Any], str]:
+    policy = B13_APPROVAL_POLICY.get(kind)
+    require(policy is not None, "D0-B13: unsupported approval kind")
+    label = f"D0-B13/OP-D0-06 {kind} approval"
+    payload = obj(result.get("_semanticPayloads", {}).get(kind), label)
+    exact_keys(payload, {"approvalSchema", "operatorDecision", "projection", "projectionSha256", "result"}, label)
+    require(payload["approvalSchema"] == B13_APPROVAL_SCHEMA, f"{label}: approval schema mismatch")
+    require(payload["result"] == "APPROVED", f"{label}: approval result mismatch")
+    projection = obj(payload["projection"], f"{label}.projection")
+    projection_digest = hex_digest(payload["projectionSha256"], f"{label}.projectionSha256")
+    decision = obj(payload["operatorDecision"], f"{label}.operatorDecision")
+    exact_keys(decision, {"decision", "returnedBy", "returnedAt", "scope", "projectionSha256"}, f"{label}.operatorDecision")
+    require(decision["decision"] == policy["decision"], f"{label}: operator decision mismatch")
+    require(decision["scope"] == policy["scope"], f"{label}: operator scope mismatch")
+    decision_digest = hex_digest(decision["projectionSha256"], f"{label}.operatorDecision.projectionSha256")
+    require(decision_digest == projection_digest, f"{label}: approval projection digest disagreement")
+    operator, returned_at = operator_return_context(result, "D0-B13")
+    require(security_text(decision["returnedBy"], f"{label}.operatorDecision.returnedBy", 128) == operator, f"{label}: operator identity mismatch")
+    decision_time = parse_utc(decision["returnedAt"], f"{label}.operatorDecision.returnedAt")
+    require(decision_time == returned_at, f"{label}: operator return time mismatch")
+    require_fresh(decision_time, returned_at, verification_time, f"{label}.operatorDecision")
+    expected_digest = b13_projection_sha256(kind, projection)
+    require(projection_digest == expected_digest, f"{label}: projection digest mismatch")
+    return projection, projection_digest
 
 
 def require_no_later(when: datetime, upper_bound: datetime, label: str) -> None:

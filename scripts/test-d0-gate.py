@@ -625,6 +625,24 @@ def b03_authentication_profile(catalog: dict[str, object], profile_id: str) -> d
     return matches[0]
 
 
+def valid_b13_approval(kind: str, projection: dict[str, object]) -> dict[str, object]:
+    policy = GATE.B13_APPROVAL_POLICY[kind]
+    projection_digest = GATE.b13_projection_sha256(kind, projection)
+    return {
+        "approvalSchema": GATE.B13_APPROVAL_SCHEMA,
+        "operatorDecision": {
+            "decision": policy["decision"],
+            "returnedBy": SEMANTIC_OPERATOR,
+            "returnedAt": SEMANTIC_RETURNED_AT,
+            "scope": policy["scope"],
+            "projectionSha256": projection_digest,
+        },
+        "projection": copy.deepcopy(projection),
+        "projectionSha256": projection_digest,
+        "result": "APPROVED",
+    }
+
+
 def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
     target_gates = GATE.REPHASE_TARGETS[finding_id]
     return {
@@ -2728,6 +2746,80 @@ class GateCoreTests(unittest.TestCase):
         for name, payloads, expected in cases:
             with self.subTest(name=name):
                 self.assertSemanticPayloadsRejected("D0-B02", "OP-D0-02", payloads, expected)
+
+    def test_b13_approval_envelope_is_exact_fresh_and_content_addressed(self) -> None:
+        def result_for(kind: str, payload: dict[str, object], returned_at: str = SEMANTIC_RETURNED_AT) -> dict[str, object]:
+            return {"_semanticPayloads": {kind: payload}, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": returned_at}
+
+        for kind in GATE.B13_APPROVAL_POLICY:
+            with self.subTest(kind=kind, case="accepted"):
+                projection = {"fixtureKind": kind, "value": 1}
+                payload = valid_b13_approval(kind, projection)
+                self.assertEqual(GATE.validate_b13_approval(result_for(kind, payload), kind, SEMANTIC_VERIFICATION_TIME), (projection, payload["projectionSha256"]))
+
+        cases: list[tuple[str, str, dict[str, object], str, str]] = []
+        kind = "protocol-enums"
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["unexpected"] = True
+        cases.append(("extra-envelope-key", kind, payload, SEMANTIC_RETURNED_AT, "object-key mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["approvalSchema"] = "pkgre-d0-b13-approval-v0"
+        cases.append(("wrong-schema", kind, payload, SEMANTIC_RETURNED_AT, "approval schema mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["unexpected"] = True
+        cases.append(("extra-decision-key", kind, payload, SEMANTIC_RETURNED_AT, "object-key mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["decision"] = "APPROVE_PROTOCOL_ENUMS"
+        cases.append(("wrong-decision", kind, payload, SEMANTIC_RETURNED_AT, "operator decision mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["scope"] = "D0_B13"
+        cases.append(("wrong-scope", kind, payload, SEMANTIC_RETURNED_AT, "operator scope mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["returnedBy"] = "other-operator"
+        cases.append(("operator-mismatch", kind, payload, SEMANTIC_RETURNED_AT, "operator identity mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["returnedAt"] = "2026-08-26T00:09:59Z"
+        cases.append(("return-time-mismatch", kind, payload, SEMANTIC_RETURNED_AT, "operator return time mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["projectionSha256"] = "0" * 64
+        cases.append(("decision-digest-disagreement", kind, payload, SEMANTIC_RETURNED_AT, "approval projection digest disagreement"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["projectionSha256"] = str(payload["projectionSha256"]).upper()
+        cases.append(("noncanonical-digest", kind, payload, SEMANTIC_RETURNED_AT, "invalid SHA256 digest"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["projection"]["mutated"] = True
+        cases.append(("projection-mutated", kind, payload, SEMANTIC_RETURNED_AT, "projection digest mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["projectionSha256"] = "0" * 64
+        payload["operatorDecision"]["projectionSha256"] = "0" * 64
+        cases.append(("attacker-digest", kind, payload, SEMANTIC_RETURNED_AT, "projection digest mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["result"] = "ACCEPTED"
+        cases.append(("wrong-result", kind, payload, SEMANTIC_RETURNED_AT, "approval result mismatch"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["returnedAt"] = "2026-08-25T00:09:59Z"
+        cases.append(("stale", kind, payload, "2026-08-25T00:09:59Z", "evidence is older"))
+
+        payload = valid_b13_approval(kind, {"fixtureKind": kind})
+        payload["operatorDecision"]["returnedAt"] = "2026-08-26T00:10:31Z"
+        cases.append(("future", kind, payload, "2026-08-26T00:10:31Z", "too far in the future"))
+
+        for name, case_kind, payload, returned_at, expected in cases:
+            with self.subTest(name=name):
+                self.assertRejected(lambda payload=payload, case_kind=case_kind, returned_at=returned_at: GATE.validate_b13_approval(result_for(case_kind, payload, returned_at), case_kind, SEMANTIC_VERIFICATION_TIME), expected)
 
     def test_b05_rejects_self_consistent_operator_labels_without_authenticated_authorities(self) -> None:
         generation = "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a"
