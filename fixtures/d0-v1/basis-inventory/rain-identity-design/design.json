@@ -536,10 +536,10 @@
           "secretInNixStore": false
         },
         "systemd": {
-          "MemoryHighBytes": 536870912,
-          "MemoryHigh": "512MiB",
-          "MemoryMaxBytes": 805306368,
-          "MemoryMax": "768MiB",
+          "MemoryHighBytes": 805306368,
+          "MemoryHigh": "768MiB",
+          "MemoryMaxBytes": 1073741824,
+          "MemoryMax": "1GiB",
           "TasksMax": 64,
           "LimitNOFILE": 2048,
           "DynamicUser": false,
@@ -1034,10 +1034,10 @@
           "secretInNixStore": false
         },
         "systemd": {
-          "MemoryHighBytes": 536870912,
-          "MemoryHigh": "512MiB",
-          "MemoryMaxBytes": 805306368,
-          "MemoryMax": "768MiB",
+          "MemoryHighBytes": 805306368,
+          "MemoryHigh": "768MiB",
+          "MemoryMaxBytes": 1073741824,
+          "MemoryMax": "1GiB",
           "TasksMax": 64,
           "LimitNOFILE": 2048,
           "DynamicUser": false,

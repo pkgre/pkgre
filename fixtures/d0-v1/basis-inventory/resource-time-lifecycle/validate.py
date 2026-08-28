@@ -62,7 +62,7 @@ try:
   single=2097152+2*limits['maxSnapshotBytes']+256*limits['maxRoutes']+128*limits['maxVersions']+96*limits['maxDependencyEdges']+256*limits['maxPackages']+96*limits['maxArchiveCount']
   buffers=limits['maxConcurrentRequests']*proposal['sharedPolicy']['http']['requestBufferBytes']+limits['maxConcurrentArchiveStreams']*limits['streamBufferBytes']
   runtime=134217728 if eco=='rust' else 100663296
-  loader=67108864 if eco=='rust' else 134217728
+  loader=67108864 if eco=='rust' else source['nodeWorker']['workerResidentEnvelopeBytes']
   peak=3*single+runtime+loader+buffers
   check(f'{eco}-single-snapshot-formula',single==calc['singleSnapshotResidentEstimateBytes'],[single,calc['singleSnapshotResidentEstimateBytes']])
   check(f'{eco}-request-stream-buffer-formula',buffers==calc['requestAndStreamBuffersBytes'],[buffers,calc['requestAndStreamBuffersBytes']])
@@ -70,6 +70,18 @@ try:
   check(f'{eco}-admission-ceiling-formula',calc['admissionCeilingBytes']==systemd['MemoryMaxBytes']-67108864)
   check(f'{eco}-memory-invariants',systemd['MemoryHighBytes']<systemd['MemoryMaxBytes'] and peak<=calc['admissionCeilingBytes'])
   check(f'{eco}-fd-task-invariants',systemd['TasksMax']==64 and systemd['LimitNOFILE']==2048 and 1040<systemd['LimitNOFILE'])
+  if eco=='js':
+   w=source['nodeWorker'];mib=1048576;heap=(w['resourceLimitsMaxOldGenerationSizeMiB']+w['resourceLimitsMaxYoungGenerationSizeMiB']+w['nearHeapLimitAllowanceMiB'])*mib;resident=heap+w['resourceLimitsStackSizeMiB']*mib+w['workerNonHeapResidentReserveBytes']
+   check('js-fixture-node-worker-equal-proposal',fx['nodeWorker']==w)
+   check('js-worker-exactly-one',w['workerCount']==1,w['workerCount'])
+   check('js-worker-heap-resident-formula',heap==w['workerHeapResidentBudgetBytes'],[heap,w['workerHeapResidentBudgetBytes']])
+   check('js-worker-resident-envelope-formula',resident==w['workerResidentEnvelopeBytes'],[resident,w['workerResidentEnvelopeBytes']])
+   check('js-worker-code-range-virtual-only',w['resourceLimitsCodeRangeSizeMiB']==32 and w['codeRangeIncludedInResidentEnvelope'] is False)
+   check('js-worker-transfer-contract',w['maxTransferableSnapshotBytes']==limits['maxSnapshotBytes'] and w['snapshotArrayBufferOwnership']=='owned' and w['snapshotTransferListRequired'] is True and w['sharedArrayBufferAllowed'] is False and w['structuredCloneAllowed'] is False)
+   check('js-worker-systemd-envelope',systemd['MemoryHighBytes']==805306368 and systemd['MemoryMaxBytes']==1073741824 and resident<systemd['MemoryMaxBytes'])
+   at=rcases['js-memory-estimate-at-admission-ceiling']['input'];over=rcases['js-memory-estimate-one-over-admission-ceiling']['input']
+   check('js-memory-admission-boundary-vector',at=={'estimatedCandidatePeakBytes':calc['admissionCeilingBytes'],'MemoryMaxBytes':systemd['MemoryMaxBytes'],'reserveBytes':67108864},at)
+   check('js-memory-admission-one-over-vector',over=={'estimatedCandidatePeakBytes':calc['admissionCeilingBytes']+1,'MemoryMaxBytes':systemd['MemoryMaxBytes'],'reserveBytes':67108864},over)
   check(f'{eco}-quota-equals-state-limit',source['zfs']['quotaBytes']==limits['maxStateBytes'])
   quota=source['zfs']['quotaBytes'];floor=85*quota//100;twice=2*limits['maxMaterializedCheckoutAllocatedBytes'];used=floor-twice
   check(f'{eco}-quota-floor',rcases[f'{eco}-state-preflight-at-inclusive-boundary']['input']['quota85PercentFloorBytes']==floor,floor)

@@ -92,13 +92,13 @@ Archive total excludes history-growth authority:these are candidate maxima,not e
 | item | Rust | JS |
 |---|---:|---:|
 | one-snapshot conservative resident estimate at maxima | 61,210,624B | 119,537,664B |
-| three-snapshot candidate peak estimate at maxima | 397,541,376B | 606,076,928B |
-| admission ceiling=`MemoryMax-67,108,864B` | 469,762,048B | 738,197,504B |
-| `MemoryHigh`/`MemoryMax` | 402,653,184B/536,870,912B | 536,870,912B/805,306,368B |
+| three-snapshot candidate peak estimate at maxima | 397,541,376B | 861,929,472B |
+| admission ceiling=`MemoryMax-67,108,864B` | 469,762,048B | 1,006,632,960B |
+| `MemoryHigh`/`MemoryMax` | 402,653,184B/536,870,912B | 805,306,368B/1,073,741,824B |
 | `TasksMax`/`LimitNOFILE` | 64/2,048 | 64/2,048 |
 | ZFS quota | 4,294,967,296B | 2,147,483,648B |
 
-Formula:`singleSnapshot=2,097,152+2*snapshotBytes+256*routes+128*versions+96*edges+256*packages+96*archives`;archive payload excluded/file-backed. Formula:`candidatePeak=3*singleSnapshot+runtimeReserve+loaderWorkerReserve+256*32,768+64*65,536`;three snapshots=`live+candidate+old leased`. JS loader worker proposal:`192MiB old+32MiB young+32MiB code`;transferable snapshot≤33,554,432B. `MemoryHigh`=alert+candidate throttle,not kill/admission threshold;any `MemoryMax` OOM fails qualification.
+Formula:`singleSnapshot=2,097,152+2*snapshotBytes+256*routes+128*versions+96*edges+256*packages+96*archives`;archive payload excluded/file-backed. Formula:`candidatePeak=3*singleSnapshot+runtimeReserve+loaderWorkerResidentEnvelope+256*32,768+64*65,536`;three snapshots=`live+candidate+old leased`. JS loader proposal:exactly one Worker;resident envelope=`390,070,272B`=`192MiB old+32MiB young+16MiB near-limit allowance+4MiB stack+128MiB nonheap reserve`;32MiB code range tracked as virtual-address reservation,not RSS;transferable snapshot≤33,554,432B must use an exclusively owned `ArrayBuffer` in `transferList`;clone+`SharedArrayBuffer` forbidden. Node `resourceLimits` constrain only the JS engine,not external memory;the 128MiB nonheap term is conservative policy,not measurement. `MemoryHigh`=alert+candidate throttle,not kill/admission threshold;any `MemoryMax` OOM fails qualification.
 
 FD estimate:`64 fixed/listeners/logs+256 request sockets+64 archive FDs+128 Git/loader+16 admin/status+512 reserve=1,040<2,048`;task estimate=`16 runtime+1 watcher+8 loader/Git+4 JS-worker allowance+35 reserve=64`. These are formulas,not measurements.
 
@@ -132,7 +132,7 @@ Clock qualification=86,400s(24h);resource stress=100 reload cycles+21,600s(6h)/i
 
 ## UNRESOLVED — blockers/decisions
 
-1. `DYNAMIC-MEASUREMENTS`:native steady/two-snapshot/three-snapshot RSS,FD peak,100-cycle reload distribution,SIGTERM/SIGKILL/drain/lease evidence absent.
+1. `DYNAMIC-MEASUREMENTS`:native steady/two-snapshot/three-snapshot RSS,FD peak,100-cycle reload distribution,SIGTERM/SIGKILL/drain/lease evidence absent;JS qualification must include the one-Worker heap/near-limit/stack/native/external envelope and prove owned-`ArrayBuffer` transfer without clone/`SharedArrayBuffer`.
 2. `PROJECTION-BASELINE`:canonical active manifest absent;actual current `snapshotBytes` unknown;prove Rust≤16,777,216B and JS≤33,554,432B.
 3. `HTTP-LIMIT-PROOF`:production-equivalent raw edge/backend 413/414/431,body-framing,header,target,and 256/64 saturation evidence absent.
 4. `ARCHIVE-HISTORY-CAPACITY`:append-only growth model,provider ceiling,production ZFS create/fill/failure/recovery,backup+restore duration absent.

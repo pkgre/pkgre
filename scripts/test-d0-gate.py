@@ -653,6 +653,10 @@ def valid_b13_protocol_projection() -> dict[str, object]:
     return copy.deepcopy(GATE.B13_PROTOCOL_ENUMS_PROJECTION)
 
 
+def valid_b13_hard_maxima_projection() -> dict[str, object]:
+    return copy.deepcopy(GATE.B13_HARD_MAXIMA_PROJECTION)
+
+
 def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
     target_gates = GATE.REPHASE_TARGETS[finding_id]
     return {
@@ -2868,6 +2872,152 @@ class GateCoreTests(unittest.TestCase):
                 mutate(projection)
                 payload = valid_b13_approval("protocol-enums", projection)
                 self.assertRejected(lambda payload=payload: GATE.validate_b13_protocol_enums(result_for(payload), SEMANTIC_VERIFICATION_TIME), expected)
+
+    def test_b13_hard_maxima_projection_matches_complete_reviewed_numeric_policy(self) -> None:
+        proposal = json.loads((REPO_ROOT / "fixtures" / "d0-v1" / "d0-time-resource-proposal" / "proposal.json").read_text())
+        resource = json.loads((REPO_ROOT / "fixtures" / "d0-v1" / "basis-inventory" / "resource-time-lifecycle" / "resource-limit-fixtures.json").read_text())
+        shutdown = json.loads((REPO_ROOT / "fixtures" / "d0-v1" / "basis-inventory" / "resource-time-lifecycle" / "shutdown-drain-fixtures.json").read_text())
+        timestamps = json.loads((REPO_ROOT / "fixtures" / "d0-v1" / "basis-inventory" / "resource-time-lifecycle" / "timestamp-fixtures.json").read_text())
+        projection = valid_b13_hard_maxima_projection()
+
+        self.assertTrue(projection["inclusiveMaxima"])
+        self.assertEqual(projection["units"], {"bytes": "exact-integer-bytes", "counts": "exact-integer-counts", "mebibyteBytes": 1048576, "percent": "whole-integer-percent", "seconds": "wall-seconds-unless-cpu-explicit"})
+        for ecosystem in ("rust", "js"):
+            instance = projection["instances"][ecosystem]
+            self.assertEqual(instance["limits"], resource["proposal"]["instances"][ecosystem]["limits"])
+            self.assertEqual(instance["limits"], proposal["instances"][ecosystem]["limits"])
+            self.assertEqual(instance["systemd"], resource["proposal"]["instances"][ecosystem]["systemd"])
+            self.assertEqual(instance["systemd"], proposal["instances"][ecosystem]["systemd"])
+            self.assertEqual(instance["zfs"], {"quotaBytes": proposal["instances"][ecosystem]["zfs"]["quotaBytes"]})
+            self.assertEqual(instance["calculatedAtMaxima"], proposal["instances"][ecosystem]["calculatedAtMaxima"])
+            self.assertEqual(instance["statePreflightAtMaxima"]["quotaPercentFloorBytes"], 85 * instance["zfs"]["quotaBytes"] // 100)
+        self.assertNotIn("nodeWorker", projection["instances"]["rust"])
+        self.assertEqual(projection["instances"]["js"]["nodeWorker"], proposal["instances"]["js"]["nodeWorker"])
+        self.assertEqual(projection["instances"]["js"]["nodeWorker"], resource["proposal"]["instances"]["js"]["nodeWorker"])
+        self.assertEqual(projection["instances"]["js"]["nodeWorker"], {
+            "codeRangeIncludedInResidentEnvelope": False,
+            "maxTransferableSnapshotBytes": 33554432,
+            "nearHeapLimitAllowanceMiB": 16,
+            "resourceLimitsCodeRangeSizeMiB": 32,
+            "resourceLimitsMaxOldGenerationSizeMiB": 192,
+            "resourceLimitsMaxYoungGenerationSizeMiB": 32,
+            "resourceLimitsStackSizeMiB": 4,
+            "sharedArrayBufferAllowed": False,
+            "snapshotArrayBufferOwnership": "owned",
+            "snapshotTransferListRequired": True,
+            "structuredCloneAllowed": False,
+            "workerCount": 1,
+            "workerHeapResidentBudgetBytes": 251658240,
+            "workerNonHeapResidentReserveBytes": 134217728,
+            "workerResidentEnvelopeBytes": 390070272,
+        })
+        self.assertEqual(projection["instances"]["js"]["calculatedAtMaxima"]["processCandidatePeakEstimateBytes"], 861929472)
+        self.assertEqual(projection["instances"]["js"]["calculatedAtMaxima"]["admissionCeilingBytes"], 1006632960)
+        self.assertEqual(projection["instances"]["js"]["systemd"]["MemoryHighBytes"], 805306368)
+        self.assertEqual(projection["instances"]["js"]["systemd"]["MemoryMaxBytes"], 1073741824)
+
+        shared_http = projection["sharedHttp"]
+        self.assertEqual(shared_http, {key: resource["proposal"]["sharedHttp"][key] for key in shared_http})
+        self.assertEqual(shared_http, {key: proposal["sharedPolicy"]["http"][key] for key in shared_http})
+        self.assertEqual(projection["shutdownDrain"], {
+            "httpDrainDeadlineSeconds": shutdown["proposal"]["httpDrainDeadlineSeconds"],
+            "systemdTimeoutStopSeconds": shutdown["proposal"]["systemdTimeoutStopSeconds"],
+            "sigkillMarginSeconds": shutdown["proposal"]["sigkillMarginSeconds"],
+            "requestHeaderReadTimeoutSeconds": shutdown["proposal"]["requestHeaderReadTimeoutSeconds"],
+            "requestIdleTimeoutSeconds": shutdown["proposal"]["requestIdleTimeoutSeconds"],
+            "requestTotalLeaseSeconds": shutdown["proposal"]["requestTotalLeaseSeconds"],
+            "archiveStreamLeaseSeconds": shutdown["proposal"]["archiveStreamLeaseSeconds"],
+            "oldGenerationLeaseSeconds": shutdown["proposal"]["oldGenerationLeaseSeconds"],
+            "shutdownLeaseOverrideSeconds": shutdown["proposal"]["shutdownLeaseOverrideSeconds"],
+        })
+        self.assertEqual(projection["clock"], {
+            "maxFutureSkewSeconds": timestamps["proposal"]["maxFutureSkewSeconds"],
+            "trustedSyncStableSeconds": timestamps["proposal"]["trustedSyncStableSeconds"],
+            "maxReportedOffsetSeconds": timestamps["proposal"]["maxReportedOffsetSeconds"],
+            "maxBackwardRealtimeMovementSeconds": timestamps["proposal"]["maxBackwardRealtimeMovementSeconds"],
+            "maxRealtimeVsMonotonicDeviationSeconds": timestamps["proposal"]["maxRealtimeVsMonotonicDeviationSeconds"],
+        })
+        for section in ("watcher", "reload", "observationHorizons"):
+            self.assertEqual(projection[section], {key: proposal["sharedPolicy"][section][key] for key in projection[section]})
+
+        self.assertEqual(projection["calculationConstants"], {
+            "memory": {
+                "admissionReserveBytes": 67108864,
+                "processCandidateSnapshotCount": 3,
+                "runtimeReserveBytes": {"rust": 134217728, "js": 100663296},
+                "loaderWorkerReserveBytes": {"rust": 67108864, "js": 390070272},
+                "singleSnapshot": {"archivePayloadBytesIncluded": False, "baseBytes": 2097152, "snapshotCopies": 2, "bytesPerRoute": 256, "bytesPerVersion": 128, "bytesPerDependencyEdge": 96, "bytesPerPackage": 256, "bytesPerArchive": 96},
+            },
+            "fileDescriptors": {"fixedListenersAndLogs": 64, "gitAndLoader": 128, "adminAndStatus": 16, "reserve": 512, "calculatedAtMaxima": 1040},
+            "tasks": {"runtime": 16, "watcher": 1, "loaderAndGit": 8, "jsWorkerAllowance": 4, "reserve": 35, "calculatedAtMaxima": 64},
+            "statePreflight": {"checkoutCopies": 2, "quotaPercentNumerator": 85, "quotaPercentDenominator": 100},
+            "stateBudget": {
+                "rust": {"mirrorBytes": 536870912, "checkoutSlotBytes": 536870912, "checkoutSlots": 5, "auditAndRefsBytes": 134217728, "reserveBytes": 939524096, "calculatedQuotaBytes": 4294967296},
+                "js": {"mirrorBytes": 268435456, "checkoutSlotBytes": 268435456, "checkoutSlots": 5, "auditAndRefsBytes": 67108864, "reserveBytes": 469762048, "calculatedQuotaBytes": 2147483648},
+            },
+        })
+        self.assertEqual(projection["qualificationThresholds"], {"rssP99MemoryHighPercentUpperExclusive": 75, "stateUseQuotaPercentUpperExclusive": 70, "archiveHashCompletenessPercent": 100, "routeCompletenessPercent": 100, "unexpectedControlledProbeHttp5xxMaximum": 0})
+
+    def test_b13_hard_maxima_projection_is_closed_bounded_and_recomputed(self) -> None:
+        def result_for(projection: dict[str, object]) -> tuple[dict[str, object], dict[str, object]]:
+            payload = valid_b13_approval("hard-maxima", projection)
+            result = {"_semanticPayloads": {"hard-maxima": payload}, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT}
+            return result, payload
+
+        projection = valid_b13_hard_maxima_projection()
+        result, payload = result_for(projection)
+        self.assertEqual(GATE.validate_b13_hard_maxima(result, SEMANTIC_VERIFICATION_TIME), (projection, payload["projectionSha256"]))
+
+        cases: list[tuple[str, object, str]] = [
+            ("extra-key", lambda value: value.__setitem__("unexpected", 1), "object-key mismatch"),
+            ("omitted-node-worker", lambda value: value["instances"]["js"].pop("nodeWorker"), "object-key mismatch"),
+            ("boolean-as-integer", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxArchiveBytes", True), "expected JSON type int"),
+            ("float", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxArchiveBytes", 134217728.0), "expected JSON type int"),
+            ("string", lambda value: value["watcher"].__setitem__("pollIntervalSeconds", "60"), "expected JSON type int"),
+            ("null", lambda value: value["reload"].__setitem__("postFetchEndToEndTimeoutSeconds", None), "expected JSON type int"),
+            ("negative", lambda value: value["clock"].__setitem__("maxFutureSkewSeconds", -1), "expected integer in [1"),
+            ("semantic-integer-overflow", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxSnapshotBytes", GATE.MAX_SEMANTIC_INTEGER + 1), f"expected integer in [1,{GATE.MAX_SEMANTIC_INTEGER}]"),
+            ("forbidden-zero", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxArchiveCount", 0), "expected integer in [1"),
+            ("inclusive-maxima-false", lambda value: value.__setitem__("inclusiveMaxima", False), "maxima must be inclusive"),
+            ("archive-payload-included", lambda value: value["calculationConstants"]["memory"]["singleSnapshot"].__setitem__("archivePayloadBytesIncluded", True), "must remain file-backed"),
+            ("descriptor-formula", lambda value: value["calculationConstants"]["fileDescriptors"].__setitem__("calculatedAtMaxima", 1041), "file-descriptor calculation mismatch"),
+            ("task-formula", lambda value: value["calculationConstants"]["tasks"].__setitem__("calculatedAtMaxima", 65), "task calculation mismatch"),
+            ("git-pack-relation", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxGitFetchNetworkBytes", 536870911), "Git network and pack maxima disagree"),
+            ("shared-concurrency", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxConcurrentRequests", 257), "request-concurrency maximum disagrees"),
+            ("state-budget", lambda value: value["calculationConstants"]["stateBudget"]["rust"].__setitem__("reserveBytes", 939524095), "state-budget calculation or quota binding mismatch"),
+            ("state-floor", lambda value: value["instances"]["rust"]["statePreflightAtMaxima"].__setitem__("quotaPercentFloorBytes", 3650722200), "state-preflight quota floor mismatch"),
+            ("single-snapshot-derived", lambda value: value["instances"]["rust"]["calculatedAtMaxima"].__setitem__("singleSnapshotResidentEstimateBytes", 61210625), "single-snapshot estimate mismatch"),
+            ("request-buffer-derived", lambda value: value["instances"]["js"]["calculatedAtMaxima"].__setitem__("requestAndStreamBuffersBytes", 12582913), "request-and-stream buffer estimate mismatch"),
+            ("peak-derived", lambda value: value["instances"]["js"]["calculatedAtMaxima"].__setitem__("processCandidatePeakEstimateBytes", 861929473), "process-candidate peak estimate mismatch"),
+            ("admission-derived", lambda value: value["instances"]["rust"]["calculatedAtMaxima"].__setitem__("admissionCeilingBytes", 469762049), "admission-ceiling calculation mismatch"),
+            ("node-worker-snapshot", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("maxTransferableSnapshotBytes", 33554431), "transferable-snapshot maximum must equal"),
+            ("node-worker-omitted-stack", lambda value: value["instances"]["js"]["nodeWorker"].pop("resourceLimitsStackSizeMiB"), "object-key mismatch"),
+            ("node-worker-omitted-near-limit", lambda value: value["instances"]["js"]["nodeWorker"].pop("nearHeapLimitAllowanceMiB"), "object-key mismatch"),
+            ("node-worker-omitted-nonheap-reserve", lambda value: value["instances"]["js"]["nodeWorker"].pop("workerNonHeapResidentReserveBytes"), "object-key mismatch"),
+            ("node-worker-count", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("workerCount", 2), "exactly one Worker"),
+            ("node-worker-heap-budget", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("workerHeapResidentBudgetBytes", 251658239), "heap resident budget mismatch"),
+            ("node-worker-resident-envelope", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("workerResidentEnvelopeBytes", 390070271), "resident envelope mismatch"),
+            ("node-worker-code-range-as-rss", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("codeRangeIncludedInResidentEnvelope", True), "must be excluded from resident arithmetic"),
+            ("node-worker-snapshot-not-owned", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("snapshotArrayBufferOwnership", "borrowed"), "requires an owned ArrayBuffer"),
+            ("node-worker-transfer-list-omitted", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("snapshotTransferListRequired", False), "must be listed in transferList"),
+            ("node-worker-shared-array-buffer", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("sharedArrayBufferAllowed", True), "must reject SharedArrayBuffer"),
+            ("node-worker-clone-path", lambda value: value["instances"]["js"]["nodeWorker"].__setitem__("structuredCloneAllowed", True), "must reject the structured-clone path"),
+            ("node-worker-reserve-binding", lambda value: (value["calculationConstants"]["memory"]["loaderWorkerReserveBytes"].__setitem__("js", 390070271), value["instances"]["js"]["calculatedAtMaxima"].__setitem__("processCandidatePeakEstimateBytes", 861929471)), "loader-Worker reserve does not cover"),
+            ("insufficient-js-memory-max", lambda value: (value["instances"]["js"]["systemd"].__setitem__("MemoryMaxBytes", 929038335), value["instances"]["js"]["calculatedAtMaxima"].__setitem__("admissionCeilingBytes", 861929471)), "process-candidate peak exceeds the admission ceiling"),
+            ("shutdown-equation", lambda value: value["shutdownDrain"].__setitem__("systemdTimeoutStopSeconds", 36), "must equal drain deadline plus SIGKILL margin"),
+            ("watcher-jitter", lambda value: value["watcher"].__setitem__("pollJitterSeconds", 60), "jitter must be below its poll interval"),
+            ("reload-phase", lambda value: value["reload"].__setitem__("materializeTimeoutSeconds", 121), "phase timeout exceeds the end-to-end deadline"),
+            ("clock-order", lambda value: value["clock"].__setitem__("maxReportedOffsetSeconds", 3), "clock limits are not conservatively ordered"),
+            ("horizon-order", lambda value: value["observationHorizons"].__setitem__("legacyRetirementMinimumSecondsAfterLastSuccessfulRollbackRehearsal", 1209600), "qualification horizons are not strictly ordered"),
+            ("percentage-over-100", lambda value: value["qualificationThresholds"].__setitem__("routeCompletenessPercent", 101), "qualification percentage exceeds 100"),
+            ("rehash-cannot-authorize-drift", lambda value: value["instances"]["rust"]["limits"].__setitem__("maxArchiveTotalBytes", 402653185), "frozen value mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                projection = valid_b13_hard_maxima_projection()
+                mutate(projection)
+                result, _ = result_for(projection)
+                self.assertRejected(lambda result=result: GATE.validate_b13_hard_maxima(result, SEMANTIC_VERIFICATION_TIME), expected)
 
     def test_b05_rejects_self_consistent_operator_labels_without_authenticated_authorities(self) -> None:
         generation = "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a"

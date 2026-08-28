@@ -158,8 +158,8 @@
         },
         "systemd": {
           "LimitNOFILE": 2048,
-          "MemoryHighBytes": 536870912,
-          "MemoryMaxBytes": 805306368,
+          "MemoryHighBytes": 805306368,
+          "MemoryMaxBytes": 1073741824,
           "TasksMax": 64
         },
         "zfs": {
@@ -168,10 +168,27 @@
           "quotaBytes": 2147483648
         },
         "calculatedAtMaxima": {
-          "admissionCeilingBytes": 738197504,
-          "processCandidatePeakEstimateBytes": 606076928,
+          "admissionCeilingBytes": 1006632960,
+          "processCandidatePeakEstimateBytes": 861929472,
           "requestAndStreamBuffersBytes": 12582912,
           "singleSnapshotResidentEstimateBytes": 119537664
+        },
+        "nodeWorker": {
+          "codeRangeIncludedInResidentEnvelope": false,
+          "maxTransferableSnapshotBytes": 33554432,
+          "nearHeapLimitAllowanceMiB": 16,
+          "resourceLimitsCodeRangeSizeMiB": 32,
+          "resourceLimitsMaxOldGenerationSizeMiB": 192,
+          "resourceLimitsMaxYoungGenerationSizeMiB": 32,
+          "resourceLimitsStackSizeMiB": 4,
+          "sharedArrayBufferAllowed": false,
+          "snapshotArrayBufferOwnership": "owned",
+          "snapshotTransferListRequired": true,
+          "structuredCloneAllowed": false,
+          "workerCount": 1,
+          "workerHeapResidentBudgetBytes": 251658240,
+          "workerNonHeapResidentReserveBytes": 134217728,
+          "workerResidentEnvelopeBytes": 390070272
         }
       }
     },
@@ -2041,8 +2058,8 @@
       "ecosystem": "js",
       "classification": "proposed-contract-vector-unexecuted",
       "input": {
-        "estimatedCandidatePeakBytes": 738197504,
-        "MemoryMaxBytes": 805306368,
+        "estimatedCandidatePeakBytes": 1006632960,
+        "MemoryMaxBytes": 1073741824,
         "reserveBytes": 67108864
       },
       "expected": {
@@ -2057,8 +2074,8 @@
       "ecosystem": "js",
       "classification": "proposed-contract-vector-unexecuted",
       "input": {
-        "estimatedCandidatePeakBytes": 738197505,
-        "MemoryMaxBytes": 805306368,
+        "estimatedCandidatePeakBytes": 1006632961,
+        "MemoryMaxBytes": 1073741824,
         "reserveBytes": 67108864
       },
       "expected": {

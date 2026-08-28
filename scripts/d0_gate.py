@@ -272,6 +272,187 @@ B13_PROTOCOL_ENUMS_PROJECTION = {
     "compatibilityRedirect": {"status": 307, "bodyBytes": 0},
     "boundedRejectCodes": ["TIME_CLOCK_UNTRUSTED", "FETCH_TIMEOUT", "FETCH_BYTES", "GIT_OBJECT_LIMIT", "TREE_LIMIT", "FILE_LIMIT", "CATALOG_LIMIT", "ARCHIVE_LIMIT", "ROUTE_LIMIT", "SNAPSHOT_LIMIT", "MEMORY_ESTIMATE", "RELOAD_TIMEOUT", "STATE_SPACE", "RESOURCE_FAILURE"],
 }
+B13_HARD_MAXIMA_PROJECTION = {'units': {'bytes': 'exact-integer-bytes',
+           'counts': 'exact-integer-counts',
+           'mebibyteBytes': 1048576,
+           'percent': 'whole-integer-percent',
+           'seconds': 'wall-seconds-unless-cpu-explicit'},
+ 'inclusiveMaxima': True,
+ 'calculationConstants': {'memory': {'admissionReserveBytes': 67108864,
+                                     'processCandidateSnapshotCount': 3,
+                                     'runtimeReserveBytes': {'rust': 134217728, 'js': 100663296},
+                                     'loaderWorkerReserveBytes': {'rust': 67108864, 'js': 390070272},
+                                     'singleSnapshot': {'archivePayloadBytesIncluded': False,
+                                                        'baseBytes': 2097152,
+                                                        'snapshotCopies': 2,
+                                                        'bytesPerRoute': 256,
+                                                        'bytesPerVersion': 128,
+                                                        'bytesPerDependencyEdge': 96,
+                                                        'bytesPerPackage': 256,
+                                                        'bytesPerArchive': 96}},
+                          'fileDescriptors': {'fixedListenersAndLogs': 64,
+                                              'gitAndLoader': 128,
+                                              'adminAndStatus': 16,
+                                              'reserve': 512,
+                                              'calculatedAtMaxima': 1040},
+                          'tasks': {'runtime': 16, 'watcher': 1, 'loaderAndGit': 8, 'jsWorkerAllowance': 4, 'reserve': 35, 'calculatedAtMaxima': 64},
+                          'statePreflight': {'checkoutCopies': 2, 'quotaPercentNumerator': 85, 'quotaPercentDenominator': 100},
+                          'stateBudget': {'rust': {'mirrorBytes': 536870912,
+                                                   'checkoutSlotBytes': 536870912,
+                                                   'checkoutSlots': 5,
+                                                   'auditAndRefsBytes': 134217728,
+                                                   'reserveBytes': 939524096,
+                                                   'calculatedQuotaBytes': 4294967296},
+                                          'js': {'mirrorBytes': 268435456,
+                                                 'checkoutSlotBytes': 268435456,
+                                                 'checkoutSlots': 5,
+                                                 'auditAndRefsBytes': 67108864,
+                                                 'reserveBytes': 469762048,
+                                                 'calculatedQuotaBytes': 2147483648}}},
+ 'clock': {'maxFutureSkewSeconds': 300,
+           'trustedSyncStableSeconds': 600,
+           'maxReportedOffsetSeconds': 1,
+           'maxBackwardRealtimeMovementSeconds': 5,
+           'maxRealtimeVsMonotonicDeviationSeconds': 2},
+ 'instances': {'rust': {'limits': {'maxArchiveBytes': 134217728,
+                                   'maxArchiveCount': 4096,
+                                   'maxArchiveTotalBytes': 402653184,
+                                   'maxCatalogBytes': 33554432,
+                                   'maxCategories': 128,
+                                   'maxConcurrentArchiveStreams': 64,
+                                   'maxConcurrentRequests': 256,
+                                   'maxDependencyEdges': 131072,
+                                   'maxGitFetchNetworkBytes': 536870912,
+                                   'maxGitFetchPackBytes': 536870912,
+                                   'maxGitInflatedObjectBytes': 1073741824,
+                                   'maxGitObjects': 65536,
+                                   'maxGitTreeLogicalBytes': 536870912,
+                                   'maxInlineResponseBytes': 1048576,
+                                   'maxMaterializedCheckoutAllocatedBytes': 536870912,
+                                   'maxNonArchiveFileBytes': 16777216,
+                                   'maxPackages': 8192,
+                                   'maxPackumentBytes': 0,
+                                   'maxPathComponentBytes': 255,
+                                   'maxRawPathBytes': 4095,
+                                   'maxRegistries': 8,
+                                   'maxRegularFileBytes': 134217728,
+                                   'maxReloadSeconds': 120,
+                                   'maxRoutes': 32768,
+                                   'maxSnapshotBytes': 16777216,
+                                   'maxSparseRowBytes': 524288,
+                                   'maxStateBytes': 4294967296,
+                                   'maxTreeDepth': 16,
+                                   'maxTreeDirectories': 4096,
+                                   'maxTreeEntries': 16384,
+                                   'maxVersions': 16384,
+                                   'streamBufferBytes': 65536},
+                        'systemd': {'LimitNOFILE': 2048, 'MemoryHighBytes': 402653184, 'MemoryMaxBytes': 536870912, 'TasksMax': 64},
+                        'zfs': {'quotaBytes': 4294967296},
+                        'calculatedAtMaxima': {'admissionCeilingBytes': 469762048,
+                                               'processCandidatePeakEstimateBytes': 397541376,
+                                               'requestAndStreamBuffersBytes': 12582912,
+                                               'singleSnapshotResidentEstimateBytes': 61210624},
+                        'statePreflightAtMaxima': {'quotaPercentFloorBytes': 3650722201}},
+               'js': {'limits': {'maxArchiveBytes': 134217728,
+                                 'maxArchiveCount': 32768,
+                                 'maxArchiveTotalBytes': 201326592,
+                                 'maxCatalogBytes': 67108864,
+                                 'maxCategories': 128,
+                                 'maxConcurrentArchiveStreams': 64,
+                                 'maxConcurrentRequests': 256,
+                                 'maxDependencyEdges': 262144,
+                                 'maxGitFetchNetworkBytes': 268435456,
+                                 'maxGitFetchPackBytes': 268435456,
+                                 'maxGitInflatedObjectBytes': 536870912,
+                                 'maxGitObjects': 65536,
+                                 'maxGitTreeLogicalBytes': 268435456,
+                                 'maxInlineResponseBytes': 4194304,
+                                 'maxMaterializedCheckoutAllocatedBytes': 268435456,
+                                 'maxNonArchiveFileBytes': 16777216,
+                                 'maxPackages': 4096,
+                                 'maxPackumentBytes': 4194304,
+                                 'maxPathComponentBytes': 255,
+                                 'maxRawPathBytes': 4095,
+                                 'maxRegistries': 8,
+                                 'maxRegularFileBytes': 134217728,
+                                 'maxReloadSeconds': 120,
+                                 'maxRoutes': 65536,
+                                 'maxSnapshotBytes': 33554432,
+                                 'maxSparseRowBytes': 0,
+                                 'maxStateBytes': 2147483648,
+                                 'maxTreeDepth': 16,
+                                 'maxTreeDirectories': 4096,
+                                 'maxTreeEntries': 16384,
+                                 'maxVersions': 32768,
+                                 'streamBufferBytes': 65536},
+                      'systemd': {'LimitNOFILE': 2048, 'MemoryHighBytes': 805306368, 'MemoryMaxBytes': 1073741824, 'TasksMax': 64},
+                      'zfs': {'quotaBytes': 2147483648},
+                      'calculatedAtMaxima': {'admissionCeilingBytes': 1006632960,
+                                             'processCandidatePeakEstimateBytes': 861929472,
+                                             'requestAndStreamBuffersBytes': 12582912,
+                                             'singleSnapshotResidentEstimateBytes': 119537664},
+                      'nodeWorker': {'codeRangeIncludedInResidentEnvelope': False,
+                                     'maxTransferableSnapshotBytes': 33554432,
+                                     'nearHeapLimitAllowanceMiB': 16,
+                                     'resourceLimitsCodeRangeSizeMiB': 32,
+                                     'resourceLimitsMaxOldGenerationSizeMiB': 192,
+                                     'resourceLimitsMaxYoungGenerationSizeMiB': 32,
+                                     'resourceLimitsStackSizeMiB': 4,
+                                     'sharedArrayBufferAllowed': False,
+                                     'snapshotArrayBufferOwnership': 'owned',
+                                     'snapshotTransferListRequired': True,
+                                     'structuredCloneAllowed': False,
+                                     'workerCount': 1,
+                                     'workerHeapResidentBudgetBytes': 251658240,
+                                     'workerNonHeapResidentReserveBytes': 134217728,
+                                     'workerResidentEnvelopeBytes': 390070272},
+                      'statePreflightAtMaxima': {'quotaPercentFloorBytes': 1825361100}}},
+ 'sharedHttp': {'maxConcurrentArchiveStreams': 64,
+                'maxConcurrentRequests': 256,
+                'maxConditionalEtags': 16,
+                'maxConditionalHeaderBytes': 4096,
+                'maxHeaderCount': 64,
+                'maxRawTargetBytes': 4096,
+                'maxRequestBodyBytes': 0,
+                'maxSingleHeaderFieldBytes': 8192,
+                'maxTotalHeaderBytes': 32768,
+                'requestBufferBytes': 32768,
+                'streamBufferBytes': 65536},
+ 'shutdownDrain': {'httpDrainDeadlineSeconds': 30,
+                   'systemdTimeoutStopSeconds': 35,
+                   'sigkillMarginSeconds': 5,
+                   'requestHeaderReadTimeoutSeconds': 10,
+                   'requestIdleTimeoutSeconds': 15,
+                   'requestTotalLeaseSeconds': 120,
+                   'archiveStreamLeaseSeconds': 120,
+                   'oldGenerationLeaseSeconds': 120,
+                   'shutdownLeaseOverrideSeconds': 30},
+ 'watcher': {'connectTimeoutSeconds': 10,
+             'fetchCpuSeconds': 20,
+             'fetchOverallTimeoutSeconds': 30,
+             'pollIntervalSeconds': 60,
+             'pollJitterSeconds': 15,
+             'retryBackoffInitialSeconds': 30,
+             'retryBackoffMaxSeconds': 900,
+             'retryBackoffMultiplier': 2,
+             'retryJitterPercent': 20},
+ 'reload': {'materializeTimeoutSeconds': 45,
+            'strictGitVerificationTimeoutSeconds': 30,
+            'archiveVerificationAndSnapshotBuildTimeoutSeconds': 90,
+            'durableCommitTimeoutSeconds': 10,
+            'postFetchEndToEndTimeoutSeconds': 120},
+ 'observationHorizons': {'clockSyncQualificationSeconds': 86400,
+                         'resourceStressCyclesPerInstance': 100,
+                         'resourceStressMinimumSeconds': 21600,
+                         'preCutoverCanarySeconds': 259200,
+                         'perArchiveBodyCutoverSeconds': 604800,
+                         'publicSustainedOperationsSeconds': 1209600,
+                         'legacyRetirementMinimumSecondsAfterLastSuccessfulRollbackRehearsal': 2592000},
+ 'qualificationThresholds': {'rssP99MemoryHighPercentUpperExclusive': 75,
+                             'stateUseQuotaPercentUpperExclusive': 70,
+                             'archiveHashCompletenessPercent': 100,
+                             'routeCompletenessPercent': 100,
+                             'unexpectedControlledProbeHttp5xxMaximum': 0}}
 SAT_EVIDENCE_BY_HANDOFF = {
     "D0-B01": {"OP-D0-01": {"credential-containment", "credential-lifecycle"}},
     "D0-B02": {"OP-D0-02": {"ssh-attestation", "ssh-lifecycle"}},
@@ -1501,6 +1682,218 @@ def validate_b13_protocol_enums(result: dict[str, Any], verification_time: datet
     return copy.deepcopy(projection), projection_digest
 
 
+def validate_b13_bounded_numbers(value: Any, expected: Any, zero_paths: set[tuple[str, ...]], label: str, path: tuple[str, ...] = ()) -> None:
+    if isinstance(expected, dict):
+        for key, expected_value in expected.items():
+            validate_b13_bounded_numbers(value[key], expected_value, zero_paths, label, (*path, key))
+    elif type(expected) is int:
+        dotted = ".".join(path)
+        bounded_integer(value, f"{label}.{dotted}", 0 if path in zero_paths else 1)
+
+
+def validate_b13_hard_maxima(result: dict[str, Any], verification_time: datetime) -> tuple[dict[str, Any], str]:
+    projection, projection_digest = validate_b13_approval(result, "hard-maxima", verification_time)
+    label = "D0-B13 hard-maxima projection"
+    exact_json_shape(projection, B13_HARD_MAXIMA_PROJECTION, label)
+    zero_paths = {
+        ("instances", "rust", "limits", "maxPackumentBytes"),
+        ("instances", "js", "limits", "maxSparseRowBytes"),
+        ("sharedHttp", "maxRequestBodyBytes"),
+        ("qualificationThresholds", "unexpectedControlledProbeHttp5xxMaximum"),
+    }
+    validate_b13_bounded_numbers(projection, B13_HARD_MAXIMA_PROJECTION, zero_paths, label)
+    require(strict_bool(projection["inclusiveMaxima"], f"{label}.inclusiveMaxima") is True, f"{label}: maxima must be inclusive")
+
+    constants = projection["calculationConstants"]
+    memory = constants["memory"]
+    single_constants = memory["singleSnapshot"]
+    require(strict_bool(single_constants["archivePayloadBytesIncluded"], f"{label}.calculationConstants.memory.singleSnapshot.archivePayloadBytesIncluded") is False, f"{label}: archive payload bytes must remain file-backed and excluded from the snapshot estimate")
+    shared_http = projection["sharedHttp"]
+    require(shared_http["maxRequestBodyBytes"] == 0, f"{label}: request-body maximum must remain zero")
+
+    descriptor_budget = constants["fileDescriptors"]
+    calculated_descriptors = checked_add(
+        [
+            descriptor_budget["fixedListenersAndLogs"],
+            shared_http["maxConcurrentRequests"],
+            shared_http["maxConcurrentArchiveStreams"],
+            descriptor_budget["gitAndLoader"],
+            descriptor_budget["adminAndStatus"],
+            descriptor_budget["reserve"],
+        ],
+        f"{label} file-descriptor budget",
+    )
+    require(calculated_descriptors == descriptor_budget["calculatedAtMaxima"], f"{label}: file-descriptor calculation mismatch")
+
+    task_budget = constants["tasks"]
+    calculated_tasks = checked_add(
+        [task_budget["runtime"], task_budget["watcher"], task_budget["loaderAndGit"], task_budget["jsWorkerAllowance"], task_budget["reserve"]],
+        f"{label} task budget",
+    )
+    require(calculated_tasks == task_budget["calculatedAtMaxima"], f"{label}: task calculation mismatch")
+
+    preflight = constants["statePreflight"]
+    require(preflight["quotaPercentNumerator"] <= preflight["quotaPercentDenominator"] <= 100, f"{label}: invalid state-preflight quota percentage")
+    require(preflight["checkoutCopies"] >= 2, f"{label}: state preflight must reserve at least two materialized checkouts")
+
+    instances = projection["instances"]
+    require(set(instances) == {"rust", "js"}, f"{label}: exact Rust and JS instance envelopes are required")
+    for ecosystem in ("rust", "js"):
+        instance = instances[ecosystem]
+        limits = instance["limits"]
+        systemd = instance["systemd"]
+        calculated = instance["calculatedAtMaxima"]
+        ecosystem_label = f"{label}.instances.{ecosystem}"
+
+        require(limits["maxConcurrentRequests"] == shared_http["maxConcurrentRequests"], f"{ecosystem_label}: request-concurrency maximum disagrees with shared HTTP")
+        require(limits["maxConcurrentArchiveStreams"] == shared_http["maxConcurrentArchiveStreams"], f"{ecosystem_label}: archive-stream maximum disagrees with shared HTTP")
+        require(limits["streamBufferBytes"] == shared_http["streamBufferBytes"], f"{ecosystem_label}: stream-buffer maximum disagrees with shared HTTP")
+        require(limits["maxGitFetchNetworkBytes"] == limits["maxGitFetchPackBytes"], f"{ecosystem_label}: Git network and pack maxima disagree")
+        require(limits["maxGitInflatedObjectBytes"] == checked_multiply([2, limits["maxGitFetchPackBytes"]], f"{ecosystem_label} inflated Git-object maximum"), f"{ecosystem_label}: inflated Git-object maximum must be twice the pack maximum")
+        require(limits["maxGitTreeLogicalBytes"] == limits["maxGitFetchPackBytes"], f"{ecosystem_label}: Git-tree logical maximum must equal the pack maximum")
+        require(limits["maxMaterializedCheckoutAllocatedBytes"] == limits["maxGitFetchPackBytes"], f"{ecosystem_label}: checkout maximum must equal the pack maximum")
+        require(limits["maxNonArchiveFileBytes"] <= limits["maxRegularFileBytes"], f"{ecosystem_label}: nonarchive-file maximum exceeds the regular-file maximum")
+        require(limits["maxArchiveBytes"] <= limits["maxRegularFileBytes"] <= limits["maxArchiveTotalBytes"], f"{ecosystem_label}: archive and regular-file maxima are inconsistent")
+        require(limits["maxInlineResponseBytes"] <= limits["maxSnapshotBytes"], f"{ecosystem_label}: inline-response maximum exceeds the snapshot maximum")
+        require(limits["maxPackumentBytes"] <= limits["maxSnapshotBytes"], f"{ecosystem_label}: packument maximum exceeds the snapshot maximum")
+        require(limits["maxSparseRowBytes"] <= limits["maxSnapshotBytes"], f"{ecosystem_label}: sparse-row maximum exceeds the snapshot maximum")
+        require(limits["maxPathComponentBytes"] <= limits["maxRawPathBytes"] < shared_http["maxRawTargetBytes"], f"{ecosystem_label}: path and raw-target maxima are inconsistent")
+        require(limits["maxReloadSeconds"] == projection["reload"]["postFetchEndToEndTimeoutSeconds"], f"{ecosystem_label}: reload maxima disagree")
+
+        quota = instance["zfs"]["quotaBytes"]
+        require(limits["maxStateBytes"] == quota, f"{ecosystem_label}: state maximum must equal the ZFS quota")
+        budget = constants["stateBudget"][ecosystem]
+        calculated_quota = checked_add(
+            [
+                budget["mirrorBytes"],
+                checked_multiply([budget["checkoutSlots"], budget["checkoutSlotBytes"]], f"{ecosystem_label} state checkout slots"),
+                budget["auditAndRefsBytes"],
+                budget["reserveBytes"],
+            ],
+            f"{ecosystem_label} state budget",
+        )
+        require(calculated_quota == budget["calculatedQuotaBytes"] == quota, f"{ecosystem_label}: state-budget calculation or quota binding mismatch")
+        quota_product = checked_multiply([quota, preflight["quotaPercentNumerator"]], f"{ecosystem_label} state-preflight quota product")
+        quota_floor = quota_product // preflight["quotaPercentDenominator"]
+        require(instance["statePreflightAtMaxima"]["quotaPercentFloorBytes"] == quota_floor, f"{ecosystem_label}: state-preflight quota floor mismatch")
+        reserved_checkouts = checked_multiply([preflight["checkoutCopies"], limits["maxMaterializedCheckoutAllocatedBytes"]], f"{ecosystem_label} state-preflight checkout reservation")
+        require(reserved_checkouts <= quota_floor, f"{ecosystem_label}: state-preflight checkout reservation exceeds the quota floor")
+
+        require(systemd["MemoryHighBytes"] < systemd["MemoryMaxBytes"], f"{ecosystem_label}: MemoryHigh must be lower than MemoryMax")
+        require(systemd["LimitNOFILE"] > calculated_descriptors, f"{ecosystem_label}: LimitNOFILE lacks descriptor headroom")
+        require(systemd["TasksMax"] >= calculated_tasks, f"{ecosystem_label}: TasksMax is below the calculated task maximum")
+
+        single_snapshot = checked_add(
+            [
+                single_constants["baseBytes"],
+                checked_multiply([single_constants["snapshotCopies"], limits["maxSnapshotBytes"]], f"{ecosystem_label} snapshot copies"),
+                checked_multiply([single_constants["bytesPerRoute"], limits["maxRoutes"]], f"{ecosystem_label} route memory"),
+                checked_multiply([single_constants["bytesPerVersion"], limits["maxVersions"]], f"{ecosystem_label} version memory"),
+                checked_multiply([single_constants["bytesPerDependencyEdge"], limits["maxDependencyEdges"]], f"{ecosystem_label} dependency-edge memory"),
+                checked_multiply([single_constants["bytesPerPackage"], limits["maxPackages"]], f"{ecosystem_label} package memory"),
+                checked_multiply([single_constants["bytesPerArchive"], limits["maxArchiveCount"]], f"{ecosystem_label} archive memory"),
+            ],
+            f"{ecosystem_label} single-snapshot estimate",
+        )
+        require(single_snapshot == calculated["singleSnapshotResidentEstimateBytes"], f"{ecosystem_label}: single-snapshot estimate mismatch")
+        request_and_stream_buffers = checked_add(
+            [
+                checked_multiply([limits["maxConcurrentRequests"], shared_http["requestBufferBytes"]], f"{ecosystem_label} request buffers"),
+                checked_multiply([limits["maxConcurrentArchiveStreams"], limits["streamBufferBytes"]], f"{ecosystem_label} stream buffers"),
+            ],
+            f"{ecosystem_label} request and stream buffers",
+        )
+        require(request_and_stream_buffers == calculated["requestAndStreamBuffersBytes"], f"{ecosystem_label}: request-and-stream buffer estimate mismatch")
+        process_peak = checked_add(
+            [
+                checked_multiply([memory["processCandidateSnapshotCount"], single_snapshot], f"{ecosystem_label} process snapshot memory"),
+                memory["runtimeReserveBytes"][ecosystem],
+                memory["loaderWorkerReserveBytes"][ecosystem],
+                request_and_stream_buffers,
+            ],
+            f"{ecosystem_label} process-candidate peak estimate",
+        )
+        require(process_peak == calculated["processCandidatePeakEstimateBytes"], f"{ecosystem_label}: process-candidate peak estimate mismatch")
+        require(systemd["MemoryMaxBytes"] >= memory["admissionReserveBytes"], f"{ecosystem_label}: MemoryMax is lower than its admission reserve")
+        admission_ceiling = systemd["MemoryMaxBytes"] - memory["admissionReserveBytes"]
+        require(admission_ceiling == calculated["admissionCeilingBytes"], f"{ecosystem_label}: admission-ceiling calculation mismatch")
+        require(process_peak <= admission_ceiling, f"{ecosystem_label}: process-candidate peak exceeds the admission ceiling")
+
+    require(instances["rust"]["limits"]["maxPackumentBytes"] == 0, f"{label}: Rust packument maximum must remain zero")
+    require(instances["js"]["limits"]["maxSparseRowBytes"] == 0, f"{label}: JS sparse-row maximum must remain zero")
+    node_worker = instances["js"]["nodeWorker"]
+    mebibyte = projection["units"]["mebibyteBytes"]
+    require(node_worker["workerCount"] == 1, f"{label}: JS loader must use exactly one Worker")
+    require(node_worker["maxTransferableSnapshotBytes"] == instances["js"]["limits"]["maxSnapshotBytes"], f"{label}: JS transferable-snapshot maximum must equal the JS snapshot maximum")
+    require(node_worker["snapshotArrayBufferOwnership"] == "owned", f"{label}: JS snapshot transfer requires an owned ArrayBuffer")
+    require(strict_bool(node_worker["snapshotTransferListRequired"], f"{label}.instances.js.nodeWorker.snapshotTransferListRequired") is True, f"{label}: JS snapshot ArrayBuffer must be listed in transferList")
+    require(strict_bool(node_worker["sharedArrayBufferAllowed"], f"{label}.instances.js.nodeWorker.sharedArrayBufferAllowed") is False, f"{label}: JS snapshot transfer must reject SharedArrayBuffer")
+    require(strict_bool(node_worker["structuredCloneAllowed"], f"{label}.instances.js.nodeWorker.structuredCloneAllowed") is False, f"{label}: JS snapshot transfer must reject the structured-clone path")
+    require(strict_bool(node_worker["codeRangeIncludedInResidentEnvelope"], f"{label}.instances.js.nodeWorker.codeRangeIncludedInResidentEnvelope") is False, f"{label}: JS code range is virtual-address reservation and must be excluded from resident arithmetic")
+    worker_heap_resident = checked_multiply(
+        [
+            checked_add(
+                [
+                    node_worker["resourceLimitsMaxOldGenerationSizeMiB"],
+                    node_worker["resourceLimitsMaxYoungGenerationSizeMiB"],
+                    node_worker["nearHeapLimitAllowanceMiB"],
+                ],
+                f"{label} JS Worker heap MiB",
+            ),
+            mebibyte,
+        ],
+        f"{label} JS Worker heap resident budget",
+    )
+    require(worker_heap_resident == node_worker["workerHeapResidentBudgetBytes"], f"{label}: JS Worker heap resident budget mismatch")
+    worker_resident_envelope = checked_add(
+        [
+            worker_heap_resident,
+            checked_multiply([node_worker["resourceLimitsStackSizeMiB"], mebibyte], f"{label} JS Worker stack bytes"),
+            node_worker["workerNonHeapResidentReserveBytes"],
+        ],
+        f"{label} JS Worker resident envelope",
+    )
+    require(worker_resident_envelope == node_worker["workerResidentEnvelopeBytes"], f"{label}: JS Worker resident envelope mismatch")
+    require(
+        checked_multiply([node_worker["workerCount"], worker_resident_envelope], f"{label} JS loader Worker envelope") == memory["loaderWorkerReserveBytes"]["js"],
+        f"{label}: JS loader-Worker reserve does not cover the exact Worker envelope",
+    )
+    require(node_worker["resourceLimitsCodeRangeSizeMiB"] > 0, f"{label}: JS Worker code-range reservation must be explicit")
+    require(worker_resident_envelope < instances["js"]["systemd"]["MemoryMaxBytes"], f"{label}: JS Worker resident envelope must be lower than MemoryMax")
+
+    shutdown = projection["shutdownDrain"]
+    require(shutdown["systemdTimeoutStopSeconds"] == checked_add([shutdown["httpDrainDeadlineSeconds"], shutdown["sigkillMarginSeconds"]], f"{label} systemd stop timeout"), f"{label}: systemd stop timeout must equal drain deadline plus SIGKILL margin")
+    require(shutdown["shutdownLeaseOverrideSeconds"] == shutdown["httpDrainDeadlineSeconds"], f"{label}: shutdown lease override must equal the drain deadline")
+    require(shutdown["requestHeaderReadTimeoutSeconds"] < shutdown["requestIdleTimeoutSeconds"] < shutdown["httpDrainDeadlineSeconds"] < shutdown["requestTotalLeaseSeconds"], f"{label}: request and drain timeouts are not strictly ordered")
+    require(shutdown["requestTotalLeaseSeconds"] == shutdown["archiveStreamLeaseSeconds"] == shutdown["oldGenerationLeaseSeconds"] == projection["reload"]["postFetchEndToEndTimeoutSeconds"], f"{label}: request,archive,old-generation,and reload deadlines disagree")
+
+    watcher = projection["watcher"]
+    require(watcher["connectTimeoutSeconds"] < watcher["fetchOverallTimeoutSeconds"], f"{label}: watcher connect timeout must be below the fetch wall timeout")
+    require(watcher["fetchCpuSeconds"] < watcher["fetchOverallTimeoutSeconds"], f"{label}: watcher CPU timeout must be below the fetch wall timeout")
+    require(watcher["pollJitterSeconds"] < watcher["pollIntervalSeconds"], f"{label}: watcher jitter must be below its poll interval")
+    require(watcher["retryBackoffInitialSeconds"] <= watcher["retryBackoffMaxSeconds"], f"{label}: watcher retry backoff bounds are reversed")
+    require(watcher["retryBackoffMultiplier"] > 1, f"{label}: watcher retry multiplier must be greater than one")
+    require(watcher["retryJitterPercent"] <= 100, f"{label}: watcher retry jitter exceeds 100 percent")
+
+    reload = projection["reload"]
+    for phase in ("materializeTimeoutSeconds", "strictGitVerificationTimeoutSeconds", "archiveVerificationAndSnapshotBuildTimeoutSeconds", "durableCommitTimeoutSeconds"):
+        require(reload[phase] <= reload["postFetchEndToEndTimeoutSeconds"], f"{label}: reload phase timeout exceeds the end-to-end deadline")
+
+    clock = projection["clock"]
+    require(clock["maxReportedOffsetSeconds"] <= clock["maxRealtimeVsMonotonicDeviationSeconds"] <= clock["maxBackwardRealtimeMovementSeconds"] < clock["maxFutureSkewSeconds"] < clock["trustedSyncStableSeconds"], f"{label}: clock limits are not conservatively ordered")
+
+    horizons = projection["observationHorizons"]
+    require(horizons["clockSyncQualificationSeconds"] >= clock["trustedSyncStableSeconds"], f"{label}: clock qualification is shorter than the trusted-sync prerequisite")
+    require(horizons["resourceStressMinimumSeconds"] < horizons["clockSyncQualificationSeconds"] < horizons["preCutoverCanarySeconds"] < horizons["perArchiveBodyCutoverSeconds"] < horizons["publicSustainedOperationsSeconds"] < horizons["legacyRetirementMinimumSecondsAfterLastSuccessfulRollbackRehearsal"], f"{label}: qualification horizons are not strictly ordered")
+
+    thresholds = projection["qualificationThresholds"]
+    for key in ("rssP99MemoryHighPercentUpperExclusive", "stateUseQuotaPercentUpperExclusive", "archiveHashCompletenessPercent", "routeCompletenessPercent"):
+        require(thresholds[key] <= 100, f"{label}: qualification percentage exceeds 100")
+
+    exact_json_value(projection, B13_HARD_MAXIMA_PROJECTION, label)
+    return copy.deepcopy(projection), projection_digest
+
+
 def require_no_later(when: datetime, upper_bound: datetime, label: str) -> None:
     require(when <= upper_bound, f"{label}: timestamp is later than its attested upper bound")
 
@@ -2052,6 +2445,20 @@ def validate_b02_payloads(results: list[dict[str, Any]], verification_time: date
     for name in SSH_LIFECYCLE_OPERATIONS:
         identity_rows.extend(procedure_identity_rows(lifecycle[name], f"D0-B02 ssh-lifecycle.{name}"))
     require_globally_distinct_identifiers(identity_rows, "D0-B02 security-relevant identifiers")
+
+
+def exact_json_shape(value: Any, expected: Any, label: str) -> None:
+    require(type(value) is type(expected), f"{label}: expected JSON type {type(expected).__name__}")
+    if isinstance(expected, dict):
+        actual_object = obj(value, label)
+        exact_keys(actual_object, set(expected), label)
+        for key, expected_value in expected.items():
+            exact_json_shape(actual_object[key], expected_value, f"{label}.{key}")
+    elif isinstance(expected, list):
+        actual_array = arr(value, label)
+        require(len(actual_array) == len(expected), f"{label}: expected exactly {len(expected)} entries")
+        for index, expected_value in enumerate(expected):
+            exact_json_shape(actual_array[index], expected_value, f"{label}[{index}]")
 
 
 def exact_json_value(value: Any, expected: Any, label: str) -> None:
