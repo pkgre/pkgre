@@ -221,19 +221,19 @@ FINDING_HANDOFFS = {finding: sorted(handoff for handoff, (_, _, findings) in HAN
 LATER_GATES = [
     {"id": "PRE_D1_REFETCH", "findingRefs": [], "conditionalOnAmendment": False, "requirement": "Fresh fetch --prune and live Git verification of all four repositories immediately before the first D1 edit"},
     {"id": "PRE_D2_STORAGE", "findingRefs": ["D0-B11"], "conditionalOnAmendment": False, "requirement": "Agent-owned provider and storage feasibility passes against operator-reviewed capacity ceilings"},
-    {"id": "D2_SIGNING", "findingRefs": ["D0-B03", "D0-B04"], "conditionalOnAmendment": False, "requirement": "Commit the exact release workflow and close signer trust plus provider-governance evidence before the D2 signing handoff"},
+    {"id": "D2_SIGNING", "findingRefs": ["D0-B03", "D0-B04", "D0-B13"], "conditionalOnAmendment": False, "requirement": "Commit the exact release workflow;close provider-governance evidence;freeze the signer principal,trusted SSH-Ed25519 key-set digest,and revocation digest;and bind that trust authority into each applicable runtime instance identity before the D2 signing handoff"},
     {"id": "PRE_D3_SERVER_CLOSURE", "findingRefs": ["D0-B15"], "conditionalOnAmendment": False, "requirement": "Admit the exact pkgre-rust-serve feature and lock closure before server implementation"},
     {"id": "PRE_D5_CARGO_OFFLINE", "findingRefs": ["D0-B15"], "conditionalOnAmendment": False, "requirement": "Set and prove Cargo net.offline for self-host and cold-replay fixtures"},
     {"id": "PRE_D6_CLIENT_MATRIX", "findingRefs": ["D0-B17"], "conditionalOnAmendment": False, "requirement": "Pin an independently current Deno and add the scoped npm production fixture unless a reviewed replacement contract says otherwise"},
     {"id": "PRE_D6_EDGE", "findingRefs": ["D0-B09", "D0-B21"], "conditionalOnAmendment": True, "requirement": "Complete production-equivalent edge and explicit no-1xx proof before D6 completion"},
     {"id": "D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH", "findingRefs": ["D0-B10", "D0-B12"], "conditionalOnAmendment": True, "requirement": "Complete native resource,time,clock,lifecycle,and crash proofs plus reviewed hard maxima before D7"},
     {"id": "PRE_D7_REAL_RAIN_EDGE", "findingRefs": ["D0-B06", "D0-B09", "D0-B21"], "conditionalOnAmendment": True, "requirement": "Complete real-Rain H1/H2 edge,identity,denial,and no-1xx integration proof before public cutover"},
-    {"id": "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "findingRefs": ["D0-B06", "D0-B08"], "conditionalOnAmendment": True, "requirement": "Complete compatibility and rollback identities plus immutable rollback bundles and restore rehearsal before the first frontend change"},
+    {"id": "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "findingRefs": ["D0-B06", "D0-B08", "D0-B13"], "conditionalOnAmendment": True, "requirement": "Freeze exact Rust+JS compatibility runtime instance digests;complete isolated compatibility+rollback units,listeners,and state roots;bind each rollback to the exact selected anchor runtime identity;and complete immutable rollback bundles plus restore rehearsal before the first frontend change"},
     {"id": "PRE_D8_RUST_ACCESS_LOG", "findingRefs": ["D0-B20"], "conditionalOnAmendment": True, "requirement": "Complete authorized bounded Rust access-log discovery and route reconciliation before D8"},
-    {"id": "PRE_D9_RUST_BODIES", "findingRefs": ["D0-B07", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete Rust archive bodies and freeze a distinct Rust body identity"},
+    {"id": "PRE_D9_RUST_BODIES", "findingRefs": ["D0-B07", "D0-B13", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete Rust archive bodies;freeze the Rust body runtime instance digest distinct from Rust compatibility;and complete its isolated physical body profile before D9 body activation"},
     {"id": "PRE_D11_JS_INITIAL_ANCHOR", "findingRefs": ["D0-B08", "D0-B16"], "conditionalOnAmendment": False, "requirement": "Build,reconstruct,and prove the immutable JS-INITIAL-ANCHOR"},
     {"id": "PRE_D11_JS_ACCESS_LOG", "findingRefs": ["D0-B20"], "conditionalOnAmendment": True, "requirement": "Complete authorized bounded JS access-log discovery and route reconciliation before D11"},
-    {"id": "PRE_D12_JS_BODIES", "findingRefs": ["D0-B07", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete JS archive bodies and freeze a distinct JS body identity"},
+    {"id": "PRE_D12_JS_BODIES", "findingRefs": ["D0-B07", "D0-B13", "D0-B14"], "conditionalOnAmendment": False, "requirement": "Import and verify complete JS archive bodies;freeze the JS body runtime instance digest distinct from JS compatibility;and complete its isolated physical body profile before D12 body activation"},
     {"id": "D13_LAN_SELECTION", "findingRefs": ["D0-B19"], "conditionalOnAmendment": False, "requirement": "Select and freeze every LAN identity,authority,credential,network,DNS,TLS,and state row before any LAN edit"},
 ]
 MUTATION_POLICY = {"id": "D0-MUTATION-POLICY-v1", "operatorEmergencyExceptions": [{"id": "GANDI_CREDENTIAL_CONTAINMENT", "scope": "credential-containment-only", "returnedEvidence": "metadata-only", "forbidden": ["token-bytes", "token-hash", "private-key-bytes", "private-key-hash"]}]}
@@ -243,13 +243,135 @@ PROCEDURAL_AUTHORITY_SCHEMA = "pkgre-d0-procedural-authority-v1"
 PROCEDURAL_AUTHORITY_ASSURANCE = {"artifactAuthorshipProven": False, "cryptographicIdentityAuthentication": False, "roleAssignmentAuthority": "CALLER_OUT_OF_BAND_PROCEDURE", "verifierAssurance": "CONTENT_BINDING_ORDERING_AND_CONSISTENCY_WITH_EXTERNAL_ASSIGNMENT_ONLY"}
 PROCEDURAL_ROLES = {"operatorReturn": "PROCEDURAL_OPERATOR_RETURNER", "agentVerification": "PROCEDURAL_AGENT_VERIFIER", "proceduralReview": "PROCEDURAL_REVIEWER"}
 SEMANTIC_EVIDENCE_SCHEMA = "pkgre-d0-semantic-evidence-v1"
-PHASE_AMENDMENT_SCHEMA = "pkgre-d0-phase-amendment-v1"
+PHASE_AMENDMENT_SCHEMA = "pkgre-d0-phase-amendment-v2"
 B13_APPROVAL_SCHEMA = "pkgre-d0-b13-approval-v1"
+B13_REPHASE_MODE = "EXACT_PARTIAL_APPROVALS_AND_PHASE_AMENDMENT"
+B13_REPHASE_BINDING_SCHEMA = "pkgre-d0-b13-rephase-binding-v1"
 B13_APPROVAL_POLICY = {
     "protocol-enums": {"decision": "APPROVE_EXACT_PROTOCOL_ENUMS", "scope": "D0_B13_PROTOCOL_ENUMS", "projectionSchema": "pkgre-d0-protocol-enums-projection-v1"},
     "hard-maxima": {"decision": "APPROVE_EXACT_HARD_MAXIMA", "scope": "D0_B13_HARD_MAXIMA", "projectionSchema": "pkgre-d0-hard-maxima-projection-v1"},
-    "instance-digests": {"decision": "APPROVE_EXACT_SIX_INSTANCE_PROFILES", "scope": "D0_B13_INSTANCE_DIGESTS", "projectionSchema": "pkgre-d0-instance-profiles-projection-v1"},
+    "instance-profiles": {"decision": "APPROVE_EXACT_SIX_INSTANCE_PROFILE_CONTRACTS", "scope": "D0_B13_INSTANCE_PROFILES", "projectionSchema": "pkgre-d0-instance-profiles-projection-v1"},
 }
+B13_REPHASE_EVIDENCE_BY_HANDOFF = {"OP-D0-06": {"protocol-enums", "hard-maxima", "instance-profiles", "phase-amendment"}}
+B13_REPHASE_EVIDENCE = set().union(*B13_REPHASE_EVIDENCE_BY_HANDOFF.values())
+B13_INSTANCE_PROFILE_CONTRACT_SCHEMA = "pkgre-d0-public-instance-profile-contract-v1"
+B13_INSTANCE_PROFILE_CONTRACT_DOMAIN = b"pkgre-d0-public-instance-profile-contract-v1\0"
+B13_RUNTIME_IDENTITY_CONTRACT = {
+    "profileContractDigestMeaning": "d0-approved-contract-only-not-runtime-instance-digest",
+    "runtimeInstanceDigestSchemaOwner": "D1",
+    "runtimeInstanceDigestPresent": False,
+    "runtimeInstanceDigestRequiredBeforeActivation": True,
+    "compatibilityBodyRuntimeIdentityRule": "distinct",
+    "rollbackRuntimeIdentityRule": "inherit-selected-anchor-exact",
+    "physicalProfileIsolationRule": "distinct-unit-listener-state-root",
+    "concreteSigningAuthorityPresent": False,
+    "concreteDeploymentAuthorityPresent": False,
+}
+B13_SIGNING_AUTHORITY_REQUIREMENT = {
+    "findingId": "D0-B04",
+    "activationGate": "D2_SIGNING",
+    "bindingRule": "exact-operator-returned-catalog-authority",
+}
+B13_INSTANCE_SOURCE_POLICY = {
+    "rust": {
+        "canonicalOrigin": "https://github.com/pkgre/rust.git",
+        "transport": "https-anonymous",
+        "credentialMode": "absent-public-anonymous",
+        "sourceRef": "refs/heads/main",
+        "fetchRefspec": "+refs/heads/main:refs/pkgre/remotes/main",
+        "remoteTrackingRef": "refs/pkgre/remotes/main",
+        "candidateRefGrammar": "refs/pkgre/candidates/<40-lower-hex-sha1>",
+        "acceptedRefGrammar": "refs/pkgre/accepted/<40-lower-hex-sha1>",
+        "reviewedFloorCommit": "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b",
+        "reviewedFloorSignatureStatus": "verified-openpgp",
+        "reviewedFloorAuthority": "reviewed-pgp-floor-not-v1-ssh-runtime-bootstrap",
+        "reviewedFloorCatalogSchemaIdentity": "rust-main-toml-schema-4",
+        "firstRuntimeBootstrapRule": "v1-ssh-signed-descendant-of-reviewed-floor",
+    },
+    "js": {
+        "canonicalOrigin": "https://github.com/pkgre/js.git",
+        "transport": "https-anonymous",
+        "credentialMode": "absent-public-anonymous",
+        "sourceRef": "refs/heads/main",
+        "fetchRefspec": "+refs/heads/main:refs/pkgre/remotes/main",
+        "remoteTrackingRef": "refs/pkgre/remotes/main",
+        "candidateRefGrammar": "refs/pkgre/candidates/<40-lower-hex-sha1>",
+        "acceptedRefGrammar": "refs/pkgre/accepted/<40-lower-hex-sha1>",
+        "reviewedFloorCommit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+        "reviewedFloorSignatureStatus": "unsigned",
+        "reviewedFloorAuthority": "reviewed-unsigned-floor-not-v1-ssh-runtime-bootstrap",
+        "reviewedFloorCatalogSchemaIdentity": "pkgre-js-catalog-v1",
+        "firstRuntimeBootstrapRule": "v1-ssh-signed-descendant-of-reviewed-floor",
+    },
+}
+B13_INSTANCE_PROFILE_POLICY = (
+    {
+        "profileId": "public-rust-compatibility",
+        "ecosystem": "rust",
+        "role": "compatibility",
+        "mode": "public",
+        "audience": "public",
+        "sourceSelector": "rust",
+        "semanticBinding": {"kind": "fixed-delivery", "deliveryMode": "redirect", "runtimeInstanceIdentityRule": "distinct-from-other-fixed-profile"},
+        "updatePolicy": "watch-fixed-ref",
+        "physicalAuthorityRequirement": {"findingId": "D0-B06", "activationGate": "PRE_D7_FRONTEND_CHANGE_ROLLBACK"},
+    },
+    {
+        "profileId": "public-js-compatibility",
+        "ecosystem": "js",
+        "role": "compatibility",
+        "mode": "public",
+        "audience": "public",
+        "sourceSelector": "js",
+        "semanticBinding": {"kind": "fixed-delivery", "deliveryMode": "redirect", "runtimeInstanceIdentityRule": "distinct-from-other-fixed-profile"},
+        "updatePolicy": "watch-fixed-ref",
+        "physicalAuthorityRequirement": {"findingId": "D0-B06", "activationGate": "PRE_D7_FRONTEND_CHANGE_ROLLBACK"},
+    },
+    {
+        "profileId": "public-rust-body",
+        "ecosystem": "rust",
+        "role": "body",
+        "mode": "public",
+        "audience": "public",
+        "sourceSelector": "rust",
+        "semanticBinding": {"kind": "fixed-delivery", "deliveryMode": "body", "runtimeInstanceIdentityRule": "distinct-from-other-fixed-profile"},
+        "updatePolicy": "watch-fixed-ref",
+        "physicalAuthorityRequirement": {"findingId": "D0-B07", "activationGate": "PRE_D9_RUST_BODIES"},
+    },
+    {
+        "profileId": "public-js-body",
+        "ecosystem": "js",
+        "role": "body",
+        "mode": "public",
+        "audience": "public",
+        "sourceSelector": "js",
+        "semanticBinding": {"kind": "fixed-delivery", "deliveryMode": "body", "runtimeInstanceIdentityRule": "distinct-from-other-fixed-profile"},
+        "updatePolicy": "watch-fixed-ref",
+        "physicalAuthorityRequirement": {"findingId": "D0-B07", "activationGate": "PRE_D12_JS_BODIES"},
+    },
+    {
+        "profileId": "public-rust-rollback",
+        "ecosystem": "rust",
+        "role": "rollback",
+        "mode": "public",
+        "audience": "public",
+        "sourceSelector": "rust",
+        "semanticBinding": {"kind": "selected-anchor-exact", "allowedAnchorRoles": ["compatibility", "body"], "allowedDeliveryModes": ["redirect", "body"], "deliveryBinding": "inherit-selected-anchor-exact", "runtimeInstanceIdentityRule": "inherit-selected-anchor-exact"},
+        "updatePolicy": "frozen-no-watcher",
+        "physicalAuthorityRequirement": {"findingId": "D0-B06", "activationGate": "PRE_D7_FRONTEND_CHANGE_ROLLBACK"},
+    },
+    {
+        "profileId": "public-js-rollback",
+        "ecosystem": "js",
+        "role": "rollback",
+        "mode": "public",
+        "audience": "public",
+        "sourceSelector": "js",
+        "semanticBinding": {"kind": "selected-anchor-exact", "allowedAnchorRoles": ["compatibility", "body"], "allowedDeliveryModes": ["redirect", "body"], "deliveryBinding": "inherit-selected-anchor-exact", "runtimeInstanceIdentityRule": "inherit-selected-anchor-exact"},
+        "updatePolicy": "frozen-no-watcher",
+        "physicalAuthorityRequirement": {"findingId": "D0-B06", "activationGate": "PRE_D7_FRONTEND_CHANGE_ROLLBACK"},
+    },
+)
 B13_PROTOCOL_ENUMS_PROJECTION = {
     "configSchema": "pkgre-dynamic-instance-config-v1",
     "protocolContract": "pkgre-public-http-contract-v1",
@@ -482,14 +604,13 @@ SAT_EVIDENCE_BY_HANDOFF = {
     "D0-B10": {"OP-D0-06": {"approved-limits"}, "OP-D0-07": {"native-resource-proof"}},
     "D0-B11": {"OP-D0-08": {"storage-policy", "storage-feasibility-proof"}},
     "D0-B12": {"OP-D0-07": {"clock-policy", "clock-proof"}},
-    "D0-B13": {"OP-D0-06": {"protocol-enums", "hard-maxima", "instance-digests"}},
     "D0-B16": {"OP-D0-07": {"js-continuity-proof", "js-initial-anchor"}},
     "D0-B17": {"OP-D0-09": {"deno-current-pin", "scoped-npm-fixture"}},
     "D0-B20": {"OP-D0-07": {"complete-access-log-reconciliation"}},
 }
 SAT_EVIDENCE = {finding_id: set().union(*by_handoff.values()) for finding_id, by_handoff in SAT_EVIDENCE_BY_HANDOFF.items()}
 REPHASE_TARGETS = {
-    "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
+    "D0-B03": ["D2_SIGNING"], "D0-B04": ["D2_SIGNING"], "D0-B06": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D7_REAL_RAIN_EDGE"], "D0-B07": ["PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B08": ["PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D11_JS_INITIAL_ANCHOR"], "D0-B09": ["PRE_D6_EDGE", "PRE_D7_REAL_RAIN_EDGE"], "D0-B10": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B11": ["PRE_D2_STORAGE"], "D0-B12": ["D4_BEFORE_D7_RESOURCE_TIME_CLOCK_CRASH"], "D0-B13": ["D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"], "D0-B16": ["PRE_D11_JS_INITIAL_ANCHOR"], "D0-B17": ["PRE_D6_CLIENT_MATRIX"], "D0-B20": ["PRE_D8_RUST_ACCESS_LOG", "PRE_D11_JS_ACCESS_LOG"],
 }
 LATER_GATES_BY_ID = {row["id"]: row for row in LATER_GATES}
 RAIN_SSH_HOST = "rain.pacna.org"
@@ -1602,11 +1723,14 @@ def validate_semantic_documents(finding_id: str, disposition: str, result: dict[
     handoff_id = nonempty(result.get("_handoffId"), f"{finding_id} semantic handoff")
     require(handoff_id in FINDING_HANDOFFS[finding_id], f"{finding_id}: semantic result belongs to an unexpected handoff")
     if disposition == "SATISFIED":
+        require(finding_id in SAT_EVIDENCE_BY_HANDOFF, f"{finding_id}: satisfaction is not allowed by semantic-document policy")
         expected_kinds = SAT_EVIDENCE_BY_HANDOFF[finding_id].get(handoff_id)
         require(expected_kinds is not None, f"{finding_id}: no satisfaction evidence is assigned to {handoff_id}")
         expected_targets: list[str] = []
     elif disposition == "REPHASED":
-        expected_kinds = {"phase-amendment"}
+        require(finding_id in REPHASE_TARGETS, f"{finding_id}: rephasing is not allowed by semantic-document policy")
+        expected_kinds = B13_REPHASE_EVIDENCE_BY_HANDOFF.get(handoff_id) if finding_id == "D0-B13" else {"phase-amendment"}
+        require(expected_kinds is not None, f"{finding_id}: no rephase evidence is assigned to {handoff_id}")
         expected_targets = REPHASE_TARGETS[finding_id]
     else:
         raise GateVerificationError(f"{finding_id}: disposition {disposition!r} has no semantic-document policy")
@@ -1923,6 +2047,139 @@ def validate_b13_hard_maxima(result: dict[str, Any], verification_time: datetime
 
     exact_json_value(projection, B13_HARD_MAXIMA_PROJECTION, label)
     return copy.deepcopy(projection), projection_digest
+
+
+def b13_instance_profile_contract_sha256(projection: Any, profile: Any) -> str:
+    projection_object = obj(projection, "D0-B13 instance-profiles projection digest input")
+    profile_object = obj(profile, "D0-B13 instance profile contract digest input")
+    source_selector = profile_object.get("sourceSelector")
+    sources = obj(projection_object.get("sources"), "D0-B13 instance-profiles projection digest sources")
+    require(type(source_selector) is str and source_selector in sources, "D0-B13 instance profile contract digest: invalid source selector")
+    profile_preimage = copy.deepcopy(profile_object)
+    profile_preimage.pop("profileContractSha256", None)
+    contract = {
+        "contractSchema": projection_object.get("contractSchema"),
+        "mode": projection_object.get("mode"),
+        "audience": projection_object.get("audience"),
+        "protocolAuthority": projection_object.get("protocolAuthority"),
+        "hardMaximaAuthority": projection_object.get("hardMaximaAuthority"),
+        "runtimeIdentityContract": projection_object.get("runtimeIdentityContract"),
+        "signingAuthorityRequirement": projection_object.get("signingAuthorityRequirement"),
+        "activationRequirements": projection_object.get("activationRequirements"),
+        "sourceAuthority": sources[source_selector],
+        "profile": profile_preimage,
+    }
+    return sha256(B13_INSTANCE_PROFILE_CONTRACT_DOMAIN + canonical_json(contract))
+
+
+def validate_b13_instance_profiles(result: dict[str, Any], verification_time: datetime, protocol_projection_digest: str, maxima_projection_digest: str) -> tuple[dict[str, Any], str]:
+    projection, projection_digest = validate_b13_approval(result, "instance-profiles", verification_time)
+    label = "D0-B13 instance-profiles projection"
+    protocol_projection_digest = hex_digest(protocol_projection_digest, f"{label} protocol projection digest")
+    maxima_projection_digest = hex_digest(maxima_projection_digest, f"{label} hard-maxima projection digest")
+    exact_keys(
+        projection,
+        {
+            "contractSchema",
+            "mode",
+            "audience",
+            "protocolAuthority",
+            "hardMaximaAuthority",
+            "runtimeIdentityContract",
+            "signingAuthorityRequirement",
+            "sources",
+            "activationRequirements",
+            "profiles",
+        },
+        label,
+    )
+    require(projection["contractSchema"] == B13_INSTANCE_PROFILE_CONTRACT_SCHEMA, f"{label}: contract schema mismatch")
+    require(projection["mode"] == "public" and projection["audience"] == "public", f"{label}: only the exact public mode and audience are authorized")
+
+    protocol = obj(projection["protocolAuthority"], f"{label}.protocolAuthority")
+    exact_keys(protocol, {"projectionSchema", "projectionSha256"}, f"{label}.protocolAuthority")
+    require(protocol["projectionSchema"] == B13_APPROVAL_POLICY["protocol-enums"]["projectionSchema"], f"{label}: protocol projection schema mismatch")
+    require(hex_digest(protocol["projectionSha256"], f"{label}.protocolAuthority.projectionSha256") == protocol_projection_digest, f"{label}: protocol projection digest mismatch")
+
+    maxima = obj(projection["hardMaximaAuthority"], f"{label}.hardMaximaAuthority")
+    exact_keys(maxima, {"projectionSchema", "projectionSha256"}, f"{label}.hardMaximaAuthority")
+    require(maxima["projectionSchema"] == B13_APPROVAL_POLICY["hard-maxima"]["projectionSchema"], f"{label}: hard-maxima projection schema mismatch")
+    require(hex_digest(maxima["projectionSha256"], f"{label}.hardMaximaAuthority.projectionSha256") == maxima_projection_digest, f"{label}: hard-maxima projection digest mismatch")
+
+    runtime_identity = obj(projection["runtimeIdentityContract"], f"{label}.runtimeIdentityContract")
+    exact_json_value(runtime_identity, B13_RUNTIME_IDENTITY_CONTRACT, f"{label}.runtimeIdentityContract")
+    signing = obj(projection["signingAuthorityRequirement"], f"{label}.signingAuthorityRequirement")
+    exact_json_value(signing, B13_SIGNING_AUTHORITY_REQUIREMENT, f"{label}.signingAuthorityRequirement")
+
+    sources = obj(projection["sources"], f"{label}.sources")
+    exact_keys(sources, set(B13_INSTANCE_SOURCE_POLICY), f"{label}.sources")
+    for ecosystem, expected_source in B13_INSTANCE_SOURCE_POLICY.items():
+        source = obj(sources[ecosystem], f"{label}.sources.{ecosystem}")
+        validate_https_source_url(source.get("canonicalOrigin"), f"{label}.sources.{ecosystem}.canonicalOrigin")
+        exact_json_value(source, expected_source, f"{label}.sources.{ecosystem}")
+
+    activation = obj(projection["activationRequirements"], f"{label}.activationRequirements")
+    expected_activation = {
+        "d1RuntimeInstanceContractRequired": True,
+        "runtimeInstanceDigestRequired": True,
+        "signingAuthorityRequired": True,
+        "exactPhysicalRealizationRequired": True,
+        "profileContractAloneAuthorizesActivation": False,
+        "profileContractAloneAuthorizesD1": False,
+    }
+    exact_json_value(activation, expected_activation, f"{label}.activationRequirements")
+
+    profiles = arr(projection["profiles"], f"{label}.profiles")
+    require(len(profiles) == len(B13_INSTANCE_PROFILE_POLICY), f"{label}: exact six-profile coverage required")
+    profile_digests: list[str] = []
+    expected_profile_keys = set(B13_INSTANCE_PROFILE_POLICY[0]) | {"profileContractSha256"}
+    for index, expected_policy in enumerate(B13_INSTANCE_PROFILE_POLICY):
+        row_label = f"{label}.profiles[{index}]"
+        profile = obj(profiles[index], row_label)
+        exact_keys(profile, expected_profile_keys, row_label)
+        for key, expected_value in expected_policy.items():
+            exact_json_value(profile[key], expected_value, f"{row_label}.{key}")
+        claimed_digest = hex_digest(profile["profileContractSha256"], f"{row_label}.profileContractSha256")
+        expected_digest = b13_instance_profile_contract_sha256(projection, profile)
+        require(claimed_digest == expected_digest, f"{row_label}: profile contract digest mismatch")
+        profile_digests.append(claimed_digest)
+    require(len(profile_digests) == len(set(profile_digests)), f"{label}: profile contract digests must be distinct")
+    return copy.deepcopy(projection), projection_digest
+
+
+def validate_b13_rephase_binding(payload: Any, approval_digests: dict[str, str]) -> None:
+    label = "D0-B13 phase-amendment.b13RephaseBinding"
+    binding = obj(payload, label)
+    expected_inputs = [
+        {
+            "kind": kind,
+            "projectionSchema": B13_APPROVAL_POLICY[kind]["projectionSchema"],
+            "projectionSha256": approval_digests[kind],
+        }
+        for kind in ("protocol-enums", "hard-maxima", "instance-profiles")
+    ]
+    expected = {
+        "schema": B13_REPHASE_BINDING_SCHEMA,
+        "boundedD0Inputs": expected_inputs,
+        "runtimeInstanceDigestsPresent": False,
+        "trustDigestsPresent": False,
+        "profileContractsSatisfyRuntimeDigestRequirement": False,
+        "boundedInputsAuthorizeActivation": False,
+        "boundedInputsAuthorizeD1Implementation": False,
+    }
+    exact_json_value(binding, expected, label)
+
+
+def validate_b13_rephase_payloads(results: list[dict[str, Any]], verification_time: datetime) -> None:
+    require(len(results) == 1, "D0-B13: exact single-handoff contribution required")
+    result = results[0]
+    _protocol_projection, protocol_digest = validate_b13_protocol_enums(result, verification_time)
+    _maxima_projection, maxima_digest = validate_b13_hard_maxima(result, verification_time)
+    _profiles_projection, profiles_digest = validate_b13_instance_profiles(result, verification_time, protocol_digest, maxima_digest)
+    validate_b13_rephase_binding(
+        result["_semanticPayloads"]["phase-amendment"]["b13RephaseBinding"],
+        {"protocol-enums": protocol_digest, "hard-maxima": maxima_digest, "instance-profiles": profiles_digest},
+    )
 
 
 def require_no_later(when: datetime, upper_bound: datetime, label: str) -> None:
@@ -4562,13 +4819,17 @@ def validate_phase_amendment_payloads(finding_id: str, results: list[dict[str, A
         handoff_id = result["_handoffId"]
         label = f"{finding_id}/{handoff_id} phase-amendment"
         payload = result["_semanticPayloads"]["phase-amendment"]
-        exact_keys(payload, {"amendmentId", "decision", "findingId", "currentEvidenceSatisfied", "d0WorkAuthorized", "targetGates", "deferredRequirements", "operatorDecision", "rationale", "residualRisks", "result"}, label)
+        expected_keys = {"amendmentId", "decision", "findingId", "currentEvidenceSatisfied", "d0WorkAuthorized", "d1ImplementationAuthorized", "targetGates", "deferredRequirements", "operatorDecision", "rationale", "residualRisks", "result"}
+        if finding_id == "D0-B13":
+            expected_keys.add("b13RephaseBinding")
+        exact_keys(payload, expected_keys, label)
         amendment_id = security_identifier(payload["amendmentId"], f"{label}.amendmentId")
         amendment_ids.append((amendment_id, f"{label}.amendmentId"))
         require(payload["decision"] == "APPROVE_EXACT_REPHASE" and payload["result"] == "APPROVED", f"{label}: exact rephase approval decision/result mismatch")
         require(payload["findingId"] == finding_id, f"{label}: finding binding mismatch")
         require(strict_bool(payload["currentEvidenceSatisfied"], f"{label}.currentEvidenceSatisfied") is False, f"{label}: current evidence must remain unsatisfied")
         require(strict_bool(payload["d0WorkAuthorized"], f"{label}.d0WorkAuthorized") is False, f"{label}: phase amendment must not authorize D0 work")
+        require(strict_bool(payload["d1ImplementationAuthorized"], f"{label}.d1ImplementationAuthorized") is False, f"{label}: phase amendment must not authorize D1 implementation")
         require(payload["targetGates"] == expected_targets, f"{label}: target-gate list mismatch")
         deferred = arr(payload["deferredRequirements"], f"{label}.deferredRequirements")
         require(len(deferred) == len(expected_targets), f"{label}: deferred-requirement coverage mismatch")
@@ -4595,6 +4856,8 @@ def validate_phase_amendment_payloads(finding_id: str, results: list[dict[str, A
 def validate_generic_payloads(finding_id: str, disposition: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
     if disposition == "REPHASED":
         validate_phase_amendment_payloads(finding_id, results, verification_time)
+        if finding_id == "D0-B13":
+            validate_b13_rephase_payloads(results, verification_time)
     elif disposition == "SATISFIED" and finding_id == "D0-B01":
         validate_b01_payloads(results, verification_time)
     elif disposition == "SATISFIED" and finding_id == "D0-B02":
@@ -4608,13 +4871,17 @@ def validate_generic_payloads(finding_id: str, disposition: str, results: list[d
 
 
 def validate_generic_policy(finding_id: str, disposition: str, mode: str, results: list[dict[str, Any]], verification_time: datetime) -> None:
-    require(finding_id in SAT_EVIDENCE, f"{finding_id}: no generic terminal policy")
-    if disposition == "SATISFIED":
-        require(mode == "EVIDENCE_SATISFIED", f"{finding_id}: wrong satisfaction mode")
-    elif disposition == "REPHASED":
-        require(finding_id in REPHASE_TARGETS and mode == "EXACT_PHASE_AMENDMENT", f"{finding_id}: rephasing is not allowed by policy")
+    if finding_id == "D0-B13":
+        require(disposition == "REPHASED", "D0-B13: profile contracts are bounded D0 inputs,not runtime/trust digests;only exact rephasing is allowed")
+        require(mode == B13_REPHASE_MODE, "D0-B13: wrong rephase mode")
     else:
-        raise GateVerificationError(f"{finding_id}: disposition {disposition!r} is forbidden")
+        require(finding_id in SAT_EVIDENCE, f"{finding_id}: no generic terminal policy")
+        if disposition == "SATISFIED":
+            require(mode == "EVIDENCE_SATISFIED", f"{finding_id}: wrong satisfaction mode")
+        elif disposition == "REPHASED":
+            require(finding_id in REPHASE_TARGETS and mode == "EXACT_PHASE_AMENDMENT", f"{finding_id}: rephasing is not allowed by policy")
+        else:
+            raise GateVerificationError(f"{finding_id}: disposition {disposition!r} is forbidden")
     for result in results:
         validate_semantic_documents(finding_id, disposition, result)
     observed_handoffs = [result["_handoffId"] for result in results]
@@ -4622,6 +4889,9 @@ def validate_generic_policy(finding_id: str, disposition: str, mode: str, result
     if disposition == "SATISFIED":
         all_kinds = set().union(*(set(result["_semanticPayloads"]) for result in results))
         require(all_kinds == SAT_EVIDENCE[finding_id], f"{finding_id}: satisfaction evidence coverage mismatch")
+    elif finding_id == "D0-B13":
+        all_kinds = set().union(*(set(result["_semanticPayloads"]) for result in results))
+        require(all_kinds == B13_REPHASE_EVIDENCE, "D0-B13: rephase evidence coverage mismatch")
     validate_generic_payloads(finding_id, disposition, results, verification_time)
 
 

@@ -657,6 +657,49 @@ def valid_b13_hard_maxima_projection() -> dict[str, object]:
     return copy.deepcopy(GATE.B13_HARD_MAXIMA_PROJECTION)
 
 
+def refresh_b13_instance_profile_contracts(projection: dict[str, object]) -> None:
+    for profile in projection["profiles"]:
+        profile["profileContractSha256"] = GATE.b13_instance_profile_contract_sha256(projection, profile)
+
+
+def valid_b13_instance_profiles_projection(protocol_digest: str, maxima_digest: str) -> dict[str, object]:
+    profiles = [{**copy.deepcopy(policy), "profileContractSha256": "0" * 64} for policy in GATE.B13_INSTANCE_PROFILE_POLICY]
+    projection: dict[str, object] = {
+        "contractSchema": GATE.B13_INSTANCE_PROFILE_CONTRACT_SCHEMA,
+        "mode": "public",
+        "audience": "public",
+        "protocolAuthority": {"projectionSchema": GATE.B13_APPROVAL_POLICY["protocol-enums"]["projectionSchema"], "projectionSha256": protocol_digest},
+        "hardMaximaAuthority": {"projectionSchema": GATE.B13_APPROVAL_POLICY["hard-maxima"]["projectionSchema"], "projectionSha256": maxima_digest},
+        "runtimeIdentityContract": copy.deepcopy(GATE.B13_RUNTIME_IDENTITY_CONTRACT),
+        "signingAuthorityRequirement": copy.deepcopy(GATE.B13_SIGNING_AUTHORITY_REQUIREMENT),
+        "sources": copy.deepcopy(GATE.B13_INSTANCE_SOURCE_POLICY),
+        "activationRequirements": {
+            "d1RuntimeInstanceContractRequired": True,
+            "runtimeInstanceDigestRequired": True,
+            "signingAuthorityRequired": True,
+            "exactPhysicalRealizationRequired": True,
+            "profileContractAloneAuthorizesActivation": False,
+            "profileContractAloneAuthorizesD1": False,
+        },
+        "profiles": profiles,
+    }
+    refresh_b13_instance_profile_contracts(projection)
+    return projection
+
+
+def valid_b13_payloads() -> dict[str, dict[str, object]]:
+    protocol = valid_b13_protocol_projection()
+    maxima = valid_b13_hard_maxima_projection()
+    protocol_digest = GATE.b13_projection_sha256("protocol-enums", protocol)
+    maxima_digest = GATE.b13_projection_sha256("hard-maxima", maxima)
+    profiles = valid_b13_instance_profiles_projection(protocol_digest, maxima_digest)
+    return {
+        "protocol-enums": valid_b13_approval("protocol-enums", protocol),
+        "hard-maxima": valid_b13_approval("hard-maxima", maxima),
+        "instance-profiles": valid_b13_approval("instance-profiles", profiles),
+    }
+
+
 def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -> dict[str, object]:
     target_gates = GATE.REPHASE_TARGETS[finding_id]
     return {
@@ -665,6 +708,7 @@ def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -
         "findingId": finding_id,
         "currentEvidenceSatisfied": False,
         "d0WorkAuthorized": False,
+        "d1ImplementationAuthorized": False,
         "targetGates": list(target_gates),
         "deferredRequirements": [{"gateId": gate_id, "requirement": GATE.LATER_GATES_BY_ID[gate_id]["requirement"]} for gate_id in target_gates],
         "operatorDecision": {"returnedBy": SEMANTIC_OPERATOR, "returnedAt": SEMANTIC_RETURNED_AT},
@@ -672,6 +716,29 @@ def valid_phase_amendment(finding_id: str, *, amendment_id: str | None = None) -
         "residualRisks": ["The deferred requirement remains blocking at every named later gate."],
         "result": "APPROVED",
     }
+
+
+def valid_b13_rephase_payloads() -> dict[str, dict[str, object]]:
+    payloads = valid_b13_payloads()
+    amendment = valid_phase_amendment("D0-B13")
+    amendment["b13RephaseBinding"] = {
+        "schema": GATE.B13_REPHASE_BINDING_SCHEMA,
+        "boundedD0Inputs": [
+            {
+                "kind": kind,
+                "projectionSchema": GATE.B13_APPROVAL_POLICY[kind]["projectionSchema"],
+                "projectionSha256": payloads[kind]["projectionSha256"],
+            }
+            for kind in ("protocol-enums", "hard-maxima", "instance-profiles")
+        ],
+        "runtimeInstanceDigestsPresent": False,
+        "trustDigestsPresent": False,
+        "profileContractsSatisfyRuntimeDigestRequirement": False,
+        "boundedInputsAuthorizeActivation": False,
+        "boundedInputsAuthorizeD1Implementation": False,
+    }
+    payloads["phase-amendment"] = amendment
+    return payloads
 
 
 def github_openapi_fixture() -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -752,6 +819,13 @@ class GateCoreTests(unittest.TestCase):
         payloads = valid_b03_payloads()
         mutate(b03_catalog(payloads))
         self.assertSemanticPayloadsRejected("D0-B03", "OP-D0-05", payloads, text)
+
+    def validateB13Rephase(self, payloads: dict[str, dict[str, object]]) -> None:
+        result = self.semanticResult("D0-B13", "OP-D0-06", payloads, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B13"])
+        GATE.validate_generic_policy("D0-B13", "REPHASED", GATE.B13_REPHASE_MODE, [result], SEMANTIC_VERIFICATION_TIME)
+
+    def assertB13RephaseRejected(self, payloads: dict[str, dict[str, object]], text: str) -> None:
+        self.assertRejected(lambda: self.validateB13Rephase(payloads), text)
 
     def temporary_fixture(self) -> tuple[tempfile.TemporaryDirectory[str], RepositoryFixture]:
         temporary = tempfile.TemporaryDirectory(prefix="pkgre-d0-gate-test-")
@@ -3058,6 +3132,148 @@ class GateCoreTests(unittest.TestCase):
                 result, _ = result_for(projection)
                 self.assertRejected(lambda result=result: GATE.validate_b13_hard_maxima(result, SEMANTIC_VERIFICATION_TIME), expected)
 
+    def test_b13_rephase_accepts_only_partial_approvals_and_keeps_runtime_trust_open(self) -> None:
+        payloads = valid_b13_rephase_payloads()
+        self.validateB13Rephase(payloads)
+        profiles = payloads["instance-profiles"]["projection"]
+        self.assertFalse(profiles["runtimeIdentityContract"]["runtimeInstanceDigestPresent"])
+        self.assertFalse(profiles["runtimeIdentityContract"]["concreteSigningAuthorityPresent"])
+        self.assertFalse(profiles["runtimeIdentityContract"]["concreteDeploymentAuthorityPresent"])
+        self.assertEqual(profiles["runtimeIdentityContract"]["compatibilityBodyRuntimeIdentityRule"], "distinct")
+        self.assertEqual(profiles["runtimeIdentityContract"]["rollbackRuntimeIdentityRule"], "inherit-selected-anchor-exact")
+        self.assertEqual(GATE.REPHASE_TARGETS["D0-B13"], ["D2_SIGNING", "PRE_D7_FRONTEND_CHANGE_ROLLBACK", "PRE_D9_RUST_BODIES", "PRE_D12_JS_BODIES"])
+
+        satisfied_payloads = valid_b13_payloads()
+        satisfied = self.semanticResult("D0-B13", "OP-D0-06", satisfied_payloads)
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B13", "SATISFIED", "EVIDENCE_SATISFIED", [satisfied], SEMANTIC_VERIFICATION_TIME), "only exact rephasing is allowed")
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B13", "SATISFIED", satisfied), "satisfaction is not allowed")
+
+        rephased = self.semanticResult("D0-B13", "OP-D0-06", valid_b13_rephase_payloads(), disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B13"])
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B13", "REPHASED", "EXACT_PHASE_AMENDMENT", [rephased], SEMANTIC_VERIFICATION_TIME), "wrong rephase mode")
+
+    def test_b13_rephase_requires_exact_evidence_kinds_and_nonreused_documents(self) -> None:
+        payloads = valid_b13_rephase_payloads()
+        payloads.pop("instance-profiles")
+        self.assertB13RephaseRejected(payloads, "evidence-kind set must be exact")
+
+        payloads = valid_b13_rephase_payloads()
+        payloads["runtime-instance-digests"] = {"present": True}
+        self.assertB13RephaseRejected(payloads, "evidence-kind set must be exact")
+
+        payloads = valid_b13_rephase_payloads()
+        result = self.semanticResult("D0-B13", "OP-D0-06", payloads, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B13"])
+        shared_ref = result["_evidenceByKind"]["protocol-enums"][0]
+        result["_evidenceByKind"]["hard-maxima"] = [shared_ref]
+        result["claims"]["evidenceByKind"] = result["_evidenceByKind"]
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B13", "REPHASED", GATE.B13_REPHASE_MODE, [result], SEMANTIC_VERIFICATION_TIME), "cannot be reused")
+
+    def test_b13_instance_profile_contracts_are_closed_exact_and_rehash_resistant(self) -> None:
+        cases: list[tuple[str, object, str, bool]] = [
+            ("missing-profile", lambda value: value["profiles"].pop(), "exact six-profile coverage required", False),
+            ("extra-profile", lambda value: value["profiles"].append(copy.deepcopy(value["profiles"][0])), "exact six-profile coverage required", False),
+            ("duplicate-profile", lambda value: value["profiles"].__setitem__(1, copy.deepcopy(value["profiles"][0])), "frozen value mismatch", False),
+            ("reordered-profiles", lambda value: value["profiles"].reverse(), "frozen value mismatch", False),
+            ("wrong-ecosystem", lambda value: value["profiles"][0].__setitem__("ecosystem", "js"), "frozen value mismatch", False),
+            ("wrong-role", lambda value: value["profiles"][0].__setitem__("role", "body"), "frozen value mismatch", False),
+            ("wrong-profile-mode", lambda value: value["profiles"][0].__setitem__("mode", "lan"), "frozen value mismatch", False),
+            ("wrong-top-mode-rehashed", lambda value: value.__setitem__("mode", "lan"), "only the exact public mode", True),
+            ("wrong-top-audience", lambda value: value.__setitem__("audience", "lan-public"), "only the exact public mode", False),
+            ("wrong-profile-audience", lambda value: value["profiles"][0].__setitem__("audience", "lan-public"), "frozen value mismatch", False),
+            ("wrong-source-selector", lambda value: value["profiles"][0].__setitem__("sourceSelector", "js"), "frozen value mismatch", False),
+            ("compatibility-body-delivery-substitution", lambda value: value["profiles"][0]["semanticBinding"].__setitem__("deliveryMode", "body"), "frozen value mismatch", False),
+            ("body-redirect-delivery-substitution", lambda value: value["profiles"][2]["semanticBinding"].__setitem__("deliveryMode", "redirect"), "frozen value mismatch", False),
+            ("fixed-profile-runtime-identity-conflation", lambda value: value["profiles"][0]["semanticBinding"].__setitem__("runtimeInstanceIdentityRule", "same-as-body"), "frozen value mismatch", False),
+            ("global-runtime-identity-conflation", lambda value: value["runtimeIdentityContract"].__setitem__("compatibilityBodyRuntimeIdentityRule", "same"), "frozen value mismatch", False),
+            ("rollback-fixed-to-redirect", lambda value: value["profiles"][4].__setitem__("semanticBinding", copy.deepcopy(value["profiles"][0]["semanticBinding"])), "object-key mismatch", False),
+            ("rollback-new-runtime-identity", lambda value: value["profiles"][4]["semanticBinding"].__setitem__("runtimeInstanceIdentityRule", "distinct-new-runtime"), "frozen value mismatch", False),
+            ("rollback-watcher", lambda value: value["profiles"][4].__setitem__("updatePolicy", "watch-fixed-ref"), "frozen value mismatch", False),
+            ("compatibility-watcher-disabled", lambda value: value["profiles"][0].__setitem__("updatePolicy", "frozen-no-watcher"), "frozen value mismatch", False),
+            ("runtime-digest-claimed-present", lambda value: value["runtimeIdentityContract"].__setitem__("runtimeInstanceDigestPresent", True), "frozen value mismatch", False),
+            ("runtime-digest-injected", lambda value: value["profiles"][0].__setitem__("runtimeInstanceDigest", "0" * 64), "object-key mismatch", False),
+            ("trust-digest-injected", lambda value: value["signingAuthorityRequirement"].__setitem__("trustedKeySetSha256", "0" * 64), "object-key mismatch", False),
+            ("concrete-signing-authority-claimed", lambda value: value["runtimeIdentityContract"].__setitem__("concreteSigningAuthorityPresent", True), "frozen value mismatch", False),
+            ("activation-authority", lambda value: value["activationRequirements"].__setitem__("profileContractAloneAuthorizesActivation", True), "frozen value mismatch", False),
+            ("d1-authority", lambda value: value["activationRequirements"].__setitem__("profileContractAloneAuthorizesD1", True), "frozen value mismatch", False),
+            ("rust-origin", lambda value: value["sources"]["rust"].__setitem__("canonicalOrigin", "https://github.com/attacker/rust.git"), "frozen value mismatch", False),
+            ("js-origin", lambda value: value["sources"]["js"].__setitem__("canonicalOrigin", "https://github.com/attacker/js.git"), "frozen value mismatch", False),
+            ("source-transport", lambda value: value["sources"]["rust"].__setitem__("transport", "ssh"), "frozen value mismatch", False),
+            ("credential-mode", lambda value: value["sources"]["js"].__setitem__("credentialMode", "credentialed"), "frozen value mismatch", False),
+            ("source-ref", lambda value: value["sources"]["rust"].__setitem__("sourceRef", "refs/heads/master"), "frozen value mismatch", False),
+            ("fetch-refspec", lambda value: value["sources"]["rust"].__setitem__("fetchRefspec", "+refs/heads/*:refs/remotes/origin/*"), "frozen value mismatch", False),
+            ("tracking-ref", lambda value: value["sources"]["js"].__setitem__("remoteTrackingRef", "refs/remotes/origin/main"), "frozen value mismatch", False),
+            ("candidate-ref-grammar", lambda value: value["sources"]["rust"].__setitem__("candidateRefGrammar", "refs/heads/<sha>"), "frozen value mismatch", False),
+            ("accepted-ref-grammar", lambda value: value["sources"]["js"].__setitem__("acceptedRefGrammar", "refs/heads/main"), "frozen value mismatch", False),
+            ("floor-mislabeled-bootstrap", lambda value: value["sources"]["rust"].__setitem__("reviewedFloorAuthority", "v1-ssh-runtime-bootstrap"), "frozen value mismatch", False),
+            ("bootstrap-weakened-to-floor", lambda value: value["sources"]["rust"].__setitem__("firstRuntimeBootstrapRule", "reviewed-floor-itself"), "frozen value mismatch", False),
+            ("signer-injected", lambda value: value["signingAuthorityRequirement"].__setitem__("principal", "pkgre-release"), "object-key mismatch", False),
+            ("uid-injected", lambda value: value["profiles"][0].__setitem__("uid", 991), "object-key mismatch", False),
+            ("unit-injected", lambda value: value["profiles"][0].__setitem__("unit", "pkgre-rust.service"), "object-key mismatch", False),
+            ("port-injected", lambda value: value["profiles"][0].__setitem__("port", 9080), "object-key mismatch", False),
+            ("d0-b04-substitution", lambda value: value["signingAuthorityRequirement"].__setitem__("findingId", "D0-B03"), "frozen value mismatch", False),
+            ("d0-b06-substitution", lambda value: value["profiles"][0]["physicalAuthorityRequirement"].__setitem__("findingId", "D0-B07"), "frozen value mismatch", False),
+            ("d0-b07-substitution", lambda value: value["profiles"][2]["physicalAuthorityRequirement"].__setitem__("findingId", "D0-B06"), "frozen value mismatch", False),
+            ("wrong-physical-gate", lambda value: value["profiles"][2]["physicalAuthorityRequirement"].__setitem__("activationGate", "PRE_D12_JS_BODIES"), "frozen value mismatch", False),
+            ("protocol-schema-substitution", lambda value: value["protocolAuthority"].__setitem__("projectionSchema", "pkgre-d0-protocol-enums-projection-v0"), "protocol projection schema mismatch", False),
+            ("maxima-schema-substitution", lambda value: value["hardMaximaAuthority"].__setitem__("projectionSchema", "pkgre-d0-hard-maxima-projection-v0"), "hard-maxima projection schema mismatch", False),
+            ("protocol-digest-copied", lambda value: value["protocolAuthority"].__setitem__("projectionSha256", value["hardMaximaAuthority"]["projectionSha256"]), "protocol projection digest mismatch", False),
+            ("maxima-digest-stale", lambda value: value["hardMaximaAuthority"].__setitem__("projectionSha256", "0" * 64), "hard-maxima projection digest mismatch", False),
+            ("stale-profile-digest", lambda value: value["profiles"][0].__setitem__("profileContractSha256", "0" * 64), "profile contract digest mismatch", False),
+            ("copied-profile-digest", lambda value: value["profiles"][1].__setitem__("profileContractSha256", value["profiles"][0]["profileContractSha256"]), "profile contract digest mismatch", False),
+            ("unknown-top-key", lambda value: value.__setitem__("unexpected", True), "object-key mismatch", False),
+            ("unknown-source-key", lambda value: value["sources"]["rust"].__setitem__("unexpected", True), "object-key mismatch", False),
+            ("unknown-profile-key", lambda value: value["profiles"][0].__setitem__("unexpected", True), "object-key mismatch", False),
+        ]
+        for name, mutate, expected, refresh_contracts in cases:
+            with self.subTest(name=name):
+                payloads = valid_b13_payloads()
+                projection = payloads["instance-profiles"]["projection"]
+                mutate(projection)
+                if refresh_contracts:
+                    refresh_b13_instance_profile_contracts(projection)
+                payloads["instance-profiles"] = valid_b13_approval("instance-profiles", projection)
+                result = {"_semanticPayloads": payloads, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT}
+                _protocol, protocol_digest = GATE.validate_b13_protocol_enums(result, SEMANTIC_VERIFICATION_TIME)
+                _maxima, maxima_digest = GATE.validate_b13_hard_maxima(result, SEMANTIC_VERIFICATION_TIME)
+                self.assertRejected(lambda result=result, protocol_digest=protocol_digest, maxima_digest=maxima_digest: GATE.validate_b13_instance_profiles(result, SEMANTIC_VERIFICATION_TIME, protocol_digest, maxima_digest), expected)
+
+    def test_b13_phase_amendment_exactly_binds_partial_approvals_without_authority(self) -> None:
+        cases: list[tuple[str, object, str]] = [
+            ("binding-schema", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("schema", "pkgre-d0-b13-rephase-binding-v0"), "frozen value mismatch"),
+            ("missing-input", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"].pop(), "expected exactly 3 entries"),
+            ("extra-input", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"].append(copy.deepcopy(value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0])), "expected exactly 3 entries"),
+            ("reordered-inputs", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"].reverse(), "frozen value mismatch"),
+            ("stale-input-digest", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0].__setitem__("projectionSha256", "0" * 64), "frozen value mismatch"),
+            ("copied-input-digest", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][2].__setitem__("projectionSha256", value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][1]["projectionSha256"]), "frozen value mismatch"),
+            ("input-kind-substitution", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0].__setitem__("kind", "runtime-instance-digests"), "frozen value mismatch"),
+            ("input-schema-substitution", lambda value: value["phase-amendment"]["b13RephaseBinding"]["boundedD0Inputs"][0].__setitem__("projectionSchema", "pkgre-d0-protocol-enums-projection-v0"), "frozen value mismatch"),
+            ("runtime-digests-claimed", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("runtimeInstanceDigestsPresent", True), "frozen value mismatch"),
+            ("trust-digests-claimed", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("trustDigestsPresent", True), "frozen value mismatch"),
+            ("profile-contract-satisfies-runtime", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("profileContractsSatisfyRuntimeDigestRequirement", True), "frozen value mismatch"),
+            ("activation-authority", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("boundedInputsAuthorizeActivation", True), "frozen value mismatch"),
+            ("d1-authority-in-binding", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("boundedInputsAuthorizeD1Implementation", True), "frozen value mismatch"),
+            ("evidence-satisfaction", lambda value: value["phase-amendment"].__setitem__("currentEvidenceSatisfied", True), "current evidence must remain unsatisfied"),
+            ("d0-work-authority", lambda value: value["phase-amendment"].__setitem__("d0WorkAuthorized", True), "must not authorize D0 work"),
+            ("d1-implementation-authority", lambda value: value["phase-amendment"].__setitem__("d1ImplementationAuthorized", True), "must not authorize D1 implementation"),
+            ("missing-binding", lambda value: value["phase-amendment"].pop("b13RephaseBinding"), "object-key mismatch"),
+            ("extra-binding-key", lambda value: value["phase-amendment"]["b13RephaseBinding"].__setitem__("unexpected", True), "object-key mismatch"),
+        ]
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                payloads = valid_b13_rephase_payloads()
+                mutate(payloads)
+                self.assertB13RephaseRejected(payloads, expected)
+
+    def test_b13_profile_digest_cannot_be_recomputed_to_authorize_mutated_contract(self) -> None:
+        payloads = valid_b13_payloads()
+        projection = payloads["instance-profiles"]["projection"]
+        projection["profiles"][0]["mode"] = "lan"
+        refresh_b13_instance_profile_contracts(projection)
+        payloads["instance-profiles"] = valid_b13_approval("instance-profiles", projection)
+        result = {"_semanticPayloads": payloads, "_operatorReturnedBy": SEMANTIC_OPERATOR, "_operatorReturnedAt": SEMANTIC_RETURNED_AT}
+        _protocol, protocol_digest = GATE.validate_b13_protocol_enums(result, SEMANTIC_VERIFICATION_TIME)
+        _maxima, maxima_digest = GATE.validate_b13_hard_maxima(result, SEMANTIC_VERIFICATION_TIME)
+        self.assertRejected(lambda: GATE.validate_b13_instance_profiles(result, SEMANTIC_VERIFICATION_TIME, protocol_digest, maxima_digest), "frozen value mismatch")
+
     def test_b05_rejects_self_consistent_operator_labels_without_authenticated_authorities(self) -> None:
         generation = "/nix/store/bhfadnwczhfsd6zadxhl04jqfp1spp9v-nixos-system-rain-26.11.20260818.9588f1a"
         ledger_statement = {
@@ -3124,20 +3340,33 @@ class GateCoreTests(unittest.TestCase):
         amendment["claims"]["targetGates"] = ["PRE_D6_EDGE"]
         self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", amendment), "target-gate claim mismatch")
 
+    def test_phase_amendment_v2_rejects_v1_envelope_and_payload(self) -> None:
+        self.assertEqual(GATE.PHASE_AMENDMENT_SCHEMA, "pkgre-d0-phase-amendment-v2")
+        payload = valid_phase_amendment("D0-B09")
+        legacy_envelope = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": payload}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
+        ref_id = legacy_envelope["_evidenceByKind"]["phase-amendment"][0]
+        raw = GATE.canonical_json({"schema": "pkgre-d0-phase-amendment-v1", "findingId": "D0-B09", "kind": "phase-amendment", "payload": payload})
+        legacy_envelope["_references"][ref_id] = {"raw": raw, "sha256": GATE.sha256(raw)}
+        self.assertRejected(lambda: GATE.validate_semantic_documents("D0-B09", "REPHASED", legacy_envelope), "semantic envelope binding mismatch")
+
+        legacy_payload = valid_phase_amendment("D0-B09")
+        legacy_payload.pop("d1ImplementationAuthorized")
+        current_envelope = self.semanticResult("D0-B09", "OP-D0-07", {"phase-amendment": legacy_payload}, disposition="REPHASED", target_gates=GATE.REPHASE_TARGETS["D0-B09"])
+        self.assertRejected(lambda: GATE.validate_generic_policy("D0-B09", "REPHASED", "EXACT_PHASE_AMENDMENT", [current_envelope], SEMANTIC_VERIFICATION_TIME), "object-key mismatch")
+
     def test_phase_amendment_accepts_every_policy_mapping_and_handoff(self) -> None:
         for finding_id, target_gates in GATE.REPHASE_TARGETS.items():
             with self.subTest(finding_id=finding_id):
-                results = [
-                    self.semanticResult(
-                        finding_id,
-                        handoff_id,
-                        {"phase-amendment": valid_phase_amendment(finding_id, amendment_id=f"amendment-{finding_id.lower()}-{handoff_id.lower()}")},
-                        disposition="REPHASED",
-                        target_gates=target_gates,
-                    )
-                    for handoff_id in GATE.FINDING_HANDOFFS[finding_id]
-                ]
-                GATE.validate_generic_policy(finding_id, "REPHASED", "EXACT_PHASE_AMENDMENT", results, SEMANTIC_VERIFICATION_TIME)
+                results = []
+                for handoff_id in GATE.FINDING_HANDOFFS[finding_id]:
+                    if finding_id == "D0-B13":
+                        payloads = valid_b13_rephase_payloads()
+                        payloads["phase-amendment"]["amendmentId"] = f"amendment-{finding_id.lower()}-{handoff_id.lower()}"
+                    else:
+                        payloads = {"phase-amendment": valid_phase_amendment(finding_id, amendment_id=f"amendment-{finding_id.lower()}-{handoff_id.lower()}")}
+                    results.append(self.semanticResult(finding_id, handoff_id, payloads, disposition="REPHASED", target_gates=target_gates))
+                mode = GATE.B13_REPHASE_MODE if finding_id == "D0-B13" else "EXACT_PHASE_AMENDMENT"
+                GATE.validate_generic_policy(finding_id, "REPHASED", mode, results, SEMANTIC_VERIFICATION_TIME)
 
     def test_phase_amendment_rejects_nonexact_or_unsafe_decisions(self) -> None:
         cases: list[tuple[str, dict[str, object], str]] = []
@@ -3191,6 +3420,14 @@ class GateCoreTests(unittest.TestCase):
         payload = valid_phase_amendment("D0-B09")
         payload["d0WorkAuthorized"] = "false"
         cases.append(("nonboolean-authorization", payload, "expected boolean"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["d1ImplementationAuthorized"] = True
+        cases.append(("authorizes-d1-implementation", payload, "must not authorize D1 implementation"))
+
+        payload = valid_phase_amendment("D0-B09")
+        payload["d1ImplementationAuthorized"] = "false"
+        cases.append(("nonboolean-d1-implementation-authorization", payload, "expected boolean"))
 
         payload = valid_phase_amendment("D0-B09")
         payload["operatorDecision"]["returnedBy"] = "other-operator"
