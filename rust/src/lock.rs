@@ -1524,7 +1524,7 @@ mod tests {
         crate::render::render(&catalog, &artifacts, &site).unwrap();
         assert!(site.join(index_path("shared-name")).is_file());
         assert!(
-            site.join("staging")
+            site.join("r/staging")
                 .join(index_path("shared_name"))
                 .is_file()
         );
@@ -2665,11 +2665,7 @@ mod tests {
     }
 
     fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
-        let index = if name == "main" {
-            "sparse+https://rust.pkg.re/".to_owned()
-        } else {
-            format!("sparse+https://rust.pkg.re/{name}/")
-        };
+        let index = crate::policy::canonical_registry_index(name);
         fs::write(
             root.join(format!("{name}.toml")),
             format!(
@@ -2698,11 +2694,11 @@ mod tests {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join(format!("site-{registry}-{name}"));
         crate::render::render(catalog, &artifacts, &site).unwrap();
-        let registry_site = if registry == "main" {
-            site.clone()
-        } else {
-            site.join(registry)
-        };
+        let registry_site = site.join(
+            crate::policy::canonical_registry_route_base(registry)
+                .trim_start_matches('/')
+                .trim_end_matches('/'),
+        );
         let row: Value =
             serde_json::from_slice(&fs::read(registry_site.join(index_path(name))).unwrap())
                 .unwrap();
@@ -2718,11 +2714,11 @@ mod tests {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join("removed-site");
         crate::render::render(catalog, &artifacts, &site).unwrap();
-        let registry_site = if registry == "main" {
-            site.clone()
-        } else {
-            site.join(registry)
-        };
+        let registry_site = site.join(
+            crate::policy::canonical_registry_route_base(registry)
+                .trim_start_matches('/')
+                .trim_end_matches('/'),
+        );
         let row: Value =
             serde_json::from_slice(&fs::read(registry_site.join(index_path(name))).unwrap())
                 .unwrap();

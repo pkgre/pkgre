@@ -705,11 +705,7 @@ fn mirror_category(
 }
 
 fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
-    let index = if name == "main" {
-        "sparse+https://rust.pkg.re/".to_owned()
-    } else {
-        format!("sparse+https://rust.pkg.re/{name}/")
-    };
+    let index = crate::policy::canonical_registry_index(name);
     fs::write(
         root.join(format!("{name}.toml")),
         format!(

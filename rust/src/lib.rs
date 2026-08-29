@@ -9,6 +9,7 @@ pub mod lock;
 pub mod migration;
 pub mod package;
 pub mod policy;
+pub mod projection;
 pub mod render;
 pub mod schema;
 pub mod update;

@@ -3,7 +3,7 @@
 ## Principles
 
 - Human authority:one committed `<registry>.toml` per catalog registry declares fixed settings + categories; each category declares exact direct-dependency policy + desired crates.io versions or immutable Git tags.
-- Root-main convention:catalog registry `main` renders at `sparse+https://rust.pkg.re/`; another alias `<name>` renders at `sparse+https://rust.pkg.re/<name>/`.
+- Root-main convention:catalog registry `main` renders at `sparse+https://rust.pkg.re/`; another alias `<name>` renders at `sparse+https://rust.pkg.re/r/<name>/`.
 - Small/large category ergonomics:a category body may be inline or stored at its exact referenced `categories/<registry>/<category>.toml` path.
 - Compact mirror authority:`admissions/<batch>.toml` contains category/name/exact version + optional typed evidence; generated `.lock` contains recomputed machine facts.
 - Generated history:adjacent `<registry>.lock` files bind name→category homes plus package identity→source class/lifecycle/hashes/provenance/optional admission-batch hash.
@@ -82,7 +82,7 @@ schema = 4
 
 [registry]
 name = "staging"
-index = "sparse+https://rust.pkg.re/staging/"
+index = "sparse+https://rust.pkg.re/r/staging/"
 download = "https://dl.rust.pkg.re/v1/staging/{crate}/{version}/{sha256-checksum}"
 cargo-version = "1.95.0"
 
@@ -95,7 +95,7 @@ example = ["1.0.0"]
 
 Declaration rules:
 
-- Filename stem = `[registry].name`; `main` index is root; every other alias index is `sparse+https://rust.pkg.re/<alias>/`; Cargo version is `1.95.0` across registries.
+- Filename stem = `[registry].name`; `main` index is root; every other alias index is `sparse+https://rust.pkg.re/r/<alias>/`; Cargo version is `1.95.0` across registries.
 - Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; additions are allowed.
 - Category identity = `<registry>/<local>`; components are canonical lowercase ASCII aliases/kebab-case, ≤64 bytes each, start/end alphanumeric, and the category registry must exist.
 - Inline category = `may-depend-on` + optional `mirror`/`publish`; external reference = only `file`; external file = `schema`, `may-depend-on`, optional `mirror`/`publish`.
@@ -306,8 +306,8 @@ site/
 ├── release.json
 ├── downloads.json
 ├── <main sparse package paths>
-├── staging/config.json            # only if staging exists
-├── staging/<sparse package paths>
+├── r/staging/config.json          # only if staging exists
+├── r/staging/<sparse package paths>
 └── crates/<active-git-archive-sha256>.crate
 ```
 

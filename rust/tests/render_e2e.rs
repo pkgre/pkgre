@@ -12,6 +12,7 @@ use pkgre_rust::download::{
     router_download_template,
 };
 use pkgre_rust::index::{IndexRecord, index_path};
+use pkgre_rust::projection::{CatalogProjection, ProjectedResponse};
 use pkgre_rust::render;
 use pkgre_rust::schema::{
     Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome, PackageState,
@@ -81,8 +82,70 @@ fn renderer_routes_mixed_sources_at_root_and_layouts_identically() {
         published.archive_bytes
     );
 
+    let projection =
+        project_and_assert_static_equivalence(&external_catalog, &external_objects, &external_site);
+
     fs::write(external_site.join("CNAME"), "tampered.example\n").unwrap();
     assert!(render::verify(&external_catalog, &external_objects, &external_site).is_err());
+
+    let retained_route = format!("/crates/{}.crate", published.archive_hash);
+    fs::write(
+        external_root
+            .join("objects/crates")
+            .join(format!("{}.crate", published.archive_hash)),
+        b"changed after projection",
+    )
+    .unwrap();
+    let retained_body = projection
+        .routes()
+        .iter()
+        .find_map(|route| match &route.response {
+            ProjectedResponse::Archive { body, .. } if route.path == retained_route => Some(body),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(retained_body, &published.archive_bytes);
+}
+
+fn project_and_assert_static_equivalence(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    site: &Path,
+) -> CatalogProjection {
+    let projection = CatalogProjection::from_catalog(catalog, artifacts).unwrap();
+    assert!(
+        projection
+            .routes()
+            .windows(2)
+            .all(|routes| routes[0].path < routes[1].path)
+    );
+    let expected_redirects = DownloadCatalog::from_catalog(catalog).routes.len();
+    let mut redirects = 0;
+    for route in projection.routes() {
+        match &route.response {
+            ProjectedResponse::Inline { body } => {
+                assert_eq!(
+                    fs::read(site.join(route.path.strip_prefix('/').unwrap())).unwrap(),
+                    *body,
+                    "projected inline body differs at {}",
+                    route.path
+                );
+            }
+            ProjectedResponse::Archive { body, sha256 } => {
+                assert_eq!(route.path, format!("/crates/{sha256}.crate"));
+                assert_eq!(
+                    fs::read(site.join(route.path.strip_prefix('/').unwrap())).unwrap(),
+                    *body,
+                    "projected archive body differs at {}",
+                    route.path
+                );
+                assert_eq!(sha256_bytes(body), *sha256);
+            }
+            ProjectedResponse::Redirect { .. } => redirects += 1,
+        }
+    }
+    assert_eq!(redirects, expected_redirects);
+    projection
 }
 
 #[test]
@@ -101,14 +164,20 @@ fn renderer_keeps_main_at_root_and_future_registry_below_its_alias() {
     assert!(site.join("config.json").is_file());
     assert!(!site.join("main/config.json").exists());
     assert!(site.join(index_path("leaf-core")).is_file());
-    assert!(site.join("staging/config.json").is_file());
+    assert!(site.join("r/staging/config.json").is_file());
     assert!(
-        site.join("staging")
+        site.join("r/staging")
             .join(index_path("future-crate"))
             .is_file()
     );
     assert!(!site.join(index_path("future-crate")).exists());
-    assert!(!site.join("staging").join(index_path("leaf-core")).exists());
+    assert!(!site.join("staging").exists());
+    assert!(
+        !site
+            .join("r/staging")
+            .join(index_path("leaf-core"))
+            .exists()
+    );
 }
 fn prepare_catalog(root: &Path, external_large_categories: bool) -> Vec<TestArtifact> {
     fs::create_dir(root).unwrap();
@@ -165,7 +234,7 @@ fn add_future_registry(root: &Path) {
                 ("main".to_owned(), MAIN_URL.to_owned()),
                 (
                     "staging".to_owned(),
-                    "sparse+https://rust.pkg.re/staging/".to_owned(),
+                    "sparse+https://rust.pkg.re/r/staging/".to_owned(),
                 ),
             ]),
         )
@@ -175,7 +244,7 @@ fn add_future_registry(root: &Path) {
     fs::write(
         root.join("staging.toml"),
         format!(
-            "schema = 4\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/staging/\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
+            "schema = 4\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/r/staging/\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
             router_download_template("staging")
         ),
     )
@@ -184,7 +253,7 @@ fn add_future_registry(root: &Path) {
         schema: SCHEMA_VERSION,
         registry: LockedRegistry {
             name: "staging".to_owned(),
-            index: "sparse+https://rust.pkg.re/staging/".to_owned(),
+            index: "sparse+https://rust.pkg.re/r/staging/".to_owned(),
             download: router_download_template("staging"),
         },
         names: vec![LockedName {
