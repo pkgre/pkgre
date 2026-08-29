@@ -55,6 +55,7 @@ Current Rust categories:
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production Rust mirror-update procedure ending in an unmerged curator-review PR.
 - [`docs/workflows.md`](docs/workflows.md):mirror,Git-tag,removal,migration,release workflows.
 - [`docs/security.md`](docs/security.md):trust model,enforced invariants,exclusions.
+- [`docs/dynamic-registry-readiness.md`](docs/dynamic-registry-readiness.md):minimal migration basis+phase-local validation policy for native Git-backed Rust/JavaScript serving.
 - Production Rust catalog/site:[`pkgre/rust`](https://github.com/pkgre/rust).
 
 ## Build
