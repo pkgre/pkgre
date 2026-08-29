@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import { Blob } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { MessageChannel } from "node:worker_threads";
 
 import { renderJsRedirectMarker } from "../src/marker.js";
 import {
-  ImmutableBody,
+  freezeTransferredProjection,
   PROJECTION_SCHEMA,
   packageMetadataRoute,
   projectCatalog,
@@ -24,8 +26,8 @@ async function fixtureManifest() {
 }
 
 async function bodyBytes(body) {
-  assert.ok(body instanceof ImmutableBody);
-  return Buffer.from(await body.bytes());
+  assert.ok(body instanceof Blob);
+  return Buffer.from(await body.arrayBuffer());
 }
 
 async function streamBytes(body) {
@@ -35,14 +37,14 @@ async function streamBytes(body) {
 }
 
 async function assertImmutableBody(body, expected) {
-  assert.ok(body instanceof ImmutableBody);
+  assert.ok(body instanceof Blob);
   assert.equal(Object.isFrozen(body), true);
   assert.equal(body.size, expected.length);
 
-  const returned = await body.bytes();
-  assert.deepEqual(Buffer.from(returned), expected);
+  const returned = Buffer.from(await body.arrayBuffer());
+  assert.deepEqual(returned, expected);
   returned.fill(0);
-  assert.deepEqual(await bodyBytes(body), expected, "mutating bytes() output changed retained body");
+  assert.deepEqual(await bodyBytes(body), expected, "mutating arrayBuffer() output changed retained body");
 
   const reader = body.stream().getReader();
   const first = await reader.read();
@@ -50,7 +52,31 @@ async function assertImmutableBody(body, expected) {
   first.value.fill(0);
   await reader.cancel();
   assert.deepEqual(await bodyBytes(body), expected, "mutating stream output changed retained body");
-  assert.deepEqual(await streamBytes(body), expected);
+
+  const [firstStream, secondStream, thirdStream] = await Promise.all([
+    streamBytes(body),
+    streamBytes(body),
+    streamBytes(body),
+  ]);
+  assert.deepEqual(firstStream, expected);
+  assert.deepEqual(secondStream, expected);
+  assert.deepEqual(thirdStream, expected);
+  assert.notStrictEqual(firstStream, secondStream);
+  firstStream.fill(0);
+  assert.deepEqual(secondStream, expected, "mutating one concurrent stream changed another");
+  assert.deepEqual(await bodyBytes(body), expected, "mutating a concurrent stream changed retained body");
+}
+
+async function cloneThroughMessageChannel(value) {
+  const { port1, port2 } = new MessageChannel();
+  try {
+    const received = new Promise((resolve) => port2.once("message", resolve));
+    port1.postMessage(value);
+    return await received;
+  } finally {
+    port1.close();
+    port2.close();
+  }
 }
 
 async function summarize(projection, bodyFiles) {
@@ -153,6 +179,54 @@ test("projection is independent of input construction and later archive mutation
   left.archives.get(left.pkgreSha256).fill(0);
   const archive = projected.routes.find(({ response }) => response.type === "archive").response;
   assert.equal(sha256(await bodyBytes(archive.body)), archive.sha256);
+});
+
+test("captures an archive subarray independently from its backing buffer", async () => {
+  const fixture = fixtureCatalog();
+  const backing = Buffer.alloc(fixture.pkgreArchive.length + 32, 0x5a);
+  fixture.pkgreArchive.copy(backing, 16);
+  const view = backing.subarray(16, 16 + fixture.pkgreArchive.length);
+  const archives = new Map(fixture.archives);
+  archives.set(fixture.pkgreSha256, view);
+
+  const projection = projectCatalog(fixture.catalog, archives);
+  const archive = projection.routes.find(({ response }) => response.type === "archive").response;
+  backing.fill(0);
+
+  assert.equal(archive.body.size, fixture.pkgreArchive.length);
+  assert.equal(sha256(await bodyBytes(archive.body)), fixture.pkgreSha256);
+});
+
+test("worker transfer preserves Blob bytes and receiver rebuilds frozen descriptors", async () => {
+  const fixture = fixtureCatalog();
+  const projected = projectCatalog(fixture.catalog, fixture.archives);
+  const transferred = await cloneThroughMessageChannel(projected);
+
+  assert.equal(transferred.schema, PROJECTION_SCHEMA);
+  assert.equal(Object.isFrozen(transferred), false, "structured clone unexpectedly preserved projection descriptors");
+  assert.equal(Object.isFrozen(transferred.routes), false, "structured clone unexpectedly preserved route-array descriptors");
+  assert.equal(Object.isFrozen(transferred.routes[0]), false, "structured clone unexpectedly preserved route descriptors");
+  assert.equal(Object.isFrozen(transferred.routes[0].response), false, "structured clone unexpectedly preserved response descriptors");
+
+  for (let index = 0; index < projected.routes.length; index += 1) {
+    const original = projected.routes[index];
+    const clone = transferred.routes[index];
+    assert.equal(clone.path, original.path);
+    assert.equal(clone.response.type, original.response.type);
+    if (original.response.type === "redirect") continue;
+    assert.ok(clone.response.body instanceof Blob);
+    assert.equal(clone.response.body.size, original.response.body.size);
+    assert.deepEqual(await bodyBytes(clone.response.body), await bodyBytes(original.response.body));
+  }
+
+  const reconstructed = freezeTransferredProjection(transferred);
+  assert.equal(Object.isFrozen(reconstructed), true);
+  assert.equal(Object.isFrozen(reconstructed.routes), true);
+  assert.equal(reconstructed.routes.every((route) => Object.isFrozen(route) && Object.isFrozen(route.response)), true);
+  for (const { response } of reconstructed.routes) {
+    if (response.type !== "redirect") assert.equal(Object.isFrozen(response.body), true);
+  }
+  await assertArchiveDescriptors(reconstructed);
 });
 
 test("fully verifies every archive before returning a projection", () => {

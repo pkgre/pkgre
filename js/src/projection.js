@@ -9,34 +9,17 @@ import { renderPackument } from "./packument.js";
 export const PROJECTION_SCHEMA = "pkgre-js-projection-v1";
 
 /**
- * Immutable in-memory response bytes. Public reads and streams cannot mutate the retained body.
+ * Captures immutable, structured-cloneable response bytes.
+ * @param {Uint8Array} bytes
+ * @returns {Blob}
  */
-export class ImmutableBody {
-  #blob;
-
-  constructor(bytes) {
-    if (!(bytes instanceof Uint8Array)) throw new Error("immutable body requires bytes");
-    this.#blob = new Blob([bytes]);
-    Object.freeze(this);
-  }
-
-  get size() {
-    return this.#blob.size;
-  }
-
-  async bytes() {
-    return this.#blob.bytes();
-  }
-
-  stream() {
-    return this.#blob.stream();
-  }
+function immutableBody(bytes) {
+  if (!(bytes instanceof Uint8Array)) throw new Error("immutable body requires bytes");
+  return Object.freeze(new Blob([bytes]));
 }
-Object.freeze(ImmutableBody.prototype);
-Object.freeze(ImmutableBody);
 
-/** @typedef {{ body: ImmutableBody, type: "inline" }} InlineResponse */
-/** @typedef {{ body: ImmutableBody, sha256: string, type: "archive" }} ArchiveResponse */
+/** @typedef {{ body: Blob, type: "inline" }} InlineResponse */
+/** @typedef {{ body: Blob, sha256: string, type: "archive" }} ArchiveResponse */
 /** @typedef {{ destinationKind: "first-party" | "npmjs", location: string, type: "redirect" }} RedirectResponse */
 /** @typedef {InlineResponse | ArchiveResponse | RedirectResponse} ProjectedResponse */
 /** @typedef {{ path: string, response: ProjectedResponse }} ProjectedRoute */
@@ -91,6 +74,57 @@ function compareRoutes(left, right) {
   return 0;
 }
 
+/**
+ * Reconstructs frozen route descriptors after a worker structured clone.
+ * Structured cloning preserves Blob bytes but intentionally does not preserve
+ * property descriptors, so receivers must call this before publication.
+ * @param {CatalogProjection} projection
+ * @returns {CatalogProjection}
+ */
+export function freezeTransferredProjection(projection) {
+  if (projection.schema !== PROJECTION_SCHEMA || !Array.isArray(projection.routes)) {
+    throw new Error("invalid transferred projection");
+  }
+
+  let previousPath;
+  const routes = projection.routes.map((route) => {
+    if (typeof route.path !== "string" || (previousPath !== undefined && route.path <= previousPath)) {
+      throw new Error(`invalid transferred projection route ${route.path}`);
+    }
+    previousPath = route.path;
+
+    let response;
+    if (route.response.type === "inline") {
+      if (!(route.response.body instanceof Blob)) throw new Error(`invalid inline body at ${route.path}`);
+      Object.freeze(route.response.body);
+      response = Object.freeze({ body: route.response.body, type: "inline" });
+    } else if (route.response.type === "archive") {
+      if (!(route.response.body instanceof Blob) || !/^[0-9a-f]{64}$/.test(route.response.sha256)) {
+        throw new Error(`invalid archive body at ${route.path}`);
+      }
+      Object.freeze(route.response.body);
+      response = Object.freeze({ body: route.response.body, sha256: route.response.sha256, type: "archive" });
+    } else if (route.response.type === "redirect") {
+      if (!["first-party", "npmjs"].includes(route.response.destinationKind) || typeof route.response.location !== "string") {
+        throw new Error(`invalid redirect at ${route.path}`);
+      }
+      response = Object.freeze({
+        destinationKind: route.response.destinationKind,
+        location: route.response.location,
+        type: "redirect",
+      });
+    } else {
+      throw new Error(`invalid response at ${route.path}`);
+    }
+    return Object.freeze({ path: route.path, response });
+  });
+
+  return Object.freeze({
+    routes: Object.freeze(routes),
+    schema: PROJECTION_SCHEMA,
+  });
+}
+
 /** @returns {CatalogProjection} */
 export function projectCatalog(catalog, archives) {
   const available = verifyCatalogArchives(catalog, archives);
@@ -99,7 +133,7 @@ export function projectCatalog(catalog, archives) {
 
   for (const entry of catalog.packages) {
     addRoute(routes, paths, packageMetadataRoute(entry.name), {
-      body: new ImmutableBody(renderPackument(catalog, entry)),
+      body: immutableBody(renderPackument(catalog, entry)),
       type: "inline",
     });
     for (const record of entry.versions) {
@@ -107,7 +141,7 @@ export function projectCatalog(catalog, archives) {
       addRoute(routes, paths, jsArchiveRoute(sha256), redirectResponse(entry.name, record));
       if (record.source.kind === "first-party") {
         addRoute(routes, paths, `/packages/${sha256}.tgz`, {
-          body: new ImmutableBody(available.get(sha256)),
+          body: immutableBody(available.get(sha256)),
           sha256,
           type: "archive",
         });
@@ -116,8 +150,5 @@ export function projectCatalog(catalog, archives) {
   }
 
   routes.sort(compareRoutes);
-  return Object.freeze({
-    routes: Object.freeze(routes),
-    schema: PROJECTION_SCHEMA,
-  });
+  return freezeTransferredProjection({ routes, schema: PROJECTION_SCHEMA });
 }
