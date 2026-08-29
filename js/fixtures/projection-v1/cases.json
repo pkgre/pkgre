@@ -1,0 +1,48 @@
+{
+  "schema": "pkgre-js-projection-fixture-v1",
+  "projectionSchema": "pkgre-js-projection-v1",
+  "routes": [
+    {
+      "path": "/@scope%2fhelper",
+      "response": {
+        "bodyFile": "scoped-packument.json",
+        "bytes": 724,
+        "sha256": "2a8398c1beac26cb444c63c049fb95e9ef8b8b006ca95fb1aead0cab250fe2d8",
+        "type": "inline"
+      }
+    },
+    {
+      "path": "/packages/9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1.tgz",
+      "response": {
+        "bytes": 271,
+        "sha256": "9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1",
+        "type": "archive"
+      }
+    },
+    {
+      "path": "/pkgre-js",
+      "response": {
+        "bodyFile": "unscoped-packument.json",
+        "bytes": 876,
+        "sha256": "47fd8fa7a46cb84b2ddbd9462b516961fcbebe32eb88d824d34b3372afad5037",
+        "type": "inline"
+      }
+    },
+    {
+      "path": "/v1/js/main/9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1",
+      "response": {
+        "destinationKind": "first-party",
+        "location": "https://js.pkg.re/packages/9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1.tgz",
+        "type": "redirect"
+      }
+    },
+    {
+      "path": "/v1/js/main/f8bab187e72b18a1933ae20fbf16e872c3fb2f4672fba782d60a53b93263533c",
+      "response": {
+        "destinationKind": "npmjs",
+        "location": "https://registry.npmjs.org/@scope/helper/-/helper-1.2.3.tgz",
+        "type": "redirect"
+      }
+    }
+  ]
+}

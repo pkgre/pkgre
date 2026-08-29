@@ -1,0 +1,45 @@
+{
+  "projectionSchema": "pkgre-js-projection-v1",
+  "routes": [
+    {
+      "path": "/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+      "response": {
+        "bytes": 16717,
+        "sha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+        "type": "archive"
+      }
+    },
+    {
+      "path": "/pkgre-js",
+      "response": {
+        "bodyFile": "packument.json",
+        "bytes": 996,
+        "sha256": "6cd8e81ee6efebfbed3f8df101ef9fc174672e7855933c6ec4d989697f06722d",
+        "type": "inline"
+      }
+    },
+    {
+      "path": "/v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
+      "response": {
+        "destinationKind": "first-party",
+        "location": "https://js.pkg.re/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+        "type": "redirect"
+      }
+    }
+  ],
+  "schema": "pkgre-js-current-projection-fixture-v1",
+  "source": {
+    "archiveFile": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+    "catalogFile": "catalog.json",
+    "catalogSha256": "b92834fb5571e00c01c389f776ba1e4749ab11be8b64f7ee5beaa8a34507fafc",
+    "commit": "f43bd58bd3d4e36f8b3f4df3c002735c977acd17",
+    "path": "bootstrap/js-v0.1.0",
+    "repository": "https://github.com/pkgre/js"
+  },
+  "staticEquivalence": {
+    "archiveFile": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
+    "markerFile": "redirect.html",
+    "markerSha256": "86a9005390094d14eb9411bfb1351b349b5dd94486b5dee541b6f6bd7a802e7c",
+    "packumentFile": "packument.json"
+  }
+}

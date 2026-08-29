@@ -1,0 +1,123 @@
+import { Blob } from "node:buffer";
+
+import { verifyPackageArchive } from "./archive.js";
+import { validatePackageName } from "./canonical.js";
+import { validateCatalog } from "./catalog.js";
+import { jsArchiveRoute, jsRedirectDestination } from "./marker.js";
+import { renderPackument } from "./packument.js";
+
+export const PROJECTION_SCHEMA = "pkgre-js-projection-v1";
+
+/**
+ * Immutable in-memory response bytes. Public reads and streams cannot mutate the retained body.
+ */
+export class ImmutableBody {
+  #blob;
+
+  constructor(bytes) {
+    if (!(bytes instanceof Uint8Array)) throw new Error("immutable body requires bytes");
+    this.#blob = new Blob([bytes]);
+    Object.freeze(this);
+  }
+
+  get size() {
+    return this.#blob.size;
+  }
+
+  async bytes() {
+    return this.#blob.bytes();
+  }
+
+  stream() {
+    return this.#blob.stream();
+  }
+}
+Object.freeze(ImmutableBody.prototype);
+Object.freeze(ImmutableBody);
+
+/** @typedef {{ body: ImmutableBody, type: "inline" }} InlineResponse */
+/** @typedef {{ body: ImmutableBody, sha256: string, type: "archive" }} ArchiveResponse */
+/** @typedef {{ destinationKind: "first-party" | "npmjs", location: string, type: "redirect" }} RedirectResponse */
+/** @typedef {InlineResponse | ArchiveResponse | RedirectResponse} ProjectedResponse */
+/** @typedef {{ path: string, response: ProjectedResponse }} ProjectedRoute */
+/** @typedef {{ routes: readonly ProjectedRoute[], schema: "pkgre-js-projection-v1" }} CatalogProjection */
+
+function archiveMap(archives) {
+  if (!(archives instanceof Map)) throw new Error("archives must be a Map from SHA-256 to bytes");
+  const result = new Map();
+  for (const [sha256, bytes] of archives) {
+    if (!/^[0-9a-f]{64}$/.test(sha256) || !(bytes instanceof Uint8Array)) throw new Error("archives must map lowercase SHA-256 to bytes");
+    result.set(sha256, Buffer.from(bytes));
+  }
+  return result;
+}
+
+export function verifyCatalogArchives(catalog, archives) {
+  validateCatalog(catalog);
+  const available = archiveMap(archives);
+  for (const entry of catalog.packages) {
+    for (const record of entry.versions) {
+      const bytes = available.get(record.source.sha256);
+      if (!bytes) throw new Error(`archive is absent for ${entry.name}@${record.version} at ${record.source.sha256}.tgz`);
+      verifyPackageArchive(bytes, entry.name, record);
+    }
+  }
+  return available;
+}
+
+export function packageMetadataRoute(name) {
+  validatePackageName(name);
+  if (!name.startsWith("@")) return `/${name}`;
+  const [scope, packageName] = name.split("/");
+  return `/${scope}%2f${packageName}`;
+}
+
+function redirectResponse(name, record) {
+  return Object.freeze({
+    ...jsRedirectDestination(name, record),
+    type: "redirect",
+  });
+}
+
+function addRoute(routes, paths, path, response) {
+  if (paths.has(path)) throw new Error(`catalog projection repeats route ${path}`);
+  paths.add(path);
+  routes.push(Object.freeze({ path, response: Object.freeze(response) }));
+}
+
+function compareRoutes(left, right) {
+  if (left.path < right.path) return -1;
+  if (left.path > right.path) return 1;
+  return 0;
+}
+
+/** @returns {CatalogProjection} */
+export function projectCatalog(catalog, archives) {
+  const available = verifyCatalogArchives(catalog, archives);
+  const paths = new Set();
+  const routes = [];
+
+  for (const entry of catalog.packages) {
+    addRoute(routes, paths, packageMetadataRoute(entry.name), {
+      body: new ImmutableBody(renderPackument(catalog, entry)),
+      type: "inline",
+    });
+    for (const record of entry.versions) {
+      const { sha256 } = record.source;
+      addRoute(routes, paths, jsArchiveRoute(sha256), redirectResponse(entry.name, record));
+      if (record.source.kind === "first-party") {
+        addRoute(routes, paths, `/packages/${sha256}.tgz`, {
+          body: new ImmutableBody(available.get(sha256)),
+          sha256,
+          type: "archive",
+        });
+      }
+    }
+  }
+
+  routes.sort(compareRoutes);
+  return Object.freeze({
+    routes: Object.freeze(routes),
+    schema: PROJECTION_SCHEMA,
+  });
+}

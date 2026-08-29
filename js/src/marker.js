@@ -27,15 +27,20 @@ export function renderRedirectMarker({ destination, ecosystem, kind, route }) {
 `, "ascii");
 }
 
-export function renderJsRedirectMarker(name, record) {
+export function jsRedirectDestination(name, record) {
   validatePackageName(name);
   const version = validateVersion(record?.version);
   const source = record?.source;
-  const route = jsArchiveRoute(source?.sha256);
-  let destination;
-  if (source?.kind === "npmjs") destination = canonicalNpmArchiveUrl(name, version);
-  else if (source?.kind === "first-party") destination = `https://js.pkg.re/packages/${source.sha256}.tgz`;
+  let location;
+  if (source?.kind === "npmjs") location = canonicalNpmArchiveUrl(name, version);
+  else if (source?.kind === "first-party") location = `https://js.pkg.re/packages/${source.sha256}.tgz`;
   else throw new Error(`${packageIdentity(name, version)} source kind cannot be rendered`);
-  if (source.url !== destination) throw new Error(`${packageIdentity(name, version)} source destination cannot be rendered`);
-  return renderRedirectMarker({ destination, ecosystem: "js", kind: source.kind, route });
+  if (source.url !== location) throw new Error(`${packageIdentity(name, version)} source destination cannot be rendered`);
+  return Object.freeze({ destinationKind: source.kind, location });
+}
+
+export function renderJsRedirectMarker(name, record) {
+  const route = jsArchiveRoute(record?.source?.sha256);
+  const { destinationKind, location } = jsRedirectDestination(name, record);
+  return renderRedirectMarker({ destination: location, ecosystem: "js", kind: destinationKind, route });
 }

@@ -1,0 +1,25 @@
+{
+  "_id": "@scope/helper",
+  "dist-tags": {
+    "latest": "1.2.3"
+  },
+  "name": "@scope/helper",
+  "time": {
+    "1.2.3": "2020-01-01T00:00:00.000Z",
+    "created": "2020-01-01T00:00:00.000Z",
+    "modified": "2026-08-25T00:00:00.000Z"
+  },
+  "versions": {
+    "1.2.3": {
+      "_id": "@scope/helper@1.2.3",
+      "dist": {
+        "integrity": "sha512-qNdjtN2oC5v7F2hx/MZHjT22kerudykRvzjMYPdR3nB8cb1F1oYx2V36PeVJ2Ld3qfRIEf6k0aGTZy3If4tcSg==",
+        "shasum": "46d0583d420227b75946be1c675408de69dc7742",
+        "tarball": "https://js.pkg.re/v1/js/main/f8bab187e72b18a1933ae20fbf16e872c3fb2f4672fba782d60a53b93263533c"
+      },
+      "license": "MIT",
+      "name": "@scope/helper",
+      "version": "1.2.3"
+    }
+  }
+}
