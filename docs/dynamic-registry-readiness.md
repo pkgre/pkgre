@@ -34,6 +34,7 @@ These commits are migration baselines,not permanent runtime pins. A later phase 
 | Authentication | none planned;private registries are LAN-public | network isolation belongs to the later LAN deployment phase;no package protocol auth layer is added |
 | Serving snapshot | immutable validated projection held only in memory;Git+accepted commit/state provide recovery | no rendered serving tree or renderer state is persisted;cache remains optional |
 | Reload trigger | internal watcher polls the configured full branch ref and swaps only a fully validated candidate | no systemd timer or watcher/child split is required initially |
+| Commit admission | every accepted catalog commit must pass SSH-Ed25519 Git signature verification using a pinned Git implementation plus deployment-owned `allowedSigners`,trust,and revocation inputs | production principals,keys,settings,and secret installation remain operator-owned D7 inputs;unsigned or untrusted candidates never become active |
 
 Large generated route dumps,raw command transcripts,live host snapshots,and cryptographic D0 ceremony state are not source artifacts. Route sets are regenerated from catalogs;protocol behavior is captured as small executable fixtures in D1;resource and deployment claims are measured against the built services in D4–D7.
 
@@ -41,8 +42,8 @@ Large generated route dumps,raw command transcripts,live host snapshots,and cryp
 
 | Phase | Must pass before leaving the phase |
 |---|---|
-| D1 contracts | versioned Rust+JS projections;raw-target/path grammar;GET/HEAD/status/header/body fixtures;typed redirect/body descriptors;deterministic current-catalog export;client configuration policy |
-| D2 catalog migration | forward+rollback schema tests;current catalogs migrate without identity loss;archive metadata is checksum-bound;any commit-signing policy is implemented and tested before it becomes an acceptance requirement |
+| D1 contracts | versioned Rust+JS projections;raw-target/path grammar;GET/HEAD/status/header/body fixtures;typed redirect/body descriptors;deterministic current-catalog export;client configuration policy;shared accepted-ref/LKG vectors proving durable accepted state is the sole restart authority and forbidding arbitrary newest/predecessor selection |
+| D2 catalog migration | forward+rollback schema tests;current catalogs migrate without identity loss;archive metadata is checksum-bound;the fixed SSH-Ed25519 commit-admission contract is implemented+tested with a pinned Git implementation and deployment-owned `allowedSigners`,trust,and revocation inputs |
 | D3–D4 services | native Rust server+JS server;full candidate validation before atomic in-memory swap;last-known-good restart/reload behavior;bounded fetch/input/request/concurrency/resource tests;no request-time upstream metadata lookup |
 | D5–D6 ecosystem proof | offline/self-host tests;Cargo/npm/Bun/Deno clean-cache+locked-cache matrix;default crates.io/npmjs metadata fallback disabled;redirect compatibility then local-body behavior tested separately |
 | D7 deployment preparation | current `~/repos/infra` master reviewed;exact source/catalog/infra commits+Nix closures+ports+state paths+nginx policy+HTTP-01 certificate plan recorded;local and deployment-build checks pass;rollback command sequence prepared |
