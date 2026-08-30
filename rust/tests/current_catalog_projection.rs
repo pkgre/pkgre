@@ -7,7 +7,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pkgre_rust::artifact::{ArtifactMap, sha256_bytes};
-use pkgre_rust::projection::{CatalogProjection, ProjectedResponseKind};
+use pkgre_rust::projection::{CatalogProjection, ProjectedRepresentation, ProjectedResponseKind};
 use pkgre_rust::render;
 use pkgre_rust::schema::{Catalog, Source};
 
@@ -80,6 +80,15 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
     let archives = count_kind(&projection, ProjectedResponseKind::Archive);
     assert_eq!(projection.routes().len(), 1_308);
     assert_eq!((inline, redirects, archives), (558, 747, 3));
+    assert_eq!(
+        (
+            count_representation(&projection, ProjectedRepresentation::MetadataJson),
+            count_representation(&projection, ProjectedRepresentation::MetadataText),
+            count_representation(&projection, ProjectedRepresentation::Archive),
+            count_representation(&projection, ProjectedRepresentation::Redirect),
+        ),
+        (3, 555, 3, 747)
+    );
     assert_eq!(projection.routes().first().unwrap().path(), "/2/cc");
     assert_eq!(projection.routes().last().unwrap().path(), "/zm/ij/zmij");
 
@@ -108,10 +117,10 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
 
     let manifest = projection.manifest_bytes().unwrap();
     assert_eq!(manifest, EXPECTED_PROJECTION);
-    assert_eq!(EXPECTED_PROJECTION.len(), 409_897);
+    assert_eq!(EXPECTED_PROJECTION.len(), 462_388);
     assert_eq!(
         sha256_bytes(EXPECTED_PROJECTION),
-        "388383ddfab16101c90631c28fa95b19bcc0a5abd4efcee0660770be5e7a690e",
+        "dfca6b5ee1b665a42e3ee894c059ed6308a1eff4404e506fc5a2863ee24e4ac6",
         "update only after independently reviewing an intentional projection change"
     );
 }
@@ -121,6 +130,17 @@ fn count_kind(projection: &CatalogProjection, kind: ProjectedResponseKind) -> us
         .routes()
         .iter()
         .filter(|route| route.response().kind() == kind)
+        .count()
+}
+
+fn count_representation(
+    projection: &CatalogProjection,
+    representation: ProjectedRepresentation,
+) -> usize {
+    projection
+        .routes()
+        .iter()
+        .filter(|route| route.response().representation() == representation)
         .count()
 }
 

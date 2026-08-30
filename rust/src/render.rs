@@ -21,6 +21,7 @@ use crate::policy::{
     canonical_registry_route_base, validate_catalog, validate_package_name,
     validate_registry_alias, validate_sha256,
 };
+use crate::projection::ProjectedRepresentation;
 use crate::schema::{
     Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, RELEASE_SCHEMA_VERSION,
     Source,
@@ -266,11 +267,12 @@ fn render_into(
         &output.join("CNAME"),
         format!("{}\n", catalog.registries.cname).as_bytes(),
     )?;
-    for (path, body) in projected_bodies(catalog, artifacts, policy)? {
-        let relative = path
+    for projected in projected_bodies(catalog, artifacts, policy)? {
+        let relative = projected
+            .path
             .strip_prefix('/')
             .expect("projected metadata paths are root-relative");
-        write_new(&output.join(relative), &body)?;
+        write_new(&output.join(relative), &projected.body)?;
     }
 
     let mut copied_archives = BTreeSet::new();
@@ -293,11 +295,17 @@ fn render_into(
     Ok(())
 }
 
+pub(crate) struct ProjectedBody {
+    pub(crate) path: String,
+    pub(crate) body: Vec<u8>,
+    pub(crate) representation: ProjectedRepresentation,
+}
+
 pub(crate) fn projected_bodies(
     catalog: &Catalog,
     artifacts: &ArtifactMap,
     policy: &crate::policy::Policy,
-) -> Result<Vec<(String, Vec<u8>)>> {
+) -> Result<Vec<ProjectedBody>> {
     let mut bodies = BTreeMap::new();
     for registry in &catalog.registries.registries {
         let mut config = serde_json::to_vec(&serde_json::json!({
@@ -314,12 +322,14 @@ pub(crate) fn projected_bodies(
                 "config.json",
             )?,
             config,
+            ProjectedRepresentation::MetadataJson,
         )?;
     }
     insert_projected_body(
         &mut bodies,
         format!("/{DOWNLOAD_CATALOG_FILE}"),
         DownloadCatalog::from_catalog(catalog).canonical_bytes()?,
+        ProjectedRepresentation::MetadataJson,
     )?;
 
     let mut rows = BTreeMap::<(String, String), Vec<(Version, Vec<u8>)>>::new();
@@ -375,13 +385,19 @@ pub(crate) fn projected_bodies(
             &mut bodies,
             projected_metadata_path(catalog.registries.schema, policy, &registry, &relative)?,
             contents,
+            ProjectedRepresentation::MetadataText,
         )?;
     }
 
     let mut release_json = release_bytes_from_catalog(catalog)?;
     release_json.push(b'\n');
-    insert_projected_body(&mut bodies, format!("/{RELEASE_MANIFEST}"), release_json)?;
-    Ok(bodies.into_iter().collect())
+    insert_projected_body(
+        &mut bodies,
+        format!("/{RELEASE_MANIFEST}"),
+        release_json,
+        ProjectedRepresentation::MetadataJson,
+    )?;
+    Ok(bodies.into_values().collect())
 }
 
 fn projected_metadata_path(
@@ -417,13 +433,18 @@ fn projected_metadata_path(
 }
 
 fn insert_projected_body(
-    bodies: &mut BTreeMap<String, Vec<u8>>,
+    bodies: &mut BTreeMap<String, ProjectedBody>,
     path: String,
     body: Vec<u8>,
+    representation: ProjectedRepresentation,
 ) -> Result<()> {
-    match bodies.entry(path) {
+    match bodies.entry(path.clone()) {
         std::collections::btree_map::Entry::Vacant(entry) => {
-            entry.insert(body);
+            entry.insert(ProjectedBody {
+                path,
+                body,
+                representation,
+            });
         }
         std::collections::btree_map::Entry::Occupied(entry) => {
             bail!("duplicate projected metadata path {}", entry.key());

@@ -13,7 +13,8 @@ use pkgre_rust::download::{
 };
 use pkgre_rust::index::{IndexRecord, index_path};
 use pkgre_rust::projection::{
-    CatalogProjection, ProjectedResponseKind, ProjectionLimits, RedirectDestination,
+    CatalogProjection, ProjectedRepresentation, ProjectedResponseKind, ProjectionLimits,
+    RedirectDestination,
 };
 use pkgre_rust::render;
 use pkgre_rust::schema::{
@@ -176,6 +177,15 @@ fn project_and_assert_static_equivalence(
         let response = route.response();
         match response.kind() {
             ProjectedResponseKind::Inline => {
+                let expected_representation = if path == "/downloads.json"
+                    || path == "/release.json"
+                    || path.ends_with("/config.json")
+                {
+                    ProjectedRepresentation::MetadataJson
+                } else {
+                    ProjectedRepresentation::MetadataText
+                };
+                assert_eq!(response.representation(), expected_representation);
                 let body = response.body().unwrap();
                 assert_eq!(
                     fs::read(site.join(path.strip_prefix('/').unwrap())).unwrap(),
@@ -184,6 +194,7 @@ fn project_and_assert_static_equivalence(
                 );
             }
             ProjectedResponseKind::Archive => {
+                assert_eq!(response.representation(), ProjectedRepresentation::Archive);
                 let body = response.body().unwrap();
                 let sha256 = response.archive_sha256().unwrap();
                 assert_eq!(path, format!("/crates/{sha256}.crate"));
@@ -194,7 +205,10 @@ fn project_and_assert_static_equivalence(
                 );
                 assert_eq!(sha256_bytes(body), sha256);
             }
-            ProjectedResponseKind::Redirect => redirects += 1,
+            ProjectedResponseKind::Redirect => {
+                assert_eq!(response.representation(), ProjectedRepresentation::Redirect);
+                redirects += 1;
+            }
         }
     }
     assert_eq!(redirects, expected_redirects);

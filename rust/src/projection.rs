@@ -12,11 +12,11 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::artifact::{ArtifactMap, sha256_bytes};
-use crate::download::{DownloadCatalog, DownloadSource};
+use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, DownloadSource};
 use crate::policy::{
     validate_catalog, validate_package_name, validate_registry_alias, validate_sha256,
 };
-use crate::render::projected_bodies;
+use crate::render::{RELEASE_MANIFEST, projected_bodies};
 use crate::schema::Catalog;
 
 /// Wire-independent schema of the typed route projection.
@@ -110,13 +110,19 @@ impl CatalogProjection {
         let mut routes = BTreeMap::new();
         let mut accounting = ProjectionAccounting::default();
 
-        for (path, body) in projected_bodies(catalog, artifacts, &policy)? {
-            accounting.add_inline(usize_as_u64(body.len(), "inline body length")?, &limits)?;
+        for projected in projected_bodies(catalog, artifacts, &policy)? {
+            accounting.add_inline(
+                usize_as_u64(projected.body.len(), "inline body length")?,
+                &limits,
+            )?;
             insert_route(
                 &mut routes,
                 &mut accounting,
                 &limits,
-                ProjectedRoute::new(path, ProjectedResponse::inline(body)),
+                ProjectedRoute::new(
+                    projected.path,
+                    ProjectedResponse::inline(projected.body, projected.representation),
+                ),
             )?;
         }
 
@@ -260,6 +266,20 @@ impl ProjectedRoute {
     }
 }
 
+/// Closed representation class for projected response handling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProjectedRepresentation {
+    /// JSON metadata, including registry configuration and release/download manifests.
+    MetadataJson,
+    /// Newline-delimited sparse-index metadata.
+    MetadataText,
+    /// Immutable package archive bytes.
+    Archive,
+    /// Redirect response without a body.
+    Redirect,
+}
+
 /// Stable response-type discriminator for manifests and request dispatch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProjectedResponseKind {
@@ -279,16 +299,29 @@ pub struct ProjectedResponse {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ProjectedResponseSource {
-    Inline { body: Arc<Vec<u8>> },
-    Archive { body: Arc<Vec<u8>>, sha256: String },
-    Redirect { destination: RedirectDestination },
+    Inline {
+        body: Arc<Vec<u8>>,
+        representation: ProjectedRepresentation,
+    },
+    Archive {
+        body: Arc<Vec<u8>>,
+        sha256: String,
+    },
+    Redirect {
+        destination: RedirectDestination,
+    },
 }
 
 impl ProjectedResponse {
-    fn inline(body: Vec<u8>) -> Self {
+    fn inline(body: Vec<u8>, representation: ProjectedRepresentation) -> Self {
+        debug_assert!(matches!(
+            representation,
+            ProjectedRepresentation::MetadataJson | ProjectedRepresentation::MetadataText
+        ));
         Self {
             source: ProjectedResponseSource::Inline {
                 body: Arc::new(body),
+                representation,
             },
         }
     }
@@ -315,6 +348,16 @@ impl ProjectedResponse {
         }
     }
 
+    /// Returns the closed representation class used to serve this response.
+    #[must_use]
+    pub const fn representation(&self) -> ProjectedRepresentation {
+        match self.source {
+            ProjectedResponseSource::Inline { representation, .. } => representation,
+            ProjectedResponseSource::Archive { .. } => ProjectedRepresentation::Archive,
+            ProjectedResponseSource::Redirect { .. } => ProjectedRepresentation::Redirect,
+        }
+    }
+
     /// Returns inline or archive bytes, if this is a body response.
     #[must_use]
     pub fn body(&self) -> Option<&[u8]> {
@@ -325,7 +368,7 @@ impl ProjectedResponse {
     #[must_use]
     pub const fn shared_body(&self) -> Option<&Arc<Vec<u8>>> {
         match &self.source {
-            ProjectedResponseSource::Inline { body }
+            ProjectedResponseSource::Inline { body, .. }
             | ProjectedResponseSource::Archive { body, .. } => Some(body),
             ProjectedResponseSource::Redirect { .. } => None,
         }
@@ -355,7 +398,9 @@ impl ProjectedResponse {
 
     fn validate_route(&self, path: &str) -> Result<()> {
         match &self.source {
-            ProjectedResponseSource::Inline { .. } => validate_inline_route(path),
+            ProjectedResponseSource::Inline { representation, .. } => {
+                validate_inline_route(path, *representation)
+            }
             ProjectedResponseSource::Archive { sha256, .. } => validate_archive_route(path, sha256),
             ProjectedResponseSource::Redirect { destination } => {
                 validate_redirect_route(path, destination)
@@ -365,12 +410,17 @@ impl ProjectedResponse {
 
     fn manifest(&self) -> Result<ProjectionManifestResponse> {
         match &self.source {
-            ProjectedResponseSource::Inline { body } => Ok(ProjectionManifestResponse::Inline {
+            ProjectedResponseSource::Inline {
+                body,
+                representation,
+            } => Ok(ProjectionManifestResponse::Inline {
+                representation: *representation,
                 bytes: usize_as_u64(body.len(), "inline manifest body length")?,
                 sha256: sha256_bytes(body),
             }),
             ProjectedResponseSource::Archive { body, sha256 } => {
                 Ok(ProjectionManifestResponse::Archive {
+                    representation: ProjectedRepresentation::Archive,
                     bytes: usize_as_u64(body.len(), "archive manifest body length")?,
                     sha256: sha256_bytes(body),
                     archive_sha256: sha256.clone(),
@@ -378,6 +428,7 @@ impl ProjectedResponse {
             }
             ProjectedResponseSource::Redirect { destination } => {
                 Ok(ProjectionManifestResponse::Redirect {
+                    representation: ProjectedRepresentation::Redirect,
                     destination: destination.clone(),
                     location: destination.location(),
                 })
@@ -502,6 +553,8 @@ pub struct ProjectionManifestRoute {
 pub enum ProjectionManifestResponse {
     /// Deterministic inline metadata bytes.
     Inline {
+        /// Metadata syntax carried by the inline body.
+        representation: ProjectedRepresentation,
         /// Exact body length.
         bytes: u64,
         /// SHA-256 of the exact body bytes.
@@ -509,6 +562,8 @@ pub enum ProjectionManifestResponse {
     },
     /// Retained content-addressed archive bytes.
     Archive {
+        /// Fixed archive representation discriminator.
+        representation: ProjectedRepresentation,
         /// Exact body length.
         bytes: u64,
         /// SHA-256 of the exact body bytes.
@@ -518,6 +573,8 @@ pub enum ProjectionManifestResponse {
     },
     /// Closed redirect and its exact resolved HTTP location.
     Redirect {
+        /// Fixed redirect representation discriminator.
+        representation: ProjectedRepresentation,
         /// Typed destination fields; arbitrary URLs are unrepresentable.
         destination: RedirectDestination,
         /// Exact output derived from `destination`.
@@ -528,16 +585,33 @@ pub enum ProjectionManifestResponse {
 impl ProjectionManifestResponse {
     fn validate(&self, path: &str) -> Result<()> {
         match self {
-            Self::Inline { sha256, .. } => {
+            Self::Inline {
+                representation,
+                sha256,
+                ..
+            } => {
+                ensure!(
+                    matches!(
+                        representation,
+                        ProjectedRepresentation::MetadataJson
+                            | ProjectedRepresentation::MetadataText
+                    ),
+                    "inline response has non-metadata representation at {path}"
+                );
                 validate_sha256(sha256)
                     .with_context(|| format!("invalid inline response SHA-256 at {path}"))?;
-                validate_inline_route(path)
+                validate_inline_route(path, *representation)
             }
             Self::Archive {
+                representation,
                 sha256,
                 archive_sha256,
                 ..
             } => {
+                ensure!(
+                    *representation == ProjectedRepresentation::Archive,
+                    "archive response has mismatched representation at {path}"
+                );
                 validate_sha256(sha256)
                     .with_context(|| format!("invalid archive body SHA-256 at {path}"))?;
                 validate_sha256(archive_sha256)
@@ -549,9 +623,14 @@ impl ProjectionManifestResponse {
                 validate_archive_route(path, archive_sha256)
             }
             Self::Redirect {
+                representation,
                 destination,
                 location,
             } => {
+                ensure!(
+                    *representation == ProjectedRepresentation::Redirect,
+                    "redirect response has mismatched representation at {path}"
+                );
                 validate_redirect_route(path, destination)?;
                 ensure!(
                     location == &destination.location(),
@@ -563,10 +642,22 @@ impl ProjectionManifestResponse {
     }
 }
 
-fn validate_inline_route(path: &str) -> Result<()> {
+fn validate_inline_route(path: &str, representation: ProjectedRepresentation) -> Result<()> {
     ensure!(
         !is_reserved_route_namespace(path),
         "inline response uses a reserved route namespace at {path}"
+    );
+    let expected = if path == format!("/{DOWNLOAD_CATALOG_FILE}")
+        || path == format!("/{RELEASE_MANIFEST}")
+        || path.ends_with("/config.json")
+    {
+        ProjectedRepresentation::MetadataJson
+    } else {
+        ProjectedRepresentation::MetadataText
+    };
+    ensure!(
+        representation == expected,
+        "inline response has mismatched representation at {path}"
     );
     Ok(())
 }
@@ -937,7 +1028,10 @@ mod tests {
             &mut routes,
             &mut accounting,
             &limits,
-            ProjectedRoute::new(path.clone(), ProjectedResponse::inline(Vec::new())),
+            ProjectedRoute::new(
+                path.clone(),
+                ProjectedResponse::inline(Vec::new(), ProjectedRepresentation::MetadataText),
+            ),
         )
         .unwrap();
         let before = accounting;
@@ -945,7 +1039,10 @@ mod tests {
             &mut routes,
             &mut accounting,
             &limits,
-            ProjectedRoute::new(path.clone(), ProjectedResponse::inline(Vec::new())),
+            ProjectedRoute::new(
+                path.clone(),
+                ProjectedResponse::inline(Vec::new(), ProjectedRepresentation::MetadataText),
+            ),
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains(&path));
@@ -957,7 +1054,7 @@ mod tests {
     fn cloning_a_projection_shares_the_route_table_and_body_allocations() {
         let route = ProjectedRoute::new(
             "/body".to_owned(),
-            ProjectedResponse::inline(b"immutable".to_vec()),
+            ProjectedResponse::inline(b"immutable".to_vec(), ProjectedRepresentation::MetadataText),
         );
         let projection = CatalogProjection {
             routes: Arc::new(vec![route]),
@@ -1003,6 +1100,7 @@ mod tests {
         ProjectionManifestRoute {
             path: path.to_owned(),
             response: ProjectionManifestResponse::Inline {
+                representation: ProjectedRepresentation::MetadataText,
                 bytes: 8,
                 sha256: METADATA_SHA256.to_owned(),
             },
@@ -1062,7 +1160,7 @@ mod tests {
         }
         assert!(!projected_response_is_valid(
             "/a/../b",
-            ProjectedResponse::inline(Vec::new())
+            ProjectedResponse::inline(Vec::new(), ProjectedRepresentation::MetadataText)
         ));
     }
 
@@ -1071,13 +1169,13 @@ mod tests {
         for path in ["/metadata", "/v10", "/crates-index"] {
             assert!(projected_response_is_valid(
                 path,
-                ProjectedResponse::inline(Vec::new())
+                ProjectedResponse::inline(Vec::new(), ProjectedRepresentation::MetadataText)
             ));
         }
         for path in ["/v1", "/v1/main", "/crates", "/crates/anything"] {
             assert!(!projected_response_is_valid(
                 path,
-                ProjectedResponse::inline(Vec::new())
+                ProjectedResponse::inline(Vec::new(), ProjectedRepresentation::MetadataText)
             ));
         }
 
@@ -1131,6 +1229,7 @@ mod tests {
         };
         let location = crates_io.location();
         let response = || ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
             destination: crates_io.clone(),
             location: location.clone(),
         };
@@ -1154,6 +1253,7 @@ mod tests {
         }
 
         let wrong_name = ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
             destination: RedirectDestination::CratesIo {
                 name: "other".to_owned(),
                 version: Version::parse("1.0.0").unwrap(),
@@ -1166,6 +1266,7 @@ mod tests {
                 .is_err()
         );
         let wrong_version = ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
             destination: RedirectDestination::CratesIo {
                 name: "serde".to_owned(),
                 version: Version::parse("2.0.0").unwrap(),
@@ -1179,6 +1280,7 @@ mod tests {
         );
 
         let wrong_sha = ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
             destination: RedirectDestination::FirstParty {
                 sha256: ARCHIVE_SHA256.to_owned(),
             },
@@ -1191,6 +1293,7 @@ mod tests {
         );
 
         let wrong_location = ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
             destination: crates_io,
             location: "https://example.invalid/archive".to_owned(),
         };
@@ -1202,9 +1305,68 @@ mod tests {
     }
 
     #[test]
+    fn manifest_rejects_response_representation_mismatches() {
+        let mut inline = inline_manifest_route("/metadata");
+        let ProjectionManifestResponse::Inline { representation, .. } = &mut inline.response else {
+            unreachable!();
+        };
+        *representation = ProjectedRepresentation::Archive;
+        assert!(test_manifest(vec![inline]).validate().is_err());
+
+        let mut config = inline_manifest_route("/config.json");
+        let ProjectionManifestResponse::Inline { representation, .. } = &mut config.response else {
+            unreachable!();
+        };
+        *representation = ProjectedRepresentation::MetadataText;
+        assert!(test_manifest(vec![config]).validate().is_err());
+
+        let mut sparse = inline_manifest_route("/2/cc");
+        let ProjectionManifestResponse::Inline { representation, .. } = &mut sparse.response else {
+            unreachable!();
+        };
+        *representation = ProjectedRepresentation::MetadataJson;
+        assert!(test_manifest(vec![sparse]).validate().is_err());
+
+        let mut archive = ProjectionManifestRoute {
+            path: format!("/crates/{ARCHIVE_SHA256}.crate"),
+            response: ProjectionManifestResponse::Archive {
+                representation: ProjectedRepresentation::Archive,
+                bytes: 7,
+                sha256: ARCHIVE_SHA256.to_owned(),
+                archive_sha256: ARCHIVE_SHA256.to_owned(),
+            },
+        };
+        let ProjectionManifestResponse::Archive { representation, .. } = &mut archive.response
+        else {
+            unreachable!();
+        };
+        *representation = ProjectedRepresentation::MetadataJson;
+        assert!(test_manifest(vec![archive]).validate().is_err());
+
+        let destination = RedirectDestination::FirstParty {
+            sha256: ARCHIVE_SHA256.to_owned(),
+        };
+        let mut redirect = ProjectionManifestRoute {
+            path: format!("/v1/main/gitcrate/2.0.0/{ARCHIVE_SHA256}"),
+            response: ProjectionManifestResponse::Redirect {
+                representation: ProjectedRepresentation::Redirect,
+                location: destination.location(),
+                destination,
+            },
+        };
+        let ProjectionManifestResponse::Redirect { representation, .. } = &mut redirect.response
+        else {
+            unreachable!();
+        };
+        *representation = ProjectedRepresentation::MetadataText;
+        assert!(test_manifest(vec![redirect]).validate().is_err());
+    }
+
+    #[test]
     fn manifest_rejects_bad_hashes_ordering_and_duplicates() {
         let mut bad_inline = inline_manifest_route("/a");
         bad_inline.response = ProjectionManifestResponse::Inline {
+            representation: ProjectedRepresentation::MetadataText,
             bytes: 0,
             sha256: "ABCDEF".to_owned(),
         };
@@ -1213,6 +1375,7 @@ mod tests {
         let bad_archive = ProjectionManifestRoute {
             path: format!("/crates/{ARCHIVE_SHA256}.crate"),
             response: ProjectionManifestResponse::Archive {
+                representation: ProjectedRepresentation::Archive,
                 bytes: 7,
                 sha256: METADATA_SHA256.to_owned(),
                 archive_sha256: ARCHIVE_SHA256.to_owned(),
@@ -1257,7 +1420,10 @@ mod tests {
             routes: Arc::new(vec![
                 ProjectedRoute::new(
                     "/2/cc".to_owned(),
-                    ProjectedResponse::inline(b"metadata".to_vec()),
+                    ProjectedResponse::inline(
+                        b"metadata".to_vec(),
+                        ProjectedRepresentation::MetadataText,
+                    ),
                 ),
                 ProjectedRoute::new(
                     format!("/crates/{ARCHIVE_SHA256}.crate"),
@@ -1291,6 +1457,7 @@ mod tests {
       "path": "/2/cc",
       "response": {
         "type": "inline",
+        "representation": "metadata-text",
         "bytes": 8,
         "sha256": "45447b7afbd5e544f7d0f1df0fccd26014d9850130abd3f020b89ff96b82079f"
       }
@@ -1299,6 +1466,7 @@ mod tests {
       "path": "/crates/0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3.crate",
       "response": {
         "type": "archive",
+        "representation": "archive",
         "bytes": 7,
         "sha256": "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3",
         "archiveSha256": "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3"
@@ -1308,6 +1476,7 @@ mod tests {
       "path": "/v1/main/crate_name-2/1.2.3-alpha.1+build.5/45447b7afbd5e544f7d0f1df0fccd26014d9850130abd3f020b89ff96b82079f",
       "response": {
         "type": "redirect",
+        "representation": "redirect",
         "destination": {
           "kind": "crates-io",
           "name": "crate_name-2",
@@ -1320,6 +1489,7 @@ mod tests {
       "path": "/v1/main/gitcrate/2.0.0/0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3",
       "response": {
         "type": "redirect",
+        "representation": "redirect",
         "destination": {
           "kind": "first-party",
           "sha256": "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3"

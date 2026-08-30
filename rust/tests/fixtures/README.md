@@ -9,8 +9,8 @@
 | Uncompressed tar SHA-256 | `06e75adf3bf4669cd619cab8415ff9e08bee44560f7a0dc1128378d16231aa98` |
 | Gzip bytes | `621318` |
 | Gzip SHA-256 | `9c70bcffb58b92003f9c950656953b51844aeaa1d86183b86415f09da334f2fa` |
-| Projection bytes | `409897` |
-| Projection SHA-256 | `388383ddfab16101c90631c28fa95b19bcc0a5abd4efcee0660770be5e7a690e` |
+| Projection bytes | `462388` |
+| Projection SHA-256 | `dfca6b5ee1b665a42e3ee894c059ed6308a1eff4404e506fc5a2863ee24e4ac6` |
 
 ## Reproduction
 
