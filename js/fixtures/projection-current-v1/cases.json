@@ -5,6 +5,7 @@
       "path": "/packages/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3.tgz",
       "response": {
         "bytes": 16717,
+        "representation": "archive",
         "sha256": "07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3",
         "type": "archive"
       }
@@ -14,6 +15,7 @@
       "response": {
         "bodyFile": "packument.json",
         "bytes": 996,
+        "representation": "metadata-json",
         "sha256": "6cd8e81ee6efebfbed3f8df101ef9fc174672e7855933c6ec4d989697f06722d",
         "type": "inline"
       }

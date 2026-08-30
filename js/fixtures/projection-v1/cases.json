@@ -7,6 +7,7 @@
       "response": {
         "bodyFile": "scoped-packument.json",
         "bytes": 724,
+        "representation": "metadata-json",
         "sha256": "2a8398c1beac26cb444c63c049fb95e9ef8b8b006ca95fb1aead0cab250fe2d8",
         "type": "inline"
       }
@@ -15,6 +16,7 @@
       "path": "/packages/9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1.tgz",
       "response": {
         "bytes": 271,
+        "representation": "archive",
         "sha256": "9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1",
         "type": "archive"
       }
@@ -24,6 +26,7 @@
       "response": {
         "bodyFile": "unscoped-packument.json",
         "bytes": 876,
+        "representation": "metadata-json",
         "sha256": "47fd8fa7a46cb84b2ddbd9462b516961fcbebe32eb88d824d34b3372afad5037",
         "type": "inline"
       }

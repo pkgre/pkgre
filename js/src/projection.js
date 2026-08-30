@@ -18,8 +18,8 @@ function immutableBody(bytes) {
   return Object.freeze(new Blob([bytes]));
 }
 
-/** @typedef {{ body: Blob, type: "inline" }} InlineResponse */
-/** @typedef {{ body: Blob, sha256: string, type: "archive" }} ArchiveResponse */
+/** @typedef {{ body: Blob, representation: "metadata-json", type: "inline" }} InlineResponse */
+/** @typedef {{ body: Blob, representation: "archive", sha256: string, type: "archive" }} ArchiveResponse */
 /** @typedef {{ destinationKind: "first-party" | "npmjs", location: string, type: "redirect" }} RedirectResponse */
 /** @typedef {InlineResponse | ArchiveResponse | RedirectResponse} ProjectedResponse */
 /** @typedef {{ path: string, response: ProjectedResponse }} ProjectedRoute */
@@ -95,15 +95,30 @@ export function freezeTransferredProjection(projection) {
 
     let response;
     if (route.response.type === "inline") {
-      if (!(route.response.body instanceof Blob)) throw new Error(`invalid inline body at ${route.path}`);
-      Object.freeze(route.response.body);
-      response = Object.freeze({ body: route.response.body, type: "inline" });
-    } else if (route.response.type === "archive") {
-      if (!(route.response.body instanceof Blob) || !/^[0-9a-f]{64}$/.test(route.response.sha256)) {
-        throw new Error(`invalid archive body at ${route.path}`);
+      if (!(route.response.body instanceof Blob) || route.response.representation !== "metadata-json") {
+        throw new Error(`invalid inline response at ${route.path}`);
       }
       Object.freeze(route.response.body);
-      response = Object.freeze({ body: route.response.body, sha256: route.response.sha256, type: "archive" });
+      response = Object.freeze({
+        body: route.response.body,
+        representation: "metadata-json",
+        type: "inline",
+      });
+    } else if (route.response.type === "archive") {
+      if (
+        !(route.response.body instanceof Blob)
+        || route.response.representation !== "archive"
+        || !/^[0-9a-f]{64}$/.test(route.response.sha256)
+      ) {
+        throw new Error(`invalid archive response at ${route.path}`);
+      }
+      Object.freeze(route.response.body);
+      response = Object.freeze({
+        body: route.response.body,
+        representation: "archive",
+        sha256: route.response.sha256,
+        type: "archive",
+      });
     } else if (route.response.type === "redirect") {
       if (!["first-party", "npmjs"].includes(route.response.destinationKind) || typeof route.response.location !== "string") {
         throw new Error(`invalid redirect at ${route.path}`);
@@ -134,6 +149,7 @@ export function projectCatalog(catalog, archives) {
   for (const entry of catalog.packages) {
     addRoute(routes, paths, packageMetadataRoute(entry.name), {
       body: immutableBody(renderPackument(catalog, entry)),
+      representation: "metadata-json",
       type: "inline",
     });
     for (const record of entry.versions) {
@@ -142,6 +158,7 @@ export function projectCatalog(catalog, archives) {
       if (record.source.kind === "first-party") {
         addRoute(routes, paths, `/packages/${sha256}.tgz`, {
           body: immutableBody(available.get(sha256)),
+          representation: "archive",
           sha256,
           type: "archive",
         });

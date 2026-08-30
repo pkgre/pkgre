@@ -90,6 +90,7 @@ async function summarize(projection, bodyFiles) {
           response: {
             bodyFile: bodyFiles.get(path),
             bytes: response.body.size,
+            representation: response.representation,
             sha256: sha256(bytes),
             type: response.type,
           },
@@ -101,6 +102,7 @@ async function summarize(projection, bodyFiles) {
           path,
           response: {
             bytes: response.body.size,
+            representation: response.representation,
             sha256: sha256(bytes),
             type: response.type,
           },
@@ -214,6 +216,7 @@ test("worker transfer preserves Blob bytes and receiver rebuilds frozen descript
     assert.equal(clone.path, original.path);
     assert.equal(clone.response.type, original.response.type);
     if (original.response.type === "redirect") continue;
+    assert.equal(clone.response.representation, original.response.representation);
     assert.ok(clone.response.body instanceof Blob);
     assert.equal(clone.response.body.size, original.response.body.size);
     assert.deepEqual(await bodyBytes(clone.response.body), await bodyBytes(original.response.body));
@@ -227,6 +230,23 @@ test("worker transfer preserves Blob bytes and receiver rebuilds frozen descript
     if (response.type !== "redirect") assert.equal(Object.isFrozen(response.body), true);
   }
   await assertArchiveDescriptors(reconstructed);
+});
+
+test("rejects missing or mismatched transferred representation classes", async () => {
+  const fixture = fixtureCatalog();
+  const projected = projectCatalog(fixture.catalog, fixture.archives);
+
+  for (const type of ["inline", "archive"]) {
+    const missing = await cloneThroughMessageChannel(projected);
+    delete missing.routes.find(({ response }) => response.type === type).response.representation;
+    assert.throws(() => freezeTransferredProjection(missing), new RegExp(`invalid ${type} response`));
+
+    const mismatched = await cloneThroughMessageChannel(projected);
+    mismatched.routes.find(({ response }) => response.type === type).response.representation = type === "inline"
+      ? "archive"
+      : "metadata-json";
+    assert.throws(() => freezeTransferredProjection(mismatched), new RegExp(`invalid ${type} response`));
+  }
 });
 
 test("fully verifies every archive before returning a projection", () => {
