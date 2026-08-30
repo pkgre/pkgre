@@ -90,7 +90,10 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
+              ./js/package.json
+              ./nix/js-compatibility-clients.nix
               ./rust
               ./rust-toolchain.toml
             ];
@@ -152,8 +155,10 @@
           jsSource = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
+              ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
               ./js
+              ./nix/js-compatibility-clients.nix
             ];
           };
           pkgreJs = pkgs.stdenvNoCC.mkDerivation {
@@ -237,7 +242,10 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
+              ./js/package.json
+              ./nix/js-compatibility-clients.nix
               ./rust
               ./rust-toolchain.toml
             ];
