@@ -14,6 +14,7 @@ const SOURCE_COMMIT: &str = "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b";
 const SOURCE_TREE: &str = "35cbdb0e7622506461ad0d4340e3c1f40f594526";
 const FIXTURE_SHA256: &str = "9c70bcffb58b92003f9c950656953b51844aeaa1d86183b86415f09da334f2fa";
 const FIXTURE: &[u8] = include_bytes!("fixtures/rust-current-catalog-f9b5ffa.tar.gz");
+const EXPECTED_PROJECTION: &[u8] = include_bytes!("fixtures/rust-current-projection-f9b5ffa.json");
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -105,20 +106,11 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
     }
 
     let manifest = projection.manifest_bytes().unwrap();
-    let independently_loaded_catalog = Catalog::load(&root).unwrap();
-    let independently_loaded_artifacts = ArtifactMap::load(&independently_loaded_catalog).unwrap();
-    let independently_projected = CatalogProjection::from_catalog(
-        &independently_loaded_catalog,
-        &independently_loaded_artifacts,
-    )
-    .unwrap();
-    assert_eq!(manifest, independently_projected.manifest_bytes().unwrap());
+    assert_eq!(manifest, EXPECTED_PROJECTION);
+    assert_eq!(EXPECTED_PROJECTION.len(), 409_897);
     assert_eq!(
-        (manifest.len(), sha256_bytes(&manifest)),
-        (
-            409_897,
-            "388383ddfab16101c90631c28fa95b19bcc0a5abd4efcee0660770be5e7a690e".to_owned(),
-        ),
+        sha256_bytes(EXPECTED_PROJECTION),
+        "388383ddfab16101c90631c28fa95b19bcc0a5abd4efcee0660770be5e7a690e",
         "update only after independently reviewing an intentional projection change"
     );
 }
