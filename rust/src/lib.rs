@@ -4,6 +4,7 @@ pub mod accepted_ref;
 pub mod artifact;
 pub mod category;
 pub mod download;
+pub mod edge;
 pub mod http_response;
 pub mod import;
 pub mod index;
