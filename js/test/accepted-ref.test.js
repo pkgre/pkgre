@@ -35,6 +35,7 @@ function assertPolicy(policy) {
     "acceptedRecordSchema",
     "bootstrap",
     "candidateValidationOrder",
+    "fullRefGrammar",
     "identityDerivation",
     "identityDomain",
     "origin",
@@ -57,6 +58,7 @@ function assertPolicy(policy) {
       "durable-persistence",
       "publication",
     ],
+    fullRefGrammar: "starts with refs/;has a nonempty suffix;contains only ASCII bytes;contains no ASCII whitespace or control byte",
     identityDerivation: "SHA-256(domain || u32be(origin length) || origin bytes || u32be(full-ref length) || full-ref bytes)",
     identityDomain: "pkgre-repository-identity-v1\\0",
     origin: "credential-free operator-supplied canonical UTF-8 bytes; no implementation-specific normalization",
@@ -69,7 +71,7 @@ function assertPolicy(policy) {
 
 test("accepted-ref startup and reload decisions follow shared vectors", async () => {
   const fixture = parseCanonicalJson(await readFile(fixtureUrl, "utf8"), "accepted-ref fixture");
-  exactKeys(fixture, ["acceptedRecords", "policy", "reloadCases", "repository", "schema", "startupCases"], "fixture");
+  exactKeys(fixture, ["acceptedRecords", "fullRefCases", "policy", "reloadCases", "repository", "schema", "startupCases"], "fixture");
   assert.equal(fixture.schema, "pkgre-accepted-ref-transitions-v1");
   assertPolicy(fixture.policy);
   exactKeys(fixture.repository, ["bootstrapCommit", "canonicalOrigin", "fullRef", "identity"], "repository");
@@ -77,6 +79,26 @@ test("accepted-ref startup and reload decisions follow shared vectors", async ()
     fullRef: fixture.repository.fullRef,
     repositoryIdentity: fixture.repository.identity,
   };
+  const fullRefIds = new Set();
+  for (const record of fixture.fullRefCases) {
+    exactKeys(record, ["expected", "id", "value"], record.id);
+    assert.match(record.id, /^[a-z][a-z0-9-]*$/);
+    assert.ok(!fullRefIds.has(record.id), `duplicate full-ref case ${record.id}`);
+    fullRefIds.add(record.id);
+    const candidateConfig = { ...config, fullRef: record.value };
+    const candidateRecord = {
+      acceptedCommit: "1".repeat(40),
+      fullRef: record.value,
+      repositoryIdentity: config.repositoryIdentity,
+      schema: ACCEPTED_REF_SCHEMA,
+    };
+    if (record.expected === "valid") {
+      assert.doesNotThrow(() => canonicalAcceptedRefBytes(candidateRecord, candidateConfig), record.id);
+    } else {
+      assert.equal(record.expected, "invalid", record.id);
+      assert.throws(() => canonicalAcceptedRefBytes(candidateRecord, candidateConfig), /invalid/, record.id);
+    }
+  }
   assert.equal(
     deriveRepositoryIdentity(Buffer.from(fixture.repository.canonicalOrigin), Buffer.from(fixture.repository.fullRef)),
     fixture.repository.identity,

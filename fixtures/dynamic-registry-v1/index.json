@@ -42,9 +42,9 @@
       "sha256": "3705e8ed702fd7c2f84c08dc12151ab1f0f2c46f71ccfc62d17ee027614fdc79"
     },
     {
-      "bytes": 20082,
+      "bytes": 21168,
       "path": "state/accepted-ref-transitions.json",
-      "sha256": "47fafcb5dba34fa3c1e8012ae1a4c79234ddf946433ae932bd1051a278116446"
+      "sha256": "0dbf265023e558cd8c1a184c8f1b2ed40ef7b2991032bb806f19b549c3e8658b"
     }
   ],
   "indexExcludes": [

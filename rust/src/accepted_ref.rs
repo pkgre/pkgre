@@ -607,6 +607,7 @@ mod tests {
     #[serde(deny_unknown_fields, rename_all = "camelCase")]
     struct Fixture {
         accepted_records: Vec<NamedAcceptedRef>,
+        full_ref_cases: Vec<FullRefCase>,
         policy: serde_json::Value,
         reload_cases: Vec<ReloadCase>,
         repository: Repository,
@@ -633,6 +634,14 @@ mod tests {
                 schema: self.schema.clone(),
             }
         }
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    #[serde(deny_unknown_fields, rename_all = "camelCase")]
+    struct FullRefCase {
+        expected: String,
+        id: String,
+        value: String,
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -693,6 +702,7 @@ mod tests {
                     "durable-persistence",
                     "publication"
                 ],
+                "fullRefGrammar": "starts with refs/;has a nonempty suffix;contains only ASCII bytes;contains no ASCII whitespace or control byte",
                 "identityDerivation": "SHA-256(domain || u32be(origin length) || origin bytes || u32be(full-ref length) || full-ref bytes)",
                 "identityDomain": "pkgre-repository-identity-v1\\0",
                 "origin": "credential-free operator-supplied canonical UTF-8 bytes; no implementation-specific normalization",
@@ -705,6 +715,8 @@ mod tests {
         let mut canonical = serde_json::to_vec_pretty(&fixture).unwrap();
         canonical.push(b'\n');
         assert_eq!(canonical, FIXTURE);
+
+        assert_full_ref_cases(&fixture.full_ref_cases);
 
         let config = RepositoryConfig::new(
             fixture.repository.full_ref.clone(),
@@ -807,6 +819,21 @@ mod tests {
         let wrong = RepositoryConfig::new("refs/heads/main", "a".repeat(64)).unwrap();
         assert!(parse_accepted_ref(&bytes, &wrong).is_err());
         assert!(parse_accepted_ref(&[0xff], &config).is_err());
+    }
+
+    fn assert_full_ref_cases(cases: &[FullRefCase]) {
+        let mut ids = HashSet::new();
+        for case in cases {
+            assert!(valid_id(&case.id));
+            assert!(ids.insert(case.id.clone()));
+            assert!(matches!(case.expected.as_str(), "valid" | "invalid"));
+            assert_eq!(
+                valid_full_ref(&case.value),
+                case.expected == "valid",
+                "case {}",
+                case.id
+            );
+        }
     }
 
     fn valid_id(value: &str) -> bool {

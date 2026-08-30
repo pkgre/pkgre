@@ -18,9 +18,18 @@ function exactKeys(value, expected, label) {
   }
 }
 
+function validFullRef(value) {
+  if (typeof value !== "string" || !value.startsWith("refs/") || value.length === "refs/".length) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code > 0x7f || code <= 0x20 || code === 0x7f) return false;
+  }
+  return true;
+}
+
 function validateConfig(config) {
   exactKeys(config, ["fullRef", "repositoryIdentity"], "accepted-ref configuration");
-  if (typeof config.fullRef !== "string" || !config.fullRef.startsWith("refs/") || !IDENTITY.test(config.repositoryIdentity)) {
+  if (!validFullRef(config.fullRef) || !IDENTITY.test(config.repositoryIdentity)) {
     throw new Error("invalid accepted-ref configuration");
   }
 }
@@ -29,7 +38,7 @@ function validateRecord(record) {
   exactKeys(record, ["acceptedCommit", "fullRef", "repositoryIdentity", "schema"], "accepted-ref record");
   if (record.schema !== ACCEPTED_REF_SCHEMA) throw new Error("unsupported accepted-ref schema");
   if (!COMMIT.test(record.acceptedCommit)) throw new Error("accepted commit must be 40 lowercase hexadecimal characters");
-  if (typeof record.fullRef !== "string" || !record.fullRef.startsWith("refs/")) throw new Error("accepted full ref is invalid");
+  if (!validFullRef(record.fullRef)) throw new Error("accepted full ref is invalid");
   if (!IDENTITY.test(record.repositoryIdentity)) throw new Error("repository identity must be 64 lowercase hexadecimal characters");
 }
 

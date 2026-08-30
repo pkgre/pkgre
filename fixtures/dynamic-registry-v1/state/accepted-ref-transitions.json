@@ -8,6 +8,53 @@
       "schema": "pkgre-accepted-ref-v1"
     }
   ],
+  "fullRefCases": [
+    {
+      "expected": "valid",
+      "id": "heads-main",
+      "value": "refs/heads/main"
+    },
+    {
+      "expected": "valid",
+      "id": "tags-release",
+      "value": "refs/tags/release-v1"
+    },
+    {
+      "expected": "invalid",
+      "id": "prefix-only",
+      "value": "refs/"
+    },
+    {
+      "expected": "invalid",
+      "id": "newline",
+      "value": "refs/heads/main\nattacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "space",
+      "value": "refs/heads/main attacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "tab",
+      "value": "refs/heads/main\tattacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "nul",
+      "value": "refs/heads/main\u0000attacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "del",
+      "value": "refs/heads/mainattacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "non-ascii",
+      "value": "refs/heads/mäin"
+    }
+  ],
   "policy": {
     "acceptedRecordFields": [
       "acceptedCommit",
@@ -27,6 +74,7 @@
       "durable-persistence",
       "publication"
     ],
+    "fullRefGrammar": "starts with refs/;has a nonempty suffix;contains only ASCII bytes;contains no ASCII whitespace or control byte",
     "identityDerivation": "SHA-256(domain || u32be(origin length) || origin bytes || u32be(full-ref length) || full-ref bytes)",
     "identityDomain": "pkgre-repository-identity-v1\\0",
     "origin": "credential-free operator-supplied canonical UTF-8 bytes; no implementation-specific normalization",
