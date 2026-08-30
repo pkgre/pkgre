@@ -9,15 +9,20 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use semver::Version;
+use serde::Serialize;
 
 use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::download::{DownloadCatalog, DownloadSource};
-use crate::policy::validate_catalog;
+use crate::policy::{
+    validate_catalog, validate_package_name, validate_registry_alias, validate_sha256,
+};
 use crate::render::projected_bodies;
 use crate::schema::Catalog;
 
 /// Wire-independent schema of the typed route projection.
 pub const PROJECTION_SCHEMA_VERSION: u32 = 1;
+/// Canonical JSON schema of a projection manifest export.
+pub const PROJECTION_MANIFEST_SCHEMA: &str = "pkgre-rust-projection-manifest-v1";
 
 /// Explicit bounds for one immutable projection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -194,6 +199,33 @@ impl CatalogProjection {
     pub const fn retained_body_bytes(&self) -> u64 {
         self.retained_body_bytes
     }
+
+    /// Derives deterministic evidence for every route in this immutable snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a body length cannot be represented as `u64`.
+    pub fn manifest(&self) -> Result<ProjectionManifest> {
+        let routes = self
+            .routes()
+            .iter()
+            .map(ProjectedRoute::manifest)
+            .collect::<Result<_>>()?;
+        Ok(ProjectionManifest {
+            schema: PROJECTION_MANIFEST_SCHEMA.to_owned(),
+            projection_schema: PROJECTION_SCHEMA_VERSION,
+            routes,
+        })
+    }
+
+    /// Serializes the deterministic route manifest as pretty JSON plus one trailing newline.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if manifest construction or JSON serialization fails.
+    pub fn manifest_bytes(&self) -> Result<Vec<u8>> {
+        self.manifest()?.canonical_bytes()
+    }
 }
 
 /// One exact public path and its typed response source.
@@ -218,6 +250,13 @@ impl ProjectedRoute {
     #[must_use]
     pub const fn response(&self) -> &ProjectedResponse {
         &self.response
+    }
+
+    fn manifest(&self) -> Result<ProjectionManifestRoute> {
+        Ok(ProjectionManifestRoute {
+            path: self.path.clone(),
+            response: self.response.manifest()?,
+        })
     }
 }
 
@@ -313,10 +352,43 @@ impl ProjectedResponse {
             }
         }
     }
+
+    fn validate_route(&self, path: &str) -> Result<()> {
+        match &self.source {
+            ProjectedResponseSource::Inline { .. } => validate_inline_route(path),
+            ProjectedResponseSource::Archive { sha256, .. } => validate_archive_route(path, sha256),
+            ProjectedResponseSource::Redirect { destination } => {
+                validate_redirect_route(path, destination)
+            }
+        }
+    }
+
+    fn manifest(&self) -> Result<ProjectionManifestResponse> {
+        match &self.source {
+            ProjectedResponseSource::Inline { body } => Ok(ProjectionManifestResponse::Inline {
+                bytes: usize_as_u64(body.len(), "inline manifest body length")?,
+                sha256: sha256_bytes(body),
+            }),
+            ProjectedResponseSource::Archive { body, sha256 } => {
+                Ok(ProjectionManifestResponse::Archive {
+                    bytes: usize_as_u64(body.len(), "archive manifest body length")?,
+                    sha256: sha256_bytes(body),
+                    archive_sha256: sha256.clone(),
+                })
+            }
+            ProjectedResponseSource::Redirect { destination } => {
+                Ok(ProjectionManifestResponse::Redirect {
+                    destination: destination.clone(),
+                    location: destination.location(),
+                })
+            }
+        }
+    }
 }
 
 /// Closed archive redirect destinations; arbitrary catalog URLs are unrepresentable.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "kind")]
 pub enum RedirectDestination {
     /// Byte-for-byte crates.io archive for the route identity.
     CratesIo { name: String, version: Version },
@@ -340,6 +412,254 @@ impl RedirectDestination {
             }
         }
     }
+
+    fn validate(&self) -> Result<()> {
+        match self {
+            Self::CratesIo { name, .. } => {
+                validate_package_name(name).context("invalid crates.io redirect package name")
+            }
+            Self::FirstParty { sha256 } => {
+                validate_sha256(sha256).context("invalid first-party redirect archive SHA-256")
+            }
+        }
+    }
+}
+
+/// Deterministic evidence for every route in one immutable projection.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionManifest {
+    /// Manifest wire schema.
+    pub schema: String,
+    /// Typed projection schema represented by this manifest.
+    pub projection_schema: u32,
+    /// Every route in strict bytewise path order.
+    pub routes: Vec<ProjectionManifestRoute>,
+}
+
+impl ProjectionManifest {
+    /// Validates schema, canonical route ordering, hashes, and closed redirects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any manifest invariant is violated.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == PROJECTION_MANIFEST_SCHEMA,
+            "projection manifest schema must be {PROJECTION_MANIFEST_SCHEMA}"
+        );
+        ensure!(
+            self.projection_schema == PROJECTION_SCHEMA_VERSION,
+            "projection schema must be {PROJECTION_SCHEMA_VERSION}"
+        );
+        let mut previous_path: Option<&str> = None;
+        for route in &self.routes {
+            validate_projected_path(&route.path)
+                .with_context(|| format!("invalid projection manifest route {:?}", route.path))?;
+            if let Some(previous) = previous_path {
+                ensure!(
+                    previous.as_bytes() < route.path.as_bytes(),
+                    "projection manifest routes are not in strict bytewise order: {:?} then {:?}",
+                    previous,
+                    route.path
+                );
+            }
+            route.response.validate(&route.path)?;
+            previous_path = Some(&route.path);
+        }
+        Ok(())
+    }
+
+    /// Serializes canonical pretty JSON terminated by one newline.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation or serialization fails.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let mut bytes = serde_json::to_vec_pretty(self).context("serialize projection manifest")?;
+        bytes.push(b'\n');
+        Ok(bytes)
+    }
+}
+
+/// One exact projected route in a deterministic manifest.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProjectionManifestRoute {
+    /// Canonical root-relative public path.
+    pub path: String,
+    /// Typed response evidence derived from the immutable projection.
+    pub response: ProjectionManifestResponse,
+}
+
+/// Body or redirect evidence for one projected route.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    tag = "type"
+)]
+pub enum ProjectionManifestResponse {
+    /// Deterministic inline metadata bytes.
+    Inline {
+        /// Exact body length.
+        bytes: u64,
+        /// SHA-256 of the exact body bytes.
+        sha256: String,
+    },
+    /// Retained content-addressed archive bytes.
+    Archive {
+        /// Exact body length.
+        bytes: u64,
+        /// SHA-256 of the exact body bytes.
+        sha256: String,
+        /// Content-addressed descriptor retained by the projection.
+        archive_sha256: String,
+    },
+    /// Closed redirect and its exact resolved HTTP location.
+    Redirect {
+        /// Typed destination fields; arbitrary URLs are unrepresentable.
+        destination: RedirectDestination,
+        /// Exact output derived from `destination`.
+        location: String,
+    },
+}
+
+impl ProjectionManifestResponse {
+    fn validate(&self, path: &str) -> Result<()> {
+        match self {
+            Self::Inline { sha256, .. } => {
+                validate_sha256(sha256)
+                    .with_context(|| format!("invalid inline response SHA-256 at {path}"))?;
+                validate_inline_route(path)
+            }
+            Self::Archive {
+                sha256,
+                archive_sha256,
+                ..
+            } => {
+                validate_sha256(sha256)
+                    .with_context(|| format!("invalid archive body SHA-256 at {path}"))?;
+                validate_sha256(archive_sha256)
+                    .with_context(|| format!("invalid archive descriptor SHA-256 at {path}"))?;
+                ensure!(
+                    sha256 == archive_sha256,
+                    "archive body and descriptor SHA-256 differ at {path}"
+                );
+                validate_archive_route(path, archive_sha256)
+            }
+            Self::Redirect {
+                destination,
+                location,
+            } => {
+                validate_redirect_route(path, destination)?;
+                ensure!(
+                    location == &destination.location(),
+                    "redirect location does not match its typed destination at {path}"
+                );
+                Ok(())
+            }
+        }
+    }
+}
+
+fn validate_inline_route(path: &str) -> Result<()> {
+    ensure!(
+        !is_reserved_route_namespace(path),
+        "inline response uses a reserved route namespace at {path}"
+    );
+    Ok(())
+}
+
+fn validate_archive_route(path: &str, archive_sha256: &str) -> Result<()> {
+    validate_sha256(archive_sha256)
+        .with_context(|| format!("invalid archive descriptor SHA-256 at {path}"))?;
+    ensure!(
+        path == format!("/crates/{archive_sha256}.crate"),
+        "archive route path does not match its descriptor SHA-256 at {path}"
+    );
+    Ok(())
+}
+
+fn validate_redirect_route(path: &str, destination: &RedirectDestination) -> Result<()> {
+    let route = parse_rust_download_path(path)
+        .with_context(|| format!("invalid redirect route at {path}"))?;
+    destination
+        .validate()
+        .with_context(|| format!("invalid redirect destination at {path}"))?;
+    match destination {
+        RedirectDestination::CratesIo { name, version } => {
+            ensure!(
+                name == route.name,
+                "crates.io redirect package name does not match route at {path}"
+            );
+            ensure!(
+                version == &route.version,
+                "crates.io redirect version does not match route at {path}"
+            );
+        }
+        RedirectDestination::FirstParty { sha256 } => ensure!(
+            sha256 == route.sha256,
+            "first-party redirect SHA-256 does not match route at {path}"
+        ),
+    }
+    Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RustDownloadRoute<'a> {
+    name: &'a str,
+    version: Version,
+    sha256: &'a str,
+}
+
+fn parse_rust_download_path(path: &str) -> Result<RustDownloadRoute<'_>> {
+    let segments = path.split('/').collect::<Vec<_>>();
+    let ["", "v1", registry, name, version, sha256] = segments.as_slice() else {
+        anyhow::bail!(
+            "Rust download route must be /v1/{{registry}}/{{name}}/{{version}}/{{sha256}}"
+        );
+    };
+    validate_registry_alias(registry).context("invalid Rust download route registry")?;
+    validate_package_name(name).context("invalid Rust download route package name")?;
+    let parsed_version = Version::parse(version).context("invalid Rust download route version")?;
+    ensure!(
+        parsed_version.to_string() == *version,
+        "Rust download route version is not canonical SemVer"
+    );
+    validate_sha256(sha256).context("invalid Rust download route SHA-256")?;
+    Ok(RustDownloadRoute {
+        name,
+        version: parsed_version,
+        sha256,
+    })
+}
+
+fn is_reserved_route_namespace(path: &str) -> bool {
+    path == "/v1" || path.starts_with("/v1/") || path == "/crates" || path.starts_with("/crates/")
+}
+
+fn validate_projected_path(path: &str) -> Result<()> {
+    ensure!(path.is_ascii(), "path is not ASCII");
+    ensure!(path.starts_with('/'), "path is not root-relative");
+    ensure!(path != "/", "root path is not a projected route");
+    ensure!(!path.ends_with('/'), "path has a trailing slash");
+    ensure!(!path.contains("//"), "path has an empty segment");
+    ensure!(
+        !path.contains(['?', '#', '\\', '\0']),
+        "path contains a query, fragment, backslash, or NUL"
+    );
+    ensure!(
+        !path.bytes().any(|byte| byte.is_ascii_control()),
+        "path contains an ASCII control character"
+    );
+    ensure!(
+        path[1..]
+            .split('/')
+            .all(|segment| segment != "." && segment != ".."),
+        "path contains a dot segment"
+    );
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -410,11 +730,12 @@ fn insert_route(
     limits: &ProjectionLimits,
     route: ProjectedRoute,
 ) -> Result<()> {
-    ensure!(
-        route.path.starts_with('/') && !route.path.contains(['?', '#', '\\', '\0']),
-        "projected route is not a canonical root-relative path: {:?}",
-        route.path
-    );
+    validate_projected_path(&route.path)
+        .with_context(|| format!("invalid projected route {:?}", route.path))?;
+    route
+        .response
+        .validate_route(&route.path)
+        .with_context(|| format!("invalid projected response at {:?}", route.path))?;
     match routes.entry(route.path.clone()) {
         std::collections::btree_map::Entry::Vacant(entry) => {
             accounting.add_route(limits)?;
@@ -672,6 +993,344 @@ mod tests {
             first_party.location(),
             format!("https://rust.pkg.re/crates/{sha256}.crate")
         );
+    }
+
+    const METADATA_SHA256: &str =
+        "45447b7afbd5e544f7d0f1df0fccd26014d9850130abd3f020b89ff96b82079f";
+    const ARCHIVE_SHA256: &str = "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3";
+
+    fn inline_manifest_route(path: &str) -> ProjectionManifestRoute {
+        ProjectionManifestRoute {
+            path: path.to_owned(),
+            response: ProjectionManifestResponse::Inline {
+                bytes: 8,
+                sha256: METADATA_SHA256.to_owned(),
+            },
+        }
+    }
+
+    fn test_manifest(routes: Vec<ProjectionManifestRoute>) -> ProjectionManifest {
+        ProjectionManifest {
+            schema: PROJECTION_MANIFEST_SCHEMA.to_owned(),
+            projection_schema: PROJECTION_SCHEMA_VERSION,
+            routes,
+        }
+    }
+
+    fn projected_response_is_valid(path: &str, response: ProjectedResponse) -> bool {
+        let mut routes = BTreeMap::new();
+        let mut accounting = ProjectionAccounting::default();
+        insert_route(
+            &mut routes,
+            &mut accounting,
+            &ProjectionLimits::PRODUCTION,
+            ProjectedRoute::new(path.to_owned(), response),
+        )
+        .is_ok()
+    }
+
+    #[test]
+    fn projected_paths_reject_noncanonical_forms() {
+        let invalid = [
+            "relative",
+            "/",
+            "/a/",
+            "/a//b",
+            "/.",
+            "/..",
+            "/a/./b",
+            "/a/../b",
+            "/non-ascii-é",
+            "/a?query",
+            "/a#fragment",
+            "/a\\b",
+            "/a\0b",
+            "/a\nb",
+            "/a\rb",
+            "/a\tb",
+            "/a\u{7f}b",
+        ];
+        for path in invalid {
+            assert!(
+                validate_projected_path(path).is_err(),
+                "invalid path was accepted: {path:?}"
+            );
+        }
+
+        for path in ["/a", "/a/b", "/v10", "/crates-index", "/a/%2e"] {
+            validate_projected_path(path).unwrap();
+        }
+        assert!(!projected_response_is_valid(
+            "/a/../b",
+            ProjectedResponse::inline(Vec::new())
+        ));
+    }
+
+    #[test]
+    fn response_kinds_are_bound_to_closed_route_namespaces() {
+        for path in ["/metadata", "/v10", "/crates-index"] {
+            assert!(projected_response_is_valid(
+                path,
+                ProjectedResponse::inline(Vec::new())
+            ));
+        }
+        for path in ["/v1", "/v1/main", "/crates", "/crates/anything"] {
+            assert!(!projected_response_is_valid(
+                path,
+                ProjectedResponse::inline(Vec::new())
+            ));
+        }
+
+        let archive_body = Arc::new(b"archive".to_vec());
+        assert!(projected_response_is_valid(
+            &format!("/crates/{ARCHIVE_SHA256}.crate"),
+            ProjectedResponse::archive(Arc::clone(&archive_body), ARCHIVE_SHA256.to_owned())
+        ));
+        for path in [
+            "/metadata".to_owned(),
+            format!("/crates/{METADATA_SHA256}.crate"),
+            format!("/crates/{ARCHIVE_SHA256}.crate/extra"),
+        ] {
+            assert!(!projected_response_is_valid(
+                &path,
+                ProjectedResponse::archive(Arc::clone(&archive_body), ARCHIVE_SHA256.to_owned())
+            ));
+        }
+
+        let crates_io = RedirectDestination::CratesIo {
+            name: "crate_name-2".to_owned(),
+            version: Version::parse("1.2.3-alpha.1+build.5").unwrap(),
+        };
+        assert!(projected_response_is_valid(
+            &format!("/v1/main/crate_name-2/1.2.3-alpha.1+build.5/{METADATA_SHA256}"),
+            ProjectedResponse::redirect(crates_io.clone())
+        ));
+        assert!(!projected_response_is_valid(
+            "/metadata",
+            ProjectedResponse::redirect(crates_io)
+        ));
+
+        let first_party = RedirectDestination::FirstParty {
+            sha256: ARCHIVE_SHA256.to_owned(),
+        };
+        assert!(projected_response_is_valid(
+            &format!("/v1/main/gitcrate/2.0.0/{ARCHIVE_SHA256}"),
+            ProjectedResponse::redirect(first_party.clone())
+        ));
+        assert!(!projected_response_is_valid(
+            &format!("/crates/{ARCHIVE_SHA256}.crate"),
+            ProjectedResponse::redirect(first_party)
+        ));
+    }
+
+    #[test]
+    fn redirect_routes_require_exact_canonical_identity() {
+        let crates_io = RedirectDestination::CratesIo {
+            name: "serde".to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+        };
+        let location = crates_io.location();
+        let response = || ProjectionManifestResponse::Redirect {
+            destination: crates_io.clone(),
+            location: location.clone(),
+        };
+        assert!(
+            response()
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .is_ok()
+        );
+        for path in [
+            format!("/v1/Main/serde/1.0.0/{METADATA_SHA256}"),
+            format!("/v1/main/bad%name/1.0.0/{METADATA_SHA256}"),
+            format!("/v1/main/serde/01.0.0/{METADATA_SHA256}"),
+            "/v1/main/serde/1.0.0/ABCDEF".to_owned(),
+            format!("/v1/main/serde/1.0.0/{METADATA_SHA256}/extra"),
+            "/v1/main/serde/1.0.0".to_owned(),
+        ] {
+            assert!(
+                response().validate(&path).is_err(),
+                "invalid redirect route was accepted: {path}"
+            );
+        }
+
+        let wrong_name = ProjectionManifestResponse::Redirect {
+            destination: RedirectDestination::CratesIo {
+                name: "other".to_owned(),
+                version: Version::parse("1.0.0").unwrap(),
+            },
+            location: "https://static.crates.io/crates/other/1.0.0/download".to_owned(),
+        };
+        assert!(
+            wrong_name
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .is_err()
+        );
+        let wrong_version = ProjectionManifestResponse::Redirect {
+            destination: RedirectDestination::CratesIo {
+                name: "serde".to_owned(),
+                version: Version::parse("2.0.0").unwrap(),
+            },
+            location: "https://static.crates.io/crates/serde/2.0.0/download".to_owned(),
+        };
+        assert!(
+            wrong_version
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .is_err()
+        );
+
+        let wrong_sha = ProjectionManifestResponse::Redirect {
+            destination: RedirectDestination::FirstParty {
+                sha256: ARCHIVE_SHA256.to_owned(),
+            },
+            location: format!("https://rust.pkg.re/crates/{ARCHIVE_SHA256}.crate"),
+        };
+        assert!(
+            wrong_sha
+                .validate(&format!("/v1/main/gitcrate/2.0.0/{METADATA_SHA256}"))
+                .is_err()
+        );
+
+        let wrong_location = ProjectionManifestResponse::Redirect {
+            destination: crates_io,
+            location: "https://example.invalid/archive".to_owned(),
+        };
+        assert!(
+            wrong_location
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_bad_hashes_ordering_and_duplicates() {
+        let mut bad_inline = inline_manifest_route("/a");
+        bad_inline.response = ProjectionManifestResponse::Inline {
+            bytes: 0,
+            sha256: "ABCDEF".to_owned(),
+        };
+        assert!(test_manifest(vec![bad_inline]).validate().is_err());
+
+        let bad_archive = ProjectionManifestRoute {
+            path: format!("/crates/{ARCHIVE_SHA256}.crate"),
+            response: ProjectionManifestResponse::Archive {
+                bytes: 7,
+                sha256: METADATA_SHA256.to_owned(),
+                archive_sha256: ARCHIVE_SHA256.to_owned(),
+            },
+        };
+        assert!(test_manifest(vec![bad_archive]).validate().is_err());
+
+        assert!(
+            test_manifest(vec![
+                inline_manifest_route("/b"),
+                inline_manifest_route("/a")
+            ])
+            .validate()
+            .is_err()
+        );
+        assert!(
+            test_manifest(vec![
+                inline_manifest_route("/a"),
+                inline_manifest_route("/a")
+            ])
+            .validate()
+            .is_err()
+        );
+        test_manifest(vec![
+            inline_manifest_route("/A"),
+            inline_manifest_route("/a"),
+        ])
+        .validate()
+        .unwrap();
+    }
+
+    #[test]
+    fn projection_manifest_is_exact_and_repeatable() {
+        let crates_io = RedirectDestination::CratesIo {
+            name: "crate_name-2".to_owned(),
+            version: Version::parse("1.2.3-alpha.1+build.5").unwrap(),
+        };
+        let first_party = RedirectDestination::FirstParty {
+            sha256: ARCHIVE_SHA256.to_owned(),
+        };
+        let projection = CatalogProjection {
+            routes: Arc::new(vec![
+                ProjectedRoute::new(
+                    "/2/cc".to_owned(),
+                    ProjectedResponse::inline(b"metadata".to_vec()),
+                ),
+                ProjectedRoute::new(
+                    format!("/crates/{ARCHIVE_SHA256}.crate"),
+                    ProjectedResponse::archive(
+                        Arc::new(b"archive".to_vec()),
+                        ARCHIVE_SHA256.to_owned(),
+                    ),
+                ),
+                ProjectedRoute::new(
+                    format!("/v1/main/crate_name-2/1.2.3-alpha.1+build.5/{METADATA_SHA256}"),
+                    ProjectedResponse::redirect(crates_io),
+                ),
+                ProjectedRoute::new(
+                    format!("/v1/main/gitcrate/2.0.0/{ARCHIVE_SHA256}"),
+                    ProjectedResponse::redirect(first_party),
+                ),
+            ]),
+            retained_body_bytes: 15,
+        };
+
+        let first = projection.manifest_bytes().unwrap();
+        let second = projection.manifest_bytes().unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.last(), Some(&b'\n'));
+        assert_ne!(first.get(first.len() - 2), Some(&b'\n'));
+        let expected = r#"{
+  "schema": "pkgre-rust-projection-manifest-v1",
+  "projectionSchema": 1,
+  "routes": [
+    {
+      "path": "/2/cc",
+      "response": {
+        "type": "inline",
+        "bytes": 8,
+        "sha256": "45447b7afbd5e544f7d0f1df0fccd26014d9850130abd3f020b89ff96b82079f"
+      }
+    },
+    {
+      "path": "/crates/0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3.crate",
+      "response": {
+        "type": "archive",
+        "bytes": 7,
+        "sha256": "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3",
+        "archiveSha256": "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3"
+      }
+    },
+    {
+      "path": "/v1/main/crate_name-2/1.2.3-alpha.1+build.5/45447b7afbd5e544f7d0f1df0fccd26014d9850130abd3f020b89ff96b82079f",
+      "response": {
+        "type": "redirect",
+        "destination": {
+          "kind": "crates-io",
+          "name": "crate_name-2",
+          "version": "1.2.3-alpha.1+build.5"
+        },
+        "location": "https://static.crates.io/crates/crate_name-2/1.2.3-alpha.1+build.5/download"
+      }
+    },
+    {
+      "path": "/v1/main/gitcrate/2.0.0/0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3",
+      "response": {
+        "type": "redirect",
+        "destination": {
+          "kind": "first-party",
+          "sha256": "0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3"
+        },
+        "location": "https://rust.pkg.re/crates/0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3.crate"
+      }
+    }
+  ]
+}
+"#;
+        assert_eq!(String::from_utf8(first).unwrap(), expected);
     }
 
     static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
