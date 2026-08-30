@@ -180,6 +180,25 @@
     ],
     "poisonedOverrideProbe": "each harness must prove a disallowed inherited override is detected or removed before client invocation"
   },
+  "lifecycleCases": [
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "field": "scripts.preinstall",
+        "value": "touch pkgre-lifecycle-sentinel"
+      },
+      "expected": {
+        "admission": "reject",
+        "hostileClientFixture": "if admission is deliberately bypassed, disable lifecycle scripts and require zero sentinel execution",
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-lifecycle-script"
+    }
+  ],
   "policy": {
     "approvedMetadataAuthorities": [
       "sparse+https://rust.pkg.re/",
@@ -411,27 +430,6 @@
       },
       "id": "js-jsr-source",
       "sourceKind": "jsr"
-    },
-    {
-      "clients": [
-        "npm",
-        "bun",
-        "deno"
-      ],
-      "declaration": {
-        "field": "scripts.preinstall",
-        "value": "touch pkgre-lifecycle-sentinel"
-      },
-      "ecosystem": "javascript",
-      "expected": {
-        "clientInvocation": "forbidden",
-        "decision": "reject-before-client",
-        "foreignNetworkRequests": 0,
-        "gitProcesses": 0,
-        "lifecycleSentinelCreated": false
-      },
-      "id": "js-lifecycle-script",
-      "sourceKind": "lifecycle-script"
     },
     {
       "clients": [
