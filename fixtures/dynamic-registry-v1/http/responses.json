@@ -1,0 +1,315 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Length": "0"
+        },
+        "status": 400
+      },
+      "id": "invalid-target-get",
+      "method": "GET",
+      "targetAscii": "/fixture-json?query=1"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Length": "0"
+        },
+        "status": 400
+      },
+      "id": "invalid-target-before-method",
+      "method": "POST",
+      "targetAscii": "/fixture-json?query=1"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Allow": "GET, HEAD",
+          "Cache-Control": "no-store",
+          "Content-Length": "0"
+        },
+        "status": 405
+      },
+      "id": "unsupported-method-known-route",
+      "method": "POST",
+      "targetAscii": "/fixture-json"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Allow": "GET, HEAD",
+          "Cache-Control": "no-store",
+          "Content-Length": "0"
+        },
+        "status": 405
+      },
+      "id": "unsupported-method-before-lookup",
+      "method": "POST",
+      "targetAscii": "/absent"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Length": "0"
+        },
+        "status": 404
+      },
+      "id": "unknown-canonical-route",
+      "method": "GET",
+      "targetAscii": "/absent"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Length": "0"
+        },
+        "status": 404
+      },
+      "id": "unknown-canonical-route-head",
+      "method": "HEAD",
+      "targetAscii": "/absent"
+    },
+    {
+      "expected": {
+        "bodyHex": "7b2266697874757265223a747275657d0a",
+        "headers": {
+          "Cache-Control": "public, max-age=60, must-revalidate",
+          "Content-Length": "17",
+          "Content-Type": "application/json; charset=utf-8",
+          "ETag": "\"sha256:218589323cbe80b7ed077e3ee36f1663e7cb5f8f4e4ad02c938ad8a5c2c5a6b9\""
+        },
+        "status": 200
+      },
+      "id": "metadata-json-get",
+      "method": "GET",
+      "targetAscii": "/fixture-json"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "public, max-age=60, must-revalidate",
+          "Content-Length": "17",
+          "Content-Type": "application/json; charset=utf-8",
+          "ETag": "\"sha256:218589323cbe80b7ed077e3ee36f1663e7cb5f8f4e4ad02c938ad8a5c2c5a6b9\""
+        },
+        "status": 200
+      },
+      "id": "metadata-json-head",
+      "method": "HEAD",
+      "targetAscii": "/fixture-json"
+    },
+    {
+      "expected": {
+        "bodyHex": "7b226e616d65223a2266697874757265222c2276657273223a22312e302e30227d0a",
+        "headers": {
+          "Cache-Control": "public, max-age=60, must-revalidate",
+          "Content-Length": "34",
+          "Content-Type": "text/plain; charset=utf-8",
+          "ETag": "\"sha256:eb0a9a418b5d14153c9a5284cf09bc23cd34b2f08ac4faea74260c75e693aa39\""
+        },
+        "status": 200
+      },
+      "id": "metadata-text-get",
+      "method": "GET",
+      "targetAscii": "/fixture-text"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "public, max-age=60, must-revalidate",
+          "Content-Length": "34",
+          "Content-Type": "text/plain; charset=utf-8",
+          "ETag": "\"sha256:eb0a9a418b5d14153c9a5284cf09bc23cd34b2f08ac4faea74260c75e693aa39\""
+        },
+        "status": 200
+      },
+      "id": "metadata-text-head",
+      "method": "HEAD",
+      "targetAscii": "/fixture-text"
+    },
+    {
+      "expected": {
+        "bodyHex": "1f8b0800000000000003",
+        "headers": {
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Length": "10",
+          "Content-Type": "application/octet-stream",
+          "ETag": "\"sha256:9d1011ce9a9221ec2cbde2cc63ce50401fda24a6ffbf96a97b55552cc9e035e3\""
+        },
+        "status": 200
+      },
+      "id": "archive-get",
+      "method": "GET",
+      "targetAscii": "/fixture-archive"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Length": "10",
+          "Content-Type": "application/octet-stream",
+          "ETag": "\"sha256:9d1011ce9a9221ec2cbde2cc63ce50401fda24a6ffbf96a97b55552cc9e035e3\""
+        },
+        "status": 200
+      },
+      "id": "archive-head",
+      "method": "HEAD",
+      "targetAscii": "/fixture-archive"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Length": "0",
+          "Location": "https://static.crates.io/crates/fixture/1.0.0/download"
+        },
+        "status": 302
+      },
+      "id": "redirect-get",
+      "method": "GET",
+      "targetAscii": "/fixture-redirect"
+    },
+    {
+      "expected": {
+        "bodyHex": "",
+        "headers": {
+          "Cache-Control": "no-store",
+          "Content-Length": "0",
+          "Location": "https://static.crates.io/crates/fixture/1.0.0/download"
+        },
+        "status": 302
+      },
+      "id": "redirect-head",
+      "method": "HEAD",
+      "targetAscii": "/fixture-redirect"
+    },
+    {
+      "expected": {
+        "bodyHex": "1f8b0800000000000003",
+        "headers": {
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Length": "10",
+          "Content-Type": "application/octet-stream",
+          "ETag": "\"sha256:9d1011ce9a9221ec2cbde2cc63ce50401fda24a6ffbf96a97b55552cc9e035e3\""
+        },
+        "status": 200
+      },
+      "id": "archive-range-ignored",
+      "method": "GET",
+      "requestHeaders": {
+        "Range": "bytes=0-0"
+      },
+      "targetAscii": "/fixture-archive"
+    },
+    {
+      "expected": {
+        "bodyHex": "7b2266697874757265223a747275657d0a",
+        "headers": {
+          "Cache-Control": "public, max-age=60, must-revalidate",
+          "Content-Length": "17",
+          "Content-Type": "application/json; charset=utf-8",
+          "ETag": "\"sha256:218589323cbe80b7ed077e3ee36f1663e7cb5f8f4e4ad02c938ad8a5c2c5a6b9\""
+        },
+        "status": 200
+      },
+      "id": "metadata-compression-ignored",
+      "method": "GET",
+      "requestHeaders": {
+        "Accept-Encoding": "gzip, br"
+      },
+      "targetAscii": "/fixture-json"
+    }
+  ],
+  "policy": {
+    "allowedMethods": [
+      "GET",
+      "HEAD"
+    ],
+    "applicationErrorBody": "empty",
+    "applicationErrorCacheControl": "no-store",
+    "compression": "no content coding or Vary transformation",
+    "entityTag": "strong quoted lowercase SHA-256 of exact body bytes with sha256: prefix",
+    "head": "same status and application-controlled headers as GET with no response body",
+    "methodRejectionAllow": "GET, HEAD",
+    "precedence": [
+      "raw-target-validation",
+      "method-validation",
+      "exact-route-lookup"
+    ],
+    "range": "ignored; return the complete representation with status 200",
+    "representationHeaders": {
+      "archive": {
+        "cacheControl": "public, max-age=31536000, immutable",
+        "contentType": "application/octet-stream"
+      },
+      "metadata-json": {
+        "cacheControl": "public, max-age=60, must-revalidate",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "metadata-text": {
+        "cacheControl": "public, max-age=60, must-revalidate",
+        "contentType": "text/plain; charset=utf-8"
+      },
+      "redirect": {
+        "cacheControl": "no-store",
+        "contentType": null
+      }
+    },
+    "transportExcludedHeaders": [
+      "Connection",
+      "Date",
+      "Server"
+    ]
+  },
+  "routes": [
+    {
+      "path": "/fixture-archive",
+      "response": {
+        "bodyHex": "1f8b0800000000000003",
+        "representation": "archive",
+        "sha256": "9d1011ce9a9221ec2cbde2cc63ce50401fda24a6ffbf96a97b55552cc9e035e3",
+        "type": "archive"
+      }
+    },
+    {
+      "path": "/fixture-json",
+      "response": {
+        "bodyHex": "7b2266697874757265223a747275657d0a",
+        "representation": "metadata-json",
+        "type": "inline"
+      }
+    },
+    {
+      "path": "/fixture-redirect",
+      "response": {
+        "location": "https://static.crates.io/crates/fixture/1.0.0/download",
+        "representation": "redirect",
+        "type": "redirect"
+      }
+    },
+    {
+      "path": "/fixture-text",
+      "response": {
+        "bodyHex": "7b226e616d65223a2266697874757265222c2276657273223a22312e302e30227d0a",
+        "representation": "metadata-text",
+        "type": "inline"
+      }
+    }
+  ],
+  "schema": "pkgre-http-responses-v1"
+}
