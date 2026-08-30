@@ -15,6 +15,7 @@ Purpose:shared,versioned,implementation-independent observables for native Rust+
 
 ## Rules
 
+- `index.json` inventories every regular fixture-bundle file except itself;Git binds the index bytes,avoiding a recursive self-digest.
 - JSON encoding:UTF-8;canonical pretty JSON;object keys bytewise sorted;2-space indent;one trailing LF;no duplicate keys.
 - Fixture schemas are closed:unknown fields,unknown enum values,duplicate case IDs,and missing referenced IDs are errors.
 - Raw target vectors are bytes,not decoded URLs. `targetAscii` and `targetHex` are mutually exclusive. No framework-normalized path may substitute for the trusted raw target.
