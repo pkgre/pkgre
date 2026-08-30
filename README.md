@@ -130,6 +130,7 @@ audit=false
 fund=false
 ignore-scripts=true
 replace-registry-host=always
+save-exact=true
 strict-ssl=true
 update-notifier=false
 ```
