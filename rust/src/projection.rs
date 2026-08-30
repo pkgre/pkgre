@@ -313,7 +313,7 @@ enum ProjectedResponseSource {
 }
 
 impl ProjectedResponse {
-    fn inline(body: Vec<u8>, representation: ProjectedRepresentation) -> Self {
+    pub(crate) fn inline(body: Vec<u8>, representation: ProjectedRepresentation) -> Self {
         debug_assert!(matches!(
             representation,
             ProjectedRepresentation::MetadataJson | ProjectedRepresentation::MetadataText
@@ -326,13 +326,13 @@ impl ProjectedResponse {
         }
     }
 
-    fn archive(body: Arc<Vec<u8>>, sha256: String) -> Self {
+    pub(crate) fn archive(body: Arc<Vec<u8>>, sha256: String) -> Self {
         Self {
             source: ProjectedResponseSource::Archive { body, sha256 },
         }
     }
 
-    fn redirect(destination: RedirectDestination) -> Self {
+    pub(crate) fn redirect(destination: RedirectDestination) -> Self {
         Self {
             source: ProjectedResponseSource::Redirect { destination },
         }

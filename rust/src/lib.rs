@@ -3,6 +3,7 @@
 pub mod artifact;
 pub mod category;
 pub mod download;
+pub mod http_response;
 pub mod import;
 pub mod index;
 pub mod lock;
