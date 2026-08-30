@@ -324,6 +324,24 @@ pub enum RedirectDestination {
     FirstParty { sha256: String },
 }
 
+impl RedirectDestination {
+    /// Resolves the closed typed destination to its exact HTTP `Location` value.
+    ///
+    /// Catalog-provided URLs are deliberately not accepted: the result is derived only from the
+    /// validated crate identity or content hash stored in this descriptor.
+    #[must_use]
+    pub fn location(&self) -> String {
+        match self {
+            Self::CratesIo { name, version } => {
+                format!("https://static.crates.io/crates/{name}/{version}/download")
+            }
+            Self::FirstParty { sha256 } => {
+                format!("https://rust.pkg.re/crates/{sha256}.crate")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ProjectionAccounting {
     routes: u64,
@@ -633,6 +651,27 @@ mod tests {
         ));
         assert_eq!(cloned.routes[0].path(), "/body");
         assert_eq!(cloned.routes[0].response().body().unwrap(), b"immutable");
+    }
+
+    #[test]
+    fn redirect_locations_are_derived_from_typed_fields() {
+        let crates_io = RedirectDestination::CratesIo {
+            name: "crate_name-2".to_owned(),
+            version: Version::parse("1.2.3-alpha.1+build.5").unwrap(),
+        };
+        assert_eq!(
+            crates_io.location(),
+            "https://static.crates.io/crates/crate_name-2/1.2.3-alpha.1+build.5/download"
+        );
+
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let first_party = RedirectDestination::FirstParty {
+            sha256: sha256.to_owned(),
+        };
+        assert_eq!(
+            first_party.location(),
+            format!("https://rust.pkg.re/crates/{sha256}.crate")
+        );
     }
 
     static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
