@@ -1314,6 +1314,29 @@
       "id": "wrong-host"
     },
     {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        },
+        {
+          "nameAscii": "Authorization",
+          "valueAscii": "Bearer secret"
+        }
+      ],
+      "id": "extra-backend-field-rejected"
+    },
+    {
       "backendTargetAscii": "/normalized",
       "configuredAuthority": "rust.pkg.re",
       "expected": {
