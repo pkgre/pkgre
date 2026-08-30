@@ -146,6 +146,19 @@ impl ArtifactMap {
         )?;
         verify_object_names(&catalog.root.join("objects/rows"), "json", &retained_rows)?;
 
+        for sha256 in retained_archives {
+            let path = catalog
+                .root
+                .join("objects/crates")
+                .join(format!("{sha256}.crate"));
+            let actual = sha256_file(&path)?;
+            ensure!(
+                actual == *sha256,
+                "archive hash mismatch for {}: expected {sha256}, got {actual}",
+                path.display()
+            );
+        }
+
         for approval in &catalog.approvals {
             let key = (
                 approval.registry.clone(),
@@ -158,11 +171,7 @@ impl ArtifactMap {
                     approval.name, approval.version, approval.registry
                 )
             })?;
-            verify_artifact(
-                approval,
-                artifact,
-                retained_archives.contains(&approval.archive_sha256),
-            )?;
+            verify_artifact(approval, artifact)?;
         }
         Ok(())
     }
@@ -188,17 +197,7 @@ fn legacy_archive_hashes(catalog: &Catalog) -> BTreeSet<String> {
         .collect()
 }
 
-fn verify_artifact(approval: &Approval, artifact: &Artifact, archive_retained: bool) -> Result<()> {
-    if archive_retained {
-        let archive_hash = sha256_file(&artifact.archive)?;
-        ensure!(
-            archive_hash == approval.archive_sha256,
-            "archive hash mismatch for {} {}: expected {}, got {archive_hash}",
-            approval.name,
-            approval.version,
-            approval.archive_sha256
-        );
-    }
+fn verify_artifact(approval: &Approval, artifact: &Artifact) -> Result<()> {
     let record_bytes = fs::read(&artifact.index_record)
         .with_context(|| format!("read source index row {}", artifact.index_record.display()))?;
     let record_hash = sha256_bytes(&record_bytes);

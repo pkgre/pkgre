@@ -12,7 +12,9 @@ use pkgre_rust::download::{
     router_download_template,
 };
 use pkgre_rust::index::{IndexRecord, index_path};
-use pkgre_rust::projection::{CatalogProjection, ProjectedResponse};
+use pkgre_rust::projection::{
+    CatalogProjection, ProjectedResponseKind, ProjectionLimits, RedirectDestination,
+};
 use pkgre_rust::render;
 use pkgre_rust::schema::{
     Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome, PackageState,
@@ -84,6 +86,7 @@ fn renderer_routes_mixed_sources_at_root_and_layouts_identically() {
 
     let projection =
         project_and_assert_static_equivalence(&external_catalog, &external_objects, &external_site);
+    assert_shared_archive_projection_limits(&external_catalog, &external_objects, published);
 
     fs::write(external_site.join("CNAME"), "tampered.example\n").unwrap();
     assert!(render::verify(&external_catalog, &external_objects, &external_site).is_err());
@@ -96,15 +99,62 @@ fn renderer_routes_mixed_sources_at_root_and_layouts_identically() {
         b"changed after projection",
     )
     .unwrap();
-    let retained_body = projection
+    let retained_response = projection
         .routes()
         .iter()
-        .find_map(|route| match &route.response {
-            ProjectedResponse::Archive { body, .. } if route.path == retained_route => Some(body),
-            _ => None,
+        .find(|route| route.path() == retained_route)
+        .unwrap()
+        .response();
+    assert_eq!(retained_response.kind(), ProjectedResponseKind::Archive);
+    assert_eq!(retained_response.body().unwrap(), published.archive_bytes);
+}
+
+fn assert_shared_archive_projection_limits(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    published: &TestArtifact,
+) {
+    let shared_archive_bytes = u64::try_from(published.archive_bytes.len()).unwrap();
+    let projection = CatalogProjection::from_catalog_with_limits(
+        catalog,
+        artifacts,
+        ProjectionLimits {
+            max_archives: 1,
+            max_archive_body_bytes: shared_archive_bytes,
+            max_archive_bytes: shared_archive_bytes,
+            ..ProjectionLimits::PRODUCTION
+        },
+    )
+    .unwrap();
+    let archive_routes = projection
+        .routes()
+        .iter()
+        .filter(|route| route.response().kind() == ProjectedResponseKind::Archive)
+        .count();
+    let shared_redirects = projection
+        .routes()
+        .iter()
+        .filter(|route| {
+            matches!(
+                route.response().redirect_destination(),
+                Some(RedirectDestination::FirstParty { sha256 })
+                    if sha256 == &published.archive_hash
+            )
         })
-        .unwrap();
-    assert_eq!(retained_body, &published.archive_bytes);
+        .count();
+    assert_eq!(archive_routes, 1);
+    assert_eq!(shared_redirects, 2);
+
+    let error = CatalogProjection::from_catalog_with_limits(
+        catalog,
+        artifacts,
+        ProjectionLimits {
+            max_archive_body_bytes: shared_archive_bytes - 1,
+            ..ProjectionLimits::PRODUCTION
+        },
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("exceeds configured limit"));
 }
 
 fn project_and_assert_static_equivalence(
@@ -117,31 +167,34 @@ fn project_and_assert_static_equivalence(
         projection
             .routes()
             .windows(2)
-            .all(|routes| routes[0].path < routes[1].path)
+            .all(|routes| routes[0].path() < routes[1].path())
     );
     let expected_redirects = DownloadCatalog::from_catalog(catalog).routes.len();
     let mut redirects = 0;
     for route in projection.routes() {
-        match &route.response {
-            ProjectedResponse::Inline { body } => {
+        let path = route.path();
+        let response = route.response();
+        match response.kind() {
+            ProjectedResponseKind::Inline => {
+                let body = response.body().unwrap();
                 assert_eq!(
-                    fs::read(site.join(route.path.strip_prefix('/').unwrap())).unwrap(),
-                    *body,
-                    "projected inline body differs at {}",
-                    route.path
+                    fs::read(site.join(path.strip_prefix('/').unwrap())).unwrap(),
+                    body,
+                    "projected inline body differs at {path}"
                 );
             }
-            ProjectedResponse::Archive { body, sha256 } => {
-                assert_eq!(route.path, format!("/crates/{sha256}.crate"));
+            ProjectedResponseKind::Archive => {
+                let body = response.body().unwrap();
+                let sha256 = response.archive_sha256().unwrap();
+                assert_eq!(path, format!("/crates/{sha256}.crate"));
                 assert_eq!(
-                    fs::read(site.join(route.path.strip_prefix('/').unwrap())).unwrap(),
-                    *body,
-                    "projected archive body differs at {}",
-                    route.path
+                    fs::read(site.join(path.strip_prefix('/').unwrap())).unwrap(),
+                    body,
+                    "projected archive body differs at {path}"
                 );
-                assert_eq!(sha256_bytes(body), *sha256);
+                assert_eq!(sha256_bytes(body), sha256);
             }
-            ProjectedResponse::Redirect { .. } => redirects += 1,
+            ProjectedResponseKind::Redirect => redirects += 1,
         }
     }
     assert_eq!(redirects, expected_redirects);
@@ -182,23 +235,30 @@ fn renderer_keeps_main_at_root_and_future_registry_below_its_alias() {
 fn prepare_catalog(root: &Path, external_large_categories: bool) -> Vec<TestArtifact> {
     fs::create_dir(root).unwrap();
     write_human_files(root, external_large_categories);
-    let artifacts = vec![
-        add_artifact(root, "general", "leaf-core", None, TestSource::Mirror),
-        add_artifact(
-            root,
-            "matrix",
-            "matrix-middle",
-            Some("leaf-core"),
-            TestSource::Mirror,
-        ),
-        add_artifact(
-            root,
-            "pkgre",
-            "pkgre-top",
-            Some("leaf-core"),
-            TestSource::Publish,
-        ),
-    ];
+    let leaf = add_artifact(root, "general", "leaf-core", None, TestSource::Mirror);
+    let middle = add_artifact(
+        root,
+        "matrix",
+        "matrix-middle",
+        Some("leaf-core"),
+        TestSource::Mirror,
+    );
+    let published = add_artifact(
+        root,
+        "pkgre",
+        "pkgre-top",
+        Some("leaf-core"),
+        TestSource::Publish,
+    );
+    let published_alias = add_artifact_with_archive(
+        root,
+        "pkgre",
+        "pkgre-alias",
+        Some("leaf-core"),
+        TestSource::Publish,
+        published.archive_bytes.clone(),
+    );
+    let artifacts = vec![leaf, middle, published_alias, published];
     write_lock(root, &artifacts);
     write_downloads(root, &artifacts);
     artifacts
@@ -335,7 +395,24 @@ fn add_artifact(
     dependency: Option<&str>,
     source: TestSource,
 ) -> TestArtifact {
-    let archive_bytes = format!("synthetic archive for {name} 1.0.0\n").into_bytes();
+    add_artifact_with_archive(
+        root,
+        category,
+        name,
+        dependency,
+        source,
+        format!("synthetic archive for {name} 1.0.0\n").into_bytes(),
+    )
+}
+
+fn add_artifact_with_archive(
+    root: &Path,
+    category: &'static str,
+    name: &'static str,
+    dependency: Option<&str>,
+    source: TestSource,
+    archive_bytes: Vec<u8>,
+) -> TestArtifact {
     let archive_hash = sha256_bytes(&archive_bytes);
     if source == TestSource::Publish {
         write_file(
@@ -457,7 +534,7 @@ fn write_human_files(root: &Path, external_large_categories: bool) {
         ));
     }
     main.push_str(
-        "[categories.pkgre]\nmay-depend-on = [\"main/pkgre\", \"main/general\"]\n\n[categories.pkgre.publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
+        "[categories.pkgre]\nmay-depend-on = [\"main/pkgre\", \"main/general\"]\n\n[categories.pkgre.publish.pkgre-alias]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n\n[categories.pkgre.publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
     );
     fs::write(root.join("main.toml"), main).unwrap();
 }
@@ -549,6 +626,7 @@ fn package_homes() -> BTreeMap<String, PackageHome> {
     [
         ("leaf-core", "main/general"),
         ("matrix-middle", "main/matrix"),
+        ("pkgre-alias", "main/pkgre"),
         ("pkgre-top", "main/pkgre"),
         ("reserved-acp", "main/acp"),
         ("reserved-filesystem", "main/filesystem"),
