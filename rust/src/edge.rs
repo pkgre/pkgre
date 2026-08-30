@@ -135,7 +135,7 @@ mod tests {
             let actual = evaluate_edge(case);
             assert_eq!(actual, case["expected"], "case {}", case["id"]);
         }
-        assert_eq!(forwarding_ids.len(), 36);
+        assert_eq!(forwarding_ids.len(), 37);
 
         let mut protocol_ids = HashSet::new();
         for case in fixture["protocolCases"].as_array().unwrap() {

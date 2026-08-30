@@ -194,7 +194,7 @@
     {
       "authorityFields": [
         {
-          "kind": ":authority",
+          "kind": "host",
           "valueAscii": "js.pkg.re"
         }
       ],
@@ -233,7 +233,54 @@
         },
         "selectedBackend": "js-protocol"
       },
-      "id": "case-variant-trusted-spoofs-dropped",
+      "id": "h1-case-variant-trusted-spoofs-dropped",
+      "protocol": "h1",
+      "sni": "js.pkg.re",
+      "targetAscii": "/left-pad"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/first"
+        },
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/second"
+        },
+        {
+          "nameAscii": "accept",
+          "valueAscii": "application/json"
+        }
+      ],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "js.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "js.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/left-pad"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/left-pad"
+        },
+        "selectedBackend": "js-protocol"
+      },
+      "id": "h2-lowercase-trusted-spoofs-dropped",
       "protocol": "h2",
       "sni": "js.pkg.re",
       "targetAscii": "/left-pad"
