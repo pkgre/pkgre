@@ -1,5 +1,6 @@
 //! Declarative Cargo registry validation and rendering.
 
+pub mod accepted_ref;
 pub mod artifact;
 pub mod category;
 pub mod download;
