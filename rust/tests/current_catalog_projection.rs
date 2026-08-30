@@ -1,6 +1,7 @@
 //! Offline evidence for the frozen production Rust catalog projection.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -159,6 +160,11 @@ impl TemporaryDirectory {
     fn new(label: &str) -> Self {
         let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!("{label}-{}-{sequence}", std::process::id()));
+        match fs::remove_dir_all(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove stale temporary directory: {error}"),
+        }
         fs::create_dir(&path).unwrap();
         Self(path)
     }
