@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pkgre_rust::artifact::{ArtifactMap, sha256_bytes};
 use pkgre_rust::category::CategoryId;
 use pkgre_rust::download::{
-    DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
-    router_download_template,
+    DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, Delivery, DownloadCatalog, DownloadRoute,
+    download_url, retained_object_path, router_download_template,
 };
 use pkgre_rust::index::{IndexRecord, index_path};
 use pkgre_rust::projection::{
@@ -355,8 +355,15 @@ fn add_future_registry(root: &Path) {
         registry: "staging".to_owned(),
         name: NAME.to_owned(),
         version: Version::parse("1.0.0").unwrap(),
-        sha256: archive_hash,
-        source: DownloadSource::CratesIo,
+        sha256: archive_hash.clone(),
+        delivery: Delivery::Redirect {
+            url: download_url(
+                "staging",
+                NAME,
+                &Version::parse("1.0.0").unwrap(),
+                &archive_hash,
+            ),
+        },
     });
     fs::write(
         root.join(DOWNLOAD_CATALOG_FILE),
@@ -372,9 +379,18 @@ fn write_downloads(root: &Path, artifacts: &[TestArtifact]) {
             name: artifact.name.to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             sha256: artifact.archive_hash.clone(),
-            source: match artifact.source {
-                TestSource::Mirror => DownloadSource::CratesIo,
-                TestSource::Publish => DownloadSource::GitTag,
+            delivery: match artifact.source {
+                TestSource::Mirror => Delivery::Redirect {
+                    url: download_url(
+                        "main",
+                        artifact.name,
+                        &Version::parse("1.0.0").unwrap(),
+                        &artifact.archive_hash,
+                    ),
+                },
+                TestSource::Publish => Delivery::Retained {
+                    path: retained_object_path("main", &artifact.archive_hash),
+                },
             },
         })
         .collect();
@@ -484,7 +500,7 @@ fn add_artifact_with_archive(
 
 fn write_human_files(root: &Path, external_large_categories: bool) {
     let mut main = format!(
-        "schema = 4\n\n[registry]\nname = \"main\"\nindex = \"{MAIN_URL}\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n",
+        "schema = 5\n\n[registry]\nname = \"main\"\nindex = \"{MAIN_URL}\"\ndownload = {:?}\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n",
         router_download_template("main")
     );
     for (local, dependencies, package) in [
@@ -570,7 +586,7 @@ fn inline_mirror_category(
 
 fn external_mirror_category(dependencies: &[&str], packages: &[(&str, &[&str])]) -> String {
     format!(
-        "schema = 4\nmay-depend-on = [{}]\n\n[mirror]\n{}",
+        "schema = 5\nmay-depend-on = [{}]\n\n[mirror]\n{}",
         quoted(dependencies),
         package_lines(packages)
     )

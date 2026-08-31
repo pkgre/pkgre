@@ -9,18 +9,18 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::policy::{validate_package_name, validate_registry_alias, validate_sha256};
-use crate::schema::{Catalog, PackageState, Source};
+use crate::schema::{Catalog, Source};
 
 /// Generated download catalog filename in both catalog and rendered-site roots.
 pub const DOWNLOAD_CATALOG_FILE: &str = "downloads.json";
 /// Download catalog wire schema.
-pub const DOWNLOAD_CATALOG_SCHEMA: u32 = 1;
+pub const DOWNLOAD_CATALOG_SCHEMA: u32 = 2;
 /// Public immutable download router origin and versioned path prefix.
 pub const DOWNLOAD_ROUTER_ORIGIN: &str = "https://dl.rust.pkg.re";
 /// Maximum accepted canonical download catalog size.
 pub const MAX_DOWNLOAD_CATALOG_BYTES: usize = 16 * 1024 * 1024;
 
-/// Exact generated route table for every active package identity.
+/// Exact generated route table for every locked package identity, including removed ones.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DownloadCatalog {
@@ -42,37 +42,54 @@ pub struct DownloadRoute {
     pub version: Version,
     /// Lowercase SHA-256 from the curated index row.
     pub sha256: String,
-    /// Locked archive origin class.
-    pub source: DownloadSource,
+    /// Exact immutable archive delivery.
+    pub delivery: Delivery,
 }
 
-/// Upstream selected for one immutable archive.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DownloadSource {
-    /// Byte-for-byte crates.io archive.
-    CratesIo,
-    /// Archive produced from and retained for an immutable Git tag.
-    GitTag,
+/// Exact immutable archive delivery for one locked package identity.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "delivery", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Delivery {
+    /// Immutable redirect to the original byte-for-byte upstream archive.
+    Redirect {
+        /// Exact canonical immutable upstream archive URL.
+        url: String,
+    },
+    /// Archive retained in this registry's content-addressed object store.
+    Retained {
+        /// Exact canonical object-store path, relative to the site root.
+        path: String,
+    },
 }
 
 impl DownloadCatalog {
-    /// Derives the complete canonical route set from active generated-lock approvals.
+    /// Derives the complete canonical route set from every generated-lock approval, including removed ones.
     #[must_use]
     pub fn from_catalog(catalog: &Catalog) -> Self {
         Self::from_routes(
             catalog
                 .approvals
                 .iter()
-                .filter(|approval| approval.state == PackageState::Active)
                 .map(|approval| DownloadRoute {
                     registry: approval.registry.clone(),
                     name: approval.name.clone(),
                     version: approval.version.clone(),
                     sha256: approval.archive_sha256.clone(),
-                    source: match approval.source {
-                        Source::CratesIo => DownloadSource::CratesIo,
-                        Source::GitTag { .. } => DownloadSource::GitTag,
+                    delivery: match approval.source {
+                        Source::CratesIo => Delivery::Redirect {
+                            url: download_url(
+                                &approval.registry,
+                                &approval.name,
+                                &approval.version,
+                                &approval.archive_sha256,
+                            ),
+                        },
+                        Source::GitTag { .. } => Delivery::Retained {
+                            path: retained_object_path(
+                                &approval.registry,
+                                &approval.archive_sha256,
+                            ),
+                        },
                     },
                 })
                 .collect(),
@@ -144,6 +161,26 @@ impl DownloadCatalog {
                 route.name,
                 route.version
             );
+            match &route.delivery {
+                Delivery::Redirect { url } => ensure!(
+                    *url == download_url(
+                        &route.registry,
+                        &route.name,
+                        &route.version,
+                        &route.sha256
+                    ),
+                    "download redirect for {}/{}/{} is not the exact canonical router URL",
+                    route.registry,
+                    route.name,
+                    route.version
+                ),
+                Delivery::Retained { path } => ensure!(
+                    *path == retained_object_path(&route.registry, &route.sha256),
+                    "download retained path for {}/{} is not the exact canonical object path",
+                    route.registry,
+                    route.sha256
+                ),
+            }
             previous = Some(route);
         }
         Ok(())
@@ -207,6 +244,21 @@ pub fn router_download_template(registry: &str) -> String {
     format!("{DOWNLOAD_ROUTER_ORIGIN}/v1/{registry}/{{crate}}/{{version}}/{{sha256-checksum}}")
 }
 
+/// Returns the exact canonical immutable redirect URL for one locked identity.
+#[must_use]
+pub fn download_url(registry: &str, name: &str, version: &Version, sha256: &str) -> String {
+    router_download_template(registry)
+        .replace("{crate}", name)
+        .replace("{version}", &version.to_string())
+        .replace("{sha256-checksum}", sha256)
+}
+
+/// Returns the exact canonical retained object-store path for one locked identity.
+#[must_use]
+pub fn retained_object_path(registry: &str, sha256: &str) -> String {
+    format!("{registry}/objects/crates/{sha256}.crate")
+}
+
 fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Ordering {
     (
         left.registry.as_str(),
@@ -214,7 +266,7 @@ fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Orderin
         left.name.as_str(),
         &left.version,
         left.sha256.as_str(),
-        left.source,
+        &left.delivery,
     )
         .cmp(&(
             right.registry.as_str(),
@@ -222,7 +274,7 @@ fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Orderin
             right.name.as_str(),
             &right.version,
             right.sha256.as_str(),
-            right.source,
+            &right.delivery,
         ))
 }
 
@@ -230,26 +282,43 @@ fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Orderin
 mod tests {
     use super::*;
 
-    fn route(name: &str, version: &str, sha256: &str, source: DownloadSource) -> DownloadRoute {
+    fn route(name: &str, version: &str, sha256: &str, delivery: Delivery) -> DownloadRoute {
         DownloadRoute {
             registry: "universe".to_owned(),
             name: name.to_owned(),
             version: Version::parse(version).unwrap(),
             sha256: sha256.to_owned(),
-            source,
+            delivery,
         }
+    }
+
+    fn redirect(name: &str, version: &str, sha256: &str) -> DownloadRoute {
+        route(
+            name,
+            version,
+            sha256,
+            Delivery::Redirect {
+                url: download_url("universe", name, &Version::parse(version).unwrap(), sha256),
+            },
+        )
+    }
+
+    fn retained(name: &str, version: &str, sha256: &str) -> DownloadRoute {
+        route(
+            name,
+            version,
+            sha256,
+            Delivery::Retained {
+                path: retained_object_path("universe", sha256),
+            },
+        )
     }
 
     #[test]
     fn canonical_round_trip_is_strict() {
         let catalog = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
-            routes: vec![route(
-                "serde",
-                "1.0.229",
-                &"01".repeat(32),
-                DownloadSource::CratesIo,
-            )],
+            routes: vec![redirect("serde", "1.0.229", &"01".repeat(32))],
         };
         let bytes = catalog.canonical_bytes().unwrap();
         assert_eq!(DownloadCatalog::parse_canonical(&bytes).unwrap(), catalog);
@@ -258,14 +327,14 @@ mod tests {
         assert!(DownloadCatalog::parse_canonical(&compact).is_err());
         let unknown = String::from_utf8(bytes)
             .unwrap()
-            .replace("\"schema\": 1", "\"schema\": 1,\n  \"extra\": true");
+            .replace("\"schema\": 2", "\"schema\": 2,\n  \"extra\": true");
         assert!(DownloadCatalog::parse_canonical(unknown.as_bytes()).is_err());
     }
 
     #[test]
     fn ordering_identity_and_fields_are_guarded() {
-        let first = route("alpha", "1.0.0", &"01".repeat(32), DownloadSource::CratesIo);
-        let second = route("beta", "1.0.0", &"02".repeat(32), DownloadSource::GitTag);
+        let first = redirect("alpha", "1.0.0", &"01".repeat(32));
+        let second = retained("beta", "1.0.0", &"02".repeat(32));
         let reversed = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
             routes: vec![second, first.clone()],
@@ -280,15 +349,12 @@ mod tests {
 
         let conflicting_checksum = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
-            routes: vec![
-                first.clone(),
-                route("alpha", "1.0.0", &"03".repeat(32), DownloadSource::GitTag),
-            ],
+            routes: vec![first.clone(), retained("alpha", "1.0.0", &"03".repeat(32))],
         };
         let error = conflicting_checksum.validate().unwrap_err();
         assert!(format!("{error:#}").contains("duplicate download identity"));
 
-        let mut invalid = route("alpha", "1.0.0", &"AB".repeat(32), DownloadSource::CratesIo);
+        let mut invalid = redirect("alpha", "1.0.0", &"AB".repeat(32));
         let catalog = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
             routes: vec![invalid.clone()],
@@ -303,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_size_and_wire_source_are_strict() {
+    fn schema_size_and_wire_delivery_are_strict() {
         let unsupported = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA + 1,
             routes: Vec::new(),
@@ -313,11 +379,35 @@ mod tests {
             DownloadCatalog::parse_canonical(&vec![b' '; MAX_DOWNLOAD_CATALOG_BYTES + 1]).is_err()
         );
 
-        let unknown_source = format!(
-            "{{\n  \"schema\": 1,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"source\": \"arbitrary-url\"\n    }}\n  ]\n}}\n",
+        let unknown_delivery = format!(
+            "{{\n  \"schema\": 2,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"delivery\": \"arbitrary-url\"\n    }}\n  ]\n}}\n",
             "01".repeat(32)
         );
-        assert!(DownloadCatalog::parse_canonical(unknown_source.as_bytes()).is_err());
+        assert!(
+            DownloadCatalog::parse_canonical(unknown_delivery.as_bytes()).is_err(),
+            "non-object delivery must be rejected"
+        );
+
+        let wrong_redirect = format!(
+            "{{\n  \"schema\": 2,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"delivery\": {{\n        \"redirect\": {{\n          \"url\": \"https://dl.rust.pkg.re/v1/universe/other/1.0.0/{}\"\n        }}\n      }}\n    }}\n  ]\n}}\n",
+            "01".repeat(32),
+            "01".repeat(32)
+        );
+        assert!(
+            DownloadCatalog::parse_canonical(wrong_redirect.as_bytes()).is_err(),
+            "non-canonical redirect URL must be rejected"
+        );
+
+        let wrong_retained = format!(
+            "{{\n  \"schema\": 2,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"delivery\": {{\n        \"retained\": {{\n          \"path\": \"universe/objects/crates/{}\",\n          \"sha256\": \"{}\"\n        }}\n      }}\n    }}\n  ]\n}}\n",
+            "02".repeat(32),
+            "02".repeat(32),
+            "02".repeat(32)
+        );
+        assert!(
+            DownloadCatalog::parse_canonical(wrong_retained.as_bytes()).is_err(),
+            "non-canonical retained path must be rejected"
+        );
     }
 
     #[test]

@@ -6,15 +6,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{ArtifactMap, require_absent, sha256_bytes};
 use crate::category::{CategoryId, category_for_v2_home};
-use crate::download::{
-    DOWNLOAD_CATALOG_FILE, DownloadCatalog, DownloadRoute, DownloadSource, router_download_template,
-};
+use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{
     CARGO_VERSION, SCHEMA3_REGISTRIES, canonical_category_dependencies, canonical_registry_index,
@@ -1612,26 +1610,38 @@ fn verify_release_rows(
     site: &Path,
     site_root: fn(&Path, &str) -> PathBuf,
 ) -> Result<()> {
-    let routes = packages
-        .iter()
-        .filter(|package| !package.yanked)
-        .map(|package| DownloadRoute {
-            registry: package.registry.clone(),
-            name: package.name.clone(),
-            version: package.version.clone(),
-            sha256: package.archive_sha256.clone(),
-            source: match package.source {
-                ReleaseSource::CratesIo => DownloadSource::CratesIo,
-                ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
-            },
-        })
-        .collect::<Vec<_>>();
-    let expected_downloads = DownloadCatalog::from_routes(routes);
-    let actual_downloads = DownloadCatalog::load_from_root(site)?;
-    ensure!(
-        actual_downloads == expected_downloads,
-        "rendered download catalog differs from active release packages"
-    );
+    let actual = DownloadCatalog::load_from_root(site)?;
+    for package in packages.iter().filter(|package| !package.yanked) {
+        let route = actual
+            .routes
+            .iter()
+            .find(|route| {
+                route.registry == package.registry
+                    && route.name == package.name
+                    && route.version == package.version
+                    && route.sha256 == package.archive_sha256
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "rendered download catalog lacks active release package {} {} {}",
+                    package.registry,
+                    package.name,
+                    package.version
+                )
+            })?;
+        match (&package.source, &route.delivery) {
+            (ReleaseSource::CratesIo, crate::download::Delivery::Redirect { .. })
+            | (ReleaseSource::GitTag { .. }, crate::download::Delivery::Retained { .. }) => {}
+            _ => {
+                return Err(anyhow!(
+                    "rendered download catalog delivery class differs from release package {} {} {}",
+                    package.registry,
+                    package.name,
+                    package.version
+                ));
+            }
+        }
+    }
 
     for package in packages {
         let path = site_root(site, &package.registry).join(index_path(&package.name));
@@ -1863,6 +1873,7 @@ impl Drop for TemporaryDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::download::DownloadRoute;
 
     fn old_registries(downloads: [&str; 3]) -> Vec<ReleaseRegistryV2> {
         ["core", "matrix", "pkgre"]
@@ -2061,9 +2072,21 @@ mod tests {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 sha256: package.archive_sha256.clone(),
-                source: match package.source {
-                    ReleaseSource::CratesIo => DownloadSource::CratesIo,
-                    ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+                delivery: match package.source {
+                    ReleaseSource::CratesIo => crate::download::Delivery::Redirect {
+                        url: crate::download::download_url(
+                            &package.registry,
+                            &package.name,
+                            &package.version,
+                            &package.archive_sha256,
+                        ),
+                    },
+                    ReleaseSource::GitTag { .. } => crate::download::Delivery::Retained {
+                        path: crate::download::retained_object_path(
+                            &package.registry,
+                            &package.archive_sha256,
+                        ),
+                    },
                 },
             })
             .collect::<Vec<_>>();
@@ -2188,9 +2211,21 @@ mod tests {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 sha256: package.archive_sha256.clone(),
-                source: match package.source {
-                    ReleaseSource::CratesIo => DownloadSource::CratesIo,
-                    ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+                delivery: match package.source {
+                    ReleaseSource::CratesIo => crate::download::Delivery::Redirect {
+                        url: crate::download::download_url(
+                            &package.registry,
+                            &package.name,
+                            &package.version,
+                            &package.archive_sha256,
+                        ),
+                    },
+                    ReleaseSource::GitTag { .. } => crate::download::Delivery::Retained {
+                        path: crate::download::retained_object_path(
+                            &package.registry,
+                            &package.archive_sha256,
+                        ),
+                    },
                 },
             })
             .collect::<Vec<_>>();
@@ -2536,14 +2571,14 @@ mod tests {
         fs::write(
             next.join(DOWNLOAD_CATALOG_FILE),
             b"{
-  \"schema\": 1,
+  \"schema\": 2,
   \"routes\": []
 }
 ",
         )
         .unwrap();
         let error = verify_monotonic(&previous, &next).unwrap_err();
-        assert!(format!("{error:#}").contains("differs from active release packages"));
+        assert!(format!("{error:#}").contains("lacks active release package"));
 
         fs::remove_file(next.join(DOWNLOAD_CATALOG_FILE)).unwrap();
         let error = verify_monotonic(&previous, &next).unwrap_err();

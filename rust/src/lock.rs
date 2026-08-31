@@ -1397,7 +1397,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::download::{DownloadSource, router_download_template};
+    use crate::download::{Delivery, download_url, retained_object_path, router_download_template};
     use crate::index::index_path;
     use crate::schema::{MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, load_lock};
 
@@ -1487,11 +1487,11 @@ mod tests {
         assert_eq!(downloads.routes.len(), 2);
         assert!(downloads.routes.iter().any(|route| {
             route.version == Version::parse("1.0.0").unwrap()
-                && route.source == DownloadSource::CratesIo
+                && matches!(route.delivery, Delivery::Redirect { .. })
         }));
         assert!(downloads.routes.iter().any(|route| {
             route.version == Version::parse("1.0.1").unwrap()
-                && route.source == DownloadSource::GitTag
+                && matches!(route.delivery, Delivery::Retained { .. })
         }));
     }
 
@@ -1617,7 +1617,10 @@ mod tests {
         let parsed = DownloadCatalog::parse_canonical(&expected).unwrap();
         assert_eq!(parsed.routes.len(), 1);
         assert_eq!(parsed.routes[0].name, "alpha");
-        assert_eq!(parsed.routes[0].source, DownloadSource::CratesIo);
+        assert!(matches!(
+            parsed.routes[0].delivery,
+            Delivery::Redirect { .. }
+        ));
 
         let catalog = Catalog::load(&root).unwrap();
         let artifacts = ArtifactMap::load(&catalog).unwrap();
@@ -1639,6 +1642,14 @@ mod tests {
 
         let mut changed = parsed.clone();
         changed.routes[0].sha256 = "03".repeat(32);
+        changed.routes[0].delivery = Delivery::Redirect {
+            url: download_url(
+                "main",
+                &changed.routes[0].name,
+                &changed.routes[0].version,
+                &changed.routes[0].sha256,
+            ),
+        };
         assert_download_catalog_regenerated(
             &root,
             &resolver,
@@ -1646,7 +1657,9 @@ mod tests {
             &expected,
         );
         let mut changed = parsed.clone();
-        changed.routes[0].source = DownloadSource::GitTag;
+        changed.routes[0].delivery = Delivery::Retained {
+            path: retained_object_path("main", &parsed.routes[0].sha256),
+        };
         assert_download_catalog_regenerated(
             &root,
             &resolver,
@@ -1660,7 +1673,14 @@ mod tests {
             name: "zeta".to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             sha256: "04".repeat(32),
-            source: DownloadSource::CratesIo,
+            delivery: Delivery::Redirect {
+                url: download_url(
+                    "main",
+                    "zeta",
+                    &Version::parse("1.0.0").unwrap(),
+                    &"04".repeat(32),
+                ),
+            },
         });
         assert_download_catalog_regenerated(
             &root,
@@ -2018,9 +2038,15 @@ mod tests {
         let downloads = DownloadCatalog::load_from_root(&root).unwrap();
         assert_eq!(downloads.routes.len(), 2);
         assert_eq!(downloads.routes[0].name, "alpha");
-        assert_eq!(downloads.routes[0].source, DownloadSource::CratesIo);
+        assert!(matches!(
+            downloads.routes[0].delivery,
+            Delivery::Redirect { .. }
+        ));
         assert_eq!(downloads.routes[1].name, "beta");
-        assert_eq!(downloads.routes[1].source, DownloadSource::GitTag);
+        assert!(matches!(
+            downloads.routes[1].delivery,
+            Delivery::Retained { .. }
+        ));
     }
 
     #[test]
@@ -2176,12 +2202,13 @@ mod tests {
         assert!(row.is_file());
         let catalog = Catalog::load(&root).unwrap();
         ArtifactMap::load(&catalog).unwrap();
-        assert!(
-            DownloadCatalog::load_from_root(&root)
-                .unwrap()
-                .routes
-                .is_empty()
-        );
+        let downloads = DownloadCatalog::load_from_root(&root).unwrap();
+        assert_eq!(downloads.routes.len(), 1);
+        assert_eq!(downloads.routes[0].name, "alpha");
+        assert!(matches!(
+            downloads.routes[0].delivery,
+            crate::download::Delivery::Redirect { .. }
+        ));
         assert_rendered_yanked(&temporary, &catalog, "main", "alpha");
 
         let removed_snapshot = snapshot(temporary.path());

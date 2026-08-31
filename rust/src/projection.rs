@@ -12,7 +12,7 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::artifact::{ArtifactMap, sha256_bytes};
-use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, DownloadSource};
+use crate::download::{DOWNLOAD_CATALOG_FILE, Delivery, DownloadCatalog};
 use crate::policy::{
     validate_catalog, validate_package_name, validate_registry_alias, validate_sha256,
 };
@@ -131,12 +131,12 @@ impl CatalogProjection {
                 "/v1/{}/{}/{}/{}",
                 route.registry, route.name, route.version, route.sha256
             );
-            let destination = match route.source {
-                DownloadSource::CratesIo => RedirectDestination::CratesIo {
+            let destination = match route.delivery {
+                Delivery::Redirect { .. } => RedirectDestination::CratesIo {
                     name: route.name,
                     version: route.version,
                 },
-                DownloadSource::GitTag => RedirectDestination::FirstParty {
+                Delivery::Retained { .. } => RedirectDestination::FirstParty {
                     sha256: route.sha256,
                 },
             };
