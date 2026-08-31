@@ -256,11 +256,12 @@ mod tests {
         let root = temporary_directory("inline");
         let input = concat!(
             "# keep-root\n",
-            "schema = 4\n\n",
+            "schema = 5\n\n",
             "[registry]\n",
             "name = \"main\"\n",
             "index = \"sparse+https://rust.pkg.re/\"\n",
             "download = \"https://static.crates.io/crates\"\n",
+            "audience = \"public\"\n",
             "cargo-version = \"1.95.0\"\n\n",
             "[categories.general]\n",
             "may-depend-on = [\"main/general\"]\n\n",
@@ -288,17 +289,18 @@ mod tests {
         let root = temporary_directory("external");
         fs::create_dir_all(root.join("categories/main")).unwrap();
         let registry = concat!(
-            "schema = 4\n\n",
+            "schema = 5\n\n",
             "[registry]\n",
             "name = \"main\"\n",
             "index = \"sparse+https://rust.pkg.re/\"\n",
             "download = \"https://static.crates.io/crates\"\n",
+            "audience = \"public\"\n",
             "cargo-version = \"1.95.0\"\n\n",
             "[categories.general]\n",
             "file = \"categories/main/general.toml\"\n",
         );
         let category = concat!(
-            "schema = 4\n",
+            "schema = 5\n",
             "may-depend-on = [\"main/general\"]\n\n",
             "[mirror]\n",
             "# retained\n",
@@ -366,11 +368,12 @@ mod tests {
         fs::write(
             root.join("main.toml"),
             concat!(
-                "schema = 4\n\n",
+                "schema = 5\n\n",
                 "[registry]\n",
                 "name = \"main\"\n",
                 "index = \"sparse+https://rust.pkg.re/\"\n",
                 "download = \"https://static.crates.io/crates\"\n",
+                "audience = \"public\"\n",
                 "cargo-version = \"1.95.0\"\n\n",
                 "[categories.general]\n",
                 "file = \"categories/main/general.toml\"\n",
@@ -378,7 +381,7 @@ mod tests {
         )
         .unwrap();
         let category = concat!(
-            "schema = 4\n",
+            "schema = 5\n",
             "may-depend-on = [\"main/general\"]\n\n",
             "[mirror]\n",
             "demo = [\"1.0.0\"]\n",
@@ -400,11 +403,12 @@ mod tests {
     fn inline_registry(versions: &str) -> String {
         format!(
             concat!(
-                "schema = 4\n\n",
+                "schema = 5\n\n",
                 "[registry]\n",
                 "name = \"main\"\n",
                 "index = \"sparse+https://rust.pkg.re/\"\n",
                 "download = \"https://static.crates.io/crates\"\n",
+                "audience = \"public\"\n",
                 "cargo-version = \"1.95.0\"\n\n",
                 "[categories.general]\n",
                 "may-depend-on = [\"main/general\"]\n\n",

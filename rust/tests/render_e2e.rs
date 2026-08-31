@@ -18,9 +18,10 @@ use pkgre_rust::projection::{
 };
 use pkgre_rust::render;
 use pkgre_rust::schema::{
-    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome, PackageState,
-    RegistryLock, SCHEMA_VERSION, serialize_lock,
+    Audience, Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome,
+    PackageState, RegistryLock, SCHEMA_VERSION, serialize_lock,
 };
+use pkgre_rust::update::time::UtcTimestamp;
 use semver::Version;
 use serde_json::{Value, json};
 
@@ -318,7 +319,7 @@ fn add_future_registry(root: &Path) {
     fs::write(
         root.join("staging.toml"),
         format!(
-            "schema = 4\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/r/staging/\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
+            "schema = 5\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/r/staging/\"\ndownload = {:?}\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
             router_download_template("staging")
         ),
     )
@@ -329,6 +330,7 @@ fn add_future_registry(root: &Path) {
             name: "staging".to_owned(),
             index: "sparse+https://rust.pkg.re/r/staging/".to_owned(),
             download: router_download_template("staging"),
+            audience: Audience::Public,
         },
         names: vec![LockedName {
             name: NAME.to_owned(),
@@ -342,6 +344,7 @@ fn add_future_registry(root: &Path) {
             source_row_sha256: source_row_hash,
             index_row_sha256: index_row_hash,
             admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
             source: LockedSource::CratesIo {},
         }],
     };
@@ -609,6 +612,7 @@ fn write_lock(root: &Path, artifacts: &[TestArtifact]) {
             source_row_sha256: artifact.record_hash.clone(),
             index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
             admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
             source: match artifact.source {
                 TestSource::Publish => LockedSource::GitTag {
                     git: "https://github.com/pkgre/pkgre".to_owned(),
@@ -629,6 +633,7 @@ fn write_lock(root: &Path, artifacts: &[TestArtifact]) {
             name: "main".to_owned(),
             index: MAIN_URL.to_owned(),
             download: router_download_template("main"),
+            audience: Audience::Public,
         },
         names,
         packages,

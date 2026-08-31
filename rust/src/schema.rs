@@ -11,11 +11,32 @@ use serde::{Deserialize, Serialize};
 
 use crate::category::CategoryId;
 use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
+use crate::update::time::UtcTimestamp;
 
 /// Supported human registry and generated lock schema version.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 /// Stable deployed release-manifest wire schema.
 pub const RELEASE_SCHEMA_VERSION: u32 = 4;
+/// Registry serving audience declared in topology and generated locks.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Audience {
+    /// Publicly reachable registry with public cache policy.
+    Public,
+    /// LAN-reachable registry for private projects; asserted by serving topology.
+    LanPublic,
+}
+
+impl Audience {
+    /// Canonical lower-kebab spelling used in TOML, locks, and diagnostics.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::LanPublic => "lan-public",
+        }
+    }
+}
 /// Cargo download base for registries backed by crates.io archives.
 pub const MIRROR_DOWNLOAD: &str = "https://static.crates.io/crates";
 /// Cargo download template for registries backed by retained Git-tag archives.
@@ -64,6 +85,8 @@ pub struct Registry {
     pub index: String,
     /// Cargo archive download base or template for this registry.
     pub download: String,
+    /// Serving audience asserted by deployment topology.
+    pub audience: Audience,
     /// Exact Cargo version used for newly published Git-tag packages.
     pub cargo_version: Version,
 }
@@ -187,6 +210,8 @@ pub struct LockedRegistry {
     pub index: String,
     /// Cargo archive download base or template.
     pub download: String,
+    /// Serving audience asserted by deployment topology.
+    pub audience: Audience,
 }
 
 /// Package source class.
@@ -238,6 +263,8 @@ pub struct LockedPackage {
     /// SHA-256 of the complete generated admission lock that authorized this identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_sha256: Option<String>,
+    /// Deterministic origin publication time of this exact identity.
+    pub admitted_at: UtcTimestamp,
     /// Immutable origin evidence.
     pub source: LockedSource,
 }
@@ -369,6 +396,8 @@ pub struct Approval {
     pub index_row_sha256: String,
     /// SHA-256 of the complete generated admission lock that authorized this identity.
     pub admission_sha256: Option<String>,
+    /// Deterministic origin publication time of this exact identity.
+    pub admitted_at: UtcTimestamp,
     /// Active or irreversibly removed state.
     pub state: PackageState,
     /// Immutable origin evidence.
@@ -798,6 +827,7 @@ pub fn empty_lock(file: &RegistryFile) -> RegistryLock {
             name: file.registry.name.clone(),
             index: file.registry.index.clone(),
             download: file.registry.download.clone(),
+            audience: file.registry.audience,
         },
         names: Vec::new(),
         packages: Vec::new(),
@@ -1206,6 +1236,7 @@ fn append_lock_approvals(
             index_record_sha256: package.source_row_sha256.clone(),
             index_row_sha256: package.index_row_sha256.clone(),
             admission_sha256: package.admission_sha256.clone(),
+            admitted_at: package.admitted_at.clone(),
             state: package.state,
             source: source_from_lock(&package.source),
             declared_in: input.lock_path.clone(),
@@ -1388,12 +1419,13 @@ surprise = true
     fn inline_category_uses_compact_package_maps() {
         let raw: RawRegistryFile = toml::from_str(
             r#"
-schema = 4
+schema = 5
 
 [registry]
 name = "main"
 index = "sparse+https://rust.pkg.re/"
 download = "https://static.crates.io/crates"
+audience = "public"
 cargo-version = "1.95.0"
 
 [categories.general]
@@ -1438,7 +1470,7 @@ reserved = []
         .unwrap();
         fs::write(
             external_root.join("categories/main/general.toml"),
-            "schema = 4\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n",
+            "schema = 5\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n",
         )
         .unwrap();
         let inline = load_registry_inputs(&inline_root).unwrap();
@@ -1473,7 +1505,7 @@ reserved = []
         .unwrap();
         fs::write(
             root.join("categories/main/general.toml"),
-            "schema = 4\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [] }\n",
+            "schema = 5\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [] }\n",
         )
         .unwrap();
         assert!(
@@ -1490,7 +1522,7 @@ reserved = []
         .unwrap();
         fs::write(
             root.join("categories/main/orphan.toml"),
-            "schema = 4\nmay-depend-on = [\"main/general\"]\nmirror = { orphan = [] }\n",
+            "schema = 5\nmay-depend-on = [\"main/general\"]\nmirror = { orphan = [] }\n",
         )
         .unwrap();
         assert!(
@@ -1513,7 +1545,7 @@ reserved = []
         )
         .unwrap();
         let target = root.with_extension("category-body");
-        fs::write(&target, "schema = 4\n").unwrap();
+        fs::write(&target, "schema = 5\n").unwrap();
         std::os::unix::fs::symlink(&target, root.join("categories/main/general.toml")).unwrap();
         let error = load_registry_inputs(&root).unwrap_err();
         assert!(format!("{error:#}").contains("not a regular file"));
@@ -1529,6 +1561,7 @@ reserved = []
                 name: "main".to_owned(),
                 index: "sparse+https://rust.pkg.re/".to_owned(),
                 download: MIRROR_DOWNLOAD.to_owned(),
+                audience: Audience::Public,
             },
             names: vec![
                 LockedName {
@@ -1551,7 +1584,7 @@ reserved = []
 
     fn registry_text(categories: &str) -> String {
         format!(
-            "schema = 4\n\n[registry]\nname = \"main\"\nindex = \"sparse+https://rust.pkg.re/\"\ndownload = \"{MIRROR_DOWNLOAD}\"\ncargo-version = \"1.95.0\"\n\n{categories}"
+            "schema = 5\n\n[registry]\nname = \"main\"\nindex = \"sparse+https://rust.pkg.re/\"\ndownload = \"{MIRROR_DOWNLOAD}\"\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n{categories}"
         )
     }
 

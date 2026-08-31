@@ -414,7 +414,7 @@ fn projected_metadata_path(
     let route_base = if schema == crate::schema::SCHEMA_VERSION {
         ensure!(
             index == &canonical_registry_index(registry),
-            "schema-4 registry {registry:?} has a noncanonical index URL"
+            "current-schema registry {registry:?} has a noncanonical index URL"
         );
         canonical_registry_route_base(registry)
     } else if schema == 3 {
@@ -513,8 +513,8 @@ fn release_bytes_from_catalog(catalog: &Catalog) -> Result<Vec<u8>> {
     match catalog.registries.schema {
         3 => serde_json::to_vec_pretty(&release_v3_from_catalog(catalog))
             .context("serialize schema-3 release manifest"),
-        4 => serde_json::to_vec_pretty(&release_from_catalog(catalog))
-            .context("serialize schema-4 release manifest"),
+        4 | 5 => serde_json::to_vec_pretty(&release_from_catalog(catalog))
+            .context("serialize release manifest"),
         schema => bail!("cannot render release manifest for catalog schema {schema}"),
     }
 }

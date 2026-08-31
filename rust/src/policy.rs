@@ -589,7 +589,7 @@ fn version_identity(version: &Version) -> (u64, u64, u64, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{HomesFile, PackageState, RegistriesFile};
+    use crate::schema::{Audience, HomesFile, PackageState, RegistriesFile};
 
     #[test]
     fn package_names_are_strict_and_collision_key_matches_cargo() {
@@ -658,6 +658,7 @@ mod tests {
                     index: canonical_registry_index("main"),
                     download: router_download_template("main"),
                     cargo_version: Version::parse(CARGO_VERSION).unwrap(),
+                    audience: Audience::Public,
                 }],
             },
             categories,
@@ -676,6 +677,8 @@ mod tests {
                 index_record_sha256: "02".repeat(32),
                 index_row_sha256: "03".repeat(32),
                 admission_sha256: None,
+                admitted_at: crate::update::time::UtcTimestamp::parse("2026-01-01T00:00:00Z")
+                    .unwrap(),
                 state: PackageState::Active,
                 source: Source::GitTag {
                     repository: "https://github.com/pkgre/pkgre".to_owned(),
@@ -781,6 +784,7 @@ mod tests {
             index: canonical_registry_index("staging"),
             download: MIRROR_DOWNLOAD.to_owned(),
             cargo_version: Version::parse(CARGO_VERSION).unwrap(),
+            audience: Audience::Public,
         });
         catalog.categories.insert(
             "staging/general".parse().unwrap(),

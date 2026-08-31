@@ -114,7 +114,12 @@ impl UtcTimestamp {
         Self::from_unix_seconds(seconds)
     }
 
-    fn from_unix_seconds(seconds: u64) -> Result<Self> {
+    /// Converts Unix seconds to a UTC timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the timestamp exceeds the supported year-9999 range.
+    pub fn from_unix_seconds(seconds: u64) -> Result<Self> {
         let days = seconds / SECONDS_PER_DAY;
         let day_seconds = seconds % SECONDS_PER_DAY;
         let days = i64::try_from(days).context("UTC timestamp exceeds supported range")?;

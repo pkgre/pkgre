@@ -123,6 +123,7 @@ pub(crate) fn apply_admission_manifest_with<
                 crate_sha256: candidate.candidate.crate_sha256.clone(),
                 source_row_sha256: candidate.candidate.source_row_sha256.clone(),
                 binding_sha256: batch_sha256.clone(),
+                admitted_at: candidate.candidate.published_at.clone(),
             });
         }
         write_admission_pair(
