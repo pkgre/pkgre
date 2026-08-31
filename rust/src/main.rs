@@ -9,7 +9,7 @@ use pkgre_rust::render;
 use pkgre_rust::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>";
+const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -32,8 +32,6 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
     match command.to_str() {
         Some("lock") => lock_catalog(&values),
         Some("check") => check(&values),
-        Some("migrate-v2-to-v3") => migrate_v2_to_v3(&values),
-        Some("migrate-v3-to-v4") => migrate_v3_to_v4(&values),
         Some("render") => render_site(&values),
         Some("verify") => verify_site(&values),
         Some("verify-monotonic") => verify_monotonic(&values),
@@ -68,37 +66,6 @@ fn check(arguments: &[OsString]) -> Result<()> {
     validate_catalog(&catalog)?;
     ArtifactMap::load(&catalog)?;
     info!(packages = catalog.approvals.len(), "catalog is valid");
-    Ok(())
-}
-
-fn migrate_v2_to_v3(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 2)?;
-    let source = Path::new(&arguments[0]);
-    let destination = Path::new(&arguments[1]);
-    let summary = pkgre_rust::migration::migrate_v2_to_v3(source, destination)?;
-    info!(
-        names = summary.names,
-        packages = summary.packages,
-        routed_rows_changed = summary.routed_rows_changed,
-        path = %destination.display(),
-        "migrated schema-2 catalog to schema 3"
-    );
-    Ok(())
-}
-
-fn migrate_v3_to_v4(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 2)?;
-    let source = Path::new(&arguments[0]);
-    let destination = Path::new(&arguments[1]);
-    let summary = pkgre_rust::migration::migrate_v3_to_v4(source, destination)?;
-    info!(
-        names = summary.names,
-        packages = summary.packages,
-        routed_rows_changed = summary.routed_rows_changed,
-        admission_batches = summary.admission_batches,
-        path = %destination.display(),
-        "migrated schema-3 catalog to schema 4"
-    );
     Ok(())
 }
 
