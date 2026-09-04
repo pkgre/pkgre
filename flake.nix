@@ -150,6 +150,12 @@
             description = "Stateless immutable download redirect service for pkgre registries";
             mainProgram = "pkgre-proxy";
           };
+          rustServe = mkRustPackage {
+            packageDirectory = "rust/serve";
+            description = "Immutable catalog snapshot serving origin for dynamic pkgre registries";
+            mainProgram = "pkgre-rust-serve";
+            nativeCheckInputs = [ pkgs.gnutar ];
+          };
           jsCompatibilityClients = import ./nix/js-compatibility-clients.nix { inherit pkgs system; };
           jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
           jsSource = pkgs.lib.fileset.toSource {
@@ -205,6 +211,7 @@
           js-client-deno-current = jsCompatibilityClients.denoCurrent;
           proxy = pkgreProxy;
           download-serve = pkgreProxy;
+          serve = rustServe;
         }
       );
 
@@ -292,6 +299,7 @@
           };
           proxy = self.packages.${system}.proxy;
           download-serve = self.packages.${system}.download-serve;
+          serve = self.packages.${system}.serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source
             chmod -R u+w source
