@@ -9,6 +9,7 @@ pub mod http_response;
 pub mod import;
 pub mod index;
 pub mod lock;
+pub mod migrate;
 pub mod package;
 pub mod policy;
 pub mod projection;

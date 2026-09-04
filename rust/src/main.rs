@@ -9,7 +9,8 @@ use pkgre_rust::render;
 use pkgre_rust::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>";
+const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
+  pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time registry/name@tag=<timestamp>]...";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -39,6 +40,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("update-plan-exact") => update_plan_exact(&values),
         Some("update-inspect") => update_inspect(&values),
         Some("update-apply") => update_apply(&values),
+        Some("migrate-v4-to-v5") => migrate_v4_to_v5(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -211,5 +213,45 @@ fn ensure_arity(arguments: &[OsString], expected: usize) -> Result<()> {
         arguments.len() == expected,
         "wrong number of arguments\n{USAGE}"
     );
+    Ok(())
+}
+
+fn migrate_v4_to_v5(arguments: &[OsString]) -> Result<()> {
+    if arguments.len() < 2 {
+        bail!(USAGE);
+    }
+    let mut positional = Vec::new();
+    let mut git_times = Vec::new();
+    for argument in arguments {
+        let value = argument.to_str().context("argument is not valid UTF-8")?;
+        if let Some(entry) = value.strip_prefix("--git-tag-time=") {
+            let (key, timestamp) = entry
+                .split_once('=')
+                .context("--git-tag-time must use registry/name@tag=<canonical-timestamp> form")?;
+            let canonical =
+                pkgre_rust::migrate::canonicalize_rfc3339(timestamp).with_context(|| {
+                    format!("--git-tag-time timestamp {timestamp:?} is not RFC 3339")
+                })?;
+            git_times.push((key.to_string(), canonical.to_string()));
+        } else {
+            ensure!(
+                !value.starts_with('-') || value == "-",
+                "unknown argument {value:?}\n{USAGE}"
+            );
+            positional.push(argument.clone());
+        }
+    }
+    ensure_arity(&positional, 2)?;
+    let input = Path::new(&positional[0]);
+    let output = Path::new(&positional[1]);
+    let summary = pkgre_rust::migrate::migrate_v4_to_v5(input, output, &git_times)?;
+    for registry in &summary.registries {
+        info!(
+            registry = %registry.name,
+            packages = registry.packages,
+            "migrated registry"
+        );
+    }
+    info!(routes = summary.routes, "migration complete");
     Ok(())
 }
