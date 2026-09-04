@@ -188,6 +188,8 @@
               cp -R js/src "$out/lib/pkgre-js/src"
               makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js" \
                 --add-flags "$out/lib/pkgre-js/src/main.js"
+              makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js-serve" \
+                --add-flags "$out/lib/pkgre-js/src/serve/main.js"
               runHook postInstall
             '';
             meta = {
