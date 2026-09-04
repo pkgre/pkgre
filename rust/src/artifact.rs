@@ -9,9 +9,10 @@ use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
 use sha2::{Digest, Sha256};
 
+use crate::download::DownloadCatalog;
 use crate::index::IndexRecord;
 use crate::policy::validate_sha256;
-use crate::schema::{Approval, Catalog, Source};
+use crate::schema::{Approval, Catalog};
 
 /// One materialized archive and un-routed source index row.
 #[derive(Debug)]
@@ -177,12 +178,23 @@ impl ArtifactMap {
     }
 }
 
-fn retained_archive_hashes(catalog: &Catalog) -> BTreeSet<String> {
+/// Returns the exact archive-hash set that must exist in `objects/crates`.
+///
+/// Delivery-driven: an active approval's archive is retained iff its download
+/// route is retained, which follows each registry's delivery declaration.
+/// Removed packages are never expected in the object store.
+pub(crate) fn retained_archive_hashes(catalog: &Catalog) -> BTreeSet<String> {
+    let retained_identities = DownloadCatalog::retained_route_identities(catalog);
     catalog
         .approvals
         .iter()
         .filter(|approval| {
-            !approval.is_removed() && matches!(&approval.source, Source::GitTag { .. })
+            !approval.is_removed()
+                && retained_identities.contains(&(
+                    approval.registry.clone(),
+                    approval.name.clone(),
+                    approval.version.clone(),
+                ))
         })
         .map(|approval| approval.archive_sha256.clone())
         .collect()
@@ -339,6 +351,15 @@ pub fn require_absent(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use semver::Version;
+
+    use crate::schema::{
+        Audience, PackageState, RegistriesFile, Registry, RegistryDelivery, Source,
+    };
+    use crate::update::time::UtcTimestamp;
+
     use super::*;
 
     #[test]
@@ -347,5 +368,107 @@ mod tests {
             sha256_bytes(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn retained_archive_hashes_follow_delivery() {
+        let git_tag = || Source::GitTag {
+            repository: "https://example.com/repo".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            tag_oid: "06".repeat(20),
+            commit: "07".repeat(20),
+            package: "first-party".to_owned(),
+            subdir: PathBuf::from("."),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        };
+        let mut approvals = vec![
+            approval(
+                "first-party",
+                "1.0.0",
+                &"01".repeat(32),
+                PackageState::Active,
+                git_tag(),
+            ),
+            approval(
+                "alpha",
+                "1.0.0",
+                &"02".repeat(32),
+                PackageState::Active,
+                Source::CratesIo,
+            ),
+            approval(
+                "gone",
+                "1.0.0",
+                &"03".repeat(32),
+                PackageState::Removed,
+                git_tag(),
+            ),
+        ];
+        let undeclared = retained_archive_hashes(&catalog(None, approvals.clone()));
+        assert_eq!(undeclared, BTreeSet::from(["01".repeat(32)]));
+
+        approvals.push(approval(
+            "beta",
+            "1.0.0",
+            &"04".repeat(32),
+            PackageState::Active,
+            Source::CratesIo,
+        ));
+        let declared =
+            retained_archive_hashes(&catalog(Some(RegistryDelivery::Retained), approvals));
+        assert_eq!(
+            declared,
+            BTreeSet::from(["01".repeat(32), "02".repeat(32), "04".repeat(32)])
+        );
+    }
+
+    fn catalog(delivery: Option<RegistryDelivery>, approvals: Vec<Approval>) -> Catalog {
+        Catalog {
+            root: PathBuf::new(),
+            registries: RegistriesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                cname: String::new(),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+                registries: vec![Registry {
+                    name: "main".to_owned(),
+                    index: String::new(),
+                    download: String::new(),
+                    audience: Audience::Public,
+                    cargo_version: Version::parse("1.95.0").unwrap(),
+                    delivery,
+                }],
+            },
+            categories: BTreeMap::new(),
+            homes: crate::schema::HomesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                homes: BTreeMap::new(),
+            },
+            mirror_names: std::collections::BTreeSet::new(),
+            publish_names: std::collections::BTreeSet::new(),
+            approvals,
+        }
+    }
+
+    fn approval(
+        name: &str,
+        version: &str,
+        sha256: &str,
+        state: PackageState,
+        source: Source,
+    ) -> Approval {
+        Approval {
+            registry: "main".to_owned(),
+            category: "main/general".parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse(version).unwrap(),
+            archive_sha256: sha256.to_owned(),
+            index_record_sha256: "08".repeat(32),
+            index_row_sha256: "09".repeat(32),
+            admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state,
+            source,
+            declared_in: PathBuf::new(),
+        }
     }
 }
