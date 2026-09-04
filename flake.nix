@@ -185,7 +185,10 @@
             inherit (jsManifest) version;
             src = jsSource;
             nativeBuildInputs = [ pkgs.makeWrapper ];
-            nativeCheckInputs = [ pkgs.nodejs_24 ];
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.nodejs_24
+            ];
             dontConfigure = true;
             dontBuild = true;
             doCheck = true;
@@ -202,7 +205,8 @@
               makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js" \
                 --add-flags "$out/lib/pkgre-js/src/main.js"
               makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js-serve" \
-                --add-flags "$out/lib/pkgre-js/src/serve/main.js"
+                --add-flags "$out/lib/pkgre-js/src/serve/main.js" \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
               runHook postInstall
             '';
             meta = {
