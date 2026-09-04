@@ -659,6 +659,7 @@ mod tests {
                     download: router_download_template("main"),
                     cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                     audience: Audience::Public,
+                    delivery: None,
                 }],
             },
             categories,
@@ -785,6 +786,7 @@ mod tests {
             download: MIRROR_DOWNLOAD.to_owned(),
             cargo_version: Version::parse(CARGO_VERSION).unwrap(),
             audience: Audience::Public,
+            delivery: None,
         });
         catalog.categories.insert(
             "staging/general".parse().unwrap(),

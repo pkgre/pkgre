@@ -37,6 +37,27 @@ impl Audience {
         }
     }
 }
+/// Archive delivery mode declared per registry in the human topology.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistryDelivery {
+    /// Redirect archive fetches to their declared external origin.
+    Redirect,
+    /// Retain archives in the catalog and serve them from the registry itself.
+    Retained,
+}
+
+impl RegistryDelivery {
+    /// Canonical lower-kebab spelling used in TOML and diagnostics.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Redirect => "redirect",
+            Self::Retained => "retained",
+        }
+    }
+}
+
 /// Cargo download base for registries backed by crates.io archives.
 pub const MIRROR_DOWNLOAD: &str = "https://static.crates.io/crates";
 /// Cargo download template for registries backed by retained Git-tag archives.
@@ -89,6 +110,9 @@ pub struct Registry {
     pub audience: Audience,
     /// Exact Cargo version used for newly published Git-tag packages.
     pub cargo_version: Version,
+    /// Archive delivery override for this registry; absent defaults to redirect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<RegistryDelivery>,
 }
 
 /// Expanded human-edited desired state for one registry.
@@ -1580,6 +1604,31 @@ reserved = []
         assert_eq!(first, serialize_lock(&lock).unwrap());
         let text = String::from_utf8(first).unwrap();
         assert!(text.find("name = \"a\"").unwrap() < text.find("name = \"z\"").unwrap());
+    }
+
+    #[test]
+    fn registry_delivery_parse() {
+        let parse_registry = |body: &str| -> Registry {
+            let raw: RawRegistryFile = toml::from_str(&registry_text(body)).unwrap();
+            raw.registry
+        };
+        let general = "[categories.general]\nmay-depend-on = [\"main/general\"]\n";
+        let absent = parse_registry(general);
+        assert_eq!(absent.delivery, None);
+        let retained = parse_registry(&format!("delivery = \"retained\"\n{general}"));
+        assert_eq!(retained.delivery, Some(RegistryDelivery::Retained));
+        assert_eq!(retained.delivery.unwrap().as_str(), "retained");
+        let redirect = parse_registry(&format!("delivery = \"redirect\"\n{general}"));
+        assert_eq!(redirect.delivery, Some(RegistryDelivery::Redirect));
+        assert_eq!(redirect.delivery.unwrap().as_str(), "redirect");
+        let invalid = toml::from_str::<RawRegistryFile>(&registry_text(&format!(
+            "delivery = \"bogus\"\n{general}"
+        )));
+        assert!(invalid.is_err());
+        let unknown_field = toml::from_str::<RawRegistryFile>(&registry_text(&format!(
+            "delivery = \"retained\"\nsurprise = true\n{general}"
+        )));
+        assert!(unknown_field.is_err());
     }
 
     fn registry_text(categories: &str) -> String {
