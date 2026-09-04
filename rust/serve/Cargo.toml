@@ -17,7 +17,7 @@ axum = { version = "0.8", registry = "pkgre" }
 pkgre-rust = { path = ".." }
 serde = { version = "1.0", features = ["derive"], registry = "pkgre" }
 serde_json = { version = "1.0", registry = "pkgre" }
-tokio = { version = "1.50", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"], registry = "pkgre" }
+tokio = { version = "1.50", features = ["fs", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"], registry = "pkgre" }
 toml = { version = "0.9", registry = "pkgre" }
 tracing = { version = "0.1", registry = "pkgre" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"], registry = "pkgre" }

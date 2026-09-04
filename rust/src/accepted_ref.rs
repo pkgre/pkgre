@@ -116,6 +116,18 @@ impl RepositoryConfig {
         );
         Ok(())
     }
+
+    /// Returns the configured canonical full ref.
+    #[must_use]
+    pub fn full_ref(&self) -> &str {
+        &self.full_ref
+    }
+
+    /// Returns the configured repository identity.
+    #[must_use]
+    pub fn repository_identity(&self) -> &str {
+        &self.repository_identity
+    }
 }
 
 /// Derives the repository binding identity from exact canonical-origin and full-ref bytes.
@@ -293,6 +305,11 @@ impl TransitionOutcome {
     #[must_use]
     pub fn active_commit(&self) -> Option<&str> {
         self.active_commit.as_deref()
+    }
+
+    #[must_use]
+    pub const fn reason(&self) -> TransitionReason {
+        self.reason
     }
 }
 

@@ -9,7 +9,8 @@ use pkgre_rust::serve::build_snapshot;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use pkgre_rust_serve::config::Config;
+use pkgre_rust_serve::config::{CatalogSource, Config};
+use pkgre_rust_serve::watcher::Watcher;
 use pkgre_rust_serve::web;
 
 fn main() -> ExitCode {
@@ -36,15 +37,44 @@ fn run() -> Result<()> {
 }
 
 async fn serve(config: Config) -> Result<()> {
-    let snapshot = build_snapshot(
-        &config.catalog,
-        config.delivery,
-        config.archive_store.as_deref(),
-        ProjectionLimits::default(),
-    )
-    .with_context(|| format!("build serving snapshot from {}", config.catalog.display()))?;
     let shared = Arc::new(web::Shared::new(config.delivery, config.max_concurrency));
-    shared.install_snapshot(Arc::new(snapshot)).await;
+    let watcher = match &config.source {
+        CatalogSource::Watcher(watcher_config) => {
+            let watcher = Arc::new(Watcher::new(
+                watcher_config,
+                config.delivery,
+                config.archive_store.clone(),
+                Arc::clone(&shared),
+            ));
+            watcher.startup().await.with_context(|| {
+                format!(
+                    "start accepted-ref watcher for {} {}",
+                    watcher_config.origin,
+                    watcher_config.repository.full_ref()
+                )
+            })?;
+            Some(watcher)
+        }
+        CatalogSource::Static(catalog) => {
+            let snapshot = build_snapshot(
+                catalog,
+                config.delivery,
+                config.archive_store.as_deref(),
+                ProjectionLimits::default(),
+            )
+            .with_context(|| format!("build serving snapshot from {}", catalog.display()))?;
+            shared.install_snapshot(Arc::new(snapshot)).await;
+            None
+        }
+    };
+    let source = match &config.source {
+        CatalogSource::Static(catalog) => catalog.display().to_string(),
+        CatalogSource::Watcher(watcher_config) => format!(
+            "{}#{}",
+            watcher_config.origin,
+            watcher_config.repository.full_ref()
+        ),
+    };
     let public_listener = TcpListener::bind(config.public_bind)
         .await
         .with_context(|| format!("bind public registry to {}", config.public_bind))?;
@@ -55,11 +85,21 @@ async fn serve(config: Config) -> Result<()> {
         public = %config.public_bind,
         admin = %config.admin_bind,
         delivery = config.delivery.as_str(),
-        catalog = %config.catalog.display(),
+        source = %source,
         "serving registry snapshot"
     );
     let public_shared = Arc::clone(&shared);
-    let (public, admin) = tokio::try_join!(
+    let admin_shared = Arc::clone(&shared);
+    let watcher_task = async {
+        match &watcher {
+            Some(watcher) => {
+                Arc::clone(watcher).run(shutdown_signal()).await;
+            }
+            None => shutdown_signal().await,
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    let (public, admin, ()) = tokio::try_join!(
         async {
             axum::serve(public_listener, web::public_application(public_shared))
                 .with_graceful_shutdown(shutdown_signal())
@@ -67,11 +107,12 @@ async fn serve(config: Config) -> Result<()> {
                 .context("serve public registry")
         },
         async {
-            axum::serve(admin_listener, web::admin_application(shared))
+            axum::serve(admin_listener, web::admin_application(admin_shared))
                 .with_graceful_shutdown(shutdown_signal())
                 .await
                 .context("serve admin service")
         },
+        watcher_task,
     )?;
     let ((), ()) = (public, admin);
     Ok(())
