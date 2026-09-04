@@ -398,4 +398,27 @@ mod tests {
             "missing bodies must fail with the first missing route, got: {rendered}"
         );
     }
+
+    #[test]
+    fn frozen_catalog_stays_fail_closed_after_retained_delivery_migration() {
+        let temp = TempDir::new("pkgre-serve-migrated-fixture");
+        let root = fixture_root(&temp);
+
+        crate::migrate::migrate_retained_delivery(&root).unwrap();
+
+        // The migration only rewrites declarations and downloads.json; the retained
+        // bodies are still absent, so both delivery modes must refuse to publish.
+        for (mode, store) in [
+            (DeliveryMode::Redirect, None),
+            (DeliveryMode::Body, Some(temp.path())),
+        ] {
+            let error =
+                build_snapshot(&root, mode, store, ProjectionLimits::default()).unwrap_err();
+            let rendered = format!("{error:#}");
+            assert!(
+                rendered.contains("differs from generated locks"),
+                "mode {mode:?} must fail closed on unimported retained bodies: {rendered}"
+            );
+        }
+    }
 }

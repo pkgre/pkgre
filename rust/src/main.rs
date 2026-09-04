@@ -12,6 +12,7 @@ use tracing::{error, info};
 
 const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
   pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time registry/name@tag=<timestamp>]...
+  pkgre-rust migrate-retained-delivery <catalog-root>
   pkgre-rust archive-inventory <catalog> <output.json>
   pkgre-rust archive-import <archive-store> <catalog>
   pkgre-rust check-transition <accepted-catalog> <candidate-catalog>";
@@ -45,6 +46,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("update-inspect") => update_inspect(&values),
         Some("update-apply") => update_apply(&values),
         Some("migrate-v4-to-v5") => migrate_v4_to_v5(&values),
+        Some("migrate-retained-delivery") => migrate_retained_delivery(&values),
         Some("archive-inventory") => archive_inventory(&values),
         Some("archive-import") => archive_import_command(&values),
         Some("check-transition") => check_transition_command(&values),
@@ -309,5 +311,20 @@ fn migrate_v4_to_v5(arguments: &[OsString]) -> Result<()> {
         );
     }
     info!(routes = summary.routes, "migration complete");
+    Ok(())
+}
+
+fn migrate_retained_delivery(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 1)?;
+    let root = Path::new(&arguments[0]);
+    let summary = pkgre_rust::migrate::migrate_retained_delivery(root)?;
+    info!(
+        registries = summary.registries,
+        changed = summary.changed,
+        retained_routes = summary.retained_routes,
+        total_routes = summary.total_routes,
+        path = %root.display(),
+        "declared retained delivery and recomputed the download catalog"
+    );
     Ok(())
 }

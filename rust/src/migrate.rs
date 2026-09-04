@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
@@ -17,7 +18,7 @@ use crate::download::{DOWNLOAD_CATALOG_FILE, Delivery, DownloadCatalog, Download
 use crate::policy::validate_catalog;
 use crate::schema::{
     Audience, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageState, RegistryLock,
-    serialize_lock,
+    catalog_from_inputs, load_registry_inputs, serialize_lock, validate_input_for_update,
 };
 use crate::update::UtcTimestamp;
 
@@ -604,4 +605,133 @@ fn verify_v1_routes_covered(v1: &V1DownloadCatalog, v2: &DownloadCatalog) -> Res
         );
     }
     Ok(())
+}
+
+/// Summary of one in-place retained-delivery migration.
+#[derive(Debug)]
+pub struct MigrateRetainedDeliverySummary {
+    /// Root registry declarations processed.
+    pub registries: usize,
+    /// Whether any catalog file changed.
+    pub changed: bool,
+    /// Download routes with retained delivery after the migration.
+    pub retained_routes: usize,
+    /// Total download routes after the migration.
+    pub total_routes: usize,
+}
+
+/// Declares `delivery = "retained"` on every root registry and recomputes the download catalog in place.
+///
+/// Each root-level registry file is edited with `toml_edit` so comments and formatting survive, and
+/// `downloads.json` is rewritten to exactly the bytes `DownloadCatalog::from_catalog` derives from
+/// the edited declarations, so later strict loads and lock reconciliations accept the result.
+/// Archive objects are deliberately not verified here: retained bodies are imported afterwards with
+/// `archive-import`, and check/render/serve fail closed until that import lands. The reconciler's
+/// `CatalogGuard` is private to `lock.rs` and is therefore intentionally not held.
+///
+/// # Errors
+///
+/// Returns an error for any unsafe root, malformed registry, failed edit validation, missing
+/// generated lock, or a failed strict catalog or policy gate on the migrated result.
+pub fn migrate_retained_delivery(catalog_root: &Path) -> Result<MigrateRetainedDeliverySummary> {
+    let mut registry_paths = Vec::<PathBuf>::new();
+    for entry in
+        fs::read_dir(catalog_root).with_context(|| format!("read {}", catalog_root.display()))?
+    {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) == Some("toml") {
+            registry_paths.push(path);
+        }
+    }
+    registry_paths.sort();
+
+    let mut changed = false;
+    for path in &registry_paths {
+        let raw = fs::read(path).with_context(|| format!("read registry {}", path.display()))?;
+        let text = String::from_utf8(raw)
+            .with_context(|| format!("registry {} is not UTF-8", path.display()))?;
+        let mut document = text
+            .parse::<toml_edit::DocumentMut>()
+            .with_context(|| format!("parse registry {}", path.display()))?;
+        let registry = document
+            .get_mut("registry")
+            .and_then(|value| value.as_table_mut())
+            .with_context(|| format!("registry {} has no [registry] table", path.display()))?;
+        registry.insert("delivery", toml_edit::value("retained"));
+        let migrated = document.to_string();
+        if migrated == text {
+            continue;
+        }
+        write_bytes_when_changed(path, migrated.as_bytes())?;
+        changed = true;
+        let inputs = load_registry_inputs(catalog_root)?;
+        let input = inputs
+            .iter()
+            .find(|input| input.path == *path)
+            .with_context(|| format!("reload edited registry {}", path.display()))?;
+        validate_input_for_update(input)
+            .with_context(|| format!("validate edited registry {}", path.display()))?;
+    }
+
+    let inputs = load_registry_inputs(catalog_root)?;
+    let catalog = catalog_from_inputs(catalog_root, &inputs)?;
+    let downloads = DownloadCatalog::from_catalog(&catalog);
+    let canonical = downloads.canonical_bytes()?;
+    let downloads_path = catalog_root.join(DOWNLOAD_CATALOG_FILE);
+    changed |= write_bytes_when_changed(&downloads_path, &canonical)?;
+
+    let catalog = crate::schema::Catalog::load(catalog_root)
+        .with_context(|| format!("validate migrated catalog {}", catalog_root.display()))?;
+    validate_catalog(&catalog)
+        .with_context(|| format!("validate migrated catalog {}", catalog_root.display()))?;
+
+    let total_routes = downloads.routes.len();
+    let retained_routes = downloads
+        .routes
+        .iter()
+        .filter(|route| route.delivery.is_retained())
+        .count();
+    Ok(MigrateRetainedDeliverySummary {
+        registries: registry_paths.len(),
+        changed,
+        retained_routes,
+        total_routes,
+    })
+}
+
+/// Atomically replaces one catalog file when its bytes differ.
+///
+/// Reports whether the file changed. Replacements land through a same-directory temporary file
+/// plus `fs::rename`, so readers observe either the previous or the new bytes and a failed write
+/// never truncates the catalog file.
+///
+/// # Errors
+///
+/// Returns an error when the temporary file cannot be written, synced, or renamed into place.
+fn write_bytes_when_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
+    if let Ok(existing) = fs::read(path) {
+        if existing == bytes {
+            return Ok(false);
+        }
+    }
+    let parent = path
+        .parent()
+        .with_context(|| format!("file {} has no parent directory", path.display()))?;
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .with_context(|| format!("file name {} is not valid UTF-8", path.display()))?;
+    let temporary = parent.join(format!(".{name}.{}.tmp", std::process::id()));
+    let mut file = fs::File::create(&temporary)
+        .with_context(|| format!("create temporary {}", temporary.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("write temporary {}", temporary.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync temporary {}", temporary.display()))?;
+    drop(file);
+    fs::rename(&temporary, path).with_context(|| format!("install {}", path.display()))?;
+    if let Ok(directory) = fs::File::open(parent) {
+        let _ = directory.sync_all();
+    }
+    Ok(true)
 }
