@@ -88,6 +88,21 @@ impl PreparedRoute {
         })
     }
 
+    /// Prepares one exact archive-body response for body-mode serving.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the retained body length cannot be represented by the HTTP policy.
+    pub(crate) fn from_archive_body(body: &Arc<Vec<u8>>) -> Result<Self> {
+        let _ = u64::try_from(body.len()).context("body-mode archive is too large")?;
+        Ok(Self {
+            representation: ProjectedRepresentation::Archive,
+            body: Some(Arc::clone(body)),
+            entity_tag: Some(entity_tag(body)),
+            location: None,
+        })
+    }
+
     fn respond(&self, head: bool) -> ApplicationResponse {
         if self.representation == ProjectedRepresentation::Redirect {
             return ApplicationResponse {

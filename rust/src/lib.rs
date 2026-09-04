@@ -17,5 +17,6 @@ pub mod projection;
 pub mod render;
 pub mod request_target;
 pub mod schema;
+pub mod serve;
 pub mod transition;
 pub mod update;
