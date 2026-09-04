@@ -9,7 +9,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::policy::{validate_package_name, validate_registry_alias, validate_sha256};
-use crate::schema::{Catalog, Source};
+use crate::schema::{Catalog, RegistryDelivery, Source};
 
 /// Generated download catalog filename in both catalog and rendered-site roots.
 pub const DOWNLOAD_CATALOG_FILE: &str = "downloads.json";
@@ -74,6 +74,13 @@ impl DownloadCatalog {
     /// Derives the complete canonical route set from every generated-lock approval, including removed ones.
     #[must_use]
     pub fn from_catalog(catalog: &Catalog) -> Self {
+        let retained_registries: BTreeSet<&str> = catalog
+            .registries
+            .registries
+            .iter()
+            .filter(|registry| registry.delivery == Some(RegistryDelivery::Retained))
+            .map(|registry| registry.name.as_str())
+            .collect();
         Self::from_routes(
             catalog
                 .approvals
@@ -83,7 +90,17 @@ impl DownloadCatalog {
                     name: approval.name.clone(),
                     version: approval.version.clone(),
                     sha256: approval.archive_sha256.clone(),
-                    delivery: match approval.source {
+                    delivery: match &approval.source {
+                        Source::CratesIo
+                            if retained_registries.contains(approval.registry.as_str()) =>
+                        {
+                            Delivery::Retained {
+                                path: retained_object_path(
+                                    &approval.registry,
+                                    &approval.archive_sha256,
+                                ),
+                            }
+                        }
                         Source::CratesIo => Delivery::Redirect {
                             url: download_url(
                                 &approval.registry,
@@ -102,6 +119,27 @@ impl DownloadCatalog {
                 })
                 .collect(),
         )
+    }
+
+    /// Returns the exact retained-route identities derived from delivery declarations.
+    ///
+    /// Includes removed packages; consumers must join with the active-approval set.
+    #[must_use]
+    pub(crate) fn retained_route_identities(
+        catalog: &Catalog,
+    ) -> BTreeSet<(String, String, Version)> {
+        Self::from_catalog(catalog)
+            .routes
+            .iter()
+            .filter(|route| route.delivery.is_retained())
+            .map(|route| {
+                (
+                    route.registry.clone(),
+                    route.name.clone(),
+                    route.version.clone(),
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn from_routes(mut routes: Vec<DownloadRoute>) -> Self {
@@ -288,7 +326,237 @@ fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Orderin
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    use semver::Version;
+
+    use crate::schema::{Approval, Catalog, PackageState, RegistryDelivery, Source};
+    use crate::update::time::UtcTimestamp;
+
     use super::*;
+
+    #[test]
+    fn from_catalog_delivery_follows_registry_declaration() {
+        let crates_io = Source::CratesIo;
+        let git_tag = || Source::GitTag {
+            repository: "https://example.com/repo".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            tag_oid: "06".repeat(20),
+            commit: "07".repeat(20),
+            package: "first-party".to_owned(),
+            subdir: PathBuf::from("."),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        };
+
+        let default_redirect = DownloadCatalog::from_catalog(&test_catalog(
+            None,
+            vec![
+                approval(
+                    "alpha",
+                    "1.0.0",
+                    &"01".repeat(32),
+                    PackageState::Active,
+                    crates_io.clone(),
+                ),
+                approval(
+                    "first-party",
+                    "1.0.0",
+                    &"02".repeat(32),
+                    PackageState::Active,
+                    git_tag(),
+                ),
+            ],
+        ))
+        .routes;
+        assert!(matches!(
+            default_redirect[0].delivery,
+            Delivery::Redirect { .. }
+        ));
+        assert!(matches!(
+            default_redirect[1].delivery,
+            Delivery::Retained { .. }
+        ));
+
+        let declared = DownloadCatalog::from_catalog(&test_catalog(
+            Some(RegistryDelivery::Retained),
+            vec![
+                approval(
+                    "alpha",
+                    "1.0.0",
+                    &"01".repeat(32),
+                    PackageState::Active,
+                    crates_io.clone(),
+                ),
+                approval(
+                    "gone",
+                    "1.0.0",
+                    &"03".repeat(32),
+                    PackageState::Removed,
+                    crates_io,
+                ),
+            ],
+        ))
+        .routes;
+        for route in &declared {
+            let Delivery::Retained { path } = &route.delivery else {
+                panic!("expected retained route for {}", route.name)
+            };
+            assert_eq!(path, &retained_object_path("main", &route.sha256));
+        }
+
+        let foreign = approval_in(
+            "other",
+            "beta",
+            "1.0.0",
+            &"04".repeat(32),
+            PackageState::Active,
+            Source::CratesIo,
+        );
+        let first_party_foreign = approval_in(
+            "other",
+            "beta-fp",
+            "1.0.0",
+            &"05".repeat(32),
+            PackageState::Active,
+            git_tag(),
+        );
+        let fallback = DownloadCatalog::from_catalog(&test_catalog(
+            Some(RegistryDelivery::Retained),
+            vec![foreign, first_party_foreign],
+        ))
+        .routes;
+        assert!(matches!(fallback[0].delivery, Delivery::Redirect { .. }));
+        assert!(matches!(fallback[1].delivery, Delivery::Retained { .. }));
+    }
+
+    #[test]
+    fn retained_route_identities_join_through_declarations() {
+        let git_tag = || Source::GitTag {
+            repository: "https://example.com/repo".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            tag_oid: "06".repeat(20),
+            commit: "07".repeat(20),
+            package: "first-party".to_owned(),
+            subdir: PathBuf::from("."),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        };
+
+        let identities = DownloadCatalog::retained_route_identities(&test_catalog(
+            Some(RegistryDelivery::Retained),
+            vec![
+                approval(
+                    "alpha",
+                    "1.0.0",
+                    &"01".repeat(32),
+                    PackageState::Active,
+                    Source::CratesIo,
+                ),
+                approval(
+                    "gone",
+                    "1.0.0",
+                    &"03".repeat(32),
+                    PackageState::Removed,
+                    Source::CratesIo,
+                ),
+            ],
+        ));
+        assert_eq!(
+            identities,
+            BTreeSet::from([
+                (
+                    "main".to_owned(),
+                    "alpha".to_owned(),
+                    Version::parse("1.0.0").unwrap()
+                ),
+                (
+                    "main".to_owned(),
+                    "gone".to_owned(),
+                    Version::parse("1.0.0").unwrap()
+                ),
+            ])
+        );
+
+        let undeclared_identities = DownloadCatalog::retained_route_identities(&test_catalog(
+            None,
+            vec![approval(
+                "first-party",
+                "1.0.0",
+                &"02".repeat(32),
+                PackageState::Active,
+                git_tag(),
+            )],
+        ));
+        assert_eq!(
+            undeclared_identities,
+            BTreeSet::from([(
+                "main".to_owned(),
+                "first-party".to_owned(),
+                Version::parse("1.0.0").unwrap()
+            )])
+        );
+    }
+
+    fn test_catalog(delivery: Option<RegistryDelivery>, approvals: Vec<Approval>) -> Catalog {
+        Catalog {
+            root: PathBuf::new(),
+            registries: crate::schema::RegistriesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                cname: String::new(),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+                registries: vec![crate::schema::Registry {
+                    name: "main".to_owned(),
+                    index: String::new(),
+                    download: String::new(),
+                    audience: crate::schema::Audience::Public,
+                    cargo_version: Version::parse("1.95.0").unwrap(),
+                    delivery,
+                }],
+            },
+            categories: BTreeMap::new(),
+            homes: crate::schema::HomesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                homes: BTreeMap::new(),
+            },
+            mirror_names: BTreeSet::new(),
+            publish_names: BTreeSet::new(),
+            approvals,
+        }
+    }
+
+    fn approval(
+        name: &str,
+        version: &str,
+        sha256: &str,
+        state: PackageState,
+        source: Source,
+    ) -> Approval {
+        approval_in("main", name, version, sha256, state, source)
+    }
+
+    fn approval_in(
+        registry: &str,
+        name: &str,
+        version: &str,
+        sha256: &str,
+        state: PackageState,
+        source: Source,
+    ) -> Approval {
+        Approval {
+            registry: registry.to_owned(),
+            category: format!("{registry}/general").parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse(version).unwrap(),
+            archive_sha256: sha256.to_owned(),
+            index_record_sha256: "08".repeat(32),
+            index_row_sha256: "09".repeat(32),
+            admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state,
+            source,
+            declared_in: PathBuf::new(),
+        }
+    }
 
     fn route(name: &str, version: &str, sha256: &str, delivery: Delivery) -> DownloadRoute {
         DownloadRoute {
