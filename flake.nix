@@ -104,6 +104,7 @@
               description,
               mainProgram,
               nativeCheckInputs ? [ ],
+              runtimeInputs ? [ ],
             }:
             let
               manifest = builtins.fromTOML (builtins.readFile ./${packageDirectory}/Cargo.toml);
@@ -115,6 +116,11 @@
               src = source;
               postPatch = ''
                 cp ${vendorLock} Cargo.lock
+              '';
+              nativeBuildInputs = pkgs.lib.optionals (runtimeInputs != [ ]) [ pkgs.makeWrapper ];
+              postInstall = pkgs.lib.optionalString (runtimeInputs != [ ]) ''
+                wrapProgram "$out/bin/${mainProgram}" \
+                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeInputs}
               '';
               inherit cargoDeps nativeCheckInputs;
               cargoBuildFlags = [
@@ -154,7 +160,14 @@
             packageDirectory = "rust/serve";
             description = "Immutable catalog snapshot serving origin for dynamic pkgre registries";
             mainProgram = "pkgre-rust-serve";
-            nativeCheckInputs = [ pkgs.gnutar ];
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.gnutar
+            ];
+            runtimeInputs = [
+              pkgs.git
+              pkgs.gnutar
+            ];
           };
           jsCompatibilityClients = import ./nix/js-compatibility-clients.nix { inherit pkgs system; };
           jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
