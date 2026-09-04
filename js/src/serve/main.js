@@ -11,6 +11,11 @@ import {
   installSnapshot,
   publicRequestHandler,
 } from "./web.js";
+import { AcceptedRefWatcher } from "./watcher.js";
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : "unknown operational failure";
+}
 
 function listen(server, { host, port }) {
   return new Promise((resolve, reject) => {
@@ -34,14 +39,34 @@ function stopSignal() {
 }
 
 async function serve(config) {
-  // Build the snapshot before binding: fail fast, no silent fallback.
-  const catalog = loadCatalog(config.registry.catalog);
-  const snapshot = await buildServeSnapshot(catalog, config.registry.archiveStore, config.registry.delivery);
   const shared = createShared({
     delivery: config.registry.delivery,
     maxConcurrency: config.limits.maxConcurrency,
   });
-  installSnapshot(shared, snapshot);
+  let watcher = null;
+  let pollTimer = undefined;
+  let source;
+  if (config.watcher === null) {
+    // Build the snapshot before binding: fail fast, no silent fallback.
+    const catalog = loadCatalog(config.registry.catalog);
+    const snapshot = await buildServeSnapshot(catalog, config.registry.archiveStore, config.registry.delivery);
+    installSnapshot(shared, snapshot);
+    source = config.registry.catalog;
+  } else {
+    // The watcher publishes its own first snapshot before any listener binds.
+    watcher = new AcceptedRefWatcher(config.watcher, {
+      archiveStore: config.registry.archiveStore,
+      delivery: config.registry.delivery,
+      shared,
+    });
+    await watcher.startup();
+    pollTimer = setInterval(() => {
+      watcher.pollOnce().catch((error) => {
+        process.stderr.write(`error: watcher poll failed: ${errorMessage(error)}\n`);
+      });
+    }, config.watcher.pollIntervalSeconds * 1000);
+    source = `${config.watcher.origin}#${config.watcher.repository.fullRef}`;
+  }
 
   const publicServer = http.createServer(publicRequestHandler(shared));
   const adminServer = http.createServer(adminRequestHandler(shared));
@@ -51,10 +76,12 @@ async function serve(config) {
     `ok pkgre-js-serve delivery=${config.registry.delivery}`
       + ` public=${config.public.host}:${config.public.port}`
       + ` admin=${config.admin.host}:${config.admin.port}`
-      + ` routes=${snapshot.routes.size}\n`,
+      + ` source=${source}`
+      + ` routes=${shared.snapshot === null ? 0 : shared.snapshot.routes.size}\n`,
   );
 
   await stopSignal();
+  if (pollTimer !== undefined) clearInterval(pollTimer);
   await Promise.all([closeServer(publicServer), closeServer(adminServer)]);
 }
 
@@ -68,8 +95,8 @@ if (resolved.kind === "help") {
   try {
     await serve(loadConfig(resolved.path));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown operational failure";
-    process.stderr.write(`error: ${message}\n`);
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
     process.exitCode = 1;
   }
 }
+

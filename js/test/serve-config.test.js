@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { deriveRepositoryIdentity } from "../src/accepted-ref.js";
 import { USAGE, loadConfig, parseConfig, resolveArguments, validateConfig } from "../src/serve/config.js";
 
 function baseDocument() {
@@ -33,6 +34,7 @@ test("serve configuration parses exactly", () => {
     limits: { maxConcurrency: 8 },
     public: { host: "127.0.0.1", port: 8080 },
     registry: { archiveStore: null, catalog: "/var/lib/pkgre/js-catalog.json", delivery: "redirect" },
+    watcher: null,
   });
   assert.ok(Object.isFrozen(config.public));
   assert.ok(Object.isFrozen(config.registry));
@@ -114,4 +116,88 @@ test("serve configuration file errors name the config path", () => {
   assert.throws(() => loadConfig("/nonexistent/pkgre-serve-config.json"), /read serve config \/nonexistent\/pkgre-serve-config\.json/);
   assert.throws(() => parseConfig("{not json", "config.json"), /parse serve config config\.json/);
   assert.throws(() => parseConfig("{}", "config.json"), /serve configuration is missing field admin/);
+});
+
+function watcherDocument() {
+  return {
+    admin: { bind: "127.0.0.1:8181" },
+    limits: { "max-concurrency": 8 },
+    public: { bind: "127.0.0.1:8080" },
+    registry: { delivery: "redirect" },
+    schema: 1,
+    watcher: {
+      bootstrapCommit: "1".repeat(40),
+      catalogPath: "registry/catalog.json",
+      fullRef: "refs/heads/main",
+      origin: "https://github.com/pkgre/fixture-catalog.git",
+      pollIntervalSeconds: 30,
+      statePath: "/srv/pkgre/state",
+    },
+  };
+}
+
+test("watcher configuration parses exactly and derives its identity", () => {
+  const config = validateConfig(watcherDocument());
+  assert.equal(config.registry.catalog, null);
+  const watcher = config.watcher;
+  assert.ok(Object.isFrozen(watcher));
+  assert.deepEqual(watcher, {
+    bootstrapCommit: "1".repeat(40),
+    catalogPath: "registry/catalog.json",
+    fullRef: "refs/heads/main",
+    origin: "https://github.com/pkgre/fixture-catalog.git",
+    pollIntervalSeconds: 30,
+    repository: {
+      fullRef: "refs/heads/main",
+      repositoryIdentity: deriveRepositoryIdentity(
+        Buffer.from("https://github.com/pkgre/fixture-catalog.git"),
+        Buffer.from("refs/heads/main"),
+      ),
+    },
+    statePath: "/srv/pkgre/state",
+  });
+});
+
+test("watcher and static catalog are exclusive", () => {
+  const both = watcherDocument();
+  both.registry.catalog = "/srv/pkgre/js-catalog.json";
+  assert.throws(() => validateConfig(both), /\[registry\] catalog is only valid when no watcher is configured/);
+  const neither = baseDocument();
+  delete neither.registry.catalog;
+  assert.throws(() => validateConfig(neither), /\[registry\] catalog is required when no watcher is configured/);
+});
+
+test("invalid watcher fields fail closed", () => {
+  const cases = [
+    ["origin-empty", "origin must be nonempty", (document) => { document.watcher.origin = ""; }],
+    ["origin-padded", "origin must be nonempty", (document) => { document.watcher.origin = ` ${document.watcher.origin}`; }],
+    ["full-ref-shape", "fullRef must be a canonical Git full ref", (document) => { document.watcher.fullRef = "main"; }],
+    ["full-ref-empty", "fullRef must be a canonical Git full ref", (document) => { document.watcher.fullRef = "refs/"; }],
+    ["bootstrap-commit-short", "bootstrapCommit must be 40 lowercase hexadecimal", (document) => { document.watcher.bootstrapCommit = "1".repeat(39); }],
+    ["bootstrap-commit-case", "bootstrapCommit must be 40 lowercase hexadecimal", (document) => { document.watcher.bootstrapCommit = "A".repeat(40); }],
+    ["bootstrap-commit-shape", "bootstrapCommit must be 40 lowercase hexadecimal", (document) => { document.watcher.bootstrapCommit = `${"1".repeat(39)}g`; }],
+    ["poll-interval-zero", "pollIntervalSeconds must be a positive integer", (document) => { document.watcher.pollIntervalSeconds = 0; }],
+    ["catalog-path-absolute", 'catalogPath "/srv/registry/catalog.json" must be relative', (document) => { document.watcher.catalogPath = "/srv/registry/catalog.json"; }],
+    ["catalog-path-parent", 'must not contain ".." components', (document) => { document.watcher.catalogPath = "../registry/catalog.json"; }],
+    ["catalog-path-empty", "non-empty relative path", (document) => { document.watcher.catalogPath = ""; }],
+    ["state-path-empty", "statePath must be a non-empty directory string", (document) => { document.watcher.statePath = ""; }],
+    ["unknown-watcher-field", "has unknown field interval", (document) => { document.watcher.interval = 30; }],
+  ];
+  for (const [label, expected, mutate] of cases) {
+    const document = watcherDocument();
+    mutate(document);
+    assert.throws(() => validateConfig(document), new RegExp(expected), label);
+  }
+});
+
+test("watcher state path and poll interval accept only sane values", () => {
+  const fractional = watcherDocument();
+  fractional.watcher.pollIntervalSeconds = 1.5;
+  assert.throws(() => validateConfig(fractional), /pollIntervalSeconds must be a positive integer/);
+  const relativeState = watcherDocument();
+  relativeState.watcher.statePath = "state";
+  assert.equal(validateConfig(relativeState).watcher.statePath, "state");
+  const parentCatalogPath = watcherDocument();
+  parentCatalogPath.watcher.catalogPath = "registry/../catalog.json";
+  assert.throws(() => validateConfig(parentCatalogPath), /must not contain "\.\." components/);
 });

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 
+import { deriveRepositoryIdentity, isValidFullRef } from "../accepted-ref.js";
+
 export const USAGE = [
   "usage: pkgre-js-serve CONFIG",
   "       pkgre-js-serve --help",
@@ -14,11 +16,18 @@ export const USAGE = [
   '               "archive-store":"DIRECTORY"},',
   '   "limits":{"max-concurrency":64}}',
   "",
+  'Exactly one snapshot source is required: [registry] catalog, or a "watcher"',
+  "section that polls the accepted ref:",
+  '  {"watcher":{"origin":"ORIGIN","fullRef":"refs/heads/main",',
+  '              "catalogPath":"registry/catalog.json","bootstrapCommit":"40HEX",',
+  '              "statePath":"STATE","pollIntervalSeconds":30}}',
+  "",
   'delivery "body" requires archive-store; delivery "redirect" may omit it',
   "(first-party archive bodies then fail the snapshot closed).",
 ].join("\n");
 
 const DELIVERY_MODES = ["redirect", "body"];
+const BOOTSTRAP_COMMIT = /^[0-9a-f]{40}$/;
 
 function reject(message) {
   throw new Error(message);
@@ -51,13 +60,52 @@ function parseBind(value, label) {
   return { host, port };
 }
 
+function validateCatalogPath(value, label) {
+  if (typeof value !== "string" || !value.length) reject(`${label} catalogPath must be a non-empty relative path string`);
+  if (value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value)) reject(`${label} catalogPath ${JSON.stringify(value)} must be relative`);
+  if (value.split("/").includes("..")) reject(`${label} catalogPath ${JSON.stringify(value)} must not contain ".." components`);
+}
+
+/**
+ * Validates the optional accepted-ref watcher section; the repository identity
+ * is derived from the canonical origin and full ref with no normalization.
+ * @param {object} document
+ * @returns {object} frozen watcher configuration
+ */
+function validateWatcher(document) {
+  exactKeys(document, ["bootstrapCommit", "catalogPath", "fullRef", "origin", "pollIntervalSeconds", "statePath"], "[watcher]");
+  const { bootstrapCommit, catalogPath, fullRef, origin, pollIntervalSeconds, statePath } = document;
+  if (typeof origin !== "string" || !origin.length || origin.trim() !== origin) {
+    reject("[watcher] origin must be nonempty with no leading or trailing whitespace");
+  }
+  if (!isValidFullRef(fullRef)) reject("[watcher] fullRef must be a canonical Git full ref");
+  if (typeof bootstrapCommit !== "string" || !BOOTSTRAP_COMMIT.test(bootstrapCommit)) {
+    reject("[watcher] bootstrapCommit must be 40 lowercase hexadecimal characters");
+  }
+  validateCatalogPath(catalogPath, "[watcher]");
+  if (typeof statePath !== "string" || !statePath.length) reject("[watcher] statePath must be a non-empty directory string");
+  if (!Number.isInteger(pollIntervalSeconds) || pollIntervalSeconds < 1) {
+    reject("[watcher] pollIntervalSeconds must be a positive integer");
+  }
+  const repositoryIdentity = deriveRepositoryIdentity(Buffer.from(origin, "utf8"), Buffer.from(fullRef, "utf8"));
+  return Object.freeze({
+    bootstrapCommit,
+    catalogPath,
+    fullRef,
+    origin,
+    pollIntervalSeconds,
+    repository: Object.freeze({ fullRef, repositoryIdentity }),
+    statePath,
+  });
+}
+
 /**
  * Validates one parsed serve configuration document without defaults or coercion.
  * @param {unknown} document
  * @returns {object} frozen configuration
  */
 export function validateConfig(document) {
-  exactKeys(document, ["admin", "limits", "public", "registry", "schema"], "serve configuration");
+  exactKeys(document, ["admin", "limits", "public", "registry", "schema", "watcher"], "serve configuration", ["watcher"]);
   if (typeof document.schema !== "number" || document.schema !== 1) reject("serve configuration schema must be 1");
   exactKeys(document.public, ["bind"], "[public]");
   const publicBind = Object.freeze(parseBind(document.public.bind, "[public] bind"));
@@ -66,9 +114,11 @@ export function validateConfig(document) {
   if (publicBind.host === adminBind.host && publicBind.port === adminBind.port) {
     reject("[public] bind and [admin] bind must differ");
   }
-  exactKeys(document.registry, ["archive-store", "catalog", "delivery"], "[registry]", ["archive-store"]);
+  exactKeys(document.registry, ["archive-store", "catalog", "delivery"], "[registry]", ["archive-store", "catalog"]);
   const { catalog, delivery } = document.registry;
-  if (typeof catalog !== "string" || !catalog.length) reject("[registry] catalog must be a non-empty path string");
+  if (catalog !== undefined && (typeof catalog !== "string" || !catalog.length)) {
+    reject("[registry] catalog must be a non-empty path string");
+  }
   if (!DELIVERY_MODES.includes(delivery)) reject('[registry] delivery must be "redirect" or "body"');
   const archiveStore = document.registry["archive-store"];
   if (archiveStore !== undefined && (typeof archiveStore !== "string" || !archiveStore.length)) {
@@ -77,6 +127,9 @@ export function validateConfig(document) {
   if (delivery === "body" && archiveStore === undefined) {
     reject('[registry] delivery "body" requires [registry] archive-store');
   }
+  const watcher = document.watcher === undefined ? null : validateWatcher(document.watcher);
+  if (watcher === null && catalog === undefined) reject("[registry] catalog is required when no watcher is configured");
+  if (watcher !== null && catalog !== undefined) reject("[registry] catalog is only valid when no watcher is configured");
   exactKeys(document.limits, ["max-concurrency"], "[limits]");
   const maxConcurrency = document.limits["max-concurrency"];
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
@@ -86,7 +139,8 @@ export function validateConfig(document) {
     admin: adminBind,
     limits: Object.freeze({ maxConcurrency }),
     public: publicBind,
-    registry: Object.freeze({ archiveStore: archiveStore ?? null, catalog, delivery }),
+    registry: Object.freeze({ archiveStore: archiveStore ?? null, catalog: catalog ?? null, delivery }),
+    watcher,
   });
 }
 
