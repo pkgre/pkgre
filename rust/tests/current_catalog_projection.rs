@@ -11,16 +11,16 @@ use pkgre_rust::projection::{CatalogProjection, ProjectedRepresentation, Project
 use pkgre_rust::render;
 use pkgre_rust::schema::{Catalog, Source};
 
-const SOURCE_COMMIT: &str = "f9b5ffaf14c2b9278c9d4828dc4e8b9ef8f6518b";
-const SOURCE_TREE: &str = "35cbdb0e7622506461ad0d4340e3c1f40f594526";
-const FIXTURE_SHA256: &str = "9c70bcffb58b92003f9c950656953b51844aeaa1d86183b86415f09da334f2fa";
-const FIXTURE: &[u8] = include_bytes!("fixtures/rust-current-catalog-f9b5ffa.tar.gz");
-const EXPECTED_PROJECTION: &[u8] = include_bytes!("fixtures/rust-current-projection-f9b5ffa.json");
+const SOURCE_COMMIT: &str = "d778238d266d0b47ab61ba2b78ec9a38d29586e6";
+const SOURCE_TREE: &str = "e8b757b723f40e15c4800bca8b02ef4698cf8543";
+const FIXTURE_SHA256: &str = "d5d2ce2cf86fafcb52400677c6f020ce096132deb45a24d5535e98149b0baacc";
+const FIXTURE: &[u8] = include_bytes!("fixtures/rust-current-catalog-d778238.tar.gz");
+const EXPECTED_PROJECTION: &[u8] = include_bytes!("fixtures/rust-current-projection-d778238.json");
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
-    assert_eq!(FIXTURE.len(), 621_318);
+    assert_eq!(FIXTURE.len(), 636_157);
     assert_eq!(
         sha256_bytes(FIXTURE),
         FIXTURE_SHA256,
@@ -45,7 +45,7 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
 
     let root = extraction.join("registry");
     let (source_files, source_bytes) = regular_file_tree_stats(&root);
-    assert_eq!((source_files, source_bytes), (757, 1_935_385));
+    assert_eq!((source_files, source_bytes), (757, 2_085_191));
 
     let catalog = Catalog::load(&root).unwrap();
     let artifacts = ArtifactMap::load(&catalog).unwrap();
@@ -94,8 +94,8 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
 
     let inline_bytes = retained_bytes(&projection, ProjectedResponseKind::Inline);
     let archive_bytes = retained_bytes(&projection, ProjectedResponseKind::Archive);
-    assert_eq!((inline_bytes, archive_bytes), (1_899_988, 229_784));
-    assert_eq!(projection.retained_body_bytes(), 2_129_772);
+    assert_eq!((inline_bytes, archive_bytes), (2_022_115, 229_784));
+    assert_eq!(projection.retained_body_bytes(), 2_251_899);
 
     let site = temporary.path().join("site");
     render::render(&catalog, &artifacts, &site).unwrap();
@@ -120,7 +120,7 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
     assert_eq!(EXPECTED_PROJECTION.len(), 462_388);
     assert_eq!(
         sha256_bytes(EXPECTED_PROJECTION),
-        "dfca6b5ee1b665a42e3ee894c059ed6308a1eff4404e506fc5a2863ee24e4ac6",
+        "838cf2660ade22b86208e8a217ca25944981ba36815dc697360ebb37ac05f5da",
         "update only after independently reviewing an intentional projection change"
     );
 }
