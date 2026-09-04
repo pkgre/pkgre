@@ -62,6 +62,14 @@ pub enum Delivery {
     },
 }
 
+impl Delivery {
+    /// Returns whether this delivery retains an archive in this registry's object store.
+    #[must_use]
+    pub fn is_retained(&self) -> bool {
+        matches!(self, Self::Retained { .. })
+    }
+}
+
 impl DownloadCatalog {
     /// Derives the complete canonical route set from every generated-lock approval, including removed ones.
     #[must_use]

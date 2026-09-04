@@ -415,7 +415,7 @@ impl Approval {
 }
 
 /// Immutable origin of a locked package archive and source index row.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Source {
     /// Exact package bytes and metadata imported from crates.io.
     CratesIo,

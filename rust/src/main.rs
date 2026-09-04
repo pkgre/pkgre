@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -10,7 +11,10 @@ use pkgre_rust::schema::Catalog;
 use tracing::{error, info};
 
 const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
-  pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time registry/name@tag=<timestamp>]...";
+  pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time registry/name@tag=<timestamp>]...
+  pkgre-rust archive-inventory <catalog> <output.json>
+  pkgre-rust archive-import <archive-store> <catalog>
+  pkgre-rust check-transition <accepted-catalog> <candidate-catalog>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -41,6 +45,9 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("update-inspect") => update_inspect(&values),
         Some("update-apply") => update_apply(&values),
         Some("migrate-v4-to-v5") => migrate_v4_to_v5(&values),
+        Some("archive-inventory") => archive_inventory(&values),
+        Some("archive-import") => archive_import_command(&values),
+        Some("check-transition") => check_transition_command(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -204,8 +211,57 @@ fn log_update_plan(plan: &pkgre_rust::update::UpdatePlan, output: &Path) {
     );
 }
 
+fn archive_inventory(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let catalog = load_catalog(&arguments[0])?;
+    validate_catalog(&catalog)?;
+    let downloads = pkgre_rust::download::DownloadCatalog::load_from_root(&catalog.root)?;
+    let inventory = pkgre_rust::archive::ArchiveInventory::from_catalog(&catalog, &downloads);
+    let output = Path::new(&arguments[1]);
+    pkgre_rust::artifact::require_absent(output)?;
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(output, inventory.canonical_bytes()?)
+        .with_context(|| format!("write {}", output.display()))?;
+    info!(
+        objects = inventory.objects.len(),
+        path = %output.display(),
+        "wrote archive inventory"
+    );
+    Ok(())
+}
+
+fn archive_import_command(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let store = Path::new(&arguments[0]);
+    let catalog = Path::new(&arguments[1]);
+    let summary = pkgre_rust::archive::archive_import(store, catalog)?;
+    info!(
+        imported = summary.imported,
+        already_present = summary.already_present,
+        path = %catalog.display(),
+        "imported retained archives"
+    );
+    Ok(())
+}
+
 fn load_catalog(path: &OsStr) -> Result<Catalog> {
     Catalog::load(Path::new(path))
+}
+
+fn check_transition_command(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let accepted = Path::new(&arguments[0]);
+    let candidate = Path::new(&arguments[1]);
+    pkgre_rust::transition::check_transition(accepted, candidate)
+        .map_err(|reason| anyhow::anyhow!("candidate rejected: {reason}"))?;
+    info!(
+        accepted = %accepted.display(),
+        candidate = %candidate.display(),
+        "candidate is a valid accepted-to-candidate transition"
+    );
+    Ok(())
 }
 
 fn ensure_arity(arguments: &[OsString], expected: usize) -> Result<()> {
