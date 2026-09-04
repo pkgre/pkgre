@@ -5,11 +5,12 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::sha256_bytes;
 use crate::download::DownloadCatalog;
-use crate::schema::{Catalog, Source};
+use crate::schema::Catalog;
 
 /// Archive store manifest inventory filename.
 pub const ARCHIVE_INVENTORY_FILE: &str = "inventory.json";
@@ -42,11 +43,31 @@ pub struct ArchiveInventory {
 
 impl ArchiveInventory {
     /// Derives the retained-object inventory from a strictly loaded catalog and its downloads.
+    ///
+    /// Removed packages never require bodies: their routes are excluded from the inventory.
     #[must_use]
     pub fn from_catalog(catalog: &Catalog, downloads: &DownloadCatalog) -> Self {
+        let active_identities: BTreeSet<(String, String, Version)> = catalog
+            .approvals
+            .iter()
+            .filter(|approval| !approval.is_removed())
+            .map(|approval| {
+                (
+                    approval.registry.clone(),
+                    approval.name.clone(),
+                    approval.version.clone(),
+                )
+            })
+            .collect();
         let mut objects = Vec::new();
         for route in &downloads.routes {
-            if route.delivery.is_retained() {
+            if route.delivery.is_retained()
+                && active_identities.contains(&(
+                    route.registry.clone(),
+                    route.name.clone(),
+                    route.version.clone(),
+                ))
+            {
                 objects.push(InventoryObject {
                     identity: format!("{}/{}/{}", route.registry, route.name, route.version),
                     sha256: route.sha256.clone(),
@@ -146,16 +167,7 @@ pub fn archive_import(store: &Path, catalog_root: &Path) -> Result<ImportSummary
     }
 
     let catalog = Catalog::load(catalog_root)?;
-    let mut expected = BTreeSet::new();
-    for approval in &catalog.approvals {
-        if matches!(&approval.source, Source::GitTag { .. }) {
-            ensure!(
-                expected.insert(approval.archive_sha256.clone()),
-                "catalog repeats retained object {}",
-                approval.archive_sha256
-            );
-        }
-    }
+    let expected = crate::artifact::retained_archive_hashes(&catalog);
     ensure!(
         expected == retained_set,
         "archive inventory retained set differs from catalog retained routes; missing={:?}, extra={:?}",
@@ -211,4 +223,123 @@ pub fn archive_import(store: &Path, catalog_root: &Path) -> Result<ImportSummary
         imported,
         already_present,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    use semver::Version;
+
+    use crate::schema::{
+        Approval, Audience, PackageState, RegistriesFile, Registry, RegistryDelivery, Source,
+    };
+    use crate::update::time::UtcTimestamp;
+
+    use super::*;
+
+    #[test]
+    fn inventory_excludes_removed_retained_routes() {
+        let catalog = catalog(vec![
+            approval(
+                "alpha",
+                "1.0.0",
+                &"01".repeat(32),
+                PackageState::Active,
+                Source::CratesIo,
+            ),
+            approval(
+                "gone",
+                "1.0.0",
+                &"02".repeat(32),
+                PackageState::Removed,
+                Source::CratesIo,
+            ),
+            approval(
+                "first-party",
+                "1.0.0",
+                &"03".repeat(32),
+                PackageState::Active,
+                git_tag(),
+            ),
+        ]);
+        let downloads = DownloadCatalog::from_catalog(&catalog);
+        let inventory = ArchiveInventory::from_catalog(&catalog, &downloads);
+        assert_eq!(inventory.catalog, "main");
+        assert_eq!(
+            inventory
+                .objects
+                .iter()
+                .map(|object| object.sha256.as_str())
+                .collect::<Vec<_>>(),
+            vec!["01".repeat(32), "03".repeat(32)]
+        );
+        assert_eq!(
+            inventory.objects[0].identity,
+            format!("main/alpha/{}", Version::parse("1.0.0").unwrap())
+        );
+    }
+
+    fn git_tag() -> Source {
+        Source::GitTag {
+            repository: "https://example.com/repo".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            tag_oid: "06".repeat(20),
+            commit: "07".repeat(20),
+            package: "first-party".to_owned(),
+            subdir: PathBuf::from("."),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        }
+    }
+
+    fn catalog(approvals: Vec<Approval>) -> Catalog {
+        Catalog {
+            root: PathBuf::new(),
+            registries: RegistriesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                cname: String::new(),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+                registries: vec![Registry {
+                    name: "main".to_owned(),
+                    index: String::new(),
+                    download: String::new(),
+                    audience: Audience::Public,
+                    cargo_version: Version::parse("1.95.0").unwrap(),
+                    delivery: Some(RegistryDelivery::Retained),
+                }],
+            },
+            categories: BTreeMap::new(),
+            homes: crate::schema::HomesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                homes: BTreeMap::new(),
+            },
+            mirror_names: BTreeSet::new(),
+            publish_names: BTreeSet::new(),
+            approvals,
+        }
+    }
+
+    fn approval(
+        name: &str,
+        version: &str,
+        sha256: &str,
+        state: PackageState,
+        source: Source,
+    ) -> Approval {
+        Approval {
+            registry: "main".to_owned(),
+            category: "main/general".parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse(version).unwrap(),
+            archive_sha256: sha256.to_owned(),
+            index_record_sha256: "08".repeat(32),
+            index_row_sha256: "09".repeat(32),
+            admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state,
+            source,
+            declared_in: PathBuf::new(),
+        }
+    }
 }
