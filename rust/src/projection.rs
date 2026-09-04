@@ -149,9 +149,14 @@ impl CatalogProjection {
         }
 
         let mut archive_bodies = BTreeMap::<String, Arc<Vec<u8>>>::new();
+        let retained_identities = DownloadCatalog::retained_route_identities(catalog);
         for approval in catalog.approvals.iter().filter(|approval| {
             !approval.is_removed()
-                && matches!(&approval.source, crate::schema::Source::GitTag { .. })
+                && retained_identities.contains(&(
+                    approval.registry.clone(),
+                    approval.name.clone(),
+                    approval.version.clone(),
+                ))
         }) {
             if archive_bodies.contains_key(&approval.archive_sha256) {
                 continue;

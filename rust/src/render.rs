@@ -274,9 +274,14 @@ fn render_into(
     }
 
     let mut copied_archives = BTreeSet::new();
+    let retained_identities = DownloadCatalog::retained_route_identities(catalog);
     for approval in sorted_approvals(catalog) {
         if !approval.is_removed()
-            && matches!(&approval.source, Source::GitTag { .. })
+            && retained_identities.contains(&(
+                approval.registry.clone(),
+                approval.name.clone(),
+                approval.version.clone(),
+            ))
             && copied_archives.insert(approval.archive_sha256.clone())
         {
             let artifact = artifacts
@@ -1632,6 +1637,18 @@ fn verify_release_rows(
         match (&package.source, &route.delivery) {
             (ReleaseSource::CratesIo, crate::download::Delivery::Redirect { .. })
             | (ReleaseSource::GitTag { .. }, crate::download::Delivery::Retained { .. }) => {}
+            (ReleaseSource::CratesIo, crate::download::Delivery::Retained { .. }) => {
+                let body = site
+                    .join("crates")
+                    .join(format!("{}.crate", package.archive_sha256));
+                ensure!(
+                    body.is_file(),
+                    "rendered retained archive body is missing for {} {} {}",
+                    package.registry,
+                    package.name,
+                    package.version
+                );
+            }
             _ => {
                 return Err(anyhow!(
                     "rendered download catalog delivery class differs from release package {} {} {}",

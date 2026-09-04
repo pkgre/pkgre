@@ -21,7 +21,7 @@ use crate::policy::{
 };
 use crate::schema::{
     Catalog, LockedName, LockedPackage, LockedSource, PackageState, RegistryInput, RegistryLock,
-    Source, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
+    catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
     validate_input_for_update, version_identity,
 };
 use crate::update::time::UtcTimestamp;
@@ -1083,11 +1083,17 @@ fn stage_catalog(
         "admission batch tree",
     )?;
 
+    let retained_identities = DownloadCatalog::retained_route_identities(catalog);
     let crates = catalog
         .approvals
         .iter()
         .filter(|approval| {
-            !approval.is_removed() && matches!(&approval.source, Source::GitTag { .. })
+            !approval.is_removed()
+                && retained_identities.contains(&(
+                    approval.registry.clone(),
+                    approval.name.clone(),
+                    approval.version.clone(),
+                ))
         })
         .map(|approval| approval.archive_sha256.as_str())
         .collect::<BTreeSet<_>>();

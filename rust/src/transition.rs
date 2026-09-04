@@ -7,7 +7,8 @@ use std::path::Path;
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 
-use crate::schema::{Approval, Catalog, PackageState, Source};
+use crate::download::DownloadCatalog;
+use crate::schema::{Approval, Catalog, PackageState};
 
 /// Exact semantic reason one candidate catalog must be rejected as an accepted successor.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,11 +182,12 @@ fn identity_key(approval: &Approval) -> (String, String, Version) {
 }
 
 fn verify_retained_bodies(catalog: &Catalog) -> Result<()> {
+    let retained_identities = DownloadCatalog::retained_route_identities(catalog);
     for approval in &catalog.approvals {
         if approval.state != PackageState::Active {
             continue;
         }
-        if !matches!(&approval.source, Source::GitTag { .. }) {
+        if !retained_identities.contains(&identity_key(approval)) {
             continue;
         }
         let path = catalog
