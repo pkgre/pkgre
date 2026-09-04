@@ -10,7 +10,8 @@
     "directory": "js"
   },
   "bin": {
-    "pkgre-js": "src/main.js"
+    "pkgre-js": "src/main.js",
+    "pkgre-js-serve": "src/serve/main.js"
   },
   "files": [
     "src"
