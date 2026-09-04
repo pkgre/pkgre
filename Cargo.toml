@@ -1,5 +1,5 @@
 [workspace]
-members = ["rust", "rust/proxy"]
+members = ["rust", "rust/proxy", "rust/serve"]
 resolver = "3"
 
 [workspace.package]

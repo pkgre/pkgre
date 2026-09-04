@@ -1,0 +1,27 @@
+[package]
+name = "pkgre-rust-serve"
+version = "0.1.0"
+description = "Immutable catalog snapshot serving origin for dynamic pkgre registries"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { version = "1.0", registry = "pkgre" }
+axum = { version = "0.8", registry = "pkgre" }
+pkgre-rust = { path = ".." }
+serde = { version = "1.0", features = ["derive"], registry = "pkgre" }
+serde_json = { version = "1.0", registry = "pkgre" }
+tokio = { version = "1.50", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"], registry = "pkgre" }
+toml = { version = "0.9", registry = "pkgre" }
+tracing = { version = "0.1", registry = "pkgre" }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"], registry = "pkgre" }
+
+[dev-dependencies]
+http-body-util = { version = "0.1", registry = "pkgre" }
+tower = { version = "0.5", features = ["util"], registry = "pkgre" }
