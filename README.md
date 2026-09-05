@@ -23,8 +23,6 @@ Target same-host state after the ecosystem-specific publication gates:
 | Rust | `github.com/pkgre/rust`→`rust.pkg.re` | `https://rust.pkg.re/v1/<registry>/<crate>/<canonical-semver>/<sha256>` | Exact static marker at the same Pages path |
 | JavaScript | `github.com/pkgre/js`→`js.pkg.re` | `https://js.pkg.re/v1/js/<registry>/<sha256>` | Exact static marker at the same Pages path |
 
-`pkgre-proxy` converts an exact validated marker into a fresh `307`;it has no route catalog,GitHub API/raw lookup,mutable database,or last-known-good route table. It resolves only `pkgre.github.io`,connects to validated public answers,and keeps URL/TLS SNI/certificate verification/HTTP Host fixed to the route-selected `rust.pkg.re` or `js.pkg.re`. No `dl.js.pkg.re` is planned. `dl.rust.pkg.re` remains the current production+rollback endpoint until P9 publishes same-host Rust metadata and a later retirement gate is met.
-
 Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 4 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities.
 
 Current Rust categories:
@@ -46,12 +44,10 @@ Current Rust categories:
 ## Components
 
 - `rust/`:Rust reconciler,validator,admission planner/applicator,schema migrators,deterministic renderer,download-catalog generator,release verifier.
-- `rust/proxy/`:cross-ecosystem static-marker translator+fixed GitHub Pages custom-host origin adapter;closed Rust/JS routes and destinations only.
 - `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,and isolated npm/Bun/Deno fixture.
 - [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,two-stage publication,consumer configuration,compatibility matrix,bootstrap+activation gate.
 - `fixtures/redirect-marker-v1/`:provider-neutral exact marker bytes consumed independently by Rust+JavaScript tests;synthetic routes only.
 - [`docs/catalog.md`](docs/catalog.md):current schema-4 Rust declarations,categories,locks,admissions,routing,removal,migration.
-- [`docs/download-routing.md`](docs/download-routing.md):same-host marker wire contract,origin adapter,proxy boundary,publication+migration rules.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production Rust mirror-update procedure ending in an unmerged curator-review PR.
 - [`docs/workflows.md`](docs/workflows.md):mirror,Git-tag,removal,migration,release workflows.
 - [`docs/security.md`](docs/security.md):trust model,enforced invariants,exclusions.
@@ -64,23 +60,13 @@ Current Rust categories:
 $ nix flake check --print-build-logs
 $ nix build .#rust
 $ nix build .#js
-$ nix build .#proxy
 $ nix run .#rust -- --help
 $ nix run .#js -- --help
-$ nix run .#proxy -- --help
 ```
 
-Transitional `.#indexer` aliases `.#rust`;`.#download-serve` aliases `.#proxy` through the deployment rollback horizon.
+Transitional `.#indexer` aliases `.#rust`.
 
 Pinned semantics:Cargo `1.95.0`;JS index authority=Node `24.15.0`+npm `12.0.2`;compatibility floors=Bun `1.3.14`+Deno `2.9.5`;current snapshots separately pinned;Nix locks build inputs;Cargo+compatibility-client inputs use fixed-output Nix fetches;checks run offline after fetching. GitHub CI runs the full flake on native x86_64+aarch64.
-
-## Proxy operation
-
-```console
-$ pkgre-proxy --listen 127.0.0.1:3000 --canary-seconds 60 --readiness-seconds 180
-```
-
-Local endpoints:`/healthz`=process/config health;`/readyz`=both fixed origin canaries succeeded within the readiness window;`/metrics`=bounded-label Prometheus text. A transient failed canary is reported in metrics but does not revoke readiness until the last success expires. These local signals do not replace the separately gated isolated long-term certificate/contract monitoring design.
 
 ## JavaScript catalog operation
 

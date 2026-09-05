@@ -151,11 +151,6 @@
               pkgs.gnutar
             ];
           };
-          pkgreProxy = mkRustPackage {
-            packageDirectory = "rust/proxy";
-            description = "Stateless immutable download redirect service for pkgre registries";
-            mainProgram = "pkgre-proxy";
-          };
           rustServe = mkRustPackage {
             packageDirectory = "rust/serve";
             description = "Immutable catalog snapshot serving origin for dynamic pkgre registries";
@@ -228,8 +223,6 @@
           js-client-bun-current = jsCompatibilityClients.bunCurrent;
           js-client-deno-minimum = jsCompatibilityClients.denoMinimum;
           js-client-deno-current = jsCompatibilityClients.denoCurrent;
-          proxy = pkgreProxy;
-          download-serve = pkgreProxy;
           serve = rustServe;
         }
       );
@@ -316,8 +309,6 @@
             package = self.packages.${system}.js-client-deno-current;
             executable = "deno";
           };
-          proxy = self.packages.${system}.proxy;
-          download-serve = self.packages.${system}.download-serve;
           serve = self.packages.${system}.serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source
