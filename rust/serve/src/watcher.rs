@@ -641,7 +641,8 @@ impl Watcher {
             .materialize_tree(commit, "startup")
             .await
             .with_context(|| format!("materialize startup catalog for {commit}"))?;
-        let snapshot = self.build_snapshot_from(tree.root()).await?;
+        let mut snapshot = self.build_snapshot_from(tree.root()).await?;
+        commit.clone_into(&mut snapshot.source_commit);
         Ok(Arc::new(snapshot))
     }
 
@@ -671,7 +672,10 @@ impl Watcher {
                 .await;
         match transition {
             Ok(Ok(())) => match self.build_snapshot_from(candidate_tree.root()).await {
-                Ok(snapshot) => (SemanticValidity::Valid, Some(Arc::new(snapshot))),
+                Ok(mut snapshot) => {
+                    candidate_commit.clone_into(&mut snapshot.source_commit);
+                    (SemanticValidity::Valid, Some(Arc::new(snapshot)))
+                }
                 Err(error) => {
                     warn!(%error, "watcher candidate snapshot build failed");
                     (SemanticValidity::Invalid, None)
