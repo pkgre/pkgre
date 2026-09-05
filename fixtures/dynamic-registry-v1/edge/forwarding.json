@@ -1,0 +1,1597 @@
+{
+  "forwardingCases": [
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "rust.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "rust.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/a//b?x=%2f%2F&y=%252f"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+        },
+        "selectedBackend": "rust-protocol"
+      },
+      "id": "rust-h1-raw-target-fidelity",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "js.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "js.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/a//b?x=%2f%2F&y=%252f"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+        },
+        "selectedBackend": "js-protocol"
+      },
+      "id": "js-h1-raw-target-fidelity",
+      "protocol": "h1",
+      "sni": "js.pkg.re",
+      "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "rust.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "rust.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/a//b?x=%2f%2F&y=%252f"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+        },
+        "selectedBackend": "rust-protocol"
+      },
+      "id": "rust-h2-raw-target-fidelity",
+      "protocol": "h2",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "js.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "js.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/a//b?x=%2f%2F&y=%252f"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+        },
+        "selectedBackend": "js-protocol"
+      },
+      "id": "js-h2-raw-target-fidelity",
+      "protocol": "h2",
+      "sni": "js.pkg.re",
+      "targetAscii": "/a//b?x=%2f%2F&y=%252f"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/attacker"
+        },
+        {
+          "nameAscii": "Authorization",
+          "valueAscii": "Bearer secret"
+        },
+        {
+          "nameAscii": "Cookie",
+          "valueAscii": "session=secret"
+        },
+        {
+          "nameAscii": "Forwarded",
+          "valueAscii": "host=attacker.invalid"
+        },
+        {
+          "nameAscii": "X-Forwarded-Host",
+          "valueAscii": "attacker.invalid"
+        }
+      ],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "rust.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "rust.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/config.json"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/config.json"
+        },
+        "selectedBackend": "rust-protocol"
+      },
+      "id": "client-headers-and-trusted-spoof-dropped",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/first"
+        },
+        {
+          "nameAscii": "X-PKGRE-ORIGINAL-URI",
+          "valueAscii": "/second"
+        },
+        {
+          "nameAscii": "accept",
+          "valueAscii": "application/json"
+        }
+      ],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "js.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "js.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/left-pad"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/left-pad"
+        },
+        "selectedBackend": "js-protocol"
+      },
+      "id": "h1-case-variant-trusted-spoofs-dropped",
+      "protocol": "h1",
+      "sni": "js.pkg.re",
+      "targetAscii": "/left-pad"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/first"
+        },
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/second"
+        },
+        {
+          "nameAscii": "accept",
+          "valueAscii": "application/json"
+        }
+      ],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "js.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "js.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/left-pad"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/left-pad"
+        },
+        "selectedBackend": "js-protocol"
+      },
+      "id": "h2-lowercase-trusted-spoofs-dropped",
+      "protocol": "h2",
+      "sni": "js.pkg.re",
+      "targetAscii": "/left-pad"
+    },
+    {
+      "authorityFields": [],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "missing-h1-host",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "duplicate-h1-host",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "kind": "host",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "conflicting-duplicate-h1-host",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "Rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "uppercase-h1-host",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re:443"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "ported-h1-host",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "missing-h2-authority",
+      "protocol": "h2",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "kind": ":authority",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "duplicate-h2-authority",
+      "protocol": "h2",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "kind": "host",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "conflicting-h2-host-and-authority",
+      "protocol": "h2",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "tls-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "missing-sni",
+      "protocol": "h1",
+      "sni": null,
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "tls-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "uppercase-sni",
+      "protocol": "h1",
+      "sni": "Rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "tls-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "unknown-sni-canonical-authority",
+      "protocol": "h1",
+      "sni": "other.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "other.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "tls-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "unknown-sni-and-authority",
+      "protocol": "h1",
+      "sni": "other.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 421
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "rust-sni-js-authority",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/left-pad"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 421
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "js-sni-rust-authority",
+      "protocol": "h2",
+      "sni": "js.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "other.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 421
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "canonical-sni-unknown-authority",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "rust.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "rust.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/@scope%2fname"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/@scope%2fname"
+        },
+        "selectedBackend": "rust-protocol"
+      },
+      "id": "rust-host-forwards-js-shaped-path",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/@scope%2fname"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "forward",
+        "edgeResponse": null,
+        "forwarded": {
+          "authority": "js.pkg.re",
+          "headerFields": [
+            {
+              "nameAscii": "Host",
+              "valueAscii": "js.pkg.re"
+            },
+            {
+              "nameAscii": "X-Pkgre-Original-URI",
+              "valueAscii": "/config.json"
+            }
+          ],
+          "protocol": "h1",
+          "targetAscii": "/config.json"
+        },
+        "selectedBackend": "js-protocol"
+      },
+      "id": "js-host-forwards-rust-shaped-path",
+      "protocol": "h2",
+      "sni": "js.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "absolute-form-target-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "https://rust.pkg.re/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "asterisk-form-target-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "*"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "fragment-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json#fragment"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "space-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetHex": "2f612062"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "tab-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetHex": "2f610962"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "nul-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetHex": "2f610062"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "delete-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetHex": "2f617f62"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "non-ascii-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetHex": "2f61c3a9"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": true,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "transport-reject",
+        "edgeResponse": null,
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "oversize-target-transport-rejected",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "Rust.pkg.re"
+        }
+      ],
+      "backendAvailable": false,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "invalid-authority-precedes-unavailability",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": false,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "http-reject",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 400
+        },
+        "forwarded": null,
+        "selectedBackend": null
+      },
+      "id": "invalid-target-precedes-unavailability",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "*"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": "host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "backendAvailable": false,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "backend-unavailable",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 503
+        },
+        "forwarded": null,
+        "selectedBackend": "rust-protocol"
+      },
+      "id": "rust-backend-unavailable",
+      "protocol": "h1",
+      "sni": "rust.pkg.re",
+      "targetAscii": "/config.json"
+    },
+    {
+      "authorityFields": [
+        {
+          "kind": ":authority",
+          "valueAscii": "js.pkg.re"
+        }
+      ],
+      "backendAvailable": false,
+      "clientHeaderFields": [],
+      "expected": {
+        "decision": "backend-unavailable",
+        "edgeResponse": {
+          "bodyHex": "",
+          "headers": {
+            "Cache-Control": "no-store",
+            "Content-Length": "0"
+          },
+          "status": 503
+        },
+        "forwarded": null,
+        "selectedBackend": "js-protocol"
+      },
+      "id": "js-backend-unavailable",
+      "protocol": "h2",
+      "sni": "js.pkg.re",
+      "targetAscii": "/left-pad"
+    }
+  ],
+  "listenerCases": [
+    {
+      "expectedReachable": true,
+      "id": "public-reaches-edge",
+      "listener": "public-edge",
+      "source": "public"
+    },
+    {
+      "expectedReachable": false,
+      "id": "public-cannot-reach-rust-protocol",
+      "listener": "rust-protocol",
+      "source": "public"
+    },
+    {
+      "expectedReachable": false,
+      "id": "public-cannot-reach-js-protocol",
+      "listener": "js-protocol",
+      "source": "public"
+    },
+    {
+      "expectedReachable": false,
+      "id": "public-cannot-reach-rust-admin",
+      "listener": "rust-admin",
+      "source": "public"
+    },
+    {
+      "expectedReachable": false,
+      "id": "public-cannot-reach-js-admin",
+      "listener": "js-admin",
+      "source": "public"
+    },
+    {
+      "expectedReachable": true,
+      "id": "edge-reaches-rust-protocol",
+      "listener": "rust-protocol",
+      "source": "edge"
+    },
+    {
+      "expectedReachable": true,
+      "id": "edge-reaches-js-protocol",
+      "listener": "js-protocol",
+      "source": "edge"
+    },
+    {
+      "expectedReachable": false,
+      "id": "edge-cannot-reach-rust-admin",
+      "listener": "rust-admin",
+      "source": "edge"
+    },
+    {
+      "expectedReachable": false,
+      "id": "edge-cannot-reach-js-admin",
+      "listener": "js-admin",
+      "source": "edge"
+    },
+    {
+      "expectedReachable": true,
+      "id": "rust-service-reaches-own-admin",
+      "listener": "rust-admin",
+      "source": "rust-service"
+    },
+    {
+      "expectedReachable": false,
+      "id": "rust-service-cannot-reach-other-admin",
+      "listener": "js-admin",
+      "source": "rust-service"
+    },
+    {
+      "expectedReachable": false,
+      "id": "rust-service-cannot-connect-other-protocol",
+      "listener": "js-protocol",
+      "source": "rust-service"
+    },
+    {
+      "expectedReachable": true,
+      "id": "js-service-reaches-own-admin",
+      "listener": "js-admin",
+      "source": "js-service"
+    },
+    {
+      "expectedReachable": false,
+      "id": "js-service-cannot-reach-other-admin",
+      "listener": "rust-admin",
+      "source": "js-service"
+    },
+    {
+      "expectedReachable": false,
+      "id": "js-service-cannot-connect-other-protocol",
+      "listener": "rust-protocol",
+      "source": "js-service"
+    }
+  ],
+  "policy": {
+    "authority": "one protocol-appropriate field with one lowercase canonical hostname and no port; H2 Host plus :authority is rejected",
+    "backendRequest": "HTTP/1.1 with exact ingress target and exactly two edge-owned fields: Host and X-Pkgre-Original-URI; every client field is dropped",
+    "backendSelection": "exact known SNI plus exact equal authority only; path and client fields never select a backend",
+    "backendUnavailableResponse": {
+      "bodyHex": "",
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Length": "0"
+      },
+      "status": 503
+    },
+    "hostRoutes": {
+      "js.pkg.re": "js-protocol",
+      "rust.pkg.re": "rust-protocol"
+    },
+    "httpBadRequestResponse": {
+      "bodyHex": "",
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Length": "0"
+      },
+      "status": 400
+    },
+    "httpMisdirectedResponse": {
+      "bodyHex": "",
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Length": "0"
+      },
+      "status": 421
+    },
+    "listenerExposure": {
+      "js-admin": "service-owned Unix socket",
+      "js-protocol": "edge-and-service Unix socket",
+      "public-edge": "public TLS TCP",
+      "rust-admin": "service-owned Unix socket",
+      "rust-protocol": "edge-and-service Unix socket"
+    },
+    "originalTarget": "unnormalized ingress request-target bytes including query",
+    "precedence": [
+      "tls-sni-validation",
+      "authority-validation",
+      "target-envelope-validation",
+      "backend-availability",
+      "forwarding"
+    ],
+    "protocolBoundary": "raw Host and trusted fields must each occur exactly once; Host must equal configured authority; trusted value must byte-equal backend request target; normalized fallback is forbidden",
+    "requestTargetEnvelope": "1..1024 ASCII bytes; origin-form beginning with /; fragment, SP, HTAB, CTL, DEL, and non-ASCII forbidden",
+    "tlsRejection": "connection terminates before HTTP; no HTTP response observable",
+    "transportRejection": "malformed or over-limit HTTP input is rejected before forwarding; status and framing are parser-specific and excluded",
+    "trustedHeaderName": "X-Pkgre-Original-URI"
+  },
+  "protocolCases": [
+    {
+      "backendTargetAscii": "/a//b?x=%2f%2F&y=%252f",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "accept",
+        "trustedTargetAscii": "/a//b?x=%2f%2F&y=%252f"
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/a//b?x=%2f%2F&y=%252f"
+        }
+      ],
+      "id": "exact-unnormalized-target-boundary-accepted"
+    },
+    {
+      "backendTargetAscii": "/left-pad",
+      "configuredAuthority": "js.pkg.re",
+      "expected": {
+        "decision": "accept",
+        "trustedTargetAscii": "/left-pad"
+      },
+      "headerFields": [
+        {
+          "nameAscii": "host",
+          "valueAscii": "js.pkg.re"
+        },
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/left-pad"
+        }
+      ],
+      "id": "lowercase-field-names-accepted"
+    },
+    {
+      "backendTargetAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "accept",
+        "trustedTargetAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "id": "maximum-target-envelope-accepted"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        }
+      ],
+      "id": "missing-trusted-header"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        }
+      ],
+      "id": "duplicate-trusted-header"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        },
+        {
+          "nameAscii": "x-pkgre-original-uri",
+          "valueAscii": "/config.json"
+        }
+      ],
+      "id": "duplicate-case-variant-trusted-header"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        }
+      ],
+      "id": "missing-host"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        }
+      ],
+      "id": "duplicate-host"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "js.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        }
+      ],
+      "id": "wrong-host"
+    },
+    {
+      "backendTargetAscii": "/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json"
+        },
+        {
+          "nameAscii": "Authorization",
+          "valueAscii": "Bearer secret"
+        }
+      ],
+      "id": "extra-backend-field-rejected"
+    },
+    {
+      "backendTargetAscii": "/normalized",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/original"
+        }
+      ],
+      "id": "trusted-target-mismatch"
+    },
+    {
+      "backendTargetHex": "",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueHex": ""
+        }
+      ],
+      "id": "empty-target-envelope-rejected"
+    },
+    {
+      "backendTargetAscii": "https://rust.pkg.re/config.json",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "https://rust.pkg.re/config.json"
+        }
+      ],
+      "id": "absolute-form-envelope-rejected"
+    },
+    {
+      "backendTargetAscii": "*",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "*"
+        }
+      ],
+      "id": "asterisk-form-envelope-rejected"
+    },
+    {
+      "backendTargetAscii": "/config.json#fragment",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/config.json#fragment"
+        }
+      ],
+      "id": "fragment-envelope-rejected"
+    },
+    {
+      "backendTargetHex": "2f612062",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueHex": "2f612062"
+        }
+      ],
+      "id": "space-envelope-rejected"
+    },
+    {
+      "backendTargetHex": "2f610962",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueHex": "2f610962"
+        }
+      ],
+      "id": "tab-envelope-rejected"
+    },
+    {
+      "backendTargetHex": "2f610062",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueHex": "2f610062"
+        }
+      ],
+      "id": "nul-envelope-rejected"
+    },
+    {
+      "backendTargetHex": "2f617f62",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueHex": "2f617f62"
+        }
+      ],
+      "id": "delete-envelope-rejected"
+    },
+    {
+      "backendTargetHex": "2f61c3a9",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueHex": "2f61c3a9"
+        }
+      ],
+      "id": "non-ascii-envelope-rejected"
+    },
+    {
+      "backendTargetAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuredAuthority": "rust.pkg.re",
+      "expected": {
+        "decision": "reject",
+        "trustedTargetAscii": null
+      },
+      "headerFields": [
+        {
+          "nameAscii": "Host",
+          "valueAscii": "rust.pkg.re"
+        },
+        {
+          "nameAscii": "X-Pkgre-Original-URI",
+          "valueAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "id": "oversize-envelope-rejected"
+    }
+  ],
+  "schema": "pkgre-edge-forwarding-v1"
+}

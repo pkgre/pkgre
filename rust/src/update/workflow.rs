@@ -1082,6 +1082,7 @@ mod tests {
             index_record_sha256: "11".repeat(32),
             index_row_sha256: "22".repeat(32),
             admission_sha256: None,
+            admitted_at: crate::update::time::UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
             state,
             source: Source::CratesIo,
             declared_in: PathBuf::from("universe.lock"),

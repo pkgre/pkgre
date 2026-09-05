@@ -199,10 +199,10 @@ Replace source catalog only after review + rerun at final path. Never hand-edit 
 
 Schema 4 allows additions without weakening prior identities:
 
-1. Add `<alias>.toml` with exact index `sparse+https://rust.pkg.re/<alias>/`, categories, and inhabited package reservations; `main` remains.
+1. Add `<alias>.toml` with exact index `sparse+https://rust.pkg.re/r/<alias>/`, categories, and inhabited package reservations; `main` remains.
 2. Use exact router template or one allowed single-source endpoint.
 3. Ensure every cross-registry dependency category edge is explicit. Same-name resolution prefers local registry; a dependency originating in a third registry fails if multiple external homes exist.
-4. Bootstrap/reconcile, then check/render/verify/monotonicity. New alias renders below `/<alias>/`; download route uses `/v1/<alias>/...`.
+4. Bootstrap/reconcile, then check/render/verify/monotonicity. New alias renders below `/r/<alias>/`; download route uses `/v1/<alias>/...`.
 5. Add consumer Cargo alias only where that registry should be selected directly.
 
 ## Release gate

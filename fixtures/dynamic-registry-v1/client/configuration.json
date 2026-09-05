@@ -1,0 +1,522 @@
+{
+  "artifacts": [
+    {
+      "bytes": 212,
+      "path": "project/.cargo/config.toml",
+      "sha256": "4398de6da884b0608ee094415e109f469d737e29ca66dd3236a0dad0e7e62b4a"
+    },
+    {
+      "bytes": 0,
+      "path": "project/.cargo/disabled-crates-io/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 224,
+      "path": "project/.npmrc",
+      "sha256": "65f2d168c79e5c802215df19811983f3eb1b824b89f2dea3156e5ee98a4c5bf5"
+    }
+  ],
+  "cacheReplayModes": [
+    {
+      "client": "cargo",
+      "clientFlags": [
+        "--frozen",
+        "--offline"
+      ],
+      "networkEnforcement": "client cache-only mode plus OS-enforced zero egress",
+      "requireSuccess": true
+    },
+    {
+      "client": "npm",
+      "clientFlags": [
+        "ci",
+        "--offline"
+      ],
+      "networkEnforcement": "client cache-only mode plus OS-enforced zero egress",
+      "requireSuccess": true
+    },
+    {
+      "client": "bun",
+      "clientFlags": [
+        "install",
+        "--frozen-lockfile"
+      ],
+      "networkEnforcement": "OS-enforced zero egress; pinned Bun versions have no reliable offline mode",
+      "requireSuccess": true
+    },
+    {
+      "client": "deno",
+      "clientFlags": [
+        "install",
+        "--frozen",
+        "--cached-only"
+      ],
+      "networkEnforcement": "client cache-only mode plus OS-enforced zero egress",
+      "requireSuccess": true
+    }
+  ],
+  "clientOptionMatrix": [
+    {
+      "client": "npm",
+      "effectiveProjectOptions": [
+        "allow-directory",
+        "allow-file",
+        "allow-git",
+        "allow-remote",
+        "audit",
+        "fund",
+        "ignore-scripts",
+        "registry",
+        "replace-registry-host",
+        "save-exact",
+        "strict-ssl",
+        "update-notifier"
+      ],
+      "observedOnlyOptions": []
+    },
+    {
+      "client": "bun",
+      "effectiveProjectOptions": [
+        "registry"
+      ],
+      "observedOnlyOptions": [
+        "all other project .npmrc options"
+      ]
+    },
+    {
+      "client": "deno",
+      "effectiveProjectOptions": [
+        "registry"
+      ],
+      "observedOnlyOptions": [
+        "all other project .npmrc options"
+      ]
+    }
+  ],
+  "clientProfiles": [
+    {
+      "client": "cargo",
+      "id": "cargo-minimum-current",
+      "roles": [
+        "minimum",
+        "current"
+      ],
+      "runtime": null,
+      "runtimeVersion": null,
+      "version": "1.95.0"
+    },
+    {
+      "client": "npm",
+      "id": "npm-node-minimum",
+      "roles": [
+        "minimum"
+      ],
+      "runtime": "node",
+      "runtimeVersion": "24.15.0",
+      "version": "12.0.2"
+    },
+    {
+      "client": "npm",
+      "id": "npm-node-current",
+      "roles": [
+        "current"
+      ],
+      "runtime": "node",
+      "runtimeVersion": "26.7.0",
+      "version": "12.0.2"
+    },
+    {
+      "client": "bun",
+      "id": "bun-minimum",
+      "roles": [
+        "minimum"
+      ],
+      "runtime": null,
+      "runtimeVersion": null,
+      "version": "1.3.14"
+    },
+    {
+      "client": "bun",
+      "id": "bun-current",
+      "roles": [
+        "current"
+      ],
+      "runtime": null,
+      "runtimeVersion": null,
+      "version": "1.4.0"
+    },
+    {
+      "client": "deno",
+      "id": "deno-minimum-current",
+      "roles": [
+        "minimum",
+        "current"
+      ],
+      "runtime": null,
+      "runtimeVersion": null,
+      "version": "2.9.5"
+    }
+  ],
+  "executionEnvelope": {
+    "forbiddenConfigurationFiles": [
+      "bunfig.toml",
+      "deno.json",
+      "deno.jsonc"
+    ],
+    "forbiddenOverrides": [
+      "Cargo --config",
+      "Cargo registry/source environment variables",
+      "NPM_CONFIG_REGISTRY",
+      "BUN_CONFIG_REGISTRY",
+      "client command-line registry override",
+      "parent, user, or global .npmrc"
+    ],
+    "isolation": [
+      "clean HOME",
+      "clean XDG_CONFIG_HOME",
+      "clean client cache",
+      "outbound destination capture",
+      "OS-enforced zero egress except the fixture registry when a scenario requires it"
+    ],
+    "poisonedOverrideProbe": "each harness must prove a disallowed inherited override is detected or removed before client invocation"
+  },
+  "lifecycleCases": [
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "field": "scripts.preinstall",
+        "value": "touch pkgre-lifecycle-sentinel"
+      },
+      "expected": {
+        "admission": "reject",
+        "hostileClientFixture": "if admission is deliberately bypassed, disable lifecycle scripts and require zero sentinel execution",
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-lifecycle-script"
+    }
+  ],
+  "policy": {
+    "approvedMetadataAuthorities": [
+      "sparse+https://rust.pkg.re/",
+      "https://js.pkg.re/"
+    ],
+    "archiveDelivery": "integrity-bound redirects from canonical registry archive routes are allowed; redirect destinations never become metadata authorities",
+    "cargo": {
+      "cratesIoFallback": "replace crates-io with the committed empty project/.cargo/disabled-crates-io directory; never replace it with pkgre",
+      "dependencyDeclaration": "every registry dependency explicitly sets registry = \"pkgre\" and an exact version",
+      "registryAlias": "pkgre"
+    },
+    "configurationFiles": [
+      "project/.cargo/config.toml",
+      "project/.cargo/disabled-crates-io/.gitkeep",
+      "project/.npmrc"
+    ],
+    "javascript": {
+      "allowedDependencySpecifier": "one exact canonical registry version",
+      "deniedDependencySpecifiers": [
+        "semver range",
+        "dist-tag",
+        "npm alias",
+        "Git",
+        "HTTP(S) URL",
+        "file",
+        "directory",
+        "workspace",
+        "JSR"
+      ],
+      "deniedMetadataAuthorities": [
+        "https://registry.npmjs.org/",
+        "https://registry.yarnpkg.com/",
+        "https://jsr.io/",
+        "scope-specific registry override"
+      ],
+      "lifecyclePolicy": "package lifecycle scripts are rejected during admission and disabled during npm installation",
+      "lockPolicy": "committed lockfiles are required for frozen installs and warm-cache replay"
+    },
+    "npmConfiguration": "project/.npmrc options are normative for npm; only registry is assumed effective for Bun and Deno; all other behavior is D5 observation",
+    "sourceEnforcement": "validate every declaration against sourceCases before invoking a package client; outbound isolation is defense in depth, not the primary denied-source boundary"
+  },
+  "schema": "pkgre-client-configuration-v1",
+  "sourceCases": [
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "^1.0.0"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-semver-range",
+      "sourceKind": "semver-range"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "latest"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-dist-tag",
+      "sourceKind": "dist-tag"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "npm:left-pad@1.3.0"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-npm-alias",
+      "sourceKind": "npm-alias"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "git+https://github.com/example/fixture.git#0123456789abcdef0123456789abcdef01234567"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-git-source",
+      "sourceKind": "git"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "https://example.invalid/fixture.tgz"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-remote-archive",
+      "sourceKind": "remote-url"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "file:../fixture"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-file-source",
+      "sourceKind": "file"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "../fixture"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-directory-source",
+      "sourceKind": "directory"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "workspace:*"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-workspace-source",
+      "sourceKind": "workspace"
+    },
+    {
+      "clients": [
+        "npm",
+        "bun",
+        "deno"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "specifier": "jsr:@example/fixture@1.0.0"
+      },
+      "ecosystem": "javascript",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "js-jsr-source",
+      "sourceKind": "jsr"
+    },
+    {
+      "clients": [
+        "cargo"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "source": {
+          "registry": "crates-io",
+          "version": "=1.0.0"
+        }
+      },
+      "ecosystem": "rust",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "rust-crates-io-registry",
+      "sourceKind": "foreign-registry"
+    },
+    {
+      "clients": [
+        "cargo"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "source": {
+          "registry": "foreign",
+          "version": "=1.0.0"
+        }
+      },
+      "ecosystem": "rust",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "rust-unknown-registry",
+      "sourceKind": "foreign-registry"
+    },
+    {
+      "clients": [
+        "cargo"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "source": {
+          "git": "https://github.com/example/fixture.git",
+          "rev": "0123456789abcdef0123456789abcdef01234567"
+        }
+      },
+      "ecosystem": "rust",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "rust-git-source",
+      "sourceKind": "git"
+    },
+    {
+      "clients": [
+        "cargo"
+      ],
+      "declaration": {
+        "dependency": "fixture",
+        "source": {
+          "path": "../fixture"
+        }
+      },
+      "ecosystem": "rust",
+      "expected": {
+        "clientInvocation": "forbidden",
+        "decision": "reject-before-client",
+        "foreignNetworkRequests": 0,
+        "gitProcesses": 0,
+        "lifecycleSentinelCreated": false
+      },
+      "id": "rust-path-source",
+      "sourceKind": "path"
+    }
+  ]
+}

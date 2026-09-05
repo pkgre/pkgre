@@ -90,7 +90,10 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
+              ./js/package.json
+              ./nix/js-compatibility-clients.nix
               ./rust
               ./rust-toolchain.toml
             ];
@@ -101,6 +104,7 @@
               description,
               mainProgram,
               nativeCheckInputs ? [ ],
+              runtimeInputs ? [ ],
             }:
             let
               manifest = builtins.fromTOML (builtins.readFile ./${packageDirectory}/Cargo.toml);
@@ -112,6 +116,11 @@
               src = source;
               postPatch = ''
                 cp ${vendorLock} Cargo.lock
+              '';
+              nativeBuildInputs = pkgs.lib.optionals (runtimeInputs != [ ]) [ pkgs.makeWrapper ];
+              postInstall = pkgs.lib.optionalString (runtimeInputs != [ ]) ''
+                wrapProgram "$out/bin/${mainProgram}" \
+                  --prefix PATH : ${pkgs.lib.makeBinPath runtimeInputs}
               '';
               inherit cargoDeps nativeCheckInputs;
               cargoBuildFlags = [
@@ -147,13 +156,28 @@
             description = "Stateless immutable download redirect service for pkgre registries";
             mainProgram = "pkgre-proxy";
           };
+          rustServe = mkRustPackage {
+            packageDirectory = "rust/serve";
+            description = "Immutable catalog snapshot serving origin for dynamic pkgre registries";
+            mainProgram = "pkgre-rust-serve";
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.gnutar
+            ];
+            runtimeInputs = [
+              pkgs.git
+              pkgs.gnutar
+            ];
+          };
           jsCompatibilityClients = import ./nix/js-compatibility-clients.nix { inherit pkgs system; };
           jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
           jsSource = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
+              ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
               ./js
+              ./nix/js-compatibility-clients.nix
             ];
           };
           pkgreJs = pkgs.stdenvNoCC.mkDerivation {
@@ -161,7 +185,10 @@
             inherit (jsManifest) version;
             src = jsSource;
             nativeBuildInputs = [ pkgs.makeWrapper ];
-            nativeCheckInputs = [ pkgs.nodejs_24 ];
+            nativeCheckInputs = [
+              pkgs.git
+              pkgs.nodejs_24
+            ];
             dontConfigure = true;
             dontBuild = true;
             doCheck = true;
@@ -177,6 +204,9 @@
               cp -R js/src "$out/lib/pkgre-js/src"
               makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js" \
                 --add-flags "$out/lib/pkgre-js/src/main.js"
+              makeWrapper ${pkgs.nodejs_24}/bin/node "$out/bin/pkgre-js-serve" \
+                --add-flags "$out/lib/pkgre-js/src/serve/main.js" \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
               runHook postInstall
             '';
             meta = {
@@ -200,6 +230,7 @@
           js-client-deno-current = jsCompatibilityClients.denoCurrent;
           proxy = pkgreProxy;
           download-serve = pkgreProxy;
+          serve = rustServe;
         }
       );
 
@@ -237,7 +268,10 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
+              ./js/package.json
+              ./nix/js-compatibility-clients.nix
               ./rust
               ./rust-toolchain.toml
             ];
@@ -284,6 +318,7 @@
           };
           proxy = self.packages.${system}.proxy;
           download-serve = self.packages.${system}.download-serve;
+          serve = self.packages.${system}.serve;
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source
             chmod -R u+w source

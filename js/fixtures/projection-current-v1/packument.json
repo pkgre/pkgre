@@ -1,0 +1,37 @@
+{
+  "_id": "pkgre-js",
+  "dist-tags": {
+    "latest": "0.1.0"
+  },
+  "name": "pkgre-js",
+  "time": {
+    "0.1.0": "2026-08-25T23:27:24.000Z",
+    "created": "2026-08-25T23:27:24.000Z",
+    "modified": "2026-08-25T23:27:24.000Z"
+  },
+  "versions": {
+    "0.1.0": {
+      "_id": "pkgre-js@0.1.0",
+      "bin": {
+        "pkgre-js": "src/main.js"
+      },
+      "description": "Deterministic indexer for the curated js.pkg.re registry",
+      "dist": {
+        "integrity": "sha512-bRuXdwAzbk7TSAcL11WeveyAnUf+VKQdmtkq60GnF83Ofc3piXia7ALSTWQX5+DSMBmKILghh3B2pd1hWNjkjg==",
+        "shasum": "003edfeff6cd091e308cba2daaf737ad843cf073",
+        "tarball": "https://js.pkg.re/v1/js/main/07e3bbe05bffd0994601324a6519621dd93c6990e9350b04019c8366942207e3"
+      },
+      "engines": {
+        "node": ">=24.15.0",
+        "npm": ">=12.0.2"
+      },
+      "license": "Apache-2.0",
+      "name": "pkgre-js",
+      "os": [
+        "linux"
+      ],
+      "type": "module",
+      "version": "0.1.0"
+    }
+  }
+}

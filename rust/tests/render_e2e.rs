@@ -8,15 +8,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pkgre_rust::artifact::{ArtifactMap, sha256_bytes};
 use pkgre_rust::category::CategoryId;
 use pkgre_rust::download::{
-    DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, DownloadCatalog, DownloadRoute, DownloadSource,
-    router_download_template,
+    DOWNLOAD_CATALOG_FILE, DOWNLOAD_CATALOG_SCHEMA, Delivery, DownloadCatalog, DownloadRoute,
+    download_url, retained_object_path, router_download_template,
 };
 use pkgre_rust::index::{IndexRecord, index_path};
+use pkgre_rust::projection::{
+    CatalogProjection, ProjectedRepresentation, ProjectedResponseKind, ProjectionLimits,
+    RedirectDestination,
+};
 use pkgre_rust::render;
 use pkgre_rust::schema::{
-    Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome, PackageState,
-    RegistryLock, SCHEMA_VERSION, serialize_lock,
+    Audience, Catalog, LockedName, LockedPackage, LockedRegistry, LockedSource, PackageHome,
+    PackageState, RegistryLock, SCHEMA_VERSION, serialize_lock,
 };
+use pkgre_rust::update::time::UtcTimestamp;
 use semver::Version;
 use serde_json::{Value, json};
 
@@ -81,8 +86,134 @@ fn renderer_routes_mixed_sources_at_root_and_layouts_identically() {
         published.archive_bytes
     );
 
+    let projection =
+        project_and_assert_static_equivalence(&external_catalog, &external_objects, &external_site);
+    assert_shared_archive_projection_limits(&external_catalog, &external_objects, published);
+
     fs::write(external_site.join("CNAME"), "tampered.example\n").unwrap();
     assert!(render::verify(&external_catalog, &external_objects, &external_site).is_err());
+
+    let retained_route = format!("/crates/{}.crate", published.archive_hash);
+    fs::write(
+        external_root
+            .join("objects/crates")
+            .join(format!("{}.crate", published.archive_hash)),
+        b"changed after projection",
+    )
+    .unwrap();
+    let retained_response = projection
+        .routes()
+        .iter()
+        .find(|route| route.path() == retained_route)
+        .unwrap()
+        .response();
+    assert_eq!(retained_response.kind(), ProjectedResponseKind::Archive);
+    assert_eq!(retained_response.body().unwrap(), published.archive_bytes);
+}
+
+fn assert_shared_archive_projection_limits(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    published: &TestArtifact,
+) {
+    let shared_archive_bytes = u64::try_from(published.archive_bytes.len()).unwrap();
+    let projection = CatalogProjection::from_catalog_with_limits(
+        catalog,
+        artifacts,
+        ProjectionLimits {
+            max_archives: 1,
+            max_archive_body_bytes: shared_archive_bytes,
+            max_archive_bytes: shared_archive_bytes,
+            ..ProjectionLimits::PRODUCTION
+        },
+    )
+    .unwrap();
+    let archive_routes = projection
+        .routes()
+        .iter()
+        .filter(|route| route.response().kind() == ProjectedResponseKind::Archive)
+        .count();
+    let shared_redirects = projection
+        .routes()
+        .iter()
+        .filter(|route| {
+            matches!(
+                route.response().redirect_destination(),
+                Some(RedirectDestination::FirstParty { sha256 })
+                    if sha256 == &published.archive_hash
+            )
+        })
+        .count();
+    assert_eq!(archive_routes, 1);
+    assert_eq!(shared_redirects, 2);
+
+    let error = CatalogProjection::from_catalog_with_limits(
+        catalog,
+        artifacts,
+        ProjectionLimits {
+            max_archive_body_bytes: shared_archive_bytes - 1,
+            ..ProjectionLimits::PRODUCTION
+        },
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("exceeds configured limit"));
+}
+
+fn project_and_assert_static_equivalence(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    site: &Path,
+) -> CatalogProjection {
+    let projection = CatalogProjection::from_catalog(catalog, artifacts).unwrap();
+    assert!(
+        projection
+            .routes()
+            .windows(2)
+            .all(|routes| routes[0].path() < routes[1].path())
+    );
+    let expected_redirects = DownloadCatalog::from_catalog(catalog).routes.len();
+    let mut redirects = 0;
+    for route in projection.routes() {
+        let path = route.path();
+        let response = route.response();
+        match response.kind() {
+            ProjectedResponseKind::Inline => {
+                let expected_representation = if path == "/downloads.json"
+                    || path == "/release.json"
+                    || path.ends_with("/config.json")
+                {
+                    ProjectedRepresentation::MetadataJson
+                } else {
+                    ProjectedRepresentation::MetadataText
+                };
+                assert_eq!(response.representation(), expected_representation);
+                let body = response.body().unwrap();
+                assert_eq!(
+                    fs::read(site.join(path.strip_prefix('/').unwrap())).unwrap(),
+                    body,
+                    "projected inline body differs at {path}"
+                );
+            }
+            ProjectedResponseKind::Archive => {
+                assert_eq!(response.representation(), ProjectedRepresentation::Archive);
+                let body = response.body().unwrap();
+                let sha256 = response.archive_sha256().unwrap();
+                assert_eq!(path, format!("/crates/{sha256}.crate"));
+                assert_eq!(
+                    fs::read(site.join(path.strip_prefix('/').unwrap())).unwrap(),
+                    body,
+                    "projected archive body differs at {path}"
+                );
+                assert_eq!(sha256_bytes(body), sha256);
+            }
+            ProjectedResponseKind::Redirect => {
+                assert_eq!(response.representation(), ProjectedRepresentation::Redirect);
+                redirects += 1;
+            }
+        }
+    }
+    assert_eq!(redirects, expected_redirects);
+    projection
 }
 
 #[test]
@@ -101,35 +232,48 @@ fn renderer_keeps_main_at_root_and_future_registry_below_its_alias() {
     assert!(site.join("config.json").is_file());
     assert!(!site.join("main/config.json").exists());
     assert!(site.join(index_path("leaf-core")).is_file());
-    assert!(site.join("staging/config.json").is_file());
+    assert!(site.join("r/staging/config.json").is_file());
     assert!(
-        site.join("staging")
+        site.join("r/staging")
             .join(index_path("future-crate"))
             .is_file()
     );
     assert!(!site.join(index_path("future-crate")).exists());
-    assert!(!site.join("staging").join(index_path("leaf-core")).exists());
+    assert!(!site.join("staging").exists());
+    assert!(
+        !site
+            .join("r/staging")
+            .join(index_path("leaf-core"))
+            .exists()
+    );
 }
 fn prepare_catalog(root: &Path, external_large_categories: bool) -> Vec<TestArtifact> {
     fs::create_dir(root).unwrap();
     write_human_files(root, external_large_categories);
-    let artifacts = vec![
-        add_artifact(root, "general", "leaf-core", None, TestSource::Mirror),
-        add_artifact(
-            root,
-            "matrix",
-            "matrix-middle",
-            Some("leaf-core"),
-            TestSource::Mirror,
-        ),
-        add_artifact(
-            root,
-            "pkgre",
-            "pkgre-top",
-            Some("leaf-core"),
-            TestSource::Publish,
-        ),
-    ];
+    let leaf = add_artifact(root, "general", "leaf-core", None, TestSource::Mirror);
+    let middle = add_artifact(
+        root,
+        "matrix",
+        "matrix-middle",
+        Some("leaf-core"),
+        TestSource::Mirror,
+    );
+    let published = add_artifact(
+        root,
+        "pkgre",
+        "pkgre-top",
+        Some("leaf-core"),
+        TestSource::Publish,
+    );
+    let published_alias = add_artifact_with_archive(
+        root,
+        "pkgre",
+        "pkgre-alias",
+        Some("leaf-core"),
+        TestSource::Publish,
+        published.archive_bytes.clone(),
+    );
+    let artifacts = vec![leaf, middle, published_alias, published];
     write_lock(root, &artifacts);
     write_downloads(root, &artifacts);
     artifacts
@@ -165,7 +309,7 @@ fn add_future_registry(root: &Path) {
                 ("main".to_owned(), MAIN_URL.to_owned()),
                 (
                     "staging".to_owned(),
-                    "sparse+https://rust.pkg.re/staging/".to_owned(),
+                    "sparse+https://rust.pkg.re/r/staging/".to_owned(),
                 ),
             ]),
         )
@@ -175,7 +319,7 @@ fn add_future_registry(root: &Path) {
     fs::write(
         root.join("staging.toml"),
         format!(
-            "schema = 4\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/staging/\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
+            "schema = 5\n\n[registry]\nname = \"staging\"\nindex = \"sparse+https://rust.pkg.re/r/staging/\"\ndownload = {:?}\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n[categories.experimental]\nmay-depend-on = [\"staging/experimental\"]\n\n[categories.experimental.mirror]\nfuture-crate = [\"1.0.0\"]\n",
             router_download_template("staging")
         ),
     )
@@ -184,8 +328,9 @@ fn add_future_registry(root: &Path) {
         schema: SCHEMA_VERSION,
         registry: LockedRegistry {
             name: "staging".to_owned(),
-            index: "sparse+https://rust.pkg.re/staging/".to_owned(),
+            index: "sparse+https://rust.pkg.re/r/staging/".to_owned(),
             download: router_download_template("staging"),
+            audience: Audience::Public,
         },
         names: vec![LockedName {
             name: NAME.to_owned(),
@@ -199,6 +344,7 @@ fn add_future_registry(root: &Path) {
             source_row_sha256: source_row_hash,
             index_row_sha256: index_row_hash,
             admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
             source: LockedSource::CratesIo {},
         }],
     };
@@ -209,8 +355,15 @@ fn add_future_registry(root: &Path) {
         registry: "staging".to_owned(),
         name: NAME.to_owned(),
         version: Version::parse("1.0.0").unwrap(),
-        sha256: archive_hash,
-        source: DownloadSource::CratesIo,
+        sha256: archive_hash.clone(),
+        delivery: Delivery::Redirect {
+            url: download_url(
+                "staging",
+                NAME,
+                &Version::parse("1.0.0").unwrap(),
+                &archive_hash,
+            ),
+        },
     });
     fs::write(
         root.join(DOWNLOAD_CATALOG_FILE),
@@ -226,9 +379,18 @@ fn write_downloads(root: &Path, artifacts: &[TestArtifact]) {
             name: artifact.name.to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             sha256: artifact.archive_hash.clone(),
-            source: match artifact.source {
-                TestSource::Mirror => DownloadSource::CratesIo,
-                TestSource::Publish => DownloadSource::GitTag,
+            delivery: match artifact.source {
+                TestSource::Mirror => Delivery::Redirect {
+                    url: download_url(
+                        "main",
+                        artifact.name,
+                        &Version::parse("1.0.0").unwrap(),
+                        &artifact.archive_hash,
+                    ),
+                },
+                TestSource::Publish => Delivery::Retained {
+                    path: retained_object_path("main", &artifact.archive_hash),
+                },
             },
         })
         .collect();
@@ -266,7 +428,24 @@ fn add_artifact(
     dependency: Option<&str>,
     source: TestSource,
 ) -> TestArtifact {
-    let archive_bytes = format!("synthetic archive for {name} 1.0.0\n").into_bytes();
+    add_artifact_with_archive(
+        root,
+        category,
+        name,
+        dependency,
+        source,
+        format!("synthetic archive for {name} 1.0.0\n").into_bytes(),
+    )
+}
+
+fn add_artifact_with_archive(
+    root: &Path,
+    category: &'static str,
+    name: &'static str,
+    dependency: Option<&str>,
+    source: TestSource,
+    archive_bytes: Vec<u8>,
+) -> TestArtifact {
     let archive_hash = sha256_bytes(&archive_bytes);
     if source == TestSource::Publish {
         write_file(
@@ -321,7 +500,7 @@ fn add_artifact(
 
 fn write_human_files(root: &Path, external_large_categories: bool) {
     let mut main = format!(
-        "schema = 4\n\n[registry]\nname = \"main\"\nindex = \"{MAIN_URL}\"\ndownload = {:?}\ncargo-version = \"1.95.0\"\n\n",
+        "schema = 5\n\n[registry]\nname = \"main\"\nindex = \"{MAIN_URL}\"\ndownload = {:?}\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n",
         router_download_template("main")
     );
     for (local, dependencies, package) in [
@@ -388,7 +567,7 @@ fn write_human_files(root: &Path, external_large_categories: bool) {
         ));
     }
     main.push_str(
-        "[categories.pkgre]\nmay-depend-on = [\"main/pkgre\", \"main/general\"]\n\n[categories.pkgre.publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
+        "[categories.pkgre]\nmay-depend-on = [\"main/pkgre\", \"main/general\"]\n\n[categories.pkgre.publish.pkgre-alias]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n\n[categories.pkgre.publish.pkgre-top]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"test/v1.0.0\"]\n",
     );
     fs::write(root.join("main.toml"), main).unwrap();
 }
@@ -407,7 +586,7 @@ fn inline_mirror_category(
 
 fn external_mirror_category(dependencies: &[&str], packages: &[(&str, &[&str])]) -> String {
     format!(
-        "schema = 4\nmay-depend-on = [{}]\n\n[mirror]\n{}",
+        "schema = 5\nmay-depend-on = [{}]\n\n[mirror]\n{}",
         quoted(dependencies),
         package_lines(packages)
     )
@@ -449,6 +628,7 @@ fn write_lock(root: &Path, artifacts: &[TestArtifact]) {
             source_row_sha256: artifact.record_hash.clone(),
             index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
             admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
             source: match artifact.source {
                 TestSource::Publish => LockedSource::GitTag {
                     git: "https://github.com/pkgre/pkgre".to_owned(),
@@ -469,6 +649,7 @@ fn write_lock(root: &Path, artifacts: &[TestArtifact]) {
             name: "main".to_owned(),
             index: MAIN_URL.to_owned(),
             download: router_download_template("main"),
+            audience: Audience::Public,
         },
         names,
         packages,
@@ -480,6 +661,7 @@ fn package_homes() -> BTreeMap<String, PackageHome> {
     [
         ("leaf-core", "main/general"),
         ("matrix-middle", "main/matrix"),
+        ("pkgre-alias", "main/pkgre"),
         ("pkgre-top", "main/pkgre"),
         ("reserved-acp", "main/acp"),
         ("reserved-filesystem", "main/filesystem"),

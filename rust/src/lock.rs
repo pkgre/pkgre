@@ -21,9 +21,10 @@ use crate::policy::{
 };
 use crate::schema::{
     Catalog, LockedName, LockedPackage, LockedSource, PackageState, RegistryInput, RegistryLock,
-    Source, catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
+    catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
     validate_input_for_update, version_identity,
 };
+use crate::update::time::UtcTimestamp;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -65,6 +66,7 @@ pub(crate) struct MirrorAdmission {
     pub(crate) crate_sha256: String,
     pub(crate) source_row_sha256: String,
     pub(crate) binding_sha256: String,
+    pub(crate) admitted_at: UtcTimestamp,
 }
 
 /// Reconciles a catalog whose only new crates.io identities have exact update admission evidence.
@@ -179,6 +181,7 @@ impl Resolver for LiveResolver {
             version: version.clone(),
             archive_bytes: materialization.archive_bytes,
             source_row_bytes: materialization.source_row_bytes,
+            published_at: None,
             source: LockedSource::CratesIo {},
         })
     }
@@ -205,6 +208,7 @@ impl Resolver for LiveResolver {
             version: materialization.version,
             archive_bytes: materialization.archive_bytes,
             source_row_bytes: materialization.source_row_bytes,
+            published_at: Some(materialization.commit_time),
             source: LockedSource::GitTag {
                 git: repository.to_owned(),
                 tag: tag.to_owned(),
@@ -224,6 +228,8 @@ pub(crate) struct ResolvedPackage {
     pub(crate) version: Version,
     pub(crate) archive_bytes: Vec<u8>,
     pub(crate) source_row_bytes: Vec<u8>,
+    /// Deterministic origin publication time from the resolver, when derivable.
+    pub(crate) published_at: Option<UtcTimestamp>,
     pub(crate) source: LockedSource,
 }
 
@@ -397,6 +403,7 @@ fn resolve_new_packages<R: Resolver>(
             Some(&package.version),
             None,
             admission.map(|value| value.binding_sha256.as_str()),
+            admission.map(|value| value.admitted_at.clone()),
             resolved,
             catalog,
             policy,
@@ -436,6 +443,7 @@ fn resolve_new_packages<R: Resolver>(
             &package.name,
             None,
             Some((&package.repository, &package.tag, &package.cargo_version)),
+            None,
             None,
             resolved,
             catalog,
@@ -779,6 +787,7 @@ fn lock_resolved_package(
     expected_version: Option<&Version>,
     expected_git: Option<(&str, &str, &Version)>,
     admission_sha256: Option<&str>,
+    admitted_at_override: Option<UtcTimestamp>,
     resolved: ResolvedPackage,
     catalog: &Catalog,
     policy: &Policy,
@@ -862,6 +871,12 @@ fn lock_resolved_package(
         resolved.source_row_bytes,
         "source row",
     )?;
+    let admitted_at = admitted_at_override.or(resolved.published_at).with_context(|| {
+        format!(
+            "new mirror identity {expected_name} {} requires published-at admission evidence; Direct reconciliation cannot add crates.io mirrors",
+            resolved.version
+        )
+    })?;
     Ok(LockedPackage {
         name: resolved.name,
         version: resolved.version,
@@ -870,6 +885,7 @@ fn lock_resolved_package(
         source_row_sha256,
         index_row_sha256,
         admission_sha256: admission_sha256.map(str::to_owned),
+        admitted_at,
         source: resolved.source,
     })
 }
@@ -1067,11 +1083,17 @@ fn stage_catalog(
         "admission batch tree",
     )?;
 
+    let retained_identities = DownloadCatalog::retained_route_identities(catalog);
     let crates = catalog
         .approvals
         .iter()
         .filter(|approval| {
-            !approval.is_removed() && matches!(&approval.source, Source::GitTag { .. })
+            !approval.is_removed()
+                && retained_identities.contains(&(
+                    approval.registry.clone(),
+                    approval.name.clone(),
+                    approval.version.clone(),
+                ))
         })
         .map(|approval| approval.archive_sha256.as_str())
         .collect::<BTreeSet<_>>();
@@ -1381,7 +1403,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::download::{DownloadSource, router_download_template};
+    use crate::download::{Delivery, download_url, retained_object_path, router_download_template};
     use crate::index::index_path;
     use crate::schema::{MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, load_lock};
 
@@ -1471,11 +1493,11 @@ mod tests {
         assert_eq!(downloads.routes.len(), 2);
         assert!(downloads.routes.iter().any(|route| {
             route.version == Version::parse("1.0.0").unwrap()
-                && route.source == DownloadSource::CratesIo
+                && matches!(route.delivery, Delivery::Redirect { .. })
         }));
         assert!(downloads.routes.iter().any(|route| {
             route.version == Version::parse("1.0.1").unwrap()
-                && route.source == DownloadSource::GitTag
+                && matches!(route.delivery, Delivery::Retained { .. })
         }));
     }
 
@@ -1524,7 +1546,7 @@ mod tests {
         crate::render::render(&catalog, &artifacts, &site).unwrap();
         assert!(site.join(index_path("shared-name")).is_file());
         assert!(
-            site.join("staging")
+            site.join("r/staging")
                 .join(index_path("shared_name"))
                 .is_file()
         );
@@ -1601,7 +1623,10 @@ mod tests {
         let parsed = DownloadCatalog::parse_canonical(&expected).unwrap();
         assert_eq!(parsed.routes.len(), 1);
         assert_eq!(parsed.routes[0].name, "alpha");
-        assert_eq!(parsed.routes[0].source, DownloadSource::CratesIo);
+        assert!(matches!(
+            parsed.routes[0].delivery,
+            Delivery::Redirect { .. }
+        ));
 
         let catalog = Catalog::load(&root).unwrap();
         let artifacts = ArtifactMap::load(&catalog).unwrap();
@@ -1623,6 +1648,14 @@ mod tests {
 
         let mut changed = parsed.clone();
         changed.routes[0].sha256 = "03".repeat(32);
+        changed.routes[0].delivery = Delivery::Redirect {
+            url: download_url(
+                "main",
+                &changed.routes[0].name,
+                &changed.routes[0].version,
+                &changed.routes[0].sha256,
+            ),
+        };
         assert_download_catalog_regenerated(
             &root,
             &resolver,
@@ -1630,7 +1663,9 @@ mod tests {
             &expected,
         );
         let mut changed = parsed.clone();
-        changed.routes[0].source = DownloadSource::GitTag;
+        changed.routes[0].delivery = Delivery::Retained {
+            path: retained_object_path("main", &parsed.routes[0].sha256),
+        };
         assert_download_catalog_regenerated(
             &root,
             &resolver,
@@ -1644,7 +1679,14 @@ mod tests {
             name: "zeta".to_owned(),
             version: Version::parse("1.0.0").unwrap(),
             sha256: "04".repeat(32),
-            source: DownloadSource::CratesIo,
+            delivery: Delivery::Redirect {
+                url: download_url(
+                    "main",
+                    "zeta",
+                    &Version::parse("1.0.0").unwrap(),
+                    &"04".repeat(32),
+                ),
+            },
         });
         assert_download_catalog_regenerated(
             &root,
@@ -1769,7 +1811,7 @@ mod tests {
         .unwrap();
         fs::create_dir_all(root.join("categories/main")).unwrap();
         let category = concat!(
-            "schema = 4\n",
+            "schema = 5\n",
             "may-depend-on = [\"main/general\"]\n\n",
             "[mirror]\n",
             "alpha = [\"1.0.0\"]\n",
@@ -2002,9 +2044,15 @@ mod tests {
         let downloads = DownloadCatalog::load_from_root(&root).unwrap();
         assert_eq!(downloads.routes.len(), 2);
         assert_eq!(downloads.routes[0].name, "alpha");
-        assert_eq!(downloads.routes[0].source, DownloadSource::CratesIo);
+        assert!(matches!(
+            downloads.routes[0].delivery,
+            Delivery::Redirect { .. }
+        ));
         assert_eq!(downloads.routes[1].name, "beta");
-        assert_eq!(downloads.routes[1].source, DownloadSource::GitTag);
+        assert!(matches!(
+            downloads.routes[1].delivery,
+            Delivery::Retained { .. }
+        ));
     }
 
     #[test]
@@ -2160,12 +2208,13 @@ mod tests {
         assert!(row.is_file());
         let catalog = Catalog::load(&root).unwrap();
         ArtifactMap::load(&catalog).unwrap();
-        assert!(
-            DownloadCatalog::load_from_root(&root)
-                .unwrap()
-                .routes
-                .is_empty()
-        );
+        let downloads = DownloadCatalog::load_from_root(&root).unwrap();
+        assert_eq!(downloads.routes.len(), 1);
+        assert_eq!(downloads.routes[0].name, "alpha");
+        assert!(matches!(
+            downloads.routes[0].delivery,
+            crate::download::Delivery::Redirect { .. }
+        ));
         assert_rendered_yanked(&temporary, &catalog, "main", "alpha");
 
         let removed_snapshot = snapshot(temporary.path());
@@ -2520,6 +2569,7 @@ mod tests {
                     crate_sha256: sha256_bytes(&resolved.archive_bytes),
                     source_row_sha256: sha256_bytes(&resolved.source_row_bytes),
                     binding_sha256: "ab".repeat(32),
+                    admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
                 };
                 (package_identity(registry, name, &version), admission)
             })
@@ -2560,6 +2610,7 @@ mod tests {
             version,
             archive_bytes,
             source_row_bytes,
+            published_at: Some(UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap()),
             source,
         }
     }
@@ -2665,15 +2716,11 @@ mod tests {
     }
 
     fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
-        let index = if name == "main" {
-            "sparse+https://rust.pkg.re/".to_owned()
-        } else {
-            format!("sparse+https://rust.pkg.re/{name}/")
-        };
+        let index = crate::policy::canonical_registry_index(name);
         fs::write(
             root.join(format!("{name}.toml")),
             format!(
-                "schema = 4\n\n[registry]\nname = {name:?}\nindex = {index:?}\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
+                "schema = 5\n\n[registry]\nname = {name:?}\nindex = {index:?}\ndownload = {download:?}\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n{categories}"
             ),
         )
         .unwrap();
@@ -2698,11 +2745,11 @@ mod tests {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join(format!("site-{registry}-{name}"));
         crate::render::render(catalog, &artifacts, &site).unwrap();
-        let registry_site = if registry == "main" {
-            site.clone()
-        } else {
-            site.join(registry)
-        };
+        let registry_site = site.join(
+            crate::policy::canonical_registry_route_base(registry)
+                .trim_start_matches('/')
+                .trim_end_matches('/'),
+        );
         let row: Value =
             serde_json::from_slice(&fs::read(registry_site.join(index_path(name))).unwrap())
                 .unwrap();
@@ -2718,11 +2765,11 @@ mod tests {
         let artifacts = ArtifactMap::load(catalog).unwrap();
         let site = temporary.path().join("removed-site");
         crate::render::render(catalog, &artifacts, &site).unwrap();
-        let registry_site = if registry == "main" {
-            site.clone()
-        } else {
-            site.join(registry)
-        };
+        let registry_site = site.join(
+            crate::policy::canonical_registry_route_base(registry)
+                .trim_start_matches('/')
+                .trim_end_matches('/'),
+        );
         let row: Value =
             serde_json::from_slice(&fs::read(registry_site.join(index_path(name))).unwrap())
                 .unwrap();

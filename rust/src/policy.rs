@@ -165,14 +165,23 @@ pub fn validate_catalog(catalog: &Catalog) -> Result<Policy> {
     })
 }
 
+/// Returns the canonical root-relative sparse route base for a catalog registry identity.
+#[must_use]
+pub fn canonical_registry_route_base(name: &str) -> String {
+    if name == "main" {
+        "/".to_owned()
+    } else {
+        format!("/r/{name}/")
+    }
+}
+
 /// Returns the one canonical sparse index URL for a catalog registry identity.
 #[must_use]
 pub fn canonical_registry_index(name: &str) -> String {
-    if name == "main" {
-        "sparse+https://rust.pkg.re/".to_owned()
-    } else {
-        format!("sparse+https://rust.pkg.re/{name}/")
-    }
+    format!(
+        "sparse+https://rust.pkg.re{}",
+        canonical_registry_route_base(name)
+    )
 }
 
 fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<()> {
@@ -580,7 +589,7 @@ fn version_identity(version: &Version) -> (u64, u64, u64, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{HomesFile, PackageState, RegistriesFile};
+    use crate::schema::{Audience, HomesFile, PackageState, RegistriesFile};
 
     #[test]
     fn package_names_are_strict_and_collision_key_matches_cargo() {
@@ -649,6 +658,8 @@ mod tests {
                     index: canonical_registry_index("main"),
                     download: router_download_template("main"),
                     cargo_version: Version::parse(CARGO_VERSION).unwrap(),
+                    audience: Audience::Public,
+                    delivery: None,
                 }],
             },
             categories,
@@ -667,6 +678,8 @@ mod tests {
                 index_record_sha256: "02".repeat(32),
                 index_row_sha256: "03".repeat(32),
                 admission_sha256: None,
+                admitted_at: crate::update::time::UtcTimestamp::parse("2026-01-01T00:00:00Z")
+                    .unwrap(),
                 state: PackageState::Active,
                 source: Source::GitTag {
                     repository: "https://github.com/pkgre/pkgre".to_owned(),
@@ -755,12 +768,25 @@ mod tests {
 
     #[test]
     fn future_subregistry_has_its_canonical_path_and_independent_name_namespace() {
+        assert_eq!(canonical_registry_route_base("main"), "/");
+        assert_eq!(
+            canonical_registry_index("main"),
+            "sparse+https://rust.pkg.re/"
+        );
+        assert_eq!(canonical_registry_route_base("staging"), "/r/staging/");
+        assert_eq!(
+            canonical_registry_index("staging"),
+            "sparse+https://rust.pkg.re/r/staging/"
+        );
+
         let mut catalog = valid_catalog();
         catalog.registries.registries.push(Registry {
             name: "staging".to_owned(),
             index: canonical_registry_index("staging"),
             download: MIRROR_DOWNLOAD.to_owned(),
             cargo_version: Version::parse(CARGO_VERSION).unwrap(),
+            audience: Audience::Public,
+            delivery: None,
         });
         catalog.categories.insert(
             "staging/general".parse().unwrap(),
@@ -778,7 +804,7 @@ mod tests {
             .insert(PackageKey::new("staging", "mirror_crate"));
         validate_catalog(&catalog).unwrap();
 
-        catalog.registries.registries[1].index = "sparse+https://rust.pkg.re/other/".to_owned();
+        catalog.registries.registries[1].index = "sparse+https://rust.pkg.re/r/other/".to_owned();
         assert!(validate_catalog(&catalog).is_err());
         catalog.registries.registries[1].index = canonical_registry_index("staging");
 

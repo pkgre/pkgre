@@ -1,0 +1,603 @@
+{
+  "acceptedRecords": [
+    {
+      "acceptedCommit": "1111111111111111111111111111111111111111",
+      "fullRef": "refs/heads/main",
+      "id": "accepted-a",
+      "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+      "schema": "pkgre-accepted-ref-v1"
+    }
+  ],
+  "fullRefCases": [
+    {
+      "expected": "valid",
+      "id": "heads-main",
+      "value": "refs/heads/main"
+    },
+    {
+      "expected": "valid",
+      "id": "tags-release",
+      "value": "refs/tags/release-v1"
+    },
+    {
+      "expected": "invalid",
+      "id": "prefix-only",
+      "value": "refs/"
+    },
+    {
+      "expected": "invalid",
+      "id": "newline",
+      "value": "refs/heads/main\nattacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "space",
+      "value": "refs/heads/main attacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "tab",
+      "value": "refs/heads/main\tattacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "nul",
+      "value": "refs/heads/main\u0000attacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "del",
+      "value": "refs/heads/mainattacker"
+    },
+    {
+      "expected": "invalid",
+      "id": "non-ascii",
+      "value": "refs/heads/mäin"
+    }
+  ],
+  "policy": {
+    "acceptedRecordFields": [
+      "acceptedCommit",
+      "fullRef",
+      "repositoryIdentity",
+      "schema"
+    ],
+    "acceptedRecordSchema": "pkgre-accepted-ref-v1",
+    "bootstrap": "only when the accepted-record path is absent; any present malformed or mismatched record forbids bootstrap",
+    "candidateValidationOrder": [
+      "candidate-shape",
+      "repository-identity",
+      "full-ref",
+      "commit-object",
+      "ancestry",
+      "semantic-validity",
+      "durable-persistence",
+      "publication"
+    ],
+    "fullRefGrammar": "starts with refs/;has a nonempty suffix;contains only ASCII bytes;contains no ASCII whitespace or control byte",
+    "identityDerivation": "SHA-256(domain || u32be(origin length) || origin bytes || u32be(full-ref length) || full-ref bytes)",
+    "identityDomain": "pkgre-repository-identity-v1\\0",
+    "origin": "credential-free operator-supplied canonical UTF-8 bytes; no implementation-specific normalization",
+    "persistence": "write temporary file,fsync file,atomic rename,fsync containing directory",
+    "publication": "only after complete semantic validation and successful durable persistence",
+    "restartAuthority": "accepted record only after bootstrap; remote and arbitrary local commits are never startup authority",
+    "stateExcludes": [
+      "rendered responses",
+      "cache state",
+      "origin URL",
+      "credentials",
+      "filesystem paths",
+      "timestamps"
+    ]
+  },
+  "reloadCases": [
+    {
+      "candidate": null,
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "remote-unavailable"
+      },
+      "id": "remote-unavailable",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "equal",
+        "commit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "unchanged",
+        "persistRecord": false,
+        "reason": "candidate-equals-accepted"
+      },
+      "id": "unchanged",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "descendant",
+        "commit": "2222222222222222222222222222222222222222",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "success",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "valid",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "2222222222222222222222222222222222222222",
+        "activeCommit": "2222222222222222222222222222222222222222",
+        "candidateLoad": true,
+        "decision": "accept-forward",
+        "persistRecord": true,
+        "reason": "valid-forward-candidate"
+      },
+      "id": "valid-forward",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "descendant",
+        "commit": "4444444444444444444444444444444444444444",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "invalid",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": true,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "semantic-validation-failed"
+      },
+      "id": "semantic-invalid",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "predecessor",
+        "commit": "0000000000000000000000000000000000000000",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "candidate-not-descendant"
+      },
+      "id": "predecessor",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "divergent",
+        "commit": "3333333333333333333333333333333333333333",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "candidate-not-descendant"
+      },
+      "id": "divergent",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "unknown",
+        "commit": "2222222222222222222222222222222222222222",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "candidate-ancestry-unknown"
+      },
+      "id": "unknown-ancestry",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "not-evaluated",
+        "commit": "NOT-A-COMMIT",
+        "fullRef": "refs/heads/main",
+        "objectState": "malformed",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "candidate-commit-malformed"
+      },
+      "id": "malformed-commit",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "not-evaluated",
+        "commit": "2222222222222222222222222222222222222222",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "repository-identity-mismatch"
+      },
+      "id": "wrong-repository",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "not-evaluated",
+        "commit": "2222222222222222222222222222222222222222",
+        "fullRef": "refs/heads/release",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "full-ref-mismatch"
+      },
+      "id": "wrong-ref",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "not-evaluated",
+        "commit": "2222222222222222222222222222222222222222",
+        "fullRef": "refs/heads/main",
+        "objectState": "missing",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "candidate-object-unavailable"
+      },
+      "id": "candidate-object-missing",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "descendant",
+        "commit": "2222222222222222222222222222222222222222",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "interrupted-before-rename",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "valid",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": true,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "durable-persistence-failed"
+      },
+      "id": "persistence-interrupted",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "descendant",
+        "commit": "4444444444444444444444444444444444444444",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "not-attempted",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "not-evaluated",
+        "suppressed": true
+      },
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "candidateLoad": false,
+        "decision": "retain-accepted",
+        "persistRecord": false,
+        "reason": "rejected-hash-suppressed"
+      },
+      "id": "rejected-hash-suppressed",
+      "startingAcceptedRecord": "accepted-a"
+    },
+    {
+      "candidate": {
+        "ancestry": "descendant",
+        "commit": "5555555555555555555555555555555555555555",
+        "fullRef": "refs/heads/main",
+        "objectState": "valid",
+        "persistence": "success",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "semanticValidity": "valid",
+        "suppressed": false
+      },
+      "expected": {
+        "acceptedCommit": "5555555555555555555555555555555555555555",
+        "activeCommit": "5555555555555555555555555555555555555555",
+        "candidateLoad": true,
+        "decision": "accept-forward",
+        "persistRecord": true,
+        "reason": "valid-forward-candidate"
+      },
+      "id": "different-candidate-after-rejection",
+      "startingAcceptedRecord": "accepted-a"
+    }
+  ],
+  "repository": {
+    "bootstrapCommit": "1111111111111111111111111111111111111111",
+    "canonicalOrigin": "https://github.com/pkgre/fixture-catalog.git",
+    "fullRef": "refs/heads/main",
+    "identity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456"
+  },
+  "schema": "pkgre-accepted-ref-transitions-v1",
+  "startupCases": [
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "decision": "start-accepted",
+        "persistRecord": false,
+        "reason": "accepted-record-authority"
+      },
+      "id": "accepted-offline",
+      "localAcceptedObject": "valid",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "decision": "start-accepted",
+        "persistRecord": false,
+        "reason": "accepted-record-authority"
+      },
+      "id": "accepted-ignores-newer-remote",
+      "localAcceptedObject": "valid",
+      "remoteObservation": "descendant"
+    },
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "decision": "start-accepted",
+        "persistRecord": false,
+        "reason": "accepted-record-authority"
+      },
+      "id": "accepted-ignores-predecessor-remote",
+      "localAcceptedObject": "valid",
+      "remoteObservation": "predecessor"
+    },
+    {
+      "acceptedRecord": null,
+      "acceptedRecordState": "absent",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "decision": "bootstrap",
+        "persistRecord": true,
+        "reason": "accepted-record-absent"
+      },
+      "id": "bootstrap-when-record-absent",
+      "localAcceptedObject": "not-applicable",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": null,
+      "acceptedRecordState": "absent",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": "1111111111111111111111111111111111111111",
+        "decision": "bootstrap",
+        "persistRecord": true,
+        "reason": "accepted-record-absent"
+      },
+      "id": "bootstrap-ignores-different-remote",
+      "localAcceptedObject": "not-applicable",
+      "remoteObservation": "descendant"
+    },
+    {
+      "acceptedRecord": null,
+      "acceptedRecordState": "malformed",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": null,
+        "activeCommit": null,
+        "decision": "fail-startup",
+        "persistRecord": false,
+        "reason": "accepted-record-malformed"
+      },
+      "id": "malformed-record-forbids-bootstrap",
+      "localAcceptedObject": "not-applicable",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "repositoryIdentity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": null,
+        "activeCommit": null,
+        "decision": "fail-startup",
+        "persistRecord": false,
+        "reason": "repository-identity-mismatch"
+      },
+      "id": "wrong-repository-forbids-bootstrap",
+      "localAcceptedObject": "valid",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/release",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": null,
+        "activeCommit": null,
+        "decision": "fail-startup",
+        "persistRecord": false,
+        "reason": "full-ref-mismatch"
+      },
+      "id": "wrong-ref-forbids-bootstrap",
+      "localAcceptedObject": "valid",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": null,
+        "decision": "fail-startup",
+        "persistRecord": false,
+        "reason": "accepted-object-unavailable"
+      },
+      "id": "accepted-object-missing",
+      "localAcceptedObject": "missing",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "fullRef": "refs/heads/main",
+        "repositoryIdentity": "b21a526d67a4251222f87dde72f2e6e99f0cdc4c9eb66d8e504aa0ed2483b456",
+        "schema": "pkgre-accepted-ref-v1"
+      },
+      "acceptedRecordState": "present",
+      "bootstrapObject": "valid",
+      "expected": {
+        "acceptedCommit": "1111111111111111111111111111111111111111",
+        "activeCommit": null,
+        "decision": "fail-startup",
+        "persistRecord": false,
+        "reason": "accepted-object-invalid"
+      },
+      "id": "accepted-object-corrupt",
+      "localAcceptedObject": "corrupt",
+      "remoteObservation": "offline"
+    },
+    {
+      "acceptedRecord": null,
+      "acceptedRecordState": "absent",
+      "bootstrapObject": "missing",
+      "expected": {
+        "acceptedCommit": null,
+        "activeCommit": null,
+        "decision": "fail-startup",
+        "persistRecord": false,
+        "reason": "bootstrap-object-unavailable"
+      },
+      "id": "bootstrap-object-missing",
+      "localAcceptedObject": "not-applicable",
+      "remoteObservation": "offline"
+    }
+  ]
+}

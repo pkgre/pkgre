@@ -9,18 +9,18 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::policy::{validate_package_name, validate_registry_alias, validate_sha256};
-use crate::schema::{Catalog, PackageState, Source};
+use crate::schema::{Catalog, RegistryDelivery, Source};
 
 /// Generated download catalog filename in both catalog and rendered-site roots.
 pub const DOWNLOAD_CATALOG_FILE: &str = "downloads.json";
 /// Download catalog wire schema.
-pub const DOWNLOAD_CATALOG_SCHEMA: u32 = 1;
+pub const DOWNLOAD_CATALOG_SCHEMA: u32 = 2;
 /// Public immutable download router origin and versioned path prefix.
 pub const DOWNLOAD_ROUTER_ORIGIN: &str = "https://dl.rust.pkg.re";
 /// Maximum accepted canonical download catalog size.
 pub const MAX_DOWNLOAD_CATALOG_BYTES: usize = 16 * 1024 * 1024;
 
-/// Exact generated route table for every active package identity.
+/// Exact generated route table for every locked package identity, including removed ones.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DownloadCatalog {
@@ -42,41 +42,104 @@ pub struct DownloadRoute {
     pub version: Version,
     /// Lowercase SHA-256 from the curated index row.
     pub sha256: String,
-    /// Locked archive origin class.
-    pub source: DownloadSource,
+    /// Exact immutable archive delivery.
+    pub delivery: Delivery,
 }
 
-/// Upstream selected for one immutable archive.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DownloadSource {
-    /// Byte-for-byte crates.io archive.
-    CratesIo,
-    /// Archive produced from and retained for an immutable Git tag.
-    GitTag,
+/// Exact immutable archive delivery for one locked package identity.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "delivery", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Delivery {
+    /// Immutable redirect to the original byte-for-byte upstream archive.
+    Redirect {
+        /// Exact canonical immutable upstream archive URL.
+        url: String,
+    },
+    /// Archive retained in this registry's content-addressed object store.
+    Retained {
+        /// Exact canonical object-store path, relative to the site root.
+        path: String,
+    },
+}
+
+impl Delivery {
+    /// Returns whether this delivery retains an archive in this registry's object store.
+    #[must_use]
+    pub fn is_retained(&self) -> bool {
+        matches!(self, Self::Retained { .. })
+    }
 }
 
 impl DownloadCatalog {
-    /// Derives the complete canonical route set from active generated-lock approvals.
+    /// Derives the complete canonical route set from every generated-lock approval, including removed ones.
     #[must_use]
     pub fn from_catalog(catalog: &Catalog) -> Self {
+        let retained_registries: BTreeSet<&str> = catalog
+            .registries
+            .registries
+            .iter()
+            .filter(|registry| registry.delivery == Some(RegistryDelivery::Retained))
+            .map(|registry| registry.name.as_str())
+            .collect();
         Self::from_routes(
             catalog
                 .approvals
                 .iter()
-                .filter(|approval| approval.state == PackageState::Active)
                 .map(|approval| DownloadRoute {
                     registry: approval.registry.clone(),
                     name: approval.name.clone(),
                     version: approval.version.clone(),
                     sha256: approval.archive_sha256.clone(),
-                    source: match approval.source {
-                        Source::CratesIo => DownloadSource::CratesIo,
-                        Source::GitTag { .. } => DownloadSource::GitTag,
+                    delivery: match &approval.source {
+                        Source::CratesIo
+                            if retained_registries.contains(approval.registry.as_str()) =>
+                        {
+                            Delivery::Retained {
+                                path: retained_object_path(
+                                    &approval.registry,
+                                    &approval.archive_sha256,
+                                ),
+                            }
+                        }
+                        Source::CratesIo => Delivery::Redirect {
+                            url: download_url(
+                                &approval.registry,
+                                &approval.name,
+                                &approval.version,
+                                &approval.archive_sha256,
+                            ),
+                        },
+                        Source::GitTag { .. } => Delivery::Retained {
+                            path: retained_object_path(
+                                &approval.registry,
+                                &approval.archive_sha256,
+                            ),
+                        },
                     },
                 })
                 .collect(),
         )
+    }
+
+    /// Returns the exact retained-route identities derived from delivery declarations.
+    ///
+    /// Includes removed packages; consumers must join with the active-approval set.
+    #[must_use]
+    pub(crate) fn retained_route_identities(
+        catalog: &Catalog,
+    ) -> BTreeSet<(String, String, Version)> {
+        Self::from_catalog(catalog)
+            .routes
+            .iter()
+            .filter(|route| route.delivery.is_retained())
+            .map(|route| {
+                (
+                    route.registry.clone(),
+                    route.name.clone(),
+                    route.version.clone(),
+                )
+            })
+            .collect()
     }
 
     pub(crate) fn from_routes(mut routes: Vec<DownloadRoute>) -> Self {
@@ -144,6 +207,26 @@ impl DownloadCatalog {
                 route.name,
                 route.version
             );
+            match &route.delivery {
+                Delivery::Redirect { url } => ensure!(
+                    *url == download_url(
+                        &route.registry,
+                        &route.name,
+                        &route.version,
+                        &route.sha256
+                    ),
+                    "download redirect for {}/{}/{} is not the exact canonical router URL",
+                    route.registry,
+                    route.name,
+                    route.version
+                ),
+                Delivery::Retained { path } => ensure!(
+                    *path == retained_object_path(&route.registry, &route.sha256),
+                    "download retained path for {}/{} is not the exact canonical object path",
+                    route.registry,
+                    route.sha256
+                ),
+            }
             previous = Some(route);
         }
         Ok(())
@@ -207,6 +290,21 @@ pub fn router_download_template(registry: &str) -> String {
     format!("{DOWNLOAD_ROUTER_ORIGIN}/v1/{registry}/{{crate}}/{{version}}/{{sha256-checksum}}")
 }
 
+/// Returns the exact canonical immutable redirect URL for one locked identity.
+#[must_use]
+pub fn download_url(registry: &str, name: &str, version: &Version, sha256: &str) -> String {
+    router_download_template(registry)
+        .replace("{crate}", name)
+        .replace("{version}", &version.to_string())
+        .replace("{sha256-checksum}", sha256)
+}
+
+/// Returns the exact canonical retained object-store path for one locked identity.
+#[must_use]
+pub fn retained_object_path(registry: &str, sha256: &str) -> String {
+    format!("{registry}/objects/crates/{sha256}.crate")
+}
+
 fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Ordering {
     (
         left.registry.as_str(),
@@ -214,7 +312,7 @@ fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Orderin
         left.name.as_str(),
         &left.version,
         left.sha256.as_str(),
-        left.source,
+        &left.delivery,
     )
         .cmp(&(
             right.registry.as_str(),
@@ -222,34 +320,281 @@ fn route_order(left: &DownloadRoute, right: &DownloadRoute) -> std::cmp::Orderin
             right.name.as_str(),
             &right.version,
             right.sha256.as_str(),
-            right.source,
+            &right.delivery,
         ))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    use semver::Version;
+
+    use crate::schema::{Approval, Catalog, PackageState, RegistryDelivery, Source};
+    use crate::update::time::UtcTimestamp;
+
     use super::*;
 
-    fn route(name: &str, version: &str, sha256: &str, source: DownloadSource) -> DownloadRoute {
+    #[test]
+    fn from_catalog_delivery_follows_registry_declaration() {
+        let crates_io = Source::CratesIo;
+        let git_tag = || Source::GitTag {
+            repository: "https://example.com/repo".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            tag_oid: "06".repeat(20),
+            commit: "07".repeat(20),
+            package: "first-party".to_owned(),
+            subdir: PathBuf::from("."),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        };
+
+        let default_redirect = DownloadCatalog::from_catalog(&test_catalog(
+            None,
+            vec![
+                approval(
+                    "alpha",
+                    "1.0.0",
+                    &"01".repeat(32),
+                    PackageState::Active,
+                    crates_io.clone(),
+                ),
+                approval(
+                    "first-party",
+                    "1.0.0",
+                    &"02".repeat(32),
+                    PackageState::Active,
+                    git_tag(),
+                ),
+            ],
+        ))
+        .routes;
+        assert!(matches!(
+            default_redirect[0].delivery,
+            Delivery::Redirect { .. }
+        ));
+        assert!(matches!(
+            default_redirect[1].delivery,
+            Delivery::Retained { .. }
+        ));
+
+        let declared = DownloadCatalog::from_catalog(&test_catalog(
+            Some(RegistryDelivery::Retained),
+            vec![
+                approval(
+                    "alpha",
+                    "1.0.0",
+                    &"01".repeat(32),
+                    PackageState::Active,
+                    crates_io.clone(),
+                ),
+                approval(
+                    "gone",
+                    "1.0.0",
+                    &"03".repeat(32),
+                    PackageState::Removed,
+                    crates_io,
+                ),
+            ],
+        ))
+        .routes;
+        for route in &declared {
+            let Delivery::Retained { path } = &route.delivery else {
+                panic!("expected retained route for {}", route.name)
+            };
+            assert_eq!(path, &retained_object_path("main", &route.sha256));
+        }
+
+        let foreign = approval_in(
+            "other",
+            "beta",
+            "1.0.0",
+            &"04".repeat(32),
+            PackageState::Active,
+            Source::CratesIo,
+        );
+        let first_party_foreign = approval_in(
+            "other",
+            "beta-fp",
+            "1.0.0",
+            &"05".repeat(32),
+            PackageState::Active,
+            git_tag(),
+        );
+        let fallback = DownloadCatalog::from_catalog(&test_catalog(
+            Some(RegistryDelivery::Retained),
+            vec![foreign, first_party_foreign],
+        ))
+        .routes;
+        assert!(matches!(fallback[0].delivery, Delivery::Redirect { .. }));
+        assert!(matches!(fallback[1].delivery, Delivery::Retained { .. }));
+    }
+
+    #[test]
+    fn retained_route_identities_join_through_declarations() {
+        let git_tag = || Source::GitTag {
+            repository: "https://example.com/repo".to_owned(),
+            tag: "v1.0.0".to_owned(),
+            tag_oid: "06".repeat(20),
+            commit: "07".repeat(20),
+            package: "first-party".to_owned(),
+            subdir: PathBuf::from("."),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        };
+
+        let identities = DownloadCatalog::retained_route_identities(&test_catalog(
+            Some(RegistryDelivery::Retained),
+            vec![
+                approval(
+                    "alpha",
+                    "1.0.0",
+                    &"01".repeat(32),
+                    PackageState::Active,
+                    Source::CratesIo,
+                ),
+                approval(
+                    "gone",
+                    "1.0.0",
+                    &"03".repeat(32),
+                    PackageState::Removed,
+                    Source::CratesIo,
+                ),
+            ],
+        ));
+        assert_eq!(
+            identities,
+            BTreeSet::from([
+                (
+                    "main".to_owned(),
+                    "alpha".to_owned(),
+                    Version::parse("1.0.0").unwrap()
+                ),
+                (
+                    "main".to_owned(),
+                    "gone".to_owned(),
+                    Version::parse("1.0.0").unwrap()
+                ),
+            ])
+        );
+
+        let undeclared_identities = DownloadCatalog::retained_route_identities(&test_catalog(
+            None,
+            vec![approval(
+                "first-party",
+                "1.0.0",
+                &"02".repeat(32),
+                PackageState::Active,
+                git_tag(),
+            )],
+        ));
+        assert_eq!(
+            undeclared_identities,
+            BTreeSet::from([(
+                "main".to_owned(),
+                "first-party".to_owned(),
+                Version::parse("1.0.0").unwrap()
+            )])
+        );
+    }
+
+    fn test_catalog(delivery: Option<RegistryDelivery>, approvals: Vec<Approval>) -> Catalog {
+        Catalog {
+            root: PathBuf::new(),
+            registries: crate::schema::RegistriesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                cname: String::new(),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+                registries: vec![crate::schema::Registry {
+                    name: "main".to_owned(),
+                    index: String::new(),
+                    download: String::new(),
+                    audience: crate::schema::Audience::Public,
+                    cargo_version: Version::parse("1.95.0").unwrap(),
+                    delivery,
+                }],
+            },
+            categories: BTreeMap::new(),
+            homes: crate::schema::HomesFile {
+                schema: crate::schema::SCHEMA_VERSION,
+                homes: BTreeMap::new(),
+            },
+            mirror_names: BTreeSet::new(),
+            publish_names: BTreeSet::new(),
+            approvals,
+        }
+    }
+
+    fn approval(
+        name: &str,
+        version: &str,
+        sha256: &str,
+        state: PackageState,
+        source: Source,
+    ) -> Approval {
+        approval_in("main", name, version, sha256, state, source)
+    }
+
+    fn approval_in(
+        registry: &str,
+        name: &str,
+        version: &str,
+        sha256: &str,
+        state: PackageState,
+        source: Source,
+    ) -> Approval {
+        Approval {
+            registry: registry.to_owned(),
+            category: format!("{registry}/general").parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse(version).unwrap(),
+            archive_sha256: sha256.to_owned(),
+            index_record_sha256: "08".repeat(32),
+            index_row_sha256: "09".repeat(32),
+            admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state,
+            source,
+            declared_in: PathBuf::new(),
+        }
+    }
+
+    fn route(name: &str, version: &str, sha256: &str, delivery: Delivery) -> DownloadRoute {
         DownloadRoute {
             registry: "universe".to_owned(),
             name: name.to_owned(),
             version: Version::parse(version).unwrap(),
             sha256: sha256.to_owned(),
-            source,
+            delivery,
         }
+    }
+
+    fn redirect(name: &str, version: &str, sha256: &str) -> DownloadRoute {
+        route(
+            name,
+            version,
+            sha256,
+            Delivery::Redirect {
+                url: download_url("universe", name, &Version::parse(version).unwrap(), sha256),
+            },
+        )
+    }
+
+    fn retained(name: &str, version: &str, sha256: &str) -> DownloadRoute {
+        route(
+            name,
+            version,
+            sha256,
+            Delivery::Retained {
+                path: retained_object_path("universe", sha256),
+            },
+        )
     }
 
     #[test]
     fn canonical_round_trip_is_strict() {
         let catalog = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
-            routes: vec![route(
-                "serde",
-                "1.0.229",
-                &"01".repeat(32),
-                DownloadSource::CratesIo,
-            )],
+            routes: vec![redirect("serde", "1.0.229", &"01".repeat(32))],
         };
         let bytes = catalog.canonical_bytes().unwrap();
         assert_eq!(DownloadCatalog::parse_canonical(&bytes).unwrap(), catalog);
@@ -258,14 +603,14 @@ mod tests {
         assert!(DownloadCatalog::parse_canonical(&compact).is_err());
         let unknown = String::from_utf8(bytes)
             .unwrap()
-            .replace("\"schema\": 1", "\"schema\": 1,\n  \"extra\": true");
+            .replace("\"schema\": 2", "\"schema\": 2,\n  \"extra\": true");
         assert!(DownloadCatalog::parse_canonical(unknown.as_bytes()).is_err());
     }
 
     #[test]
     fn ordering_identity_and_fields_are_guarded() {
-        let first = route("alpha", "1.0.0", &"01".repeat(32), DownloadSource::CratesIo);
-        let second = route("beta", "1.0.0", &"02".repeat(32), DownloadSource::GitTag);
+        let first = redirect("alpha", "1.0.0", &"01".repeat(32));
+        let second = retained("beta", "1.0.0", &"02".repeat(32));
         let reversed = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
             routes: vec![second, first.clone()],
@@ -280,15 +625,12 @@ mod tests {
 
         let conflicting_checksum = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
-            routes: vec![
-                first.clone(),
-                route("alpha", "1.0.0", &"03".repeat(32), DownloadSource::GitTag),
-            ],
+            routes: vec![first.clone(), retained("alpha", "1.0.0", &"03".repeat(32))],
         };
         let error = conflicting_checksum.validate().unwrap_err();
         assert!(format!("{error:#}").contains("duplicate download identity"));
 
-        let mut invalid = route("alpha", "1.0.0", &"AB".repeat(32), DownloadSource::CratesIo);
+        let mut invalid = redirect("alpha", "1.0.0", &"AB".repeat(32));
         let catalog = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA,
             routes: vec![invalid.clone()],
@@ -303,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_size_and_wire_source_are_strict() {
+    fn schema_size_and_wire_delivery_are_strict() {
         let unsupported = DownloadCatalog {
             schema: DOWNLOAD_CATALOG_SCHEMA + 1,
             routes: Vec::new(),
@@ -313,11 +655,35 @@ mod tests {
             DownloadCatalog::parse_canonical(&vec![b' '; MAX_DOWNLOAD_CATALOG_BYTES + 1]).is_err()
         );
 
-        let unknown_source = format!(
-            "{{\n  \"schema\": 1,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"source\": \"arbitrary-url\"\n    }}\n  ]\n}}\n",
+        let unknown_delivery = format!(
+            "{{\n  \"schema\": 2,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"delivery\": \"arbitrary-url\"\n    }}\n  ]\n}}\n",
             "01".repeat(32)
         );
-        assert!(DownloadCatalog::parse_canonical(unknown_source.as_bytes()).is_err());
+        assert!(
+            DownloadCatalog::parse_canonical(unknown_delivery.as_bytes()).is_err(),
+            "non-object delivery must be rejected"
+        );
+
+        let wrong_redirect = format!(
+            "{{\n  \"schema\": 2,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"delivery\": {{\n        \"redirect\": {{\n          \"url\": \"https://dl.rust.pkg.re/v1/universe/other/1.0.0/{}\"\n        }}\n      }}\n    }}\n  ]\n}}\n",
+            "01".repeat(32),
+            "01".repeat(32)
+        );
+        assert!(
+            DownloadCatalog::parse_canonical(wrong_redirect.as_bytes()).is_err(),
+            "non-canonical redirect URL must be rejected"
+        );
+
+        let wrong_retained = format!(
+            "{{\n  \"schema\": 2,\n  \"routes\": [\n    {{\n      \"registry\": \"universe\",\n      \"name\": \"alpha\",\n      \"version\": \"1.0.0\",\n      \"sha256\": \"{}\",\n      \"delivery\": {{\n        \"retained\": {{\n          \"path\": \"universe/objects/crates/{}\",\n          \"sha256\": \"{}\"\n        }}\n      }}\n    }}\n  ]\n}}\n",
+            "02".repeat(32),
+            "02".repeat(32),
+            "02".repeat(32)
+        );
+        assert!(
+            DownloadCatalog::parse_canonical(wrong_retained.as_bytes()).is_err(),
+            "non-canonical retained path must be rejected"
+        );
     }
 
     #[test]

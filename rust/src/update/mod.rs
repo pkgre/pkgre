@@ -10,18 +10,13 @@ mod manifest;
 mod plan;
 mod policy;
 mod source;
-mod time;
+pub mod time;
 mod workflow;
 
 #[cfg(test)]
 mod e2e_tests;
 
-pub(crate) use admission::{
-    MigratedAdmissionInventory, migrate_admission_inventory, validate_admission_inventory,
-    validate_admission_tree_structure,
-};
-#[cfg(test)]
-pub(crate) use admission::{prepare_admission_lock, write_admission_pair};
+pub(crate) use admission::{validate_admission_inventory, validate_admission_tree_structure};
 pub use api::parse_crates_io_api_evidence;
 pub use apply::apply_admission_manifest;
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};

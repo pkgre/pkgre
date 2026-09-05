@@ -25,7 +25,7 @@ Target same-host state after the ecosystem-specific publication gates:
 
 `pkgre-proxy` converts an exact validated marker into a fresh `307`;it has no route catalog,GitHub API/raw lookup,mutable database,or last-known-good route table. It resolves only `pkgre.github.io`,connects to validated public answers,and keeps URL/TLS SNI/certificate verification/HTTP Host fixed to the route-selected `rust.pkg.re` or `js.pkg.re`. No `dl.js.pkg.re` is planned. `dl.rust.pkg.re` remains the current production+rollback endpoint until P9 publishes same-host Rust metadata and a later retirement gate is met.
 
-Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 4 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/staging/`,has its own categories/locks/routes,and does not move existing `main` identities.
+Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 4 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities.
 
 Current Rust categories:
 
@@ -55,6 +55,7 @@ Current Rust categories:
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production Rust mirror-update procedure ending in an unmerged curator-review PR.
 - [`docs/workflows.md`](docs/workflows.md):mirror,Git-tag,removal,migration,release workflows.
 - [`docs/security.md`](docs/security.md):trust model,enforced invariants,exclusions.
+- [`docs/dynamic-registry-readiness.md`](docs/dynamic-registry-readiness.md):minimal migration basis+phase-local validation policy for native Git-backed Rust/JavaScript serving.
 - Production Rust catalog/site:[`pkgre/rust`](https://github.com/pkgre/rust).
 
 ## Build
@@ -129,6 +130,7 @@ audit=false
 fund=false
 ignore-scripts=true
 replace-registry-host=always
+save-exact=true
 strict-ssl=true
 update-notifier=false
 ```

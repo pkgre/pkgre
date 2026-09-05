@@ -1,0 +1,54 @@
+{
+  "bundle": "dynamic-registry-v1",
+  "files": [
+    {
+      "bytes": 2256,
+      "path": "README.md",
+      "sha256": "cb49a1b0ef4597b466dd9078d32817320a07536c9b566b9a254bd7ebee02c27f"
+    },
+    {
+      "bytes": 13391,
+      "path": "client/configuration.json",
+      "sha256": "e08f70279d2c441af85cd14aad54fa16c9a0a8f84490a0c0ad811daae9940c94"
+    },
+    {
+      "bytes": 212,
+      "path": "client/project/.cargo/config.toml",
+      "sha256": "4398de6da884b0608ee094415e109f469d737e29ca66dd3236a0dad0e7e62b4a"
+    },
+    {
+      "bytes": 0,
+      "path": "client/project/.cargo/disabled-crates-io/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 224,
+      "path": "client/project/.npmrc",
+      "sha256": "65f2d168c79e5c802215df19811983f3eb1b824b89f2dea3156e5ee98a4c5bf5"
+    },
+    {
+      "bytes": 46218,
+      "path": "edge/forwarding.json",
+      "sha256": "3cc673be4aef925a1d8b61542c492440a40124c9c36020f3a2a49d392e5cf3da"
+    },
+    {
+      "bytes": 9213,
+      "path": "http/raw-targets.json",
+      "sha256": "b620e05fc448e799e845ff78aef2a2501030c3ff3761460421e297c92a4a4d5a"
+    },
+    {
+      "bytes": 8886,
+      "path": "http/responses.json",
+      "sha256": "3705e8ed702fd7c2f84c08dc12151ab1f0f2c46f71ccfc62d17ee027614fdc79"
+    },
+    {
+      "bytes": 21168,
+      "path": "state/accepted-ref-transitions.json",
+      "sha256": "0dbf265023e558cd8c1a184c8f1b2ed40ef7b2991032bb806f19b549c3e8658b"
+    }
+  ],
+  "indexExcludes": [
+    "index.json"
+  ],
+  "schema": "pkgre-fixture-bundle-index-v1"
+}

@@ -10,29 +10,9 @@ import {
 import { validateCatalog } from "./catalog.js";
 import { renderJsRedirectMarker } from "./marker.js";
 import { renderPackument } from "./packument.js";
+import { verifyCatalogArchives } from "./projection.js";
 
-function archiveMap(archives) {
-  if (!(archives instanceof Map)) throw new Error("archives must be a Map from SHA-256 to bytes");
-  const result = new Map();
-  for (const [sha256, bytes] of archives) {
-    if (!/^[0-9a-f]{64}$/.test(sha256) || !(bytes instanceof Uint8Array)) throw new Error("archives must map lowercase SHA-256 to bytes");
-    result.set(sha256, Buffer.from(bytes));
-  }
-  return result;
-}
-
-export function verifyCatalogArchives(catalog, archives) {
-  validateCatalog(catalog);
-  const available = archiveMap(archives);
-  for (const entry of catalog.packages) {
-    for (const record of entry.versions) {
-      const bytes = available.get(record.source.sha256);
-      if (!bytes) throw new Error(`archive is absent for ${entry.name}@${record.version} at ${record.source.sha256}.tgz`);
-      verifyPackageArchive(bytes, entry.name, record);
-    }
-  }
-  return available;
-}
+export { verifyCatalogArchives } from "./projection.js";
 
 function putImmutable(site, path, bytes) {
   const prior = site.get(path);

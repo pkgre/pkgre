@@ -1,0 +1,288 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/"
+      },
+      "id": "root",
+      "targetAscii": "/"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/config.json"
+      },
+      "id": "rust-config",
+      "targetAscii": "/config.json"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/se/rd/serde"
+      },
+      "id": "rust-index-entry",
+      "targetAscii": "/se/rd/serde"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "id": "rust-download",
+      "targetAscii": "/v1/main/serde/1.0.228/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/package-name"
+      },
+      "id": "js-unscoped-metadata",
+      "targetAscii": "/package-name"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/@scope%2fname"
+      },
+      "id": "js-scoped-metadata",
+      "targetAscii": "/@scope%2fname"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/v1/js/main/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      },
+      "id": "js-download",
+      "targetAscii": "/v1/js/main/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/packages/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.tgz"
+      },
+      "id": "archive-body",
+      "targetAscii": "/packages/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.tgz"
+    },
+    {
+      "expected": {
+        "kind": "canonical",
+        "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "id": "maximum-length",
+      "targetAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "empty",
+      "targetAscii": ""
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "asterisk-form",
+      "targetAscii": "*"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "absolute-form",
+      "targetAscii": "https://rust.pkg.re/config.json"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "missing-leading-slash",
+      "targetAscii": "config.json"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "authority-like-form",
+      "targetAscii": "//rust.pkg.re/config.json"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "trailing-slash",
+      "targetAscii": "/config.json/"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "duplicate-slash",
+      "targetAscii": "/se//serde"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "dot-segment",
+      "targetAscii": "/se/./serde"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "dot-dot-segment",
+      "targetAscii": "/se/../serde"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "query",
+      "targetAscii": "/config.json?x=1"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "fragment",
+      "targetAscii": "/config.json#x"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "backslash",
+      "targetAscii": "/se\\rd"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "space",
+      "targetAscii": "/package name"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "bare-percent",
+      "targetAscii": "/package%"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "short-percent",
+      "targetAscii": "/package%2"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "unknown-percent",
+      "targetAscii": "/package%20name"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "uppercase-percent",
+      "targetAscii": "/@scope%2Fname"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "encoded-percent",
+      "targetAscii": "/@scope%252fname"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "generic-encoded-slash",
+      "targetAscii": "/se%2frd/serde"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "literal-scoped-slash",
+      "targetAscii": "/@scope/name"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "empty-scope",
+      "targetAscii": "/@%2fname"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "empty-scoped-name",
+      "targetAscii": "/@scope%2f"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "uppercase-scope",
+      "targetAscii": "/@Scope%2fname"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "multiple-encoded-slashes",
+      "targetAscii": "/@scope%2fname%2fextra"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "too-long",
+      "targetAscii": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "nul",
+      "targetHex": "2f610062"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "control",
+      "targetHex": "2f610a62"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "delete",
+      "targetHex": "2f617f62"
+    },
+    {
+      "expected": {
+        "kind": "reject"
+      },
+      "id": "non-ascii",
+      "targetHex": "2f636166c3a9"
+    }
+  ],
+  "policy": {
+    "allowedGenericSegmentAscii": "A-Z a-z 0-9 . _ ~ + @ -",
+    "allowedPercentEscape": "one lowercase %2f in a canonical scoped JavaScript metadata path only",
+    "maximumRequestTargetBytes": 1024,
+    "scopedJavaScriptComponentPattern": "^[a-z][a-z0-9._~-]*$",
+    "scopedJavaScriptMaximumPackageBytes": 214,
+    "targetForm": "origin-form path without query or fragment"
+  },
+  "schema": "pkgre-raw-request-targets-v1"
+}

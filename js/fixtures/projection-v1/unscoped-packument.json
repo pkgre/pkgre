@@ -1,0 +1,33 @@
+{
+  "_id": "pkgre-js",
+  "dist-tags": {
+    "latest": "0.1.0"
+  },
+  "name": "pkgre-js",
+  "time": {
+    "0.1.0": "2026-08-25T00:00:00.000Z",
+    "created": "2026-08-25T00:00:00.000Z",
+    "modified": "2026-08-25T00:00:00.000Z"
+  },
+  "versions": {
+    "0.1.0": {
+      "_id": "pkgre-js@0.1.0",
+      "bin": {
+        "pkgre-js": "src/main.js"
+      },
+      "dist": {
+        "integrity": "sha512-ACPePj5KPikSznX3kz4wiCiMs6/elbnLbEy0uAMF39PipwfmF93jzf6Z4wKHbCSBJOgqCvdXUBoY+5AgzLcGww==",
+        "shasum": "2a07445564c0a9ed138646685f5f5dc15b0c6cc7",
+        "tarball": "https://js.pkg.re/v1/js/main/9334606d34e6660c41d9e0d2dadc1f1e7cc29fd0ac234a426f2b42fce97218c1"
+      },
+      "engines": {
+        "node": ">=24.15.0",
+        "npm": ">=12.0.2"
+      },
+      "license": "Apache-2.0",
+      "name": "pkgre-js",
+      "type": "module",
+      "version": "0.1.0"
+    }
+  }
+}

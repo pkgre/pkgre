@@ -1,4 +1,5 @@
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -9,7 +10,12 @@ use pkgre_rust::render;
 use pkgre_rust::schema::Catalog;
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>\n  pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>";
+const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
+  pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time registry/name@tag=<timestamp>]...
+  pkgre-rust migrate-retained-delivery <catalog-root>
+  pkgre-rust archive-inventory <catalog> <output.json>
+  pkgre-rust archive-import <archive-store> <catalog>
+  pkgre-rust check-transition <accepted-catalog> <candidate-catalog>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -32,8 +38,6 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
     match command.to_str() {
         Some("lock") => lock_catalog(&values),
         Some("check") => check(&values),
-        Some("migrate-v2-to-v3") => migrate_v2_to_v3(&values),
-        Some("migrate-v3-to-v4") => migrate_v3_to_v4(&values),
         Some("render") => render_site(&values),
         Some("verify") => verify_site(&values),
         Some("verify-monotonic") => verify_monotonic(&values),
@@ -41,6 +45,11 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("update-plan-exact") => update_plan_exact(&values),
         Some("update-inspect") => update_inspect(&values),
         Some("update-apply") => update_apply(&values),
+        Some("migrate-v4-to-v5") => migrate_v4_to_v5(&values),
+        Some("migrate-retained-delivery") => migrate_retained_delivery(&values),
+        Some("archive-inventory") => archive_inventory(&values),
+        Some("archive-import") => archive_import_command(&values),
+        Some("check-transition") => check_transition_command(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -68,37 +77,6 @@ fn check(arguments: &[OsString]) -> Result<()> {
     validate_catalog(&catalog)?;
     ArtifactMap::load(&catalog)?;
     info!(packages = catalog.approvals.len(), "catalog is valid");
-    Ok(())
-}
-
-fn migrate_v2_to_v3(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 2)?;
-    let source = Path::new(&arguments[0]);
-    let destination = Path::new(&arguments[1]);
-    let summary = pkgre_rust::migration::migrate_v2_to_v3(source, destination)?;
-    info!(
-        names = summary.names,
-        packages = summary.packages,
-        routed_rows_changed = summary.routed_rows_changed,
-        path = %destination.display(),
-        "migrated schema-2 catalog to schema 3"
-    );
-    Ok(())
-}
-
-fn migrate_v3_to_v4(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 2)?;
-    let source = Path::new(&arguments[0]);
-    let destination = Path::new(&arguments[1]);
-    let summary = pkgre_rust::migration::migrate_v3_to_v4(source, destination)?;
-    info!(
-        names = summary.names,
-        packages = summary.packages,
-        routed_rows_changed = summary.routed_rows_changed,
-        admission_batches = summary.admission_batches,
-        path = %destination.display(),
-        "migrated schema-3 catalog to schema 4"
-    );
     Ok(())
 }
 
@@ -235,14 +213,118 @@ fn log_update_plan(plan: &pkgre_rust::update::UpdatePlan, output: &Path) {
     );
 }
 
+fn archive_inventory(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let catalog = load_catalog(&arguments[0])?;
+    validate_catalog(&catalog)?;
+    let downloads = pkgre_rust::download::DownloadCatalog::load_from_root(&catalog.root)?;
+    let inventory = pkgre_rust::archive::ArchiveInventory::from_catalog(&catalog, &downloads);
+    let output = Path::new(&arguments[1]);
+    pkgre_rust::artifact::require_absent(output)?;
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(output, inventory.canonical_bytes()?)
+        .with_context(|| format!("write {}", output.display()))?;
+    info!(
+        objects = inventory.objects.len(),
+        path = %output.display(),
+        "wrote archive inventory"
+    );
+    Ok(())
+}
+
+fn archive_import_command(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let store = Path::new(&arguments[0]);
+    let catalog = Path::new(&arguments[1]);
+    let summary = pkgre_rust::archive::archive_import(store, catalog)?;
+    info!(
+        imported = summary.imported,
+        already_present = summary.already_present,
+        path = %catalog.display(),
+        "imported retained archives"
+    );
+    Ok(())
+}
+
 fn load_catalog(path: &OsStr) -> Result<Catalog> {
     Catalog::load(Path::new(path))
+}
+
+fn check_transition_command(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let accepted = Path::new(&arguments[0]);
+    let candidate = Path::new(&arguments[1]);
+    pkgre_rust::transition::check_transition(accepted, candidate)
+        .map_err(|reason| anyhow::anyhow!("candidate rejected: {reason}"))?;
+    info!(
+        accepted = %accepted.display(),
+        candidate = %candidate.display(),
+        "candidate is a valid accepted-to-candidate transition"
+    );
+    Ok(())
 }
 
 fn ensure_arity(arguments: &[OsString], expected: usize) -> Result<()> {
     ensure!(
         arguments.len() == expected,
         "wrong number of arguments\n{USAGE}"
+    );
+    Ok(())
+}
+
+fn migrate_v4_to_v5(arguments: &[OsString]) -> Result<()> {
+    if arguments.len() < 2 {
+        bail!(USAGE);
+    }
+    let mut positional = Vec::new();
+    let mut git_times = Vec::new();
+    for argument in arguments {
+        let value = argument.to_str().context("argument is not valid UTF-8")?;
+        if let Some(entry) = value.strip_prefix("--git-tag-time=") {
+            let (key, timestamp) = entry
+                .split_once('=')
+                .context("--git-tag-time must use registry/name@tag=<canonical-timestamp> form")?;
+            let canonical =
+                pkgre_rust::migrate::canonicalize_rfc3339(timestamp).with_context(|| {
+                    format!("--git-tag-time timestamp {timestamp:?} is not RFC 3339")
+                })?;
+            git_times.push((key.to_string(), canonical.to_string()));
+        } else {
+            ensure!(
+                !value.starts_with('-') || value == "-",
+                "unknown argument {value:?}\n{USAGE}"
+            );
+            positional.push(argument.clone());
+        }
+    }
+    ensure_arity(&positional, 2)?;
+    let input = Path::new(&positional[0]);
+    let output = Path::new(&positional[1]);
+    let summary = pkgre_rust::migrate::migrate_v4_to_v5(input, output, &git_times)?;
+    for registry in &summary.registries {
+        info!(
+            registry = %registry.name,
+            packages = registry.packages,
+            "migrated registry"
+        );
+    }
+    info!(routes = summary.routes, "migration complete");
+    Ok(())
+}
+
+fn migrate_retained_delivery(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 1)?;
+    let root = Path::new(&arguments[0]);
+    let summary = pkgre_rust::migrate::migrate_retained_delivery(root)?;
+    info!(
+        registries = summary.registries,
+        changed = summary.changed,
+        retained_routes = summary.retained_routes,
+        total_routes = summary.total_routes,
+        path = %root.display(),
+        "declared retained delivery and recomputed the download catalog"
     );
     Ok(())
 }

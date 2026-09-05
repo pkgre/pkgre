@@ -18,6 +18,7 @@ use crate::policy::{
     validate_relative_path, validate_tag_version,
 };
 use crate::schema::{Approval, Source};
+use crate::update::time::UtcTimestamp;
 
 const CARGO_REGISTRY: &str = "pkgre";
 const REGISTRY_INDEX: &str = "sparse+https://rust.pkg.re/";
@@ -36,6 +37,8 @@ pub struct GitTagMaterialization {
     pub tag_oid: String,
     /// Full peeled commit object ID.
     pub commit: String,
+    /// Deterministic committer time of the published tag commit.
+    pub commit_time: UtcTimestamp,
     /// Repository-relative package directory.
     pub path: PathBuf,
     /// Exact reproducible `.crate` bytes.
@@ -195,6 +198,7 @@ fn resolve_git_tag_from(
     let checkout = temporary.path().join("repository");
     let (tag_oid, commit) = fetch_tag(tag, &checkout, fetch_repository, allow_file)?;
     ensure_safe_checkout_tree(&checkout)?;
+    let commit_time = tag_commit_time(&checkout, &commit)?;
     ensure_clean_checkout(&checkout)?;
 
     let cargo = pinned_cargo(cargo_version)?;
@@ -252,12 +256,38 @@ fn resolve_git_tag_from(
         version: package.version,
         tag_oid,
         commit,
+        commit_time,
         path,
         archive_bytes,
         source_row_bytes,
         archive_sha256,
         source_row_sha256,
     })
+}
+
+/// Reads the committer time of the published tag commit as a deterministic timestamp.
+///
+/// # Errors
+///
+/// Returns an error when Git output is malformed or the timestamp is invalid.
+fn tag_commit_time(repository: &Path, commit: &str) -> Result<UtcTimestamp> {
+    let unix_seconds = command_stdout(
+        git_command(
+            Some(repository),
+            [
+                OsString::from("show"),
+                OsString::from("-s"),
+                OsString::from("--format=%ct"),
+                OsString::from("--no-patch"),
+                OsString::from(commit),
+            ],
+        ),
+        "read published Git commit time",
+    )?;
+    let seconds = unix_seconds.trim().parse::<u64>().with_context(|| {
+        format!("parse published Git commit time {unix_seconds:?} for commit {commit}")
+    })?;
+    UtcTimestamp::from_unix_seconds(seconds)
 }
 
 fn verify_approved_materialization(
@@ -997,6 +1027,7 @@ mod tests {
             index_record_sha256: materialization.source_row_sha256.clone(),
             index_row_sha256: "01".repeat(32),
             admission_sha256: None,
+            admitted_at: crate::update::time::UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
             state: PackageState::Active,
             source: Source::GitTag {
                 repository: "https://example.invalid/pkgre-demo".to_owned(),

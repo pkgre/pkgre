@@ -40,7 +40,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 
 ### Registry/category/identity
 
-- Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/<name>/`; additions allowed, released registry identity/index cannot disappear/change.
+- Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index cannot disappear/change.
 - Current production categories:`main/{general,acp,filesystem,matrix,mcp,pkgre,sse,terminal,yaml}`. Each category is inhabited + has exact committed direct-dependency allowlist; additions allowed, released category/rule cannot disappear/change.
 - Current edges:`general→general`; feature category→itself+general; `mcp→general|mcp|sse`; `pkgre→general|pkgre`; same registry grants no implicit edge.
 - One permanent registry/category home per normalized package name within a registry; Cargo ASCII case + `-`/`_` collision defense. Each `name + version` has one immutable `mirror|publish` source class/checksum; one name may use both classes across distinct versions. Same normalized name in another registry is a distinct home.

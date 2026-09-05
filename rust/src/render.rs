@@ -6,20 +6,20 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{ArtifactMap, require_absent, sha256_bytes};
 use crate::category::{CategoryId, category_for_v2_home};
-use crate::download::{
-    DOWNLOAD_CATALOG_FILE, DownloadCatalog, DownloadRoute, DownloadSource, router_download_template,
-};
+use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{
     CARGO_VERSION, SCHEMA3_REGISTRIES, canonical_category_dependencies, canonical_registry_index,
-    validate_catalog, validate_package_name, validate_registry_alias, validate_sha256,
+    canonical_registry_route_base, validate_catalog, validate_package_name,
+    validate_registry_alias, validate_sha256,
 };
+use crate::projection::ProjectedRepresentation;
 use crate::schema::{
     Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, RELEASE_SCHEMA_VERSION,
     Source,
@@ -213,11 +213,15 @@ impl LoadedRelease {
 }
 
 fn registry_site_root(root: &Path, registry: &str) -> PathBuf {
-    if registry == "main" {
-        root.to_path_buf()
-    } else {
-        root.join(registry)
-    }
+    root.join(
+        canonical_registry_route_base(registry)
+            .trim_start_matches('/')
+            .trim_end_matches('/'),
+    )
+}
+
+fn schema_three_registry_site_root(root: &Path, registry: &str) -> PathBuf {
+    root.join(registry)
 }
 
 /// Renders a complete immutable sparse-registry site at a new path.
@@ -261,26 +265,81 @@ fn render_into(
         &output.join("CNAME"),
         format!("{}\n", catalog.registries.cname).as_bytes(),
     )?;
+    for projected in projected_bodies(catalog, artifacts, policy)? {
+        let relative = projected
+            .path
+            .strip_prefix('/')
+            .expect("projected metadata paths are root-relative");
+        write_new(&output.join(relative), &projected.body)?;
+    }
+
+    let mut copied_archives = BTreeSet::new();
+    let retained_identities = DownloadCatalog::retained_route_identities(catalog);
+    for approval in sorted_approvals(catalog) {
+        if !approval.is_removed()
+            && retained_identities.contains(&(
+                approval.registry.clone(),
+                approval.name.clone(),
+                approval.version.clone(),
+            ))
+            && copied_archives.insert(approval.archive_sha256.clone())
+        {
+            let artifact = artifacts
+                .get(&approval.registry, &approval.name, &approval.version)
+                .expect("artifact map was verified before rendering");
+            copy_new(
+                &artifact.archive,
+                &output
+                    .join("crates")
+                    .join(format!("{}.crate", approval.archive_sha256)),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) struct ProjectedBody {
+    pub(crate) path: String,
+    pub(crate) body: Vec<u8>,
+    pub(crate) representation: ProjectedRepresentation,
+}
+
+pub(crate) fn projected_bodies(
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    policy: &crate::policy::Policy,
+) -> Result<Vec<ProjectedBody>> {
+    let mut bodies = BTreeMap::new();
     for registry in &catalog.registries.registries {
         let mut config = serde_json::to_vec(&serde_json::json!({
             "dl": registry.download,
         }))
         .context("serialize registry config")?;
         config.push(b'\n');
-        write_new(
-            &registry_site_root(output, &registry.name).join("config.json"),
-            &config,
+        insert_projected_body(
+            &mut bodies,
+            projected_metadata_path(
+                catalog.registries.schema,
+                policy,
+                &registry.name,
+                "config.json",
+            )?,
+            config,
+            ProjectedRepresentation::MetadataJson,
         )?;
     }
-    let downloads = DownloadCatalog::from_catalog(catalog).canonical_bytes()?;
-    write_new(&output.join(DOWNLOAD_CATALOG_FILE), &downloads)?;
+    insert_projected_body(
+        &mut bodies,
+        format!("/{DOWNLOAD_CATALOG_FILE}"),
+        DownloadCatalog::from_catalog(catalog).canonical_bytes()?,
+        ProjectedRepresentation::MetadataJson,
+    )?;
 
     let mut rows = BTreeMap::<(String, String), Vec<(Version, Vec<u8>)>>::new();
-    let mut copied_archives = BTreeSet::new();
     for approval in sorted_approvals(catalog) {
         let artifact = artifacts
             .get(&approval.registry, &approval.name, &approval.version)
-            .expect("artifact map was verified before rendering");
+            .expect("artifact map was verified before projection");
         let source = fs::read(&artifact.index_record).with_context(|| {
             format!(
                 "read un-routed index record {}",
@@ -317,18 +376,6 @@ fn render_into(
         rows.entry((approval.registry.clone(), index_path(&approval.name)))
             .or_default()
             .push((approval.version.clone(), record.to_json_line()?));
-
-        if !approval.is_removed()
-            && matches!(&approval.source, Source::GitTag { .. })
-            && copied_archives.insert(approval.archive_sha256.clone())
-        {
-            copy_new(
-                &artifact.archive,
-                &output
-                    .join("crates")
-                    .join(format!("{}.crate", approval.archive_sha256)),
-            )?;
-        }
     }
 
     for ((registry, relative), mut versions) in rows {
@@ -337,15 +384,75 @@ fn render_into(
         for (_, line) in versions {
             contents.extend_from_slice(&line);
         }
-        write_new(
-            &registry_site_root(output, &registry).join(relative),
-            &contents,
+        insert_projected_body(
+            &mut bodies,
+            projected_metadata_path(catalog.registries.schema, policy, &registry, &relative)?,
+            contents,
+            ProjectedRepresentation::MetadataText,
         )?;
     }
 
     let mut release_json = release_bytes_from_catalog(catalog)?;
     release_json.push(b'\n');
-    write_new(&output.join(RELEASE_MANIFEST), &release_json)?;
+    insert_projected_body(
+        &mut bodies,
+        format!("/{RELEASE_MANIFEST}"),
+        release_json,
+        ProjectedRepresentation::MetadataJson,
+    )?;
+    Ok(bodies.into_values().collect())
+}
+
+fn projected_metadata_path(
+    schema: u32,
+    policy: &crate::policy::Policy,
+    registry: &str,
+    relative: &str,
+) -> Result<String> {
+    debug_assert!(!relative.starts_with('/'));
+    let index = policy
+        .registry_urls
+        .get(registry)
+        .with_context(|| format!("missing registry URL for {registry:?}"))?;
+    let route_base = if schema == crate::schema::SCHEMA_VERSION {
+        ensure!(
+            index == &canonical_registry_index(registry),
+            "current-schema registry {registry:?} has a noncanonical index URL"
+        );
+        canonical_registry_route_base(registry)
+    } else if schema == 3 {
+        let expected = SCHEMA3_REGISTRIES
+            .iter()
+            .find_map(|(name, index)| (*name == registry).then_some(*index));
+        ensure!(
+            expected == Some(index.as_str()),
+            "schema-3 registry {registry:?} has a noncanonical index URL"
+        );
+        format!("/{registry}/")
+    } else {
+        bail!("unsupported catalog schema {schema} for route projection");
+    };
+    Ok(format!("{route_base}{relative}"))
+}
+
+fn insert_projected_body(
+    bodies: &mut BTreeMap<String, ProjectedBody>,
+    path: String,
+    body: Vec<u8>,
+    representation: ProjectedRepresentation,
+) -> Result<()> {
+    match bodies.entry(path.clone()) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(ProjectedBody {
+                path,
+                body,
+                representation,
+            });
+        }
+        std::collections::btree_map::Entry::Occupied(entry) => {
+            bail!("duplicate projected metadata path {}", entry.key());
+        }
+    }
     Ok(())
 }
 
@@ -409,8 +516,8 @@ fn release_bytes_from_catalog(catalog: &Catalog) -> Result<Vec<u8>> {
     match catalog.registries.schema {
         3 => serde_json::to_vec_pretty(&release_v3_from_catalog(catalog))
             .context("serialize schema-3 release manifest"),
-        4 => serde_json::to_vec_pretty(&release_from_catalog(catalog))
-            .context("serialize schema-4 release manifest"),
+        4 | 5 => serde_json::to_vec_pretty(&release_from_catalog(catalog))
+            .context("serialize release manifest"),
         schema => bail!("cannot render release manifest for catalog schema {schema}"),
     }
 }
@@ -1243,7 +1350,7 @@ fn name_map_v4(names: &[ReleaseNameV4]) -> Result<BTreeMap<(&str, &str), &Releas
 }
 
 fn verify_v4_rows(release: &ReleaseV4, site: &Path) -> Result<()> {
-    verify_release_rows(&release.packages, site)
+    verify_release_rows(&release.packages, site, registry_site_root)
 }
 
 fn validate_v2_topology(release: &ReleaseV2) -> Result<()> {
@@ -1500,33 +1607,61 @@ fn same_v2_v3_source(previous: &ReleaseSourceV2, next: &ReleaseSource) -> bool {
 }
 
 fn verify_v3_rows(release: &Release, site: &Path) -> Result<()> {
-    verify_release_rows(&release.packages, site)
+    verify_release_rows(&release.packages, site, schema_three_registry_site_root)
 }
 
-fn verify_release_rows(packages: &[ReleasePackage], site: &Path) -> Result<()> {
-    let routes = packages
-        .iter()
-        .filter(|package| !package.yanked)
-        .map(|package| DownloadRoute {
-            registry: package.registry.clone(),
-            name: package.name.clone(),
-            version: package.version.clone(),
-            sha256: package.archive_sha256.clone(),
-            source: match package.source {
-                ReleaseSource::CratesIo => DownloadSource::CratesIo,
-                ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
-            },
-        })
-        .collect::<Vec<_>>();
-    let expected_downloads = DownloadCatalog::from_routes(routes);
-    let actual_downloads = DownloadCatalog::load_from_root(site)?;
-    ensure!(
-        actual_downloads == expected_downloads,
-        "rendered download catalog differs from active release packages"
-    );
+fn verify_release_rows(
+    packages: &[ReleasePackage],
+    site: &Path,
+    site_root: fn(&Path, &str) -> PathBuf,
+) -> Result<()> {
+    let actual = DownloadCatalog::load_from_root(site)?;
+    for package in packages.iter().filter(|package| !package.yanked) {
+        let route = actual
+            .routes
+            .iter()
+            .find(|route| {
+                route.registry == package.registry
+                    && route.name == package.name
+                    && route.version == package.version
+                    && route.sha256 == package.archive_sha256
+            })
+            .ok_or_else(|| {
+                anyhow!(
+                    "rendered download catalog lacks active release package {} {} {}",
+                    package.registry,
+                    package.name,
+                    package.version
+                )
+            })?;
+        match (&package.source, &route.delivery) {
+            (ReleaseSource::CratesIo, crate::download::Delivery::Redirect { .. })
+            | (ReleaseSource::GitTag { .. }, crate::download::Delivery::Retained { .. }) => {}
+            (ReleaseSource::CratesIo, crate::download::Delivery::Retained { .. }) => {
+                let body = site
+                    .join("crates")
+                    .join(format!("{}.crate", package.archive_sha256));
+                ensure!(
+                    body.is_file(),
+                    "rendered retained archive body is missing for {} {} {}",
+                    package.registry,
+                    package.name,
+                    package.version
+                );
+            }
+            _ => {
+                return Err(anyhow!(
+                    "rendered download catalog delivery class differs from release package {} {} {}",
+                    package.registry,
+                    package.name,
+                    package.version
+                ));
+            }
+        }
+    }
 
     for package in packages {
-        let path = registry_site_root(site, &package.registry).join(index_path(&package.name));
+        let path = site_root(site, &package.registry).join(index_path(&package.name));
         let bytes = fs::read(&path).with_context(|| {
             format!(
                 "read rendered index row for {} {} at {}",
@@ -1755,6 +1890,7 @@ impl Drop for TemporaryDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::download::DownloadRoute;
 
     fn old_registries(downloads: [&str; 3]) -> Vec<ReleaseRegistryV2> {
         ["core", "matrix", "pkgre"]
@@ -1953,9 +2089,21 @@ mod tests {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 sha256: package.archive_sha256.clone(),
-                source: match package.source {
-                    ReleaseSource::CratesIo => DownloadSource::CratesIo,
-                    ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+                delivery: match package.source {
+                    ReleaseSource::CratesIo => crate::download::Delivery::Redirect {
+                        url: crate::download::download_url(
+                            &package.registry,
+                            &package.name,
+                            &package.version,
+                            &package.archive_sha256,
+                        ),
+                    },
+                    ReleaseSource::GitTag { .. } => crate::download::Delivery::Retained {
+                        path: crate::download::retained_object_path(
+                            &package.registry,
+                            &package.archive_sha256,
+                        ),
+                    },
                 },
             })
             .collect::<Vec<_>>();
@@ -2080,9 +2228,21 @@ mod tests {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 sha256: package.archive_sha256.clone(),
-                source: match package.source {
-                    ReleaseSource::CratesIo => DownloadSource::CratesIo,
-                    ReleaseSource::GitTag { .. } => DownloadSource::GitTag,
+                delivery: match package.source {
+                    ReleaseSource::CratesIo => crate::download::Delivery::Redirect {
+                        url: crate::download::download_url(
+                            &package.registry,
+                            &package.name,
+                            &package.version,
+                            &package.archive_sha256,
+                        ),
+                    },
+                    ReleaseSource::GitTag { .. } => crate::download::Delivery::Retained {
+                        path: crate::download::retained_object_path(
+                            &package.registry,
+                            &package.archive_sha256,
+                        ),
+                    },
                 },
             })
             .collect::<Vec<_>>();
@@ -2213,7 +2373,7 @@ mod tests {
         assert!(expanded_site.join(index_path("shared-name")).is_file());
         assert!(
             expanded_site
-                .join("staging")
+                .join("r/staging")
                 .join(index_path("shared_name"))
                 .is_file()
         );
@@ -2428,14 +2588,14 @@ mod tests {
         fs::write(
             next.join(DOWNLOAD_CATALOG_FILE),
             b"{
-  \"schema\": 1,
+  \"schema\": 2,
   \"routes\": []
 }
 ",
         )
         .unwrap();
         let error = verify_monotonic(&previous, &next).unwrap_err();
-        assert!(format!("{error:#}").contains("differs from active release packages"));
+        assert!(format!("{error:#}").contains("lacks active release package"));
 
         fs::remove_file(next.join(DOWNLOAD_CATALOG_FILE)).unwrap();
         let error = verify_monotonic(&previous, &next).unwrap_err();

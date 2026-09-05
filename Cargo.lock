@@ -688,6 +688,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pkgre-rust-serve"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "http-body-util",
+ "pkgre-rust",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.5"
 source = "sparse+https://rust.pkg.re/"

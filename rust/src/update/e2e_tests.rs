@@ -631,6 +631,7 @@ impl Resolver for FixtureResolver {
             version: package.version.clone(),
             archive_bytes: package.archive.clone(),
             source_row_bytes: package.source_row.clone(),
+            published_at: None,
             source: LockedSource::CratesIo {},
         })
     }
@@ -705,15 +706,11 @@ fn mirror_category(
 }
 
 fn write_registry(root: &Path, name: &str, download: &str, categories: &str) {
-    let index = if name == "main" {
-        "sparse+https://rust.pkg.re/".to_owned()
-    } else {
-        format!("sparse+https://rust.pkg.re/{name}/")
-    };
+    let index = crate::policy::canonical_registry_index(name);
     fs::write(
         root.join(format!("{name}.toml")),
         format!(
-            "schema = 4\n\n[registry]\nname = {name:?}\nindex = {index:?}\ndownload = {download:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
+            "schema = 5\n\n[registry]\nname = {name:?}\nindex = {index:?}\ndownload = {download:?}\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n{categories}"
         ),
     )
     .unwrap();
