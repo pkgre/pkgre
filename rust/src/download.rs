@@ -17,6 +17,8 @@ pub const DOWNLOAD_CATALOG_FILE: &str = "downloads.json";
 pub const DOWNLOAD_CATALOG_SCHEMA: u32 = 2;
 /// Public immutable download router origin and versioned path prefix.
 pub const DOWNLOAD_ROUTER_ORIGIN: &str = "https://dl.rust.pkg.re";
+/// Public native registry serve origin for same-host download templates.
+pub const NATIVE_DOWNLOAD_ORIGIN: &str = "https://rust.pkg.re";
 /// Maximum accepted canonical download catalog size.
 pub const MAX_DOWNLOAD_CATALOG_BYTES: usize = 16 * 1024 * 1024;
 
@@ -290,6 +292,12 @@ pub fn router_download_template(registry: &str) -> String {
     format!("{DOWNLOAD_ROUTER_ORIGIN}/v1/{registry}/{{crate}}/{{version}}/{{sha256-checksum}}")
 }
 
+/// Returns the exact Cargo `dl` template for one registry served by the native origin.
+#[must_use]
+pub fn native_download_template(registry: &str) -> String {
+    format!("{NATIVE_DOWNLOAD_ORIGIN}/v1/{registry}/{{crate}}/{{version}}/{{sha256-checksum}}")
+}
+
 /// Returns the exact canonical immutable redirect URL for one locked identity.
 #[must_use]
 pub fn download_url(registry: &str, name: &str, version: &Version, sha256: &str) -> String {
@@ -335,6 +343,14 @@ mod tests {
     use crate::update::time::UtcTimestamp;
 
     use super::*;
+
+    #[test]
+    fn native_download_template_is_exact() {
+        assert_eq!(
+            native_download_template("main"),
+            "https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
+        );
+    }
 
     #[test]
     fn from_catalog_delivery_follows_registry_declaration() {

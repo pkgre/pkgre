@@ -7,7 +7,7 @@ use anyhow::{Context, Result, ensure};
 use semver::Version;
 
 use crate::category::CategoryId;
-use crate::download::router_download_template;
+use crate::download::{native_download_template, router_download_template};
 use crate::schema::{
     Approval, Catalog, MIRROR_DOWNLOAD, PUBLISH_DOWNLOAD, PackageHome, PackageKey, Registry, Source,
 };
@@ -194,12 +194,13 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
         .iter()
         .any(|key| key.registry == registry.name);
     let router = router_download_template(&registry.name);
-    if registry.download == router {
+    let native = native_download_template(&registry.name);
+    if registry.download == router || registry.download == native {
         return Ok(());
     }
     ensure!(
         !(has_mirror && has_publish),
-        "registry {:?} mixes mirror and publish sources and therefore requires download {router:?}",
+        "registry {:?} mixes mirror and publish sources and therefore requires download {router:?} or same-host native {native:?}",
         registry.name
     );
     let expected = if has_publish {
@@ -209,7 +210,7 @@ fn validate_registry_download(catalog: &Catalog, registry: &Registry) -> Result<
     };
     ensure!(
         registry.download == expected,
-        "registry {:?} download must be {expected:?} for its source class, or {router:?} for the immutable router",
+        "registry {:?} download must be {expected:?} for its source class, {router:?} for the immutable router, or same-host native {native:?}",
         registry.name
     );
     Ok(())
@@ -764,6 +765,17 @@ mod tests {
 
         catalog.registries.registries[0].download = router_download_template("main");
         validate_catalog(&catalog).unwrap();
+    }
+
+    #[test]
+    fn native_same_host_template_is_valid_for_mixed_registry() {
+        let mut catalog = valid_catalog();
+        catalog.registries.registries[0].download = native_download_template("main");
+        validate_catalog(&catalog).unwrap();
+
+        catalog.registries.registries[0].download = native_download_template("other");
+        let error = validate_catalog(&catalog).unwrap_err();
+        assert!(format!("{error:#}").contains("requires download"));
     }
 
     #[test]
