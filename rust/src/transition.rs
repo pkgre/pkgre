@@ -152,7 +152,13 @@ fn ensure_topology(
             "registry {:?} index {:?} became {:?}",
             accepted.name, accepted.index, candidate.index
         ))
-    } else if accepted.download != candidate.download {
+    } else if accepted.download != candidate.download
+        && !crate::schema::is_allowed_download_migration(
+            &accepted.name,
+            &accepted.download,
+            &candidate.download,
+        )
+    {
         Some(format!(
             "registry {:?} download {:?} became {:?}",
             accepted.name, accepted.download, candidate.download

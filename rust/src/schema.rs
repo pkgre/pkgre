@@ -10,7 +10,9 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::category::CategoryId;
-use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
+use crate::download::{
+    DOWNLOAD_CATALOG_FILE, DownloadCatalog, native_download_template, router_download_template,
+};
 use crate::update::time::UtcTimestamp;
 
 /// Supported human registry and generated lock schema version.
@@ -877,6 +879,19 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
     validate_desired_tags(input, lock)
 }
 
+/// True when a registry download template change is an allowed one-way migration:
+/// identity, the retained historical publish→mirror move, the one-way
+/// source-specific→router move, or the one-way router→same-host native move.
+#[must_use]
+pub fn is_allowed_download_migration(registry: &str, before: &str, after: &str) -> bool {
+    let router = router_download_template(registry);
+    let native = native_download_template(registry);
+    before == after
+        || (before == PUBLISH_DOWNLOAD && after == MIRROR_DOWNLOAD)
+        || ((before == MIRROR_DOWNLOAD || before == PUBLISH_DOWNLOAD) && after == router)
+        || (before == router && after == native)
+}
+
 fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
     ensure!(
         lock.registry.name == input.file.registry.name
@@ -887,12 +902,9 @@ fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Res
     );
     let before = lock.registry.download.as_str();
     let after = input.file.registry.download.as_str();
-    let router = router_download_template(&input.file.registry.name);
     ensure!(
-        before == after
-            || (before == PUBLISH_DOWNLOAD && after == MIRROR_DOWNLOAD)
-            || ((before == MIRROR_DOWNLOAD || before == PUBLISH_DOWNLOAD) && after == router),
-        "registry download in {} differs from {}; only a retained historical {PUBLISH_DOWNLOAD:?}→{MIRROR_DOWNLOAD:?} migration or a one-way source-specific→{router:?} migration is allowed",
+        is_allowed_download_migration(&input.file.registry.name, before, after),
+        "registry download in {} differs from {}; only a retained historical {PUBLISH_DOWNLOAD:?}→{MIRROR_DOWNLOAD:?} migration, a one-way source-specific→router migration, or a one-way router→same-host native migration is allowed",
         input.lock_path.display(),
         input.path.display()
     );
@@ -1424,6 +1436,8 @@ pub(crate) fn version_identity(version: &Version) -> (u64, u64, u64, String) {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use crate::download::{native_download_template, router_download_template};
+
     use super::*;
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1646,5 +1660,44 @@ reserved = []
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn download_migrations_allow_only_documented_one_way_paths() {
+        let router = router_download_template("main");
+        let native = native_download_template("main");
+        assert!(is_allowed_download_migration("main", &router, &native));
+        assert!(is_allowed_download_migration(
+            "main",
+            MIRROR_DOWNLOAD,
+            &router
+        ));
+        assert!(is_allowed_download_migration(
+            "main",
+            PUBLISH_DOWNLOAD,
+            MIRROR_DOWNLOAD
+        ));
+        assert!(is_allowed_download_migration(
+            "main",
+            MIRROR_DOWNLOAD,
+            MIRROR_DOWNLOAD
+        ));
+
+        assert!(!is_allowed_download_migration("main", &native, &router));
+        assert!(!is_allowed_download_migration(
+            "main",
+            &native,
+            MIRROR_DOWNLOAD
+        ));
+        assert!(!is_allowed_download_migration(
+            "main",
+            &router,
+            PUBLISH_DOWNLOAD
+        ));
+        assert!(!is_allowed_download_migration(
+            "other",
+            &router_download_template("other"),
+            &native
+        ));
     }
 }
