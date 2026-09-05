@@ -60,6 +60,8 @@ pub struct Snapshot {
     pub archive_routes: usize,
     /// Number of typed redirect routes.
     pub redirect_routes: usize,
+    /// Source catalog commit pin; empty when the catalog came from a static path.
+    pub source_commit: String,
 }
 
 impl Snapshot {
@@ -149,6 +151,7 @@ pub fn build_snapshot(
         inline_routes,
         archive_routes,
         redirect_routes,
+        source_commit: String::new(),
     })
 }
 

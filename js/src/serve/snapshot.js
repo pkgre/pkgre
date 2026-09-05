@@ -60,11 +60,13 @@ function frozenArchiveBody(bytes) {
  * @param {object} catalog validated catalog
  * @param {string | null} storePath content-addressed archive-store directory
  * @param {"redirect" | "body"} delivery
- * @returns {Promise<object>} frozen snapshot {counts, delivery, routes}
+ * @param {string} [sourceCommit] watched source commit pin for the index page
+ * @returns {Promise<object>} frozen snapshot {counts, delivery, routes, sourceCommit}
  */
-export async function buildServeSnapshot(catalog, storePath, delivery) {
+export async function buildServeSnapshot(catalog, storePath, delivery, sourceCommit = "") {
   if (!SERVE_DELIVERY_MODES.includes(delivery)) throw new Error(`unknown serving delivery mode ${delivery}`);
   if (delivery === "body" && typeof storePath !== "string") throw new Error('serving delivery "body" requires an archive store');
+  if (typeof sourceCommit !== "string") throw new Error("serving snapshot sourceCommit must be a string");
   validateCatalog(catalog);
   const projected = [];
   const paths = new Set();
@@ -123,5 +125,6 @@ export async function buildServeSnapshot(catalog, storePath, delivery) {
     counts: Object.freeze(counts),
     delivery,
     routes: Object.freeze(routes),
+    sourceCommit,
   });
 }

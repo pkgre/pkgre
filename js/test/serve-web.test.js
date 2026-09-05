@@ -325,3 +325,40 @@ test("concurrency limit queues public dispatch", async () => {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("public index route serves snapshot pin metadata", async () => {
+  const shared = createShared({ delivery: "body", maxConcurrency: 8 });
+  installSnapshot(shared, await buildServeSnapshot(fixture.catalog, store, "body", "0dec2a0a92c58a6b1aa92cdc9c49dac9f7b5f183"));
+  const server = await listen(publicRequestHandler(shared));
+  try {
+    const page = await request(server, { target: "/" });
+    assert.equal(page.status, 200);
+    assert.equal(page.headers["content-type"], "text/html; charset=utf-8");
+    assert.equal(page.headers["cache-control"], CACHE_CONTROL_NO_STORE);
+    const html = page.body.toString("utf8");
+    assert.match(html, /0dec2a0a92c58a6b1aa92cdc9c49dac9f7b5f183/);
+    assert.match(html, /pkg\.re JavaScript \(npm\) registry/);
+    assert.match(html, />body<\/dd>/);
+
+    const pinned = await request(server, { target: "/", method: "HEAD" });
+    assert.equal(pinned.status, 200);
+    assert.equal(pinned.body.length, 0);
+
+    const rejected = await request(server, { target: "/", method: "POST" });
+    assert.equal(rejected.status, 405);
+    assert.equal(rejected.headers.allow, "GET, HEAD");
+
+    const unready = createShared({ delivery: "body", maxConcurrency: 8 });
+    const unreadyServer = await listen(publicRequestHandler(unready));
+    try {
+      const unavailable = await request(unreadyServer, { target: "/" });
+      assert.equal(unavailable.status, 503);
+    } finally {
+      unreadyServer.closeAllConnections();
+      await new Promise((resolve) => unreadyServer.close(resolve));
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

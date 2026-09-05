@@ -512,7 +512,7 @@ export class AcceptedRefWatcher {
     }
     try {
       validateCatalog(acceptedCatalog);
-      const snapshot = await buildServeSnapshot(candidateCatalog, this.archiveStore, this.delivery);
+      const snapshot = await buildServeSnapshot(candidateCatalog, this.archiveStore, this.delivery, candidateCommit);
       return { snapshot, validity: "valid" };
     } catch (error) {
       this.emit("info", "watcher rejected candidate snapshot", { error: errorMessage(error) });
@@ -522,7 +522,7 @@ export class AcceptedRefWatcher {
 
   async initialSnapshot(commit) {
     const catalog = await this.materializeCatalog(commit);
-    return buildServeSnapshot(catalog, this.archiveStore, this.delivery);
+    return buildServeSnapshot(catalog, this.archiveStore, this.delivery, commit);
   }
 }
 

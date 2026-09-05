@@ -9,6 +9,59 @@ const MAX_LOGGED_TARGET_BYTES = 160;
 const EMPTY_HEADERS = Object.freeze({ "Cache-Control": CACHE_CONTROL_NO_STORE, "Content-Length": "0" });
 const NOT_FOUND_RESPONSE = Object.freeze({ headers: EMPTY_HEADERS, status: 404 });
 const UNAVAILABLE_RESPONSE = Object.freeze({ headers: EMPTY_HEADERS, status: 503 });
+const INDEX_CONTENT_TYPE = "text/html; charset=utf-8";
+
+const INDEX_STYLE = `body{font-family:system-ui,sans-serif;max-width:42rem;margin:4rem auto;padding:0 1.25rem;line-height:1.55;color:#1b1f24;background:#fff}
+h1{font-size:1.35rem;margin:0 0 .2rem}
+p{margin:.5rem 0}
+dl{margin:.75rem 0}
+dt{font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin-top:.5rem}
+dd{margin:.1rem 0 0}
+code{background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;font-size:.925em;word-break:break-all}
+a{color:#0b57d0}
+footer{margin-top:3rem;font-size:.85rem;color:#6b7280}`;
+
+/**
+ * Minimal no-JS HTML index with live snapshot metadata (source pin, delivery, counts).
+ * @param {object} snapshot installed serving snapshot
+ * @returns {object} frozen 200 response
+ */
+export function indexResponse(snapshot) {
+  const { archive, inline, redirect } = snapshot.counts;
+  const commit = snapshot.sourceCommit === "" ? "unknown" : snapshot.sourceCommit;
+  const body = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pkg.re JavaScript (npm) registry</title>
+<style>
+${INDEX_STYLE}
+</style>
+</head>
+<body>
+<h1>pkg.re JavaScript (npm) registry</h1>
+<p>Curated, read-only npm-compatible registry served from an immutable, validated snapshot.</p>
+<dl>
+<dt>source commit</dt><dd><code>${commit}</code></dd>
+<dt>delivery</dt><dd>${snapshot.delivery}</dd>
+<dt>routes</dt><dd>${inline} inline / ${archive} archive / ${redirect} redirect</dd>
+</dl>
+<p><a href="/pkgre-js">pkgre-js packument</a> · <a href="https://github.com/pkgre">pkgre on GitHub</a></p>
+<footer>pkg.re — deterministic, read-only package install planes.</footer>
+</body>
+</html>
+`;
+  return Object.freeze({
+    headers: Object.freeze({
+      "Cache-Control": CACHE_CONTROL_NO_STORE,
+      "Content-Length": String(Buffer.byteLength(body, "utf8")),
+      "Content-Type": INDEX_CONTENT_TYPE,
+    }),
+    status: 200,
+    body: new Blob([body]),
+  });
+}
 
 class Semaphore {
   constructor(permits) {
@@ -132,6 +185,11 @@ async function dispatchPublic(shared, req, res) {
     response = NOT_FOUND_RESPONSE;
   } else if (!isReady(shared)) {
     response = UNAVAILABLE_RESPONSE;
+  } else if (target.toString("latin1") === "/") {
+    response =
+      req.method === "GET" || req.method === "HEAD"
+        ? indexResponse(shared.snapshot)
+        : methodNotAllowed("GET, HEAD");
   } else {
     await shared.semaphore.acquire();
     try {

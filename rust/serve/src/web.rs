@@ -92,6 +92,9 @@ async fn dispatch(State(shared): State<Arc<Shared>>, request: Request<Body>) -> 
     let Some(snapshot) = shared.snapshot().await else {
         return empty_response(StatusCode::SERVICE_UNAVAILABLE);
     };
+    if raw_target == b"/" {
+        return index_response(&method, &snapshot);
+    }
     let Ok(permit) = Arc::clone(&shared.semaphore).acquire_owned().await else {
         return empty_response(StatusCode::SERVICE_UNAVAILABLE);
     };
@@ -155,6 +158,62 @@ async fn status_response(shared: &Shared) -> Response {
         HeaderValue::from_static(CONTENT_TYPE_METADATA_JSON),
     );
     response
+}
+
+/// Serves the minimal HTML index at "/" with live snapshot metadata.
+fn index_response(method: &Method, snapshot: &Snapshot) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return method_not_allowed(&GET_HEAD);
+    }
+    let mut response = Response::new(Body::from(index_page(snapshot)));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(CACHE_CONTROL, NO_STORE);
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    response
+}
+
+/// Renders the no-JS index page: identity, source pin, delivery, route counts.
+fn index_page(snapshot: &Snapshot) -> String {
+    let (inline, archive, redirect) = snapshot.counts();
+    let commit = if snapshot.source_commit.is_empty() {
+        "unknown"
+    } else {
+        snapshot.source_commit.as_str()
+    };
+    let head = concat!(
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n",
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n",
+        "<title>pkg.re Cargo registry</title>\n<style>\n",
+        "body{font-family:system-ui,sans-serif;max-width:42rem;margin:4rem auto;padding:0 1.25rem;line-height:1.55;color:#1b1f24;background:#fff}\n",
+        "h1{font-size:1.35rem;margin:0 0 .2rem}\n",
+        "p{margin:.5rem 0}\n",
+        "dl{margin:.75rem 0}\n",
+        "dt{font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:#6b7280;margin-top:.5rem}\n",
+        "dd{margin:.1rem 0 0}\n",
+        "code{background:#f3f4f6;padding:.1rem .35rem;border-radius:4px;font-size:.925em;word-break:break-all}\n",
+        "a{color:#0b57d0}\n",
+        "footer{margin-top:3rem;font-size:.85rem;color:#6b7280}\n",
+        "</style>\n</head>\n<body>\n",
+    );
+    let tail = "\n<footer>pkg.re — deterministic, read-only package install planes.</footer>\n</body>\n</html>\n";
+    let mut page = String::from(head);
+    page.push_str("<h1>pkg.re Cargo registry</h1>\n");
+    page.push_str(
+        "<p>Curated, read-only Cargo sparse registry served from an immutable, validated snapshot.</p>\n",
+    );
+    let metadata = format!(
+        "<dl>\n<dt>source commit</dt><dd><code>{commit}</code></dd>\n<dt>delivery</dt><dd>{mode}</dd>\n<dt>routes</dt><dd>{inline} inline / {archive} archive / {redirect} redirect</dd>\n</dl>\n",
+        mode = snapshot.mode.as_str(),
+    );
+    page.push_str(&metadata);
+    page.push_str(
+        "<p><a href=\"/config.json\">config.json</a> · <a href=\"https://github.com/pkgre\">pkgre on GitHub</a></p>",
+    );
+    page.push_str(tail);
+    page
 }
 
 fn request_target<'a>(headers: &'a HeaderMap, uri: &'a Uri) -> Option<&'a str> {
@@ -357,6 +416,38 @@ mod tests {
             .to_bytes()
             .to_vec();
         (status, headers, body)
+    }
+
+    #[tokio::test]
+    async fn index_route_serves_snapshot_pin_metadata() {
+        let snapshot = Arc::new(Snapshot {
+            routes: std::collections::BTreeMap::new(),
+            mode: DeliveryMode::Body,
+            inline_routes: 558,
+            archive_routes: 747,
+            redirect_routes: 0,
+            source_commit: "0dec2a0a92c58a6b1aa92cdc9c49dac9f7b5f183".to_owned(),
+        });
+        let public = public_application(shared_with(Some(snapshot)).await);
+        let (status, headers, body) = send(&public, request(Method::GET, "/")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[CONTENT_TYPE], "text/html; charset=utf-8");
+        assert_eq!(headers[CACHE_CONTROL], "no-store");
+        let page = String::from_utf8(body).unwrap();
+        assert!(page.contains("0dec2a0a92c58a6b1aa92cdc9c49dac9f7b5f183"));
+        assert!(page.contains("558 inline / 747 archive / 0 redirect"));
+        assert!(page.contains(">body<"));
+
+        let (status, headers, _) = send(&public, request(Method::POST, "/")).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(headers[ALLOW], "GET, HEAD");
+
+        let (status, _, _) = send(
+            &public_application(shared_with(None).await),
+            request(Method::GET, "/"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]
@@ -602,6 +693,7 @@ mod tests {
             inline_routes: first.inline_routes - 1,
             archive_routes: first.archive_routes,
             redirect_routes: first.redirect_routes,
+            source_commit: String::new(),
         });
         assert_eq!(second.inline_routes, 557);
         shared.install_snapshot(second).await;
