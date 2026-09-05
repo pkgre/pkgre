@@ -192,7 +192,7 @@ Never hand-edit locks. Load validates canonical form, registry/category/source a
 }
 ```
 
-Route sort order + identity are strict; registry aliases are catalog-defined; name remains case-sensitive; version is canonical SemVer; source is closed to `crates-io|git-tag`. Duplicate identity, unknown fields/schema, noncanonical JSON, nonregular file, wrong/extra/missing routes, or >16 MiB fails load/check. `lock` regenerates missing/stale bytes transactionally. `render` copies the exact projection to the Pages root. Removed identities are excluded. Destinations are not stored; the service derives one of two hardcoded origins. See [`download-routing.md`](download-routing.md).
+Route sort order + identity are strict; registry aliases are catalog-defined; name remains case-sensitive; version is canonical SemVer; source is closed to `crates-io|git-tag`. Duplicate identity, unknown fields/schema, noncanonical JSON, nonregular file, wrong/extra/missing routes, or >16 MiB fails load/check. `lock` regenerates missing/stale bytes transactionally. `render` copies the exact projection to the Pages root. Removed identities are excluded.
 
 ## Human admission manifest
 

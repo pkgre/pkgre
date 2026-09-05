@@ -38,4 +38,4 @@ One registry may contain mirror + publish names only when `download = "https://d
 
 Human admission manifests contain exact category/name/version or tag + optional typed evidence. Mirror apply currently accepts versions only. Generated admission locks retain complete recomputed facts; every package in a batch binds the SHA-256 of the same generated lock. Protected review/merge of the complete catalog PR is authorization; `automatic`/`review-required` only prioritize attention; `blocked` candidates cannot be applied.
 
-Documentation:[`catalog schema`](../docs/catalog.md) | [`download routing`](../docs/download-routing.md) | [`production mirror-update runbook`](../docs/production-update-runbook.md) | [`curator workflows`](../docs/workflows.md) | [`security model`](../docs/security.md).
+Documentation:[`catalog schema`](../docs/catalog.md) | [`production mirror-update runbook`](../docs/production-update-runbook.md) | [`curator workflows`](../docs/workflows.md) | [`security model`](../docs/security.md).
