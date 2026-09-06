@@ -206,19 +206,26 @@ class Req:
             raw = raw.strip()
             if not raw or raw == "*":
                 continue
-            if raw.endswith(".*"):
-                # cargo wildcard `X.Y.*` / `X.*` — equivalent to the tilde
-                # range over the written components
-                base = raw[:-2]
+            op = "^"
+            rest = raw
+            for candidate in (">=", "<=", "==", ">", "<", "=", "~", "^"):
+                if raw.startswith(candidate):
+                    op = candidate
+                    rest = raw[len(candidate) :].strip()
+                    break
+            if rest.endswith(".*"):
+                # cargo wildcard `X.Y.*` / `X.*`: comparison operators keep
+                # their partial-bound meaning over the written components,
+                # while =/^/~ and bare wildcards select the whole level
+                # (equivalent to the tilde range)
+                base = rest[:-2]
                 if base and all(p.isdigit() for p in base.split(".")):
+                    if op in (">=", "<=", ">", "<"):
+                        self.terms.append((op, base))
+                        continue
                     self.terms.append(("~", base))
                     continue
-            for op in (">=", "<=", "==", ">", "<", "=", "~", "^"):
-                if raw.startswith(op):
-                    self.terms.append((op, raw[len(op) :].strip()))
-                    break
-            else:
-                self.terms.append(("^", raw))
+            self.terms.append((op, rest))
 
     def matches(self, version: Version) -> bool:
         if not self.terms:
@@ -1148,6 +1155,14 @@ def self_test() -> int:
         )
         check("wildcard-major", Req("1.*").matches(Version("1.9.9")))
         check("wildcard-major-excludes-next", not Req("1.*").matches(Version("2.0.0")))
+        check("op-wildcard-tilde", Req("=0.61.*").matches(Version("0.61.2")))
+        check(
+            "op-wildcard-tilde-excludes-next",
+            not Req("=0.61.*").matches(Version("0.62.0")),
+        )
+        check("op-wildcard-ge-includes-next", Req(">=0.61.*").matches(Version("0.62.0")))
+        check("op-wildcard-lt-excludes-bound", not Req("<0.61.*").matches(Version("0.61.2")))
+        check("op-wildcard-lt-includes-below", Req("<0.61.*").matches(Version("0.60.1")))
 
         # --- ambiguous range across two rows of one source qualifies ----------
         range_vendor = root / "range-vendor"
