@@ -310,6 +310,101 @@
             executable = "deno";
           };
           serve = self.packages.${system}.serve;
+          pkgre-vendor-script-self-test =
+            pkgs.runCommand "pkgre-vendor-script-self-test" { nativeBuildInputs = [ pkgs.python3 ]; }
+              ''
+                python3 ${./nix/pkgre-vendor.py} --self-test
+                touch "$out"
+              '';
+          pkgre-vendor-integration =
+            let
+              pkgreVendorScript = ./nix/pkgre-vendor.py;
+            in
+            pkgs.stdenvNoCC.mkDerivation {
+              name = "pkgre-vendor-integration";
+              dontUnpack = true;
+              nativeBuildInputs = [
+                rustToolchain
+                pkgs.cacert
+                pkgs.python3
+              ];
+              impureEnvVars = pkgs.lib.fetchers.proxyImpureEnvVars;
+              outputHashAlgo = "sha256";
+              outputHash = "sha256-AjEXQvkohr7q4wUYvnpsGzFllDC4m3IjSAYg9gR0UPo=";
+              outputHashMode = "recursive";
+              SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              CARGO_HTTP_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              buildPhase = ''
+                runHook preBuild
+                cp -R ${./fixtures/vendor-scratch} fixture
+                chmod -R u+w fixture
+                cd fixture
+                mkdir -p .cargo
+                cat > .cargo/config.toml <<'EOF'
+                [registries]
+                pkgre = { index = "sparse+https://rust.pkg.re/" }
+                EOF
+                export CARGO_HOME="$NIX_BUILD_TOP/cargo-home"
+                cargo vendor --locked vendor > /dev/null
+                cp -R vendor vendor-control
+                python3 ${pkgreVendorScript} vendor Cargo.lock
+                python3 - <<'PYEOF'
+                import hashlib
+                import json
+                import pathlib
+                for crate_dir in sorted(pathlib.Path("vendor").iterdir()):
+                    if not crate_dir.is_dir():
+                        continue
+                    manifest = (crate_dir / "Cargo.toml").read_bytes()
+                    checksum = json.loads((crate_dir / ".cargo-checksum.json").read_text())
+                    expected = hashlib.sha256(manifest).hexdigest()
+                    actual = checksum["files"]["Cargo.toml"]
+                    assert actual == expected, f"{crate_dir}: checksum {actual} != {expected}"
+                assert "crates.io" not in pathlib.Path("Cargo.lock").read_text()
+                serde_manifest = pathlib.Path("vendor/serde/Cargo.toml").read_text()
+                assert 'registry-index = "sparse+https://rust.pkg.re/"' in serde_manifest
+                print("pkgre-vendor: integration assertions ok")
+                PYEOF
+                python3 ${pkgreVendorScript} --emit-config Cargo.lock --registries-from .cargo/config.toml > emitted-config.toml
+                sed "s|@vendor@|$PWD/vendor|" emitted-config.toml > .cargo/config.toml
+                cargo build --locked --offline
+                control="$NIX_BUILD_TOP/control"
+                mkdir -p "$control"
+                cp Cargo.toml Cargo.lock "$control"/
+                cp -R src "$control"/src
+                cp -R vendor-control "$control"/vendor
+                mkdir -p "$control"/.cargo
+                sed "s|@vendor@|$control/vendor|" emitted-config.toml > "$control"/.cargo/config.toml
+                (
+                  cd "$control"
+                  if cargo build --locked --offline > control.log 2>&1; then
+                    echo "control: unpatched vendor must fail cargo build --locked --offline" >&2
+                    cat control.log >&2
+                    exit 1
+                  fi
+                  grep -q "lock file" control.log
+                )
+                cp -R vendor vendor-tamper
+                echo "// tampered" >> vendor-tamper/anyhow/src/lib.rs
+                sed "s|@vendor@|$PWD/vendor-tamper|" emitted-config.toml > .cargo/config-tamper.toml
+                if CARGO_TARGET_DIR="$PWD/target-tamper" cargo build --locked --offline --config .cargo/config-tamper.toml > tamper.log 2>&1; then
+                  echo "tamper: modified vendored file must fail checksum verification" >&2
+                  cat tamper.log >&2
+                  exit 1
+                fi
+                grep -qi "checksum" tamper.log
+                runHook postBuild
+              '';
+              installPhase = ''
+                runHook preInstall
+                cd "$NIX_BUILD_TOP/fixture"
+                mkdir -p "$out/.cargo"
+                cp -R vendor/. "$out"/
+                cp Cargo.lock "$out"/Cargo.lock
+                cp emitted-config.toml "$out"/.cargo/config.toml
+                runHook postInstall
+              '';
+            };
           formatting = pkgs.runCommand "pkgre-formatting" { nativeBuildInputs = [ rustToolchain ]; } ''
             cp -R ${source} source
             chmod -R u+w source
