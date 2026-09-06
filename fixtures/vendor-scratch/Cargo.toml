@@ -1,0 +1,11 @@
+[workspace]
+
+[package]
+name = "vendor-scratch"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"], registry = "pkgre" }
+anyhow = { version = "=1.0.104", registry = "pkgre" }
