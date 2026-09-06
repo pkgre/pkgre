@@ -39,52 +39,20 @@
             cargo = rustToolchain;
             rustc = rustToolchain;
           };
-          pkgreRegistry = "sparse+https://rust.pkg.re/";
-          cargoVendorRegistry = "registry+https://github.com/rust-lang/crates.io-index";
-          lockText = builtins.readFile ./Cargo.lock;
-          lock = builtins.fromTOML lockText;
-          vendorLock = builtins.toFile "pkgre-rust-vendor-Cargo.lock" (
-            builtins.replaceStrings [ pkgreRegistry ] [ cargoVendorRegistry ] lockText
-          );
-          registryPackages = builtins.filter (package: package ? source) lock.package;
-          registryArchives = map (
-            package:
-            assert package.source == pkgreRegistry;
-            {
-              inherit package;
-              archive = pkgs.fetchurl {
-                url = "https://static.crates.io/crates/${package.name}/${package.name}-${package.version}.crate";
-                sha256 = package.checksum;
-              };
-            }
-          ) registryPackages;
-          cargoDeps = pkgs.runCommand "pkgre-rust-cargo-vendor" { nativeBuildInputs = [ pkgs.gnutar ]; } ''
-            mkdir -p "$out/.cargo"
-            cp ${vendorLock} "$out/Cargo.lock"
-            cat > "$out/.cargo/config.toml" <<'EOF'
-            # Cargo normalizes unqualified dependencies in imported manifests to crates.io.
-            # A synthetic offline identity unifies those with explicit `registry = "pkgre"` dependencies.
-            [registries.pkgre]
-            index = "https://github.com/rust-lang/crates.io-index"
-
-            [source.crates-io]
-            replace-with = "vendored-sources"
-
-            [source.vendored-sources]
-            directory = "@vendor@"
-            EOF
-            ${pkgs.lib.concatMapStringsSep "\n" (
-              entry:
-              let
-                inherit (entry) archive package;
-              in
-              ''
-                mkdir -p "$out/${package.name}-${package.version}"
-                tar -xf ${archive} -C "$out/${package.name}-${package.version}" --strip-components=1
-                printf '{"files":{},"package":"%s"}\n' '${package.checksum}' > "$out/${package.name}-${package.version}/.cargo-checksum.json"
-              ''
-            ) registryArchives}
-          '';
+          cargoDepsSrc = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              ./.cargo/config.toml
+              ./Cargo.lock
+              ./Cargo.toml
+              ./rust
+            ];
+          };
+          pkgreCargoDeps = self.lib.${system}.rust.cargoDeps {
+            src = cargoDepsSrc;
+            cargoHash = "sha256-RBh+tpSZcPmc2+65z93ai6gkUzlqepyP94Ebpm+OQS0=";
+            name = "pkgre-rust-cargo-deps";
+          };
           source = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
@@ -114,15 +82,13 @@
               pname = packageName;
               inherit (manifest.package) version;
               src = source;
-              postPatch = ''
-                cp ${vendorLock} Cargo.lock
-              '';
               nativeBuildInputs = pkgs.lib.optionals (runtimeInputs != [ ]) [ pkgs.makeWrapper ];
               postInstall = pkgs.lib.optionalString (runtimeInputs != [ ]) ''
                 wrapProgram "$out/bin/${mainProgram}" \
                   --prefix PATH : ${pkgs.lib.makeBinPath runtimeInputs}
               '';
-              inherit cargoDeps nativeCheckInputs;
+              cargoDeps = pkgreCargoDeps;
+              inherit nativeCheckInputs;
               cargoBuildFlags = [
                 "--package"
                 packageName
@@ -443,6 +409,90 @@
             ];
             PKGRE_CARGO = "${rustToolchain}/bin/cargo";
           };
+        }
+      );
+
+      lib = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ rust-overlay.overlays.default ];
+          };
+          rustToolchain = pkgs.rust-bin.stable."1.95.0".default;
+          pkgreVendorScript = ./nix/pkgre-vendor.py;
+        in
+        {
+          rust.cargoDeps =
+            {
+              src,
+              lockFile ? null,
+              cargoHash,
+              name ? "cargo-deps",
+              registriesFrom ? null,
+            }:
+            pkgs.stdenvNoCC.mkDerivation {
+              inherit name;
+              dontUnpack = true;
+              # vendored crates carry shebangs; fixup would rewrite them into
+              # store-path references, which fixed-output derivations forbid
+              dontFixup = true;
+              nativeBuildInputs = [
+                rustToolchain
+                pkgs.cacert
+                pkgs.python3
+              ];
+              impureEnvVars = pkgs.lib.fetchers.proxyImpureEnvVars;
+              outputHashAlgo = "sha256";
+              outputHash = cargoHash;
+              outputHashMode = "recursive";
+              SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              CARGO_HTTP_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+              # the registry edge 503s under parallel sparse-index request
+              # bursts; keep requests on separate HTTP/1 connections and retry
+              # through transient rejections
+              CARGO_HTTP_MULTIPLEXING = "false";
+              CARGO_NET_RETRY = "20";
+              buildPhase = ''
+                runHook preBuild
+                cp -R ${src} src-tree
+                chmod -R u+w src-tree
+                cd src-tree
+                ${pkgs.lib.optionalString (lockFile != null) "cp ${lockFile} Cargo.lock"}
+                export CARGO_HOME="$NIX_BUILD_TOP/cargo-home"
+                # the consumer config may map crates-io to an empty directory;
+                # keep it present so name-form `registry = "<name>"` deps resolve
+                mkdir -p vendor/empty
+                cargo vendor --locked vendor > /dev/null
+                rm -rf vendor/empty
+                python3 ${pkgreVendorScript} vendor Cargo.lock
+                ${
+                  if registriesFrom != null then
+                    "cp ${registriesFrom} registries.toml"
+                  else
+                    ''
+                      if [ -f .cargo/config.toml ]; then
+                        cp .cargo/config.toml registries.toml
+                      else
+                        : > registries.toml
+                      fi
+                    ''
+                }
+                python3 ${pkgreVendorScript} --emit-config Cargo.lock --registries-from registries.toml > emitted-config.toml
+                runHook postBuild
+              '';
+              installPhase = ''
+                runHook preInstall
+                mkdir -p "$out/.cargo"
+                cp -R vendor/. "$out"/
+                cp Cargo.lock "$out"/Cargo.lock
+                cp emitted-config.toml "$out"/.cargo/config.toml
+                runHook postInstall
+              '';
+              meta = {
+                description = "Vendored cargo dependencies with registry-index-patched manifests for non-crates.io lock sources";
+              };
+            };
         }
       );
 
