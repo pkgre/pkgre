@@ -206,6 +206,13 @@ class Req:
             raw = raw.strip()
             if not raw or raw == "*":
                 continue
+            if raw.endswith(".*"):
+                # cargo wildcard `X.Y.*` / `X.*` — equivalent to the tilde
+                # range over the written components
+                base = raw[:-2]
+                if base and all(p.isdigit() for p in base.split(".")):
+                    self.terms.append(("~", base))
+                    continue
             for op in (">=", "<=", "==", ">", "<", "=", "~", "^"):
                 if raw.startswith(op):
                     self.terms.append((op, raw[len(op) :].strip()))
@@ -1134,6 +1141,13 @@ def self_test() -> int:
         check("eq-partial-wildcard-patch", Req("=1.2").matches(Version("1.2.9")))
         check("eq-partial-excludes-next-minor", not Req("=1.2").matches(Version("1.3.0")))
         check("star-matches", Req("*").matches(Version("9.9.9")))
+        check("wildcard-minor", Req("0.61.*").matches(Version("0.61.2")))
+        check(
+            "wildcard-minor-excludes-next",
+            not Req("0.61.*").matches(Version("0.62.0")),
+        )
+        check("wildcard-major", Req("1.*").matches(Version("1.9.9")))
+        check("wildcard-major-excludes-next", not Req("1.*").matches(Version("2.0.0")))
 
         # --- ambiguous range across two rows of one source qualifies ----------
         range_vendor = root / "range-vendor"
