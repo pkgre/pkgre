@@ -98,7 +98,7 @@ def fail(message: str) -> VendorError:
 
 
 class Version:
-    __slots__ = ("major", "minor", "patch", "pre")
+    __slots__ = ("major", "minor", "patch", "pre", "given")
 
     def __init__(self, text: str) -> None:
         core, _, _meta = text.partition("+")
@@ -109,6 +109,10 @@ class Version:
         nums = [int(p) for p in parts] + [0] * (3 - len(parts))
         self.major, self.minor, self.patch = nums[0], nums[1], nums[2]
         self.pre = tuple(p for p in pre.split(".") if pre) if pre else None
+        # components explicitly written in the requirement bound; the semver
+        # crate treats unwritten trailing components as wildcards for the
+        # comparison operators (e.g. `<=0.62` admits 0.62.z)
+        self.given = len(parts)
 
     def key(self) -> tuple:
         # build metadata ignored; release sorts after any pre-release
@@ -119,20 +123,60 @@ class Version:
         return f"{self.major}.{self.minor}.{self.patch}"
 
 
+def _matches_exact(bound: Version, version: Version) -> bool:
+    if version.major != bound.major:
+        return False
+    if bound.given >= 2 and version.minor != bound.minor:
+        return False
+    if bound.given >= 3 and version.patch != bound.patch:
+        return False
+    return version.pre == bound.pre
+
+
+def _matches_greater(bound: Version, version: Version) -> bool:
+    if version.major != bound.major:
+        return version.major > bound.major
+    if bound.given < 2:
+        return False
+    if version.minor != bound.minor:
+        return version.minor > bound.minor
+    if bound.given < 3:
+        return False
+    if version.patch != bound.patch:
+        return version.patch > bound.patch
+    # only the pre-release segment differs here
+    return version.key() > bound.key()
+
+
+def _matches_less(bound: Version, version: Version) -> bool:
+    if version.major != bound.major:
+        return version.major < bound.major
+    if bound.given < 2:
+        return False
+    if version.minor != bound.minor:
+        return version.minor < bound.minor
+    if bound.given < 3:
+        return False
+    if version.patch != bound.patch:
+        return version.patch < bound.patch
+    # only the pre-release segment differs here
+    return version.key() < bound.key()
+
+
 def _matches_one(op: str, text: str, version: Version) -> bool:
     bound = Version(text)
-    v, b = version.key(), bound.key()
     if op in ("=", "=="):
-        return v == b
+        return _matches_exact(bound, version)
     if op == ">=":
-        return v >= b
+        return _matches_exact(bound, version) or _matches_greater(bound, version)
     if op == ">":
-        return v > b
+        return _matches_greater(bound, version)
     if op == "<=":
-        return v <= b
+        return _matches_exact(bound, version) or _matches_less(bound, version)
     if op == "<":
-        return v < b
+        return _matches_less(bound, version)
     if op == "^":
+        v, b = version.key(), bound.key()
         if not v >= b:
             return False
         if bound.major > 0:
@@ -141,6 +185,7 @@ def _matches_one(op: str, text: str, version: Version) -> bool:
             return version.minor == bound.minor
         return version.patch == bound.patch
     if op == "~":
+        v, b = version.key(), bound.key()
         if not v >= b:
             return False
         if len([p for p in text.split(".") if p]) >= 2:
@@ -159,7 +204,7 @@ class Req:
             return  # no requirement: matches anything
         for raw in text.split(","):
             raw = raw.strip()
-            if not raw:
+            if not raw or raw == "*":
                 continue
             for op in (">=", "<=", "==", ">", "<", "=", "~", "^"):
                 if raw.startswith(op):
@@ -1075,6 +1120,20 @@ def self_test() -> int:
                 "absent-qualified" in str(error) and "has no matching lock row" in str(error),
                 str(error),
             )
+
+        # --- comparator semantics mirror the semver crate ---------------------
+        # (cargo resolved windows-core 0.62.2 against req ">=0.56, <=0.62")
+        req = Req(">=0.56, <=0.62")
+        check("le-partial-includes-patch", req.matches(Version("0.62.2")))
+        check("le-partial-below", req.matches(Version("0.56.0")))
+        check("le-partial-excludes-next-minor", not req.matches(Version("0.63.0")))
+        check("lt-partial-excludes-bound-minor", not Req("<0.62").matches(Version("0.62.0")))
+        check("lt-partial-includes-below", Req("<0.62").matches(Version("0.61.2")))
+        check("gt-partial-excludes-bound-minor", not Req(">0.62").matches(Version("0.62.2")))
+        check("gt-partial-includes-next-minor", Req(">0.62").matches(Version("0.63.0")))
+        check("eq-partial-wildcard-patch", Req("=1.2").matches(Version("1.2.9")))
+        check("eq-partial-excludes-next-minor", not Req("=1.2").matches(Version("1.3.0")))
+        check("star-matches", Req("*").matches(Version("9.9.9")))
 
         # --- ambiguous range across two rows of one source qualifies ----------
         range_vendor = root / "range-vendor"
