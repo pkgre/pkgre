@@ -564,6 +564,26 @@ class Patcher:
 
         row, candidates = self.lock.lookup(real_name, req)
         if row is None:
+            if candidates:
+                # ambiguous version match: qualification only needs the
+                # SOURCE; the unmodified lock still binds each usage to its
+                # version, so a range spanning several rows of one registry
+                # is unambiguous at the source level
+                sources = {c["source"] for c in candidates}
+                curated = {s for s in sources if s and s not in CRATES_IO_SOURCES}
+                if len(curated) == 1 and len(sources) == 1:
+                    return ("replace" if existing_registry else "insert", curated.pop())
+                if not curated and not existing_registry:
+                    # every candidate is crates.io: the default-registry belt
+                    # plus the lock resolve this without patching
+                    return None
+                raise fail(
+                    f"{manifest.package_name}: dep {dep['key']!r} "
+                    f"(req {req!r}) matches lock rows "
+                    f"{[c['version'] for c in candidates]} across sources "
+                    f"{sorted(str(s or 'none') for s in sources)} — refusing "
+                    "to guess"
+                )
             if existing_registry:
                 raise fail(
                     f"{manifest.package_name}: dep {dep['key']!r} "
@@ -703,6 +723,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dddd"
 
 [[package]]
+name = "wsa"
+version = "0.52.0"
+source = "sparse+https://rust.pkg.re/"
+checksum = "ffff"
+
+[[package]]
+name = "wsa"
+version = "0.61.2"
+source = "sparse+https://rust.pkg.re/"
+checksum = "abab"
+
+[[package]]
+name = "mix"
+version = "1.0.0"
+source = "sparse+https://rust.pkg.re/"
+checksum = "cdcd"
+
+[[package]]
+name = "mix"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efef"
+
+[[package]]
+name = "ioonly"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1234"
+
+[[package]]
+name = "ioonly"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5678"
+
+[[package]]
+name = "delta"
+version = "0.1.0"
+source = "sparse+https://rust.pkg.re/"
+checksum = "1357"
+
+[[package]]
+name = "epsilon"
+version = "0.1.0"
+source = "sparse+https://rust.pkg.re/"
+checksum = "2468"
+
+[[package]]
+name = "zeta"
+version = "0.1.0"
+source = "sparse+https://rust.pkg.re/"
+checksum = "3579"
+
+[[package]]
 name = "qualified"
 version = "1.0.0"
 source = "sparse+https://rust.pkg.re/"
@@ -769,6 +843,34 @@ version = "0.4.1+meta.7"
 
 [dependencies.gamma]
 version = "5"
+"""
+
+
+SELF_TEST_RANGE = """\
+[package]
+name = "delta"
+version = "0.1.0"
+
+[dependencies.wsa]
+version = ">=0.52, <0.62"
+"""
+
+SELF_TEST_MIX = """\
+[package]
+name = "epsilon"
+version = "0.1.0"
+
+[dependencies.mix]
+version = ">=1"
+"""
+
+SELF_TEST_IOONLY = """\
+[package]
+name = "zeta"
+version = "0.1.0"
+
+[dependencies.ioonly]
+version = ">=1"
 """
 
 
@@ -973,6 +1075,53 @@ def self_test() -> int:
                 "absent-qualified" in str(error) and "has no matching lock row" in str(error),
                 str(error),
             )
+
+        # --- ambiguous range across two rows of one source qualifies ----------
+        range_vendor = root / "range-vendor"
+        delta = _write(range_vendor / "delta-0.1.0" / "Cargo.toml", SELF_TEST_RANGE)
+        _write(
+            range_vendor / "delta-0.1.0" / ".cargo-checksum.json",
+            '{"files":{},"package":"9999"}',
+        )
+        Patcher(range_vendor, lock).patch()
+        delta_text = delta.read_text()
+        check(
+            "range-two-rows-one-source",
+            '[dependencies.wsa]\nregistry-index = "%s"\nversion = ">=0.52, <0.62"'
+            % pkgre in delta_text,
+            delta_text,
+        )
+
+        # --- ambiguous range across sources refused ---------------------------
+        mix_vendor = root / "mix-vendor"
+        _write(mix_vendor / "epsilon-0.1.0" / "Cargo.toml", SELF_TEST_MIX)
+        _write(
+            mix_vendor / "epsilon-0.1.0" / ".cargo-checksum.json",
+            '{"files":{},"package":"8888"}',
+        )
+        try:
+            Patcher(mix_vendor, lock).patch()
+            check("hard-fail-mixed-sources", False, "no exception raised")
+        except VendorError as error:
+            check(
+                "hard-fail-mixed-sources",
+                "across sources" in str(error),
+                str(error),
+            )
+
+        # --- ambiguous all-crates.io range left to the belt -------------------
+        io_vendor = root / "io-vendor"
+        zeta = _write(io_vendor / "zeta-0.1.0" / "Cargo.toml", SELF_TEST_IOONLY)
+        _write(
+            io_vendor / "zeta-0.1.0" / ".cargo-checksum.json",
+            '{"files":{},"package":"7777"}',
+        )
+        Patcher(io_vendor, lock).patch()
+        check(
+            "range-all-crates-io-unpatched",
+            zeta.read_text() == SELF_TEST_IOONLY,
+            zeta.read_text(),
+        )
 
         # --- loud failure: vendored crate absent from lock ---------------------
         rogue = root / "rogue-vendor"
