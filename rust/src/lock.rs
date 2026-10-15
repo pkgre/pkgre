@@ -20,9 +20,9 @@ use crate::policy::{
     Policy, validate_catalog, validate_git_tag, validate_https_repository, validate_tag_version,
 };
 use crate::schema::{
-    Catalog, LockedName, LockedPackage, LockedSource, PackageState, RegistryInput, RegistryLock,
-    catalog_from_inputs, empty_lock, load_registry_inputs, serialize_lock,
-    validate_input_for_update, version_identity,
+    Catalog, LockedName, LockedPackage, LockedSource, PackageState, RegistryDelivery,
+    RegistryInput, RegistryLock, catalog_from_inputs, empty_lock, load_registry_inputs,
+    serialize_lock, validate_input_for_update, version_identity,
 };
 use crate::update::time::UtcTimestamp;
 
@@ -857,7 +857,11 @@ fn lock_resolved_package(
         catalog,
         policy,
     )?;
-    if matches!(&resolved.source, LockedSource::GitTag { .. }) {
+    if matches!(&resolved.source, LockedSource::GitTag { .. })
+        || catalog.registries.registries.iter().any(|declaration| {
+            declaration.name == registry && declaration.delivery == Some(RegistryDelivery::Retained)
+        })
+    {
         insert_pending_object(
             &mut pending.crates,
             &archive_sha256,

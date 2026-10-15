@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::artifact::{ArtifactMap, require_absent, sha256_bytes};
 use crate::category::{CategoryId, category_for_v2_home};
-use crate::download::{DOWNLOAD_CATALOG_FILE, DownloadCatalog, router_download_template};
+use crate::download::{
+    DOWNLOAD_CATALOG_FILE, DownloadCatalog, native_download_template, router_download_template,
+};
 use crate::index::{IndexRecord, index_path};
 use crate::policy::{
     CARGO_VERSION, SCHEMA3_REGISTRIES, canonical_category_dependencies, canonical_registry_index,
@@ -1157,7 +1159,8 @@ fn validate_v4_registry<'a>(
     ensure!(
         registry.download == MIRROR_DOWNLOAD
             || registry.download == PUBLISH_DOWNLOAD
-            || registry.download == router_download_template(&registry.name),
+            || registry.download == router_download_template(&registry.name)
+            || registry.download == native_download_template(&registry.name),
         "release registry {:?} has a noncanonical download template",
         registry.name
     );
@@ -1294,12 +1297,13 @@ fn validate_release_registry_download_v4<'a>(
         }
     }
     let router = router_download_template(&registry.name);
-    if registry.download == router || (!has_mirror && !has_publish) {
+    let native = native_download_template(&registry.name);
+    if registry.download == router || registry.download == native || (!has_mirror && !has_publish) {
         return Ok(());
     }
     ensure!(
         !(has_mirror && has_publish),
-        "release registry {:?} mixes source classes and requires download {router:?}",
+        "release registry {:?} mixes source classes and requires download {router:?} or same-host native {native:?}",
         registry.name
     );
     let expected = if has_publish {
@@ -1309,7 +1313,7 @@ fn validate_release_registry_download_v4<'a>(
     };
     ensure!(
         registry.download == expected,
-        "release registry {:?} download must be {expected:?} for its locked package source class, or {router:?} for the immutable router",
+        "release registry {:?} download must be {expected:?} for its locked package source class, {router:?} for the immutable router, or same-host native {native:?}",
         registry.name
     );
     Ok(())
@@ -2385,6 +2389,42 @@ mod tests {
     }
 
     #[test]
+    fn schema_four_download_templates_are_exact_and_registry_bound() {
+        let native = crate::download::native_download_template("main");
+        for (download, valid) in [
+            (native.clone(), true),
+            (router_download_template("main"), true),
+            (MIRROR_DOWNLOAD.to_owned(), true),
+            (PUBLISH_DOWNLOAD.to_owned(), true),
+            (crate::download::native_download_template("staging"), false),
+            (router_download_template("staging"), false),
+            (native.replace("https://", "http://"), false),
+            (format!("{native}/"), false),
+            (format!("{native}?download=1"), false),
+            (
+                "https://example.invalid/{crate}/{version}".to_owned(),
+                false,
+            ),
+        ] {
+            let registry = ReleaseRegistry {
+                name: "main".to_owned(),
+                index: canonical_registry_index("main"),
+                download,
+                categories: Vec::new(),
+            };
+            let result =
+                validate_v4_registry(&registry, &mut BTreeSet::new(), &mut BTreeMap::new());
+            if valid {
+                result.unwrap();
+            } else {
+                assert!(
+                    format!("{:#}", result.unwrap_err()).contains("noncanonical download template")
+                );
+            }
+        }
+    }
+
+    #[test]
     fn schema_four_download_template_matches_locked_package_sources() {
         let package = schema_two_crate("serde", false);
         let previous = migrate_test_release(&package);
@@ -2421,9 +2461,16 @@ mod tests {
             validate_release_registry_download_v4(&registry, [&published].into_iter()).unwrap_err();
         assert!(format!("{error:#}").contains("locked package source class"));
 
-        registry.download = router_download_template("main");
-        validate_release_registry_download_v4(&registry, [&mirror, &published].into_iter())
-            .unwrap();
+        for download in [
+            router_download_template("main"),
+            native_download_template("main"),
+        ] {
+            registry.download = download;
+            validate_release_registry_download_v4(&registry, [&mirror].into_iter()).unwrap();
+            validate_release_registry_download_v4(&registry, [&published].into_iter()).unwrap();
+            validate_release_registry_download_v4(&registry, [&mirror, &published].into_iter())
+                .unwrap();
+        }
         registry.download = MIRROR_DOWNLOAD.to_owned();
         let error =
             validate_release_registry_download_v4(&registry, [&mirror, &published].into_iter())
@@ -2434,6 +2481,7 @@ mod tests {
             MIRROR_DOWNLOAD.to_owned(),
             PUBLISH_DOWNLOAD.to_owned(),
             router_download_template("main"),
+            native_download_template("main"),
         ] {
             registry.download = download;
             validate_release_registry_download_v4(&registry, std::iter::empty::<&ReleasePackage>())
