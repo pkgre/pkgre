@@ -161,6 +161,83 @@ fn compact_manifest_lifecycle_is_inert_transactional_bound_and_convergent() {
 }
 
 #[test]
+fn mirror_admission_retains_archives_only_for_retained_delivery() {
+    for delivery in [Some("retained"), Some("redirect"), None] {
+        let temporary = TemporaryDirectory::new("pkgre-admission-delivery");
+        let catalog_root = temporary.path().join("catalog");
+        write_catalog(&catalog_root, &["demo"]);
+        let registry_path = catalog_root.join("main.toml");
+        let mut registry = fs::read_to_string(&registry_path).unwrap().replace(
+            &crate::download::router_download_template("main"),
+            &crate::download::native_download_template("main"),
+        );
+        if let Some(delivery) = delivery {
+            registry = registry.replace(
+                "[registry]\n",
+                &format!("[registry]\ndelivery = {delivery:?}\n"),
+            );
+        }
+        fs::write(registry_path, registry).unwrap();
+        lock::reconcile(&catalog_root).unwrap();
+        let fixture = FixtureResolver::new(vec![FixturePackage::new(
+            "demo",
+            "1.0.0",
+            "src/lib.rs",
+            b"pub fn demo() {}\n",
+        )]);
+        let manifest_path = prepare_manifest(
+            temporary.path(),
+            &catalog_root,
+            &fixture,
+            &["demo"],
+            "2026-08-24-delivery",
+        );
+
+        let summary = apply_admission_manifest_with(
+            &catalog_root,
+            &manifest_path,
+            &fixture,
+            &fixture,
+            &UtcTimestamp::now().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            summary,
+            ReconcileSummary {
+                changed: true,
+                packages_added: 1,
+                ..ReconcileSummary::default()
+            }
+        );
+        assert_eq!(fixture.lock_calls.get(), 1);
+        let catalog = Catalog::load(&catalog_root).unwrap();
+        validate_catalog(&catalog).unwrap();
+        ArtifactMap::load(&catalog).unwrap();
+        validate_admission_inventory(&catalog).unwrap();
+        let downloads = crate::download::DownloadCatalog::load_from_root(&catalog_root).unwrap();
+        assert_eq!(downloads.routes.len(), 1);
+        let retained = delivery == Some("retained");
+        assert_eq!(downloads.routes[0].delivery.is_retained(), retained);
+        let archives = catalog_root.join("objects/crates");
+        assert_eq!(
+            fs::read_dir(&archives).unwrap().count(),
+            usize::from(retained)
+        );
+        if retained {
+            let package = fixture.package("demo", &Version::new(1, 0, 0)).unwrap();
+            assert_eq!(
+                fs::read(archives.join(format!("{}.crate", sha256_bytes(&package.archive))))
+                    .unwrap(),
+                package.archive
+            );
+        }
+        let site = temporary.path().join("site");
+        assert_render_and_lock_convergence(&catalog_root, &site);
+        crate::render::verify_monotonic(&site, &site).unwrap();
+    }
+}
+
+#[test]
 fn one_generated_batch_binds_multiple_locks_to_its_complete_hash() {
     let temporary = TemporaryDirectory::new("pkgre-admission-v2-batch");
     let catalog_root = temporary.path().join("catalog");
