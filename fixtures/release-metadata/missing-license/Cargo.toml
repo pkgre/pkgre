@@ -1,0 +1,8 @@
+# No license, and none inherited from the workspace: the check refuses this
+# member.
+[package]
+name = "missing-license"
+version.workspace = true
+description = "A member without a license"
+repository.workspace = true
+publish = ["pkgre"]

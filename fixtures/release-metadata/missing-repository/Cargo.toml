@@ -1,0 +1,7 @@
+# No repository: the check refuses this member.
+[package]
+name = "missing-repository"
+version.workspace = true
+description = "A member without a repository"
+license.workspace = true
+publish = ["pkgre"]

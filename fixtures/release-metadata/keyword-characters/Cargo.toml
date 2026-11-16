@@ -1,0 +1,10 @@
+# A keyword that starts with a dash, and one that contains a space: the check
+# refuses this member.
+[package]
+name = "keyword-characters"
+version.workspace = true
+description = "A member with keywords that crates.io does not accept"
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]
+keywords = ["-leading-dash", "with space"]

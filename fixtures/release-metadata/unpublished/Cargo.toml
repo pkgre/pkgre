@@ -1,0 +1,6 @@
+# Not published to the pkgre registry, and keeping its own version: the check
+# ignores this member's metadata.
+[package]
+name = "unpublished"
+version = "0.1.0"
+publish = false
