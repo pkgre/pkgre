@@ -145,14 +145,7 @@ pub fn resolve_git_tag(
     expected_package: &str,
     cargo_version: &Version,
 ) -> Result<GitTagMaterialization> {
-    resolve_git_tag_from(
-        repository,
-        tag,
-        expected_package,
-        cargo_version,
-        repository,
-        false,
-    )
+    resolve_git_tag_from(repository, tag, expected_package, cargo_version)
 }
 
 /// Reproduces one locked Git publication and verifies every immutable source and content field.
@@ -182,7 +175,49 @@ pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterializati
     Ok(materialization)
 }
 
-fn resolve_git_tag_from(
+pub(crate) fn resolve_git_tag_from(
+    repository: &str,
+    tag: &str,
+    expected_package: &str,
+    cargo_version: &Version,
+) -> Result<GitTagMaterialization> {
+    resolve_git_tag_isolated(
+        repository,
+        tag,
+        expected_package,
+        cargo_version,
+        repository,
+        false,
+    )
+}
+
+/// Resolves and reproducibly packages one declared tag from a local repository,
+/// which a test names instead of the network.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe source, ambiguous package, malformed or moved
+/// tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty
+/// checkout, non-reproducible archive, or invalid package metadata.
+#[cfg(test)]
+pub(crate) fn resolve_git_tag_from_file(
+    repository: &str,
+    tag: &str,
+    expected_package: &str,
+    cargo_version: &Version,
+    fetch_repository: &str,
+) -> Result<GitTagMaterialization> {
+    resolve_git_tag_isolated(
+        repository,
+        tag,
+        expected_package,
+        cargo_version,
+        fetch_repository,
+        true,
+    )
+}
+
+fn resolve_git_tag_isolated(
     repository: &str,
     tag: &str,
     expected_package: &str,
@@ -426,7 +461,7 @@ fn fetch_tag(
     Ok((tag_oid, commit))
 }
 
-fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
+pub(crate) fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
     inspect_checkout_directory(repository, repository)
 }
 
@@ -512,7 +547,7 @@ fn package_path(repository: &Path, manifest_path: &Path) -> Result<PathBuf> {
     Ok(relative)
 }
 
-fn pinned_cargo(version: &Version) -> Result<PathBuf> {
+pub(crate) fn pinned_cargo(version: &Version) -> Result<PathBuf> {
     let path = if let Some(configured) = std::env::var_os("PKGRE_CARGO") {
         let configured = PathBuf::from(configured);
         ensure!(
@@ -689,7 +724,7 @@ fn run_cargo_package(
     Ok(archive)
 }
 
-fn read_bounded_archive(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_bounded_archive(path: &Path) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("inspect package archive {}", path.display()))?;
     ensure!(
@@ -860,13 +895,17 @@ fn path_arg(path: &Path) -> OsString {
     path.as_os_str().to_owned()
 }
 
-struct TemporaryDirectory {
+pub(crate) struct TemporaryDirectory {
     path: PathBuf,
 }
 
 impl TemporaryDirectory {
-    fn new(prefix: &str) -> Result<Self> {
-        let root = std::env::temp_dir();
+    pub(crate) fn new(prefix: &str) -> Result<Self> {
+        Self::new_in(&std::env::temp_dir(), prefix)
+    }
+
+    /// Creates one unique temporary directory below `root`.
+    pub(crate) fn new_in(root: &Path, prefix: &str) -> Result<Self> {
         for _ in 0..100 {
             let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = root.join(format!("{prefix}-{}-{sequence}", std::process::id()));
@@ -882,7 +921,7 @@ impl TemporaryDirectory {
         bail!("could not allocate a unique temporary directory")
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 }
@@ -951,13 +990,12 @@ mod tests {
         let source = create_test_release(&temporary);
         let source_url = source.to_str().unwrap();
         let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
-        let materialization = resolve_git_tag_from(
+        let materialization = resolve_git_tag_from_file(
             "https://example.invalid/pkgre-demo",
             TEST_TAG,
             "pkgre-demo",
             &cargo_version,
             source_url,
-            true,
         )
         .unwrap();
         assert_eq!(materialization.name, "pkgre-demo");

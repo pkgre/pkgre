@@ -146,6 +146,87 @@ cargo-version = "1.95.0"
 Entries are never edited and never removed, not even when the catalog removes the identity.
 An entry names one crate version and one release, and each release has one entry.
 
+## The derivation
+
+For one release tag, `self-publish-lock` derives the crates.io package of every crate
+that the catalog publishes from it:
+
+1. It fetches the tag into a fresh checkout with the same safety checks as the catalog's
+   own tag publication and requires the tag object and the commit that
+   `registry/main.lock` records.
+2. It reads the workspace with `cargo metadata --no-deps --locked` and requires the crates
+   the catalog publishes from the tag to be exactly its publishable members, whose
+   `publish` is exactly `["pkgre"]`.
+3. It rewrites every manifest of the workspace with `toml_edit`, the released members' and
+   the others' alike, since Cargo loads the whole workspace:
+   - for each released crate, its crates.io name and `publish = ["crates-io"]`, and
+     explicit names for its library and for the binary of `src/main.rs`, which Cargo would
+     otherwise derive from the package name, so that code and installed programs keep
+     their names;
+   - in every dependency table of every member (normal, dev, build, target-specific, and
+     `[workspace.dependencies]`), no `registry` key, and `package = "<crates.io name>"`
+     under the unchanged dependency key for a first-party dependency, a path dependency on
+     a renamed member included;
+   - it refuses `[patch]` and `[replace]`, a dependency between two released crates of one
+     tag, a dependency on a fork, a member that is not released but depends on something
+     crates.io does not have, and a first-party version without an entry in
+     `crates-io.lock`.
+4. It translates `Cargo.lock`: a source of the `pkgre` registry becomes crates.io; a
+   mirrored identity keeps its name, version and checksum; a first-party identity of an
+   earlier release takes its crates.io name and the `crate-sha256` of its `crates-io.lock`
+   entry; a workspace member takes its crates.io name, also in the dependency lists of
+   other packages.
+5. It packages the release with the pinned Cargo, in a fresh isolated Cargo home that uses
+   plain crates.io, from a working directory outside the checkout:
+   `cargo package --no-verify --locked --allow-dirty`, with one `-p` for each released
+   crate, twice, requiring identical bytes. `--locked` proves that crates.io resolves the
+   translated lock without a change. The derivation refuses to run Cargo when the working
+   directory or a directory above it holds `.cargo/config.toml` or `.cargo/config`, as a
+   file, directory or symbolic link, since such configuration could replace crates.io.
+6. It compares each derived archive with the archive that the catalog retains: the same
+   files below the top directory, identical bytes and permissions for every file except
+   `Cargo.toml`, `Cargo.toml.orig`, `Cargo.lock` and `.cargo_vcs_info.json`; a VCS claim
+   that differs only by `dirty`; a normalized manifest that differs only in the fields the
+   rewrite changed, where every dependency's `package` is exactly its expected crates.io
+   name and no `registry` or `registry-index` remains; and two lock files that list the
+   same packages at the same versions under the mapped names, every package outside the
+   workspace with its own registry's source and expected checksum: the catalog's
+   `crate-sha256` in the retained archive, and crates.io's, for a first-party identity the
+   `crate-sha256` of its `crates-io.lock` entry, in the derived one.
+7. It records the result.
+
+Deriving from the tag and proving the result against the retained archive is what lets
+`cargo publish` work from ordinary sources, and what guarantees that the crates.io package
+is the curated package with a mechanically rewritten manifest.
+
+Every Git and Cargo process of the derivation starts from an empty environment and inherits
+only `PATH`, `TMPDIR`, the certificate variables, `CARGO_HOME`, and `RUSTC` pointing at the
+`rustc` beside the pinned `cargo`; no wrapper and no token variable reaches it. The
+derivation works in a temporary directory and refuses to run when that directory or any
+directory above it holds Cargo configuration, so set `TMPDIR` to a directory that no Cargo
+configuration covers; a symbolic link on the way is resolved too, since Cargo follows it.
+
+## Recording entries
+
+```text
+pkgre-rust self-publish-lock <repository>
+```
+
+`<repository>` is a checkout of the catalog repository, the directory that holds
+`registry/` and `self-publish/`. The command derives every self-published identity of
+`registry/main.lock` that has no entry in `crates-io.lock` yet, grouped by release so that
+each tag is fetched and packaged once, and writes the new entries in canonical form. It
+runs the offline checks above on the result before it writes, so it never writes a lock
+that `self-publish-check` refuses, and it writes the file atomically.
+
+- A run with nothing to derive changes nothing and says so.
+- An identity the catalog removed cannot be derived, because the catalog no longer retains
+  its archive; it needs an entry, which only a release could add while the identity was
+  active.
+- A crate added to a tag that `crates-io.lock` already records is refused:a release tag
+  publishes the crates of its commit, so only a new version can add one.
+- An identity from a tag that is not a release tag is refused, as in the offline checks.
+
 ## Name rules
 
 Checked offline, on every run:

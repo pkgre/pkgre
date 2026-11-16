@@ -16,7 +16,8 @@ const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <ca
   pkgre-rust archive-inventory <catalog> <output.json>
   pkgre-rust archive-import <archive-store> <catalog>
   pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
-  pkgre-rust self-publish-check <repository> [<accepted-repository>]";
+  pkgre-rust self-publish-check <repository> [<accepted-repository>]
+  pkgre-rust self-publish-lock <repository>";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -52,6 +53,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("archive-import") => archive_import_command(&values),
         Some("check-transition") => check_transition_command(&values),
         Some("self-publish-check") => self_publish_check(&values),
+        Some("self-publish-lock") => self_publish_lock(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -287,6 +289,37 @@ fn self_publish_check(arguments: &[OsString]) -> Result<()> {
         accepted = summary.accepted,
         path = %repository.display(),
         "checked self-publishing state"
+    );
+    Ok(())
+}
+
+fn self_publish_lock(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 1)?;
+    let repository = Path::new(&arguments[0]);
+    let summary = pkgre_rust::self_publish::self_publish_lock(repository)?;
+    if !summary.changed {
+        info!(
+            path = %repository.display(),
+            "every self-published identity has an entry; nothing to derive"
+        );
+        return Ok(());
+    }
+    for entry in &summary.entries {
+        info!(
+            package = %entry.name,
+            version = %entry.version,
+            crates_io_name = %entry.crates_io_name,
+            crate_sha256 = %entry.crate_sha256,
+            pkgre_crate_sha256 = %entry.pkgre_crate_sha256,
+            tag = %entry.tag,
+            "recorded a crates.io package"
+        );
+    }
+    info!(
+        entries = summary.entries.len(),
+        releases = summary.releases,
+        path = %repository.display(),
+        "wrote self-publish/crates-io.lock"
     );
     Ok(())
 }

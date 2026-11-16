@@ -8,6 +8,7 @@ use semver::Version;
 use sha2::{Digest, Sha256};
 
 use super::super::lock::{CRATES_IO_LOCK_SCHEMA, CratesIoPackage};
+use super::super::state::CONFIG_FILE;
 use super::*;
 
 const REPOSITORY: &str = "https://git.example.invalid/example/project";
@@ -59,9 +60,11 @@ fn identity(name: &str, version: &str, tag: &str, commit: char) -> CatalogIdenti
         name: name.to_owned(),
         version: Version::parse(version).unwrap(),
         crate_sha256: checksum(&format!("pkgre {name} {version}")),
+        removed: false,
         release: Some(GitRelease {
             git: REPOSITORY.to_owned(),
             tag: tag.to_owned(),
+            tag_oid: commit.to_string().repeat(40),
             commit: commit.to_string().repeat(40),
             cargo_version: Version::parse("1.95.0").unwrap(),
         }),
@@ -83,6 +86,7 @@ fn mirror_identity(name: &str, version: &str) -> CatalogIdentity {
         name: name.to_owned(),
         version: Version::parse(version).unwrap(),
         crate_sha256: checksum(&format!("crates.io {name} {version}")),
+        removed: false,
         release: None,
     }
 }
@@ -212,7 +216,7 @@ impl State {
     }
 }
 
-fn check_state(candidate: &State, accepted: Option<&State>) -> Result<SelfPublishCheckSummary> {
+fn run_checks(candidate: &State, accepted: Option<&State>) -> Result<SelfPublishCheckSummary> {
     let candidate_snapshot = candidate.snapshot();
     let candidate_state = candidate.state();
     let accepted_config = accepted.map(|state| parse_config(&state.config));
@@ -225,7 +229,7 @@ fn check_state(candidate: &State, accepted: Option<&State>) -> Result<SelfPublis
         config: accepted_config.as_ref(),
         lock: accepted_lock.as_ref(),
     });
-    check(
+    check_state(
         &candidate_state,
         &candidate_snapshot,
         accepted_view.as_ref(),
@@ -248,7 +252,7 @@ fn simple_error_text(result: Result<()>) -> String {
 
 #[track_caller]
 fn assert_refused(candidate: &State, accepted: Option<&State>, expected: &str) -> String {
-    let error = error_text(check_state(candidate, accepted));
+    let error = error_text(run_checks(candidate, accepted));
     assert!(error.contains(expected), "{expected:?} not in {error}");
     error
 }
@@ -256,7 +260,7 @@ fn assert_refused(candidate: &State, accepted: Option<&State>, expected: &str) -
 #[test]
 fn accepts_a_valid_state_and_the_canonical_lock_round_trips() {
     let state = State::base();
-    let summary = check_state(&state, None).unwrap();
+    let summary = run_checks(&state, None).unwrap();
     assert!(summary.declared);
     assert_eq!(summary.repositories, 1);
     assert_eq!(summary.names, 1);
@@ -264,7 +268,7 @@ fn accepts_a_valid_state_and_the_canonical_lock_round_trips() {
     assert_eq!(summary.identities, 2);
     assert!(!summary.accepted);
 
-    let summary = check_state(&state, Some(&state)).unwrap();
+    let summary = run_checks(&state, Some(&state)).unwrap();
     assert!(summary.accepted);
 
     let bytes = state.lock.serialize().unwrap();
@@ -287,7 +291,7 @@ fn accepts_an_earlier_non_release_identity_and_a_removed_identity() {
     let removed = identity("example-lib", "0.9.0", "rust/v0.9.0", '6');
     state.lock.packages.push(entry(&removed, "example-lib"));
     state.identities.push(removed);
-    check_state(&state, Some(&state)).unwrap();
+    run_checks(&state, Some(&state)).unwrap();
 }
 
 #[test]
@@ -300,9 +304,9 @@ fn accepts_a_new_mapping_after_every_entry_is_abandoned() {
         &[("example-lib", "example-renamed")],
         &[("example-lib", "1.0.0", "crates.io refused the upload")],
     );
-    check_state(&candidate, Some(&accepted)).unwrap();
+    run_checks(&candidate, Some(&accepted)).unwrap();
     // Without an accepted repository the abandoned entry keeps its name too.
-    check_state(&candidate, None).unwrap();
+    run_checks(&candidate, None).unwrap();
 }
 
 #[test]
@@ -316,7 +320,7 @@ fn accepts_a_names_key_for_a_declared_crate_without_an_identity() {
         ("example-lib", "example-lib"),
         ("future-crate", "future-name"),
     ]);
-    check_state(&state, None).unwrap();
+    run_checks(&state, None).unwrap();
 }
 
 #[test]
@@ -446,7 +450,7 @@ fn accepts_a_names_key_before_the_crates_first_release() {
         ("example-lib", "example-lib"),
         ("future-crate", "future-name"),
     ]);
-    check_state(&state, None).unwrap();
+    run_checks(&state, None).unwrap();
 
     // A declared name follows the name rules even before its crate exists.
     state.set_names(&[("example-lib", "example-lib"), ("future-crate", "nul")]);
@@ -578,9 +582,11 @@ fn refuses_a_catalog_repository_spelled_differently_from_its_declaration() {
         name: "example-tool".to_owned(),
         version: Version::parse("2.0.0").unwrap(),
         crate_sha256: checksum("pkgre example-tool 2.0.0"),
+        removed: false,
         release: Some(GitRelease {
             git: "https://Git.Example.Invalid/example/project.git".to_owned(),
             tag: "rust/v2.0.0".to_owned(),
+            tag_oid: "8".repeat(40),
             commit: "5".repeat(40),
             cargo_version: Version::parse("1.95.0").unwrap(),
         }),
@@ -643,7 +649,7 @@ fn accepts_abandoning_an_already_released_version() {
     let accepted = State::base();
     let mut candidate = State::base();
     candidate.set_abandoned(&[("example-lib", "1.0.0", "crates.io refused the upload")]);
-    check_state(&candidate, Some(&accepted)).unwrap();
+    run_checks(&candidate, Some(&accepted)).unwrap();
 }
 
 #[test]
@@ -750,7 +756,7 @@ fn accepts_a_release_tag_that_publishes_several_crates() {
         candidate.identities.last().unwrap(),
         "pkgre-pkgs-example-bin",
     ));
-    check_state(&candidate, Some(&accepted)).unwrap();
+    run_checks(&candidate, Some(&accepted)).unwrap();
 }
 
 #[test]
@@ -767,10 +773,12 @@ fn refuses_removing_the_self_publishing_state_of_the_accepted_repository() {
     let state = State::base();
     let candidate = RepositoryState {
         catalog: CatalogSnapshot::default(),
+        catalog_root: std::path::PathBuf::from("registry"),
         self_publish: None,
     };
     let accepted = RepositoryState {
         catalog: CatalogSnapshot::default(),
+        catalog_root: std::path::PathBuf::from("registry"),
         self_publish: Some(state.state()),
     };
     let error = simple_error_text(check_state_not_removed(&candidate, Some(&accepted)));
@@ -778,6 +786,7 @@ fn refuses_removing_the_self_publishing_state_of_the_accepted_repository() {
     check_state_not_removed(&candidate, None).unwrap();
     let declared = RepositoryState {
         catalog: CatalogSnapshot::default(),
+        catalog_root: std::path::PathBuf::from("registry"),
         self_publish: Some(state.state()),
     };
     check_state_not_removed(&declared, Some(&accepted)).unwrap();
@@ -810,7 +819,11 @@ fn an_accepted_catalog_without_self_publishing_state_still_bounds_versions() {
         config: None,
         lock: None,
     };
-    let error = error_text(check(&candidate, &candidate_catalog, Some(&accepted_view)));
+    let error = error_text(check_state(
+        &candidate,
+        &candidate_catalog,
+        Some(&accepted_view),
+    ));
     assert!(
         error.contains("does not increase the version of the crate"),
         "{error}"
