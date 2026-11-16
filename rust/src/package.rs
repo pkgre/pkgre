@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::artifact::sha256_bytes;
+use crate::isolation::{ChildEnvironment, ensure_no_cargo_configuration};
 use crate::policy::{
     validate_git_object_id, validate_git_tag, validate_https_repository, validate_package_name,
     validate_relative_path, validate_tag_version,
@@ -182,6 +183,7 @@ pub(crate) fn resolve_git_tag_from(
     cargo_version: &Version,
 ) -> Result<GitTagMaterialization> {
     resolve_git_tag_isolated(
+        &std::env::temp_dir(),
         repository,
         tag,
         expected_package,
@@ -207,7 +209,39 @@ pub(crate) fn resolve_git_tag_from_file(
     cargo_version: &Version,
     fetch_repository: &str,
 ) -> Result<GitTagMaterialization> {
+    resolve_git_tag_from_file_in(
+        &std::env::temp_dir(),
+        repository,
+        tag,
+        expected_package,
+        cargo_version,
+        fetch_repository,
+    )
+}
+
+/// Resolves and reproducibly packages one declared tag from a local repository
+/// below a temporary root a test chooses.
+///
+/// The root lets a test place Cargo configuration above the working directory
+/// that the packaging uses.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe source, ambiguous package, malformed or moved
+/// tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty
+/// checkout, non-reproducible archive, invalid package metadata, or a working
+/// directory that Cargo configuration covers.
+#[cfg(test)]
+pub(crate) fn resolve_git_tag_from_file_in(
+    root: &Path,
+    repository: &str,
+    tag: &str,
+    expected_package: &str,
+    cargo_version: &Version,
+    fetch_repository: &str,
+) -> Result<GitTagMaterialization> {
     resolve_git_tag_isolated(
+        root,
         repository,
         tag,
         expected_package,
@@ -218,6 +252,7 @@ pub(crate) fn resolve_git_tag_from_file(
 }
 
 fn resolve_git_tag_isolated(
+    root: &Path,
     repository: &str,
     tag: &str,
     expected_package: &str,
@@ -229,16 +264,18 @@ fn resolve_git_tag_isolated(
     validate_git_tag(tag)?;
     validate_package_name(expected_package)?;
 
-    let temporary = TemporaryDirectory::new("pkgre-git-package")?;
+    let temporary = TemporaryDirectory::new_in(root, "pkgre-git-package")?;
     let checkout = temporary.path().join("repository");
-    let (tag_oid, commit) = fetch_tag(tag, &checkout, fetch_repository, allow_file)?;
-    ensure_safe_checkout_tree(&checkout)?;
-    let commit_time = tag_commit_time(&checkout, &commit)?;
-    ensure_clean_checkout(&checkout)?;
-
-    let cargo = pinned_cargo(cargo_version)?;
     let cargo_home = temporary.path().join("cargo-home");
+    ensure_no_cargo_configuration(&cargo_home)?;
+    let cargo = pinned_cargo(cargo_version)?;
     prepare_cargo_home(&cargo_home)?;
+    let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
+
+    let (tag_oid, commit) = fetch_tag(&environment, tag, &checkout, fetch_repository, allow_file)?;
+    ensure_safe_checkout_tree(&checkout)?;
+    let commit_time = tag_commit_time(&environment, &checkout, &commit)?;
+    ensure_clean_checkout(&environment, &checkout)?;
     let root_manifest = checkout.join("Cargo.toml");
     ensure!(
         fs::symlink_metadata(&root_manifest)
@@ -250,6 +287,7 @@ fn resolve_git_tag_isolated(
     let package = cargo_metadata(
         &cargo,
         &cargo_home,
+        &environment,
         &root_manifest,
         expected_package,
         &checkout,
@@ -260,6 +298,7 @@ fn resolve_git_tag_isolated(
     let archive_one = run_cargo_package(
         &cargo,
         &cargo_home,
+        &environment,
         &package.manifest_path,
         expected_package,
         &temporary.path().join("target-one"),
@@ -268,6 +307,7 @@ fn resolve_git_tag_isolated(
     let archive_two = run_cargo_package(
         &cargo,
         &cargo_home,
+        &environment,
         &package.manifest_path,
         expected_package,
         &temporary.path().join("target-two"),
@@ -281,7 +321,7 @@ fn resolve_git_tag_isolated(
         package.name,
         package.version
     );
-    ensure_clean_checkout(&checkout)?;
+    ensure_clean_checkout(&environment, &checkout)?;
 
     let archive_sha256 = sha256_bytes(&archive_bytes);
     let source_row_bytes = generated_index_record(&package, &archive_sha256)?;
@@ -305,7 +345,11 @@ fn resolve_git_tag_isolated(
 /// # Errors
 ///
 /// Returns an error when Git output is malformed or the timestamp is invalid.
-fn tag_commit_time(repository: &Path, commit: &str) -> Result<UtcTimestamp> {
+fn tag_commit_time(
+    environment: &ChildEnvironment,
+    repository: &Path,
+    commit: &str,
+) -> Result<UtcTimestamp> {
     let unix_seconds = command_stdout(
         git_command(
             Some(repository),
@@ -316,6 +360,7 @@ fn tag_commit_time(repository: &Path, commit: &str) -> Result<UtcTimestamp> {
                 OsString::from("--no-patch"),
                 OsString::from(commit),
             ],
+            environment,
         ),
         "read published Git commit time",
     )?;
@@ -380,6 +425,7 @@ fn verify_approved_materialization(
 }
 
 fn fetch_tag(
+    environment: &ChildEnvironment,
     tag: &str,
     repository: &Path,
     fetch_repository: &str,
@@ -392,6 +438,7 @@ fn fetch_tag(
             OsString::from("--quiet"),
             path_arg(repository),
         ],
+        environment,
     )?;
     run_git(
         Some(repository),
@@ -401,6 +448,7 @@ fn fetch_tag(
             OsString::from("origin"),
             OsString::from(fetch_repository),
         ],
+        environment,
     )?;
     let reference = format!("refs/tags/{tag}");
     let fetch_arguments = [
@@ -411,7 +459,8 @@ fn fetch_tag(
         OsString::from("origin"),
         OsString::from(format!("{reference}:{reference}")),
     ];
-    let fetch_command = git_command_with_file_policy(Some(repository), fetch_arguments, allow_file);
+    let fetch_command =
+        git_command_with_file_policy(Some(repository), fetch_arguments, environment, allow_file);
     run_command(fetch_command, "fetch exact Git tag")?;
     let tag_oid = command_stdout(
         git_command(
@@ -421,6 +470,7 @@ fn fetch_tag(
                 OsString::from("--verify"),
                 OsString::from(&reference),
             ],
+            environment,
         ),
         "resolve fetched Git tag object",
     )?;
@@ -432,6 +482,7 @@ fn fetch_tag(
                 OsString::from("--verify"),
                 OsString::from(format!("{reference}^{{commit}}")),
             ],
+            environment,
         ),
         "peel fetched Git tag",
     )?;
@@ -446,11 +497,13 @@ fn fetch_tag(
             OsString::from(&commit),
             OsString::from("--"),
         ],
+        environment,
     )?;
     let gitlinks = command_stdout(
         git_command(
             Some(repository),
             [OsString::from("ls-files"), OsString::from("--stage")],
+            environment,
         ),
         "list checked-out Git files",
     )?;
@@ -507,7 +560,7 @@ fn inspect_checkout_directory(repository: &Path, directory: &Path) -> Result<()>
     Ok(())
 }
 
-fn ensure_clean_checkout(repository: &Path) -> Result<()> {
+fn ensure_clean_checkout(environment: &ChildEnvironment, repository: &Path) -> Result<()> {
     let status = command_stdout(
         git_command(
             Some(repository),
@@ -516,6 +569,7 @@ fn ensure_clean_checkout(repository: &Path) -> Result<()> {
                 OsString::from("--porcelain=v1"),
                 OsString::from("--untracked-files=all"),
             ],
+            environment,
         ),
         "inspect Git checkout cleanliness",
     )?;
@@ -636,11 +690,12 @@ fn is_curated_registry_source(source: &str, registry_indexes: &[&str]) -> bool {
 fn cargo_metadata(
     cargo: &Path,
     cargo_home: &Path,
+    environment: &ChildEnvironment,
     manifest_path: &Path,
     expected_package: &str,
     repository: &Path,
 ) -> Result<MetadataPackage> {
-    let mut command = isolated_cargo(cargo, cargo_home);
+    let mut command = isolated_cargo(cargo, environment);
     command.current_dir(cargo_home).args([
         OsStr::new("metadata"),
         OsStr::new("--format-version"),
@@ -692,12 +747,13 @@ fn cargo_metadata(
 fn run_cargo_package(
     cargo: &Path,
     cargo_home: &Path,
+    environment: &ChildEnvironment,
     manifest_path: &Path,
     package: &str,
     target: &Path,
     version: &Version,
 ) -> Result<PathBuf> {
-    let mut command = isolated_cargo(cargo, cargo_home);
+    let mut command = isolated_cargo(cargo, environment);
     command.current_dir(cargo_home).args([
         OsStr::new("package"),
         OsStr::new("--no-verify"),
@@ -736,18 +792,15 @@ pub(crate) fn read_bounded_archive(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).with_context(|| format!("read package archive {}", path.display()))
 }
 
-fn isolated_cargo(cargo: &Path, cargo_home: &Path) -> Command {
+fn isolated_cargo(cargo: &Path, environment: &ChildEnvironment) -> Command {
     let mut command = Command::new(cargo);
-    command
-        .env("CARGO_HOME", cargo_home)
-        .env("CARGO_TERM_COLOR", "never")
-        .env("CARGO_NET_GIT_FETCH_WITH_CLI", "false")
-        .env_remove("CARGO_REGISTRY_TOKEN")
-        .env_remove("CARGO_REGISTRIES_CRATES_IO_TOKEN")
-        .env_remove("CARGO_HTTP_PROXY")
-        .env_remove("HTTPS_PROXY")
-        .env_remove("HTTP_PROXY")
-        .env_remove("ALL_PROXY");
+    environment.apply_with(
+        &mut command,
+        &[
+            ("CARGO_TERM_COLOR", OsStr::new("never")),
+            ("CARGO_NET_GIT_FETCH_WITH_CLI", OsStr::new("false")),
+        ],
+    );
     command
 }
 
@@ -807,27 +860,36 @@ fn generated_index_record(package: &MetadataPackage, checksum: &str) -> Result<V
     Ok(bytes)
 }
 
-fn run_git<I, S>(current_dir: Option<&Path>, arguments: I) -> Result<()>
+fn run_git<I, S>(
+    current_dir: Option<&Path>,
+    arguments: I,
+    environment: &ChildEnvironment,
+) -> Result<()>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let command = git_command(current_dir, arguments);
+    let command = git_command(current_dir, arguments, environment);
     run_command(command, "run Git command")?;
     Ok(())
 }
 
-fn git_command<I, S>(current_dir: Option<&Path>, arguments: I) -> Command
+fn git_command<I, S>(
+    current_dir: Option<&Path>,
+    arguments: I,
+    environment: &ChildEnvironment,
+) -> Command
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    git_command_with_file_policy(current_dir, arguments, false)
+    git_command_with_file_policy(current_dir, arguments, environment, false)
 }
 
 fn git_command_with_file_policy<I, S>(
     current_dir: Option<&Path>,
     arguments: I,
+    environment: &ChildEnvironment,
     allow_file: bool,
 ) -> Command
 where
@@ -847,16 +909,15 @@ where
             OsStr::new("-c"),
             OsStr::new(&format!("protocol.file.allow={file_policy}")),
         ])
-        .args(arguments)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env_remove("GIT_ASKPASS")
-        .env_remove("SSH_ASKPASS")
-        .env_remove("SSH_AUTH_SOCK")
-        .env_remove("HTTPS_PROXY")
-        .env_remove("HTTP_PROXY")
-        .env_remove("ALL_PROXY");
+        .args(arguments);
+    environment.apply_with(
+        &mut command,
+        &[
+            ("GIT_TERMINAL_PROMPT", OsStr::new("0")),
+            ("GIT_CONFIG_NOSYSTEM", OsStr::new("1")),
+            ("GIT_CONFIG_GLOBAL", OsStr::new("/dev/null")),
+        ],
+    );
     if let Some(directory) = current_dir {
         command.current_dir(directory);
     }
@@ -986,11 +1047,13 @@ mod tests {
 
     #[test]
     fn git_tag_materialization_records_tag_and_is_reproducible() {
-        let temporary = TemporaryDirectory::new("pkgre-git-e2e").unwrap();
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-e2e").unwrap();
         let source = create_test_release(&temporary);
         let source_url = source.to_str().unwrap();
         let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
-        let materialization = resolve_git_tag_from_file(
+        let materialization = resolve_git_tag_from_file_in(
+            &root,
             "https://example.invalid/pkgre-demo",
             TEST_TAG,
             "pkgre-demo",
@@ -1020,6 +1083,56 @@ mod tests {
             &materialization,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn git_tag_packaging_refuses_cargo_configuration_above_the_working_directory() {
+        let temporary =
+            TemporaryDirectory::new_in(&uncovered_temporary_root(), "pkgre-git-config").unwrap();
+        let source = create_test_release(&temporary);
+        let root = temporary.path().join("covered");
+        let configuration = root.join(".cargo");
+        fs::create_dir_all(&configuration).unwrap();
+        let file = configuration.join("config.toml");
+        fs::write(&file, "[net]\noffline = true\n").unwrap();
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let error = resolve_git_tag_from_file_in(
+            &root,
+            "https://example.invalid/pkgre-demo",
+            TEST_TAG,
+            "pkgre-demo",
+            &cargo_version,
+            source.to_str().unwrap(),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&file.display().to_string()),
+            "the error names the configuration it found: {message}"
+        );
+        assert!(
+            message.contains("TMPDIR"),
+            "the error says what to change: {message}"
+        );
+    }
+
+    /// Returns the first of `TMPDIR`, `/tmp`, and `/var/tmp` that no Cargo
+    /// configuration covers.
+    ///
+    /// The packaging refuses a temporary directory that Cargo configuration
+    /// covers, and a development environment or a build sandbox may point
+    /// `TMPDIR` into one.
+    fn uncovered_temporary_root() -> PathBuf {
+        for root in [
+            std::env::temp_dir(),
+            PathBuf::from("/tmp"),
+            PathBuf::from("/var/tmp"),
+        ] {
+            if ensure_no_cargo_configuration(&root).is_ok() {
+                return root;
+            }
+        }
+        panic!("no temporary directory without Cargo configuration is available");
     }
 
     fn create_test_release(temporary: &TemporaryDirectory) -> PathBuf {
