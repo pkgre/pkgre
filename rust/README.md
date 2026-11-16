@@ -27,7 +27,7 @@ pkgre-rust self-publish-check <repository> [<accepted-repository>]
 - `update-inspect`:recompute one manifest request + materialize checksum-verified candidate/base archives and bounded inert evidence without executing package code.
 - `update-apply`:recompute every exact request at current time; reject young/yanked/blocked/invalid candidates; atomically install declaration additions, source rows, registry locks, canonical download catalog, and one immutable human-manifest/generated-lock admission pair.
 - `lock`:preflight locally; reconcile initial bootstrap, empty reservations, removals, new first-party Git tags, and canonical `downloads.json`; direct new-mirror admission fails once registry locks exist.
-- `check`:local-only strict schema/category/registry/admission/download/object/hash/row validation; never fetch crates.io or reproduce Git tags.
+- `check`:local-only strict schema/category/registry/admission/download/object/hash/row validation, routed-row hash + dependency-edge validation, and a serving projection under the production limits; reports each limit it has half spent as `name=usage/limit`; never fetch crates.io or reproduce Git tags.
 - `render`:write a new complete site tree. Catalog registry `main` renders at the site root; other registry aliases render below `/r/<alias>/`; output must be absent.
 - `verify`:re-render + require exact entry/byte equality with an existing site.
 - `verify-monotonic`:permit registries/categories/package identities to be added, `active→removed`, and source-specific→exact-router `dl`; reject removal/mutation/reactivation; authenticate exact release-manifest schema-2→3 + schema-3→4 migrations.

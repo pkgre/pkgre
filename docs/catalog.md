@@ -180,7 +180,7 @@ cargo-version = "1.95.0"
 | `admission-sha256` | SHA-256 of complete generated admission `.lock`; all candidates in a batch share it; forbidden on Git identities |
 | `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for an admitted mirror, the peeled commit time for a newly published Git tag; a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified against the commit |
 
-Never hand-edit locks. Load validates canonical form, registry/category/source anchors, provenance, object hashes, row identity/checksum, routed-row hash, and exact admission↔package coverage; it never re-derives `admitted-at`, and only `check-transition` rejects a change of it. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
+Never hand-edit locks. Load validates canonical form, registry/category/source anchors, provenance, object hashes, row identity/checksum, and exact admission↔package coverage; `check`, `lock`, `render`, and the serving origin also re-derive every routed-row hash and dependency edge, so a stale `index-row-sha256` fails all of them. Load never re-derives `admitted-at`, and only `check-transition` rejects a change of it. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
 
 ## Generated download catalog
 
@@ -255,7 +255,7 @@ Mirror workflow:
 2. Reviewer may remove requests, run `update-inspect`, or add evidence; generated unedited manifest is valid.
 3. `update-apply` validates the human file, re-fetches exact current sparse/API/archive/source facts, rejects young/yanked/blocked/route-invalid/evidence-invalid identities, and computes one batch lock.
 4. Guarded whole-catalog transaction checks the starting fingerprint, appends requested versions, installs the pair, reconciles rows/locks/downloads, strictly reloads + test-renders staging, then atomically installs it.
-5. A second `lock` must be byte-for-byte no-op; `check`, `render`, `verify`, and `verify-monotonic` validate publication.
+5. A second `lock` must be byte-for-byte no-op; `check`, `render`, `verify`, and `verify-monotonic` validate publication, and `check` additionally requires the catalog to fit the production serving projection limits.
 
 Planning facts are not authority:apply always recomputes using its own current UTC time, including the 30-day floor. Route/catalog drift is detected during apply.
 
