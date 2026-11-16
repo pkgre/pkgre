@@ -165,6 +165,7 @@ Self-publication normally uses prior immutable Rust indexer release. A schema/bo
 3. Verify only intended packages become `active→removed`; rows remain; an unshared retained archive disappears; a `redirect` mirror archive set remains empty.
 4. Rendered history retains `yanked = true`; reactivation forbidden.
 5. Run `check`, no-op `lock`, render, `verify`, `verify-monotonic`; commit.
+6. The serving gate `check-transition` rejects an `active→removed` change, so a removal is not published through the watched ref; a fresh accepted baseline is required before the service serves it, after which the tombstone route stays.
 
 Changing a package name's registry/category home, changing any locked identity's source/checksum, changing a retained Git publisher URL, deleting a required declaration key, or re-adding a removed identity fails before fetch.
 
@@ -252,7 +253,7 @@ $ pkgre-rust verify-monotonic site-current site-next
 
 Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use their router or same-host native template; rendered inventory expected; protected CI passes; normal merge without force/bypass.
 
-Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only through `check-transition` + a successful snapshot build and keeps the last-known-good snapshot on failure.
+Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only when it fast-forwards the accepted commit, passes `check-transition`, builds a snapshot, and persists its accepted-ref record; a rejected or interrupted candidate keeps the last-known-good snapshot.
 
 ## Post-deployment verification
 

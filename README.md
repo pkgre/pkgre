@@ -6,7 +6,7 @@ Security-oriented tooling + policy for curated Rust and JavaScript package regis
 
 pkg.re builds deterministic,read-only package install planes from reviewed declarations+immutable evidence. The Rust implementation converts exact crates.io mirror versions+immutable first-party Git tags into a Cargo sparse index. The JavaScript implementation validates a closed exact-version catalog+audited archives,then deterministically renders npm-compatible packuments,same-host immutable redirect markers,and first-party content-addressed objects. No mutable registry API,package-manager publish operation,or upstream metadata fallback is authoritative.
 
-Rust removal replaces curator-controlled yanking:delete a version/tag from desired state but retain its package key;reconciliation preserves an irreversible tombstone+source evidence and renders the row as yanked. Serving keeps the tombstone route for ordinary removed identities;emergency route revocation remains a separate explicit operation.
+Rust removal replaces curator-controlled yanking:delete a version/tag from desired state but retain its package key;reconciliation preserves an irreversible tombstone+source evidence and renders the row as yanked. The serving gate `check-transition` rejects an `active→removed` change,so a removal needs a fresh accepted baseline before the service publishes it;once published,serving keeps the tombstone route. Emergency route revocation remains a separate explicit operation.
 
 ## Public topology
 
