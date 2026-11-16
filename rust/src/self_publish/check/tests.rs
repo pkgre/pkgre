@@ -508,7 +508,7 @@ fn refuses_removing_a_names_key_that_a_crate_falls_back_from() {
     let accepted = State::base();
     let mut candidate = State::base();
     candidate.set_names(&[]);
-    assert_refused(&candidate, Some(&accepted), "is permanent");
+    assert_refused(&candidate, Some(&accepted), "but the mapping gives");
 
     // Without an accepted state, the recorded name is still not the default one.
     let mut candidate = State::base();
@@ -622,11 +622,36 @@ fn refuses_an_abandoned_record_without_an_entry_or_one_that_disappears() {
 }
 
 #[test]
+fn refuses_abandoning_a_version_in_the_change_that_adds_it() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.add_release("example-tool", "1.1.0", "rust/v1.1.0", "another-name", '5');
+    candidate.config = config_text(
+        &[(REPOSITORY, PREFIX)],
+        &[("example-lib", "example-lib")],
+        &[("example-tool", "1.1.0", "crates.io refused the upload")],
+    );
+    assert_refused(
+        &candidate,
+        Some(&accepted),
+        "names no entry of the accepted crates-io.lock",
+    );
+}
+
+#[test]
+fn accepts_abandoning_an_already_released_version() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.set_abandoned(&[("example-lib", "1.0.0", "crates.io refused the upload")]);
+    check_state(&candidate, Some(&accepted)).unwrap();
+}
+
+#[test]
 fn refuses_a_changed_name_while_an_entry_is_not_abandoned() {
     let accepted = State::base();
     let mut candidate = State::base();
     candidate.set_names(&[("example-lib", "example-renamed")]);
-    assert_refused(&candidate, Some(&accepted), "is permanent");
+    assert_refused(&candidate, Some(&accepted), "but the mapping gives");
 }
 
 #[test]

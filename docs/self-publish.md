@@ -80,8 +80,9 @@ that its publish declarations in `registry/` use. `tag-prefix` turns a version i
 release tag:`tag-prefix` is empty or `v`, or ends with `/` or `/v`, so that the tag's final
 component is the version, or `v` and the version. Prefix and version together are a safe Git
 ref. Repositories are declared once each, and a repository and its prefix are permanent.
-Repositories are compared in a normalized form:the scheme and host are lowercased, a trailing
-`.git` is dropped, and for GitHub the path is lowercased too. A Git identity or publish
+Repositories are compared in a normalized form:the scheme and host are lowercased, a default
+`:443` port and empty or `.` path segments are dropped, `..` segments are resolved, and a
+trailing `.git` is dropped; for GitHub the path is lowercased too. A Git identity or publish
 declaration that names a self-publishing repository in another spelling is refused, so that
 it cannot escape the release rules of its declaration.
 
@@ -101,8 +102,10 @@ workflow uses.
 `[[abandoned]]` records a crate version that reached the `pkgre` registry but will never
 reach crates.io, with the reason crates.io gave. A record names an entry of
 `self-publish/crates-io.lock`, which stays as it is; the checks accept that the version
-exists in one registry only. Records are only ever added and never changed. A crate whose
-entries are all abandoned may get another crates.io name in `[names]`, for its later
+exists in one registry only. Records are only ever added and never changed. A version is
+abandoned only after it was released:a new record names an entry of the accepted
+`crates-io.lock`, so a release cannot be added and abandoned in the same change. A crate
+whose entries are all abandoned may get another crates.io name in `[names]`, for its later
 versions.
 
 ## Generated records
@@ -187,7 +190,9 @@ runs these checks:
   entry in `crates-io.lock` whose fields agree with it, and each entry has exactly one
   identity. An identity is self-published when it comes from a self-publishing repository
   and its tag is that repository's `tag-prefix` followed by the version.
-- Each abandoned record names an entry of `crates-io.lock`.
+- Each abandoned record names an entry of `crates-io.lock`, and a record that the accepted
+  state does not have names an entry of the accepted lock, so that a version is abandoned
+  only after it was released.
 - Compared with the accepted state, each Git identity that the candidate gains from a
   self-publishing repository comes from a release tag of that repository. A tag outside the
   convention, such as `cli/v0.1.0`, is refused, so that no crate of a self-publishing

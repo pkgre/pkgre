@@ -132,23 +132,6 @@ impl CratesIoConfig {
             .find(|record| record.name == name && record.version == *version)
     }
 
-    /// Returns whether every given crate version of `name` is recorded as abandoned.
-    #[must_use]
-    pub(crate) fn all_abandoned<'a>(
-        &self,
-        name: &str,
-        versions: impl IntoIterator<Item = &'a Version>,
-    ) -> bool {
-        let mut seen = false;
-        for version in versions {
-            seen = true;
-            if self.abandoned_version(name, version).is_none() {
-                return false;
-            }
-        }
-        seen
-    }
-
     fn validate(&self) -> Result<()> {
         ensure!(
             self.schema == CRATES_IO_CONFIG_SCHEMA,
@@ -212,31 +195,62 @@ impl CratesIoConfig {
 
 /// Returns the comparison form of a Git repository URL.
 ///
-/// The scheme and host are lowercased and a trailing `.git` is dropped, since
-/// they name the same repository; for GitHub the path is lowercased too, since
-/// GitHub compares it case-insensitively. Every other path component keeps its
-/// case, because other hosts may treat it as significant.
+/// The scheme and host are lowercased, a default `:443` port and empty or `.`
+/// path segments are dropped, `..` segments are resolved, and a trailing `.git`
+/// is removed, since they name the same repository; for GitHub the path is
+/// lowercased too, since GitHub compares it case-insensitively. Every other
+/// path component keeps its case, because other hosts may treat it as
+/// significant.
 #[must_use]
 pub(crate) fn normalized_git(git: &str) -> String {
     let (scheme, rest) = git.split_once("://").unwrap_or(("", git));
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let host = authority.to_ascii_lowercase();
-    let path = strip_git_suffix(path);
+    let host = normalized_host(authority);
+    let path = normalized_path(path);
     let path = if host == "github.com" {
         path.to_ascii_lowercase()
     } else {
-        path.to_owned()
+        path
     };
     format!("{}://{host}/{path}", scheme.to_ascii_lowercase())
 }
 
-/// Drops one trailing `.git`, in any case, from a URL path.
-fn strip_git_suffix(path: &str) -> &str {
-    match path.len().checked_sub(4) {
-        Some(cut) if path.is_char_boundary(cut) && path[cut..].eq_ignore_ascii_case(".git") => {
-            &path[..cut]
+/// Lowercases a URL authority and drops the default HTTPS port.
+fn normalized_host(authority: &str) -> String {
+    let host = authority.to_ascii_lowercase();
+    host.strip_suffix(":443").unwrap_or(&host).to_owned()
+}
+
+/// Normalizes a URL path: no empty or `.` segments, resolved `..` segments, no
+/// trailing `.git`.
+fn normalized_path(path: &str) -> String {
+    let mut segments = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if segments.pop().is_none() {
+                    segments.push(segment);
+                }
+            }
+            segment => segments.push(segment),
         }
-        _ => path,
+    }
+    if let Some(last) = segments.last_mut() {
+        *last = strip_git_suffix(last);
+    }
+    segments.join("/")
+}
+
+/// Drops one trailing `.git`, in any case, from a URL path segment.
+fn strip_git_suffix(segment: &str) -> &str {
+    match segment.len().checked_sub(4) {
+        Some(cut)
+            if segment.is_char_boundary(cut) && segment[cut..].eq_ignore_ascii_case(".git") =>
+        {
+            &segment[..cut]
+        }
+        _ => segment,
     }
 }
 
@@ -325,8 +339,6 @@ reason = "crates.io refused the upload"
                 .abandoned_version("example-lib", &Version::parse("0.9.0").unwrap())
                 .is_some()
         );
-        assert!(config.all_abandoned("example-lib", [&Version::parse("0.9.0").unwrap()]));
-        assert!(!config.all_abandoned("example-lib", []));
     }
 
     #[test]
@@ -390,6 +402,18 @@ reason = "crates.io refused the upload"
             normalized_git("https://git.example.invalid/Owner/Repo"),
             normalized_git("https://git.example.invalid/owner/repo")
         );
+        for spelling in [
+            "https://git.example.invalid:443/example/project",
+            "https://git.example.invalid//example/project",
+            "https://git.example.invalid/example/./project",
+            "https://git.example.invalid/example/other/../project",
+        ] {
+            assert_eq!(
+                normalized_git(spelling),
+                "https://git.example.invalid/example/project",
+                "{spelling}"
+            );
+        }
         let config = CratesIoConfig::parse(
             "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = \"https://git.example.invalid/Owner/Repo\"\ntag-prefix = \"rust/v\"\n"
                 .as_bytes(),

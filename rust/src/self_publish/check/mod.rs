@@ -296,9 +296,8 @@ fn check(
     check_accepted_repositories(candidate, accepted)?;
     check_accepted_entries(candidate, accepted)?;
     check_abandoned(candidate, accepted)?;
-    check_name_permanence(candidate, accepted)?;
     check_names(config, catalog, &published)?;
-    check_entries(candidate, catalog)?;
+    check_entries(candidate, catalog, accepted)?;
     check_gained_release_tags(config, catalog, accepted)?;
     check_versions(config, catalog, &self_published, accepted)?;
     Ok(SelfPublishCheckSummary {
@@ -469,6 +468,29 @@ fn check_abandoned(
             record.version
         );
     }
+    // A version is abandoned after it was released, never in the change that
+    // adds it: otherwise a new entry could carry any name, since abandoned
+    // entries keep the name crates.io never took.
+    if let Some(accepted) = accepted {
+        for record in &candidate.config.abandoned {
+            let established = accepted.config.is_some_and(|config| {
+                config
+                    .abandoned_version(&record.name, &record.version)
+                    .is_some()
+            });
+            if established {
+                continue;
+            }
+            ensure!(
+                accepted
+                    .lock
+                    .is_some_and(|lock| { lock.entry(&record.name, &record.version).is_some() }),
+                "abandoned record {} {} is new, but names no entry of the accepted {LOCK_FILE}; a version is abandoned in a later change than the one that released it",
+                record.name,
+                record.version
+            );
+        }
+    }
     let Some(accepted_config) = accepted.and_then(|state| state.config) else {
         return Ok(());
     };
@@ -493,47 +515,13 @@ fn check_abandoned(
     Ok(())
 }
 
-fn check_name_permanence(
+fn check_entries(
     candidate: &SelfPublishState,
+    catalog: &CatalogSnapshot,
     accepted: Option<&AcceptedState<'_>>,
 ) -> Result<()> {
-    let Some(accepted_state) = accepted else {
-        return Ok(());
-    };
-    let (Some(accepted_config), Some(accepted_lock)) = (accepted_state.config, accepted_state.lock)
-    else {
-        return Ok(());
-    };
-    let mut crates = BTreeSet::new();
-    for entry in &accepted_lock.packages {
-        crates.insert(entry.name.as_str());
-    }
-    for crate_name in crates {
-        let versions = accepted_lock
-            .packages
-            .iter()
-            .filter(|entry| entry.name == crate_name)
-            .map(|entry| &entry.version);
-        if candidate.config.all_abandoned(crate_name, versions) {
-            continue;
-        }
-        let before = accepted_config.names.get(crate_name);
-        let after = candidate.config.names.get(crate_name);
-        ensure!(
-            before == after,
-            "the crates.io name of {crate_name:?} is permanent while any of its {LOCK_FILE} entries is not abandoned; its [names] entry changed from {before:?} to {after:?}"
-        );
-        ensure!(
-            accepted_config.effective_name(crate_name)
-                == candidate.config.effective_name(crate_name),
-            "the crates.io name of {crate_name:?} is permanent while any of its {LOCK_FILE} entries is not abandoned"
-        );
-    }
-    Ok(())
-}
-
-fn check_entries(candidate: &SelfPublishState, catalog: &CatalogSnapshot) -> Result<()> {
     let config = &candidate.config;
+    let accepted_lock = accepted.and_then(|state| state.lock);
     let mut identities = BTreeMap::new();
     for (identity, release) in self_published_identities(catalog, config) {
         identities.insert(
@@ -578,12 +566,16 @@ fn check_entries(candidate: &SelfPublishState, catalog: &CatalogSnapshot) -> Res
             release.cargo_version
         );
         // An abandoned entry keeps the name crates.io never took, so a crate
-        // may be renamed once every one of its entries is abandoned.
-        if config.abandoned_version(name, version).is_none() {
+        // may be renamed once every one of its entries is abandoned. Only an
+        // entry the accepted lock has was released, and check_abandoned refuses
+        // a version abandoned in the change that adds it.
+        let exempt = config.abandoned_version(name, version).is_some()
+            && accepted_lock.is_none_or(|lock| lock.entry(name, version).is_some());
+        if !exempt {
             let effective = config.effective_name(name);
             ensure!(
                 entry.crates_io_name == effective,
-                "entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}; only abandoned entries keep another name",
+                "entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}; only an abandoned entry that was released may keep another name",
                 entry.crates_io_name
             );
         }
@@ -614,8 +606,8 @@ fn check_names(
         let effective = config.effective_name(crate_name);
         name::validate(&effective)
             .with_context(|| format!("validate crates.io name of crate {crate_name:?}"))?;
-        // Every mapped name belongs to a published crate, so refusing a mirror
-        // that carries an effective name covers both directions of the rule.
+        // A mirror that carries an effective name is refused here; a mapped
+        // name of a crate that has no identity yet is checked in the loop below.
         ensure!(
             !mirrors.contains(&name::canonical(&effective)),
             "crates.io name {effective:?} of crate {crate_name:?} is the name of a crate that registry/{CATALOG_REGISTRY} mirrors"
