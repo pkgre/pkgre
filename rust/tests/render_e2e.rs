@@ -27,6 +27,8 @@ use serde_json::{Value, json};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MAIN_URL: &str = "sparse+https://rust.pkg.re/";
+/// Publication time of every synthetic crates.io source row, and the admission time it derives.
+const PUBTIME: &str = "2026-01-01T00:00:00Z";
 
 #[test]
 fn renderer_routes_mixed_sources_at_root_and_layouts_identically() {
@@ -289,6 +291,7 @@ fn add_future_registry(root: &Path) {
         "cksum": archive_hash,
         "features": {},
         "yanked": true,
+        "pubtime": PUBTIME,
     }))
     .unwrap();
     source_row.push(b'\n');
@@ -344,7 +347,7 @@ fn add_future_registry(root: &Path) {
             source_row_sha256: source_row_hash,
             index_row_sha256: index_row_hash,
             admission_sha256: None,
-            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            admitted_at: UtcTimestamp::parse(PUBTIME).unwrap(),
             source: LockedSource::CratesIo {},
         }],
     };
@@ -470,15 +473,18 @@ fn add_artifact_with_archive(
             "package": Value::Null,
         })]
     });
-    let mut record_bytes = serde_json::to_vec(&json!({
+    let mut record = json!({
         "name": name,
         "vers": "1.0.0",
         "deps": dependencies,
         "cksum": archive_hash,
         "features": {},
         "yanked": true,
-    }))
-    .unwrap();
+    });
+    if source == TestSource::Mirror {
+        record["pubtime"] = json!(PUBTIME);
+    }
+    let mut record_bytes = serde_json::to_vec(&record).unwrap();
     record_bytes.push(b'\n');
     let record_hash = sha256_bytes(&record_bytes);
     write_file(
@@ -628,7 +634,7 @@ fn write_lock(root: &Path, artifacts: &[TestArtifact]) {
             source_row_sha256: artifact.record_hash.clone(),
             index_row_sha256: routed_hash(artifact, &homes, &registry_urls),
             admission_sha256: None,
-            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            admitted_at: UtcTimestamp::parse(PUBTIME).unwrap(),
             source: match artifact.source {
                 TestSource::Publish => LockedSource::GitTag {
                     git: "https://github.com/pkgre/pkgre".to_owned(),

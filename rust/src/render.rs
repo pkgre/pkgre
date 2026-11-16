@@ -24,7 +24,7 @@ use crate::policy::{
 use crate::projection::ProjectedRepresentation;
 use crate::schema::{
     Approval, Catalog, MIRROR_DOWNLOAD, NameSource, PUBLISH_DOWNLOAD, RELEASE_SCHEMA_VERSION,
-    Source,
+    Source, is_allowed_download_migration,
 };
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1034,11 +1034,8 @@ fn verify_v4_to_v4(previous: &ReleaseV4, next: &ReleaseV4, next_site: &Path) -> 
             "registry {:?} index changed",
             before.name
         );
-        let router = router_download_template(&before.name);
         ensure!(
-            before.download == after.download
-                || ((before.download == MIRROR_DOWNLOAD || before.download == PUBLISH_DOWNLOAD)
-                    && after.download == router),
+            is_allowed_download_migration(&before.name, &before.download, &after.download),
             "registry {:?} has an unsupported download transition from {:?} to {:?}",
             before.name,
             before.download,
@@ -2385,6 +2382,34 @@ mod tests {
         write_schema_four_site(&removed_site, &main_only);
         let error = verify_monotonic(&expanded_site, &removed_site).unwrap_err();
         assert!(format!("{error:#}").contains("registry \"staging\" was removed"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_four_accepts_only_the_allowed_download_migrations() {
+        let root = temporary_test_root("v4-download-migration");
+        let routed_site = root.join("routed");
+        let native_site = root.join("native");
+        let package = schema_two_crate("serde", false);
+        let mut legacy = migrate_test_release(&package);
+        inhabit_all_schema_three_categories(&mut legacy);
+        let routed = migrate_test_release_to_schema_four(&legacy);
+        assert_eq!(
+            routed.registries[0].download,
+            router_download_template("main")
+        );
+        let mut native = routed.clone();
+        native.registries[0].download = native_download_template("main");
+        write_schema_four_site(&routed_site, &routed);
+        write_schema_four_site(&native_site, &native);
+
+        verify_monotonic(&routed_site, &native_site).unwrap();
+
+        let error = verify_monotonic(&native_site, &routed_site).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("unsupported download transition"),
+            "the router to native move is one-way: {error:#}"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1434,6 +1434,9 @@ mod tests {
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    /// Publication time of every synthetic crates.io source row.
+    const FAKE_PUBTIME: &str = "2026-01-01T00:00:00Z";
+
     #[test]
     fn bootstrap_routes_all_layers_and_second_run_is_an_exact_noop() {
         let temporary = TemporaryDirectory::new("pkgre-lock-bootstrap");
@@ -1750,6 +1753,50 @@ mod tests {
         let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
         assert!(format!("{error:#}").contains("not a regular file"));
         assert_eq!(snapshot(temporary.path()), before);
+    }
+
+    #[test]
+    fn unrelated_object_area_entries_are_refused_without_mutation() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-object-area");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let mut installed = fs::read_dir(root.join("objects"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        installed.sort();
+        assert_eq!(installed, ["crates", "rows"]);
+        assert_eq!(resolver.calls(), 1);
+
+        let stray = root.join("objects/stray");
+        fs::write(&stray, b"").unwrap();
+        let before = snapshot(temporary.path());
+        let error = Catalog::load(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/stray"));
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/stray"));
+        assert_eq!(snapshot(temporary.path()), before);
+        fs::remove_file(&stray).unwrap();
+
+        let other = root.join("objects/other");
+        fs::create_dir(&other).unwrap();
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/other"));
+        assert_eq!(snapshot(temporary.path()), before);
+        fs::remove_dir(&other).unwrap();
+
+        #[cfg(unix)]
+        {
+            let target = temporary.path().join("object-link-target");
+            fs::write(&target, b"").unwrap();
+            std::os::unix::fs::symlink(&target, root.join("objects/link")).unwrap();
+            let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+            assert!(format!("{error:#}").contains("objects/link"));
+        }
+        assert_eq!(resolver.calls(), 1);
     }
 
     #[test]
@@ -2512,6 +2559,72 @@ mod tests {
         assert_eq!(snapshot(temporary.path()), before);
     }
 
+    #[test]
+    fn strict_load_and_relock_require_the_locked_audience_and_mirror_admission_time() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-audience");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "[mirror]\nleaf-core = [\"1.0.0\"]\n",
+            "[mirror]\nmatrix-middle = [\"1.0.0\"]\n",
+            "[publish.pkgre-tool]\ngit = \"https://github.com/pkgre/pkgre\"\ntags = [\"tool/v1.0.0\"]\n",
+        );
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        // A mirror's admission time is its retained source row's pubtime and a Git tag's is the
+        // tag commit, so both survive strict loading and an unchanged reconciliation.
+        let catalog = Catalog::load(&root).unwrap();
+        ArtifactMap::load(&catalog).unwrap();
+        let before = snapshot(temporary.path());
+        assert_eq!(
+            reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
+            ReconcileSummary::default()
+        );
+        assert_eq!(snapshot(temporary.path()), before);
+
+        // A lock whose audience differs from its declaration is refused before resolution.
+        let lock_path = root.join("main.lock");
+        let canonical = fs::read_to_string(&lock_path).unwrap();
+        fs::write(
+            &lock_path,
+            canonical.replace("audience = \"public\"", "audience = \"lan-public\""),
+        )
+        .unwrap();
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("serving audience"),
+            "a changed locked audience must be refused: {error:#}"
+        );
+        assert_eq!(snapshot(temporary.path()), before);
+        assert!(
+            format!("{:#}", Catalog::load(&root).unwrap_err()).contains("serving audience"),
+            "strict loading must refuse a changed locked audience"
+        );
+
+        // A mirror whose locked admission time differs from its retained source row is refused.
+        fs::write(
+            &lock_path,
+            canonical.replace(
+                "admitted-at = \"2026-01-01T00:00:00Z\"",
+                "admitted-at = \"2026-01-01T00:00:01Z\"",
+            ),
+        )
+        .unwrap();
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("locked admission time"),
+            "a changed mirror admission time must be refused: {error:#}"
+        );
+        assert_eq!(snapshot(temporary.path()), before);
+        assert!(
+            format!("{:#}", Catalog::load(&root).unwrap_err()).contains("locked admission time"),
+            "strict loading must refuse a changed mirror admission time"
+        );
+    }
+
     #[derive(Default)]
     struct FakeResolver {
         calls: Cell<usize>,
@@ -2620,22 +2733,25 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let mut source_row_bytes = serde_json::to_vec(&json!({
+        let mut record = json!({
             "name": name,
             "vers": version.to_string(),
             "deps": dependencies,
             "cksum": checksum,
             "features": {},
             "yanked": true,
-        }))
-        .unwrap();
+        });
+        if matches!(&source, LockedSource::CratesIo {}) {
+            record["pubtime"] = json!(FAKE_PUBTIME);
+        }
+        let mut source_row_bytes = serde_json::to_vec(&record).unwrap();
         source_row_bytes.push(b'\n');
         ResolvedPackage {
             name: name.to_owned(),
             version,
             archive_bytes,
             source_row_bytes,
-            published_at: Some(UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap()),
+            published_at: Some(UtcTimestamp::parse(FAKE_PUBTIME).unwrap()),
             source,
         }
     }
