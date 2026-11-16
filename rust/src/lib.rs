@@ -9,6 +9,7 @@ pub mod download;
 pub mod http_response;
 pub mod import;
 pub mod index;
+mod isolation;
 pub mod lock;
 pub mod migrate;
 pub mod package;
