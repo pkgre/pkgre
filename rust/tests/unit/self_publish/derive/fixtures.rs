@@ -456,6 +456,17 @@ pub(super) fn catalog(
         ("other-mirror", "0.2.0"),
     ];
     write_registry_file(&registry.join("main.toml"), variant, &mirrors);
+    fs::create_dir_all(registry.join("objects/rows")).expect("create the row objects");
+    for (name, version) in &mirrors {
+        let row = mirror_row(name, version, &source.checksum(name, version));
+        fs::write(
+            registry
+                .join("objects/rows")
+                .join(format!("{}.json", sha256_bytes(&row))),
+            row,
+        )
+        .expect("write the mirror's source row");
+    }
     let lock = registry_lock(release, variant, &mirrors, &curated, source);
     fs::write(
         registry.join("main.lock"),
@@ -586,7 +597,11 @@ fn registry_lock(
             version: Version::parse(version).expect("parse a fixture version"),
             state: PackageState::Active,
             crate_sha256: source.checksum(name, version),
-            source_row_sha256: checksum("row", name, version),
+            source_row_sha256: sha256_bytes(&mirror_row(
+                name,
+                version,
+                &source.checksum(name, version),
+            )),
             index_row_sha256: checksum("index", name, version),
             admission_sha256: None,
             admitted_at: admitted_at(),
@@ -713,9 +728,29 @@ fn checksum(kind: &str, name: &str, version: &str) -> String {
     sha256_bytes(format!("{kind} {name} {version}").as_bytes())
 }
 
+/// The deterministic publication and admission time of the fixture.
+const ADMITTED_AT: &str = "2026-01-02T03:04:05Z";
+
 /// Returns the deterministic admission timestamp of the fixture.
 fn admitted_at() -> UtcTimestamp {
-    UtcTimestamp::parse("2026-01-02T03:04:05Z").expect("parse the fixture timestamp")
+    UtcTimestamp::parse(ADMITTED_AT).expect("parse the fixture timestamp")
+}
+
+/// Returns the retained crates.io source row of one mirror, whose `pubtime` is the
+/// admission time that loading re-derives.
+fn mirror_row(name: &str, version: &str, checksum: &str) -> Vec<u8> {
+    let mut row = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "vers": version,
+        "deps": [],
+        "cksum": checksum,
+        "features": {},
+        "yanked": false,
+        "pubtime": ADMITTED_AT,
+    }))
+    .expect("serialize a fixture row");
+    row.push(b'\n');
+    row
 }
 
 /// One file of a repacked archive.
