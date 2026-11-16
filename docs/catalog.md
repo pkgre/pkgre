@@ -33,7 +33,7 @@ registry/
     └── rows/<source-row-sha256>.json
 ```
 
-A future registry adds `<alias>.toml`, `<alias>.lock`, and optional `categories/<alias>/...`; it does not rename `main` files. `registry/` is exclusive managed state. Orphan paths, nested admission entries, symlinks, special files, noncanonical content, missing/extra pairs, locks without declarations, and unexpected objects fail before network resolution. Keep proposals, transient manifests, inspections, logs, and rendered sites outside this directory.
+A future registry adds `<alias>.toml`, `<alias>.lock`, and optional `categories/<alias>/...`; it does not rename `main` files. `registry/` is exclusive managed state. Orphan paths, nested admission entries, symlinks, special files, noncanonical content, missing/extra pairs, locks without declarations, and unexpected objects fail before network resolution; `objects/` holds only the `crates/` and `rows/` directories, each a real directory, and any other entry there is refused by path. Keep proposals, transient manifests, inspections, logs, and rendered sites outside this directory.
 
 ## Human declarations
 
@@ -100,9 +100,9 @@ example = ["1.0.0"]
 Declaration rules:
 
 - Filename stem = `[registry].name`; `main` index is root; every other alias index is `sparse+https://rust.pkg.re/r/<alias>/`; Cargo version is `1.95.0` across registries.
-- `[registry].audience` is mandatory:`public` for a publicly reachable registry, `lan-public` for a LAN-reachable one asserted by serving topology. A generated lock copies it when the lock is created or migrated, but `check` never compares it and `lock` does not refresh it; only `check-transition` compares the accepted + candidate declarations, and `release.json` does not carry it.
+- `[registry].audience` is mandatory:`public` for a publicly reachable registry, `lan-public` for a LAN-reachable one asserted by serving topology. A generated lock copies it when the lock is created or migrated and is permanent: loading refuses a lock whose recorded `audience` differs from the declaration, so `check` and `lock` fail before a merge; `check-transition` still compares the accepted + candidate declarations, and `release.json` does not carry it.
 - `[registry].delivery` is optional:`redirect` (the default when absent) points each crates.io archive at its exact checksum-bound router URL; `retained` stores the registry's crates.io archives as `objects/crates/<sha256>.crate` and renders them at `crates/<sha256>.crate`. Git-tag archives are always retained.
-- Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; package/category/version additions are allowed, but the serving gate `check-transition` rejects a candidate that adds or removes a registry.
+- Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; package/category/version additions are allowed, but the serving gate `check-transition` rejects a candidate that adds or removes a registry, changes or removes an accepted category or its `may-depend-on` rule, moves or removes an accepted package home, or adds a crates.io identity without a binding to an admission batch that is new in the candidate.
 - Category identity = `<registry>/<local>`; components are canonical lowercase ASCII aliases/kebab-case, ≤64 bytes each, start/end alphanumeric, and the category registry must exist.
 - Inline category = `may-depend-on` + optional `mirror`/`publish`; external reference = only `file`; external file = `schema`, `may-depend-on`, optional `mirror`/`publish`.
 - Every `may-depend-on` target must be an existing category; same registry grants no implicit permission; every category must reserve ≥1 package name.
@@ -178,9 +178,9 @@ cargo-version = "1.95.0"
 | `source-row-sha256` | Exact unrouted crates.io row or deterministic Git-package row |
 | `index-row-sha256` | Canonical routed row with `yanked = false`; removal changes only rendered yank state |
 | `admission-sha256` | SHA-256 of complete generated admission `.lock`; all candidates in a batch share it; forbidden on Git identities |
-| `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for an admitted mirror, the peeled commit time for a newly published Git tag; a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified against the commit |
+| `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for an admitted mirror, the peeled commit time for a newly published Git tag; a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified against the commit. Loading re-derives a mirror value from its retained source row and refuses a mismatch |
 
-Never hand-edit locks. Load validates canonical form, registry/category/source anchors, provenance, object hashes, row identity/checksum, routed-row hash, and exact admission↔package coverage; it never re-derives `admitted-at`, and only `check-transition` rejects a change of it. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
+Never hand-edit locks. Load validates canonical form, registry/category/source anchors, the recorded `audience`, provenance, object hashes, row identity/checksum, and exact admission↔package coverage, and re-derives every mirror `admitted-at` from its retained source row `pubtime`; a Git-tag `admitted-at` is the tag commit time, which no catalog file records, so only `check-transition` rejects a change of it. `check`, `lock`, `render`, and the serving origin also re-derive every routed-row hash and dependency edge, so a stale `index-row-sha256` fails all of them. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap. The serving gate `check-transition` keeps every accepted binding exactly as it was, present or absent, and requires every crates.io identity new since the accepted catalog to be bound to an admission batch that is new in the candidate; Git-tag identities carry no admission evidence.
 
 ## Generated download catalog
 
@@ -247,7 +247,7 @@ Evidence is optional, canonical, public, and exact-base checked. Protected revie
 
 `update-apply` creates `admissions/<batch>.lock` beside the exact human manifest. It contains adjacent-manifest hash, admission UTC time, indexer version, catalog fingerprint, recorded positive policy thresholds, exact candidates, histories/rows/archives/hashes, bounded analyses/deltas, dependency/API/source evidence, decisions/reasons, and copied requests/evidence.
 
-The canonical lock bytes are hashed; every resulting package receives the hash in `admission-sha256`. Validation indexes candidates/packages, rejects duplicate/orphan coverage, and requires each candidate route/version/archive/source-row fact to equal its package lock. Pairs are immutable. Identical reapply validates + no-ops; filename reuse with different content, deletion/tampering, orphaning, or package-binding change fails.
+The canonical lock bytes are hashed; every resulting package receives the hash in `admission-sha256`. Validation indexes candidates/packages, rejects duplicate/orphan coverage, and requires each candidate route/version/archive/source-row fact to equal its package lock. Pairs are immutable. Identical reapply validates + no-ops; filename reuse with different content, deletion/tampering, orphaning, or package-binding change fails. The serving gate `check-transition` additionally requires every accepted manifest/lock pair to stay byte-identical in the candidate, so a published batch cannot be rewritten, renamed, or dropped.
 
 Mirror workflow:
 
@@ -255,7 +255,7 @@ Mirror workflow:
 2. Reviewer may remove requests, run `update-inspect`, or add evidence; generated unedited manifest is valid.
 3. `update-apply` validates the human file, re-fetches exact current sparse/API/archive/source facts, rejects young/yanked/blocked/route-invalid/evidence-invalid identities, and computes one batch lock.
 4. Guarded whole-catalog transaction checks the starting fingerprint, appends requested versions, installs the pair, reconciles rows/locks/downloads, strictly reloads + test-renders staging, then atomically installs it.
-5. A second `lock` must be byte-for-byte no-op; `check`, `render`, `verify`, and `verify-monotonic` validate publication.
+5. A second `lock` must be byte-for-byte no-op; `check`, `render`, `verify`, and `verify-monotonic` validate publication, and `check` additionally requires the catalog to fit the production serving projection limits.
 
 Planning facts are not authority:apply always recomputes using its own current UTC time, including the 30-day floor. Route/catalog drift is detected during apply.
 
@@ -323,7 +323,7 @@ site/
 └── crates/<retained-archive-sha256>.crate
 ```
 
-`release.json` schema 4 records registry/category topology, registry-scoped permanent name homes, and package identities; neither registry `audience` nor `delivery` is part of it. `verify-monotonic` requires every prior registry/category/home/immutable identity to remain exact, permits new registry/category/home/package identities + `active→removed` + source-specific→router transition, authenticates every release package's rendered index row and every active package's route, requires a rendered `crates/<sha256>.crate` file for an active crates.io package with a retained route to exist as a file (presence only, no hash; Git-tag routes get no body check), and rejects reactivation. `verify` re-renders the site and compares every rendered byte.
+`release.json` schema 4 records registry/category topology, registry-scoped permanent name homes, and package identities; neither registry `audience` nor `delivery` is part of it. `verify-monotonic` requires every prior registry/category/home/immutable identity to remain exact, permits new registry/category/home/package identities + `active→removed` + exactly the one-way registry download migrations `check`, `lock` and `check-transition` allow (publish→mirror, source-specific→router, router→same-host native), authenticates every release package's rendered index row and every active package's route, requires a rendered `crates/<sha256>.crate` file for an active crates.io package with a retained route to exist as a file (presence only, no hash; Git-tag routes get no body check), and rejects reactivation. `verify` re-renders the site and compares every rendered byte.
 
 ## Exact migrations
 
@@ -351,7 +351,7 @@ $ pkgre-rust migrate-v4-to-v5 registry-v4 registry-v5 \
 # repeat --git-tag-time for every Git tag of the source
 ```
 
-This migration is complete for the production `main` registry, so this procedure is historical. It parses every generated schema-4 lock strictly (exact fields, `schema = 4`) and the schema-1 download catalog strictly, but rewrites each root `<registry>.toml` + external category file to `schema = 5` through TOML editing without checking their old schema or canonical form; it asserts `audience = "public"` in every registry and rebuilds every lock with `audience` in `[registry]` + one `admitted-at` per package, taken from the crates.io row `pubtime` for a mirror and from a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` argument for each Git tag (the operator's value, not verified against the tag). It replaces the download catalog with the schema-2 `redirect` delivery model (no `delivery` declaration is added), then strict-loads, policy-checks, artifact-verifies, and test-renders the output. It writes only to an absent destination and leaves a partial destination behind on failure; delete it before a rerun. The source is never modified.
+This migration is complete for the production `main` registry, so this procedure is historical. It parses every generated schema-4 lock strictly (exact fields, `schema = 4`), the schema-1 download catalog strictly, and every root `<registry>.toml` + external category file, refusing one whose `schema` is not 4 by naming the file; it rewrites those files to `schema = 5` through TOML editing; it asserts `audience = "public"` in every registry and rebuilds every lock with `audience` in `[registry]` + one `admitted-at` per package, taken from the crates.io row `pubtime` for a mirror and from a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` argument for each Git tag (the operator's value, not verified against the tag). It replaces the download catalog with the schema-2 `redirect` delivery model (no `delivery` declaration is added), then strict-loads, policy-checks, artifact-verifies, and test-renders the output. It writes only to an absent destination: the whole migration runs in a private staging directory beside the destination, which is renamed into place only after those gates pass, so a failed run removes the staging directory and leaves no destination. The source is never modified.
 
 Schema-5 retained delivery (completed for production):
 

@@ -11,7 +11,7 @@ use pkgre_rust::schema::Catalog;
 use tracing::{error, info};
 
 const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
-  pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time registry/name@tag=<timestamp>]...
+  pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time=<registry>/<name>@<tag>=<timestamp>]...
   pkgre-rust migrate-retained-delivery <catalog-root>
   pkgre-rust archive-inventory <catalog> <output.json>
   pkgre-rust archive-import <archive-store> <catalog>
@@ -77,10 +77,12 @@ fn lock_catalog(arguments: &[OsString]) -> Result<()> {
 
 fn check(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 1)?;
-    let catalog = load_catalog(&arguments[0])?;
-    validate_catalog(&catalog)?;
-    ArtifactMap::load(&catalog)?;
-    info!(packages = catalog.approvals.len(), "catalog is valid");
+    let summary = pkgre_rust::check::check(Path::new(&arguments[0]))?;
+    info!(
+        packages = summary.usage.approvals,
+        margins = %summary.margins(),
+        "catalog is valid"
+    );
     Ok(())
 }
 
@@ -339,9 +341,9 @@ fn migrate_v4_to_v5(arguments: &[OsString]) -> Result<()> {
     for argument in arguments {
         let value = argument.to_str().context("argument is not valid UTF-8")?;
         if let Some(entry) = value.strip_prefix("--git-tag-time=") {
-            let (key, timestamp) = entry
-                .split_once('=')
-                .context("--git-tag-time must use registry/name@tag=<canonical-timestamp> form")?;
+            let (key, timestamp) = entry.split_once('=').context(
+                "--git-tag-time value must use <registry>/<name>@<tag>=<canonical-timestamp> form",
+            )?;
             let canonical =
                 pkgre_rust::migrate::canonicalize_rfc3339(timestamp).with_context(|| {
                     format!("--git-tag-time timestamp {timestamp:?} is not RFC 3339")

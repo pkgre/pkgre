@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use axum::Router;
 use axum::body::Body;
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::header::{ALLOW, CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, Uri};
@@ -254,13 +255,27 @@ fn framework_response(method: &Method, application: &ApplicationResponse) -> Res
         Body::empty()
     } else {
         application
-            .body()
-            .map(|body| Body::from(body.to_vec()))
+            .shared_body()
+            .map(|body| Body::from(shared_bytes(Arc::clone(body))))
             .unwrap_or_default()
     };
     builder
         .body(body)
         .unwrap_or_else(|_| empty_response(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+/// Response bytes that an axum body reads from the snapshot without copying them.
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+/// Wraps already shared response bytes as a body, keeping one allocation per snapshot route.
+fn shared_bytes(body: Arc<Vec<u8>>) -> Bytes {
+    Bytes::from_owner(SharedBytes(body))
 }
 
 fn method_not_allowed(allow: &HeaderValue) -> Response {
@@ -418,6 +433,14 @@ mod tests {
         (status, headers, body)
     }
 
+    /// Sends one request and returns the body the framework produced, without copying it.
+    async fn send_shared(app: &Router, request: Request<Body>) -> (StatusCode, Bytes) {
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        (status, body)
+    }
+
     #[tokio::test]
     async fn index_route_serves_snapshot_pin_metadata() {
         let snapshot = Arc::new(Snapshot {
@@ -569,6 +592,36 @@ mod tests {
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(headers.get(ALLOW).unwrap(), "GET, HEAD");
         assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_bodies_are_served_from_one_shared_allocation() {
+        let public = public_application(shared_with(Some(fixture_snapshot())).await);
+        let path = fixture_snapshot()
+            .routes
+            .keys()
+            .find(|path| path.starts_with("/crates/"))
+            .expect("fixture retains archive routes")
+            .clone();
+        let expected = path
+            .rsplit('/')
+            .next()
+            .expect("archive route ends with a file name")
+            .strip_suffix(".crate")
+            .expect("archive route names a crate file")
+            .to_owned();
+
+        let (first_status, first) = send_shared(&public, request(Method::GET, &path)).await;
+        let (second_status, second) = send_shared(&public, request(Method::GET, &path)).await;
+        assert_eq!(first_status, StatusCode::OK);
+        assert_eq!(second_status, StatusCode::OK);
+        assert_eq!(sha256_bytes(&first), expected);
+        assert_eq!(first.as_ref(), second.as_ref());
+        assert_eq!(
+            first.as_ptr(),
+            second.as_ptr(),
+            "two responses must read one retained archive allocation"
+        );
     }
 
     #[tokio::test]

@@ -196,6 +196,192 @@ fn retained_delivery_migration_is_in_place_idempotent_and_strictly_gated() {
     );
 }
 
+#[test]
+fn missing_git_tag_time_error_shows_the_accepted_form() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-migrate-tag-time");
+    let extraction = temporary.path().join("extracted");
+    extract_fixture(FIXTURE, &extraction);
+    let input = extraction.join("registry");
+    let output = temporary.path().join("migrated");
+
+    let mut git_times = git_tag_times();
+    git_times.pop();
+    let error = migrate_v4_to_v5(&input, &output, &git_times).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("missing --git-tag-time mapping for main/pkgre-indexer"),
+        "{message}"
+    );
+    assert!(
+        message.contains("--git-tag-time=main/pkgre-indexer@indexer/v0.3.0=<canonical-timestamp>"),
+        "the error must name the accepted argument form: {message}"
+    );
+}
+
+#[test]
+fn failed_migration_leaves_no_destination() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-migrate-failure");
+    let extraction = temporary.path().join("extracted");
+    extract_fixture(FIXTURE, &extraction);
+    let input = extraction.join("registry");
+    let output = temporary.path().join("migrated");
+
+    // The missing last Git-tag mapping fails the migration after its staged copy has
+    // already been rewritten, which is exactly the case that used to leave a partial tree.
+    let mut git_times = git_tag_times();
+    git_times.pop();
+    migrate_v4_to_v5(&input, &output, &git_times).unwrap_err();
+    assert!(
+        !output.exists(),
+        "a failed migration must leave no destination at {}",
+        output.display()
+    );
+    assert_eq!(
+        entry_names(temporary.path()),
+        vec!["extracted".to_owned()],
+        "a failed migration must leave no staging directory beside the destination"
+    );
+}
+
+#[test]
+fn migration_refuses_a_registry_or_category_file_that_is_not_schema_four() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-migrate-schema");
+    let extraction = temporary.path().join("extracted");
+    extract_fixture(FIXTURE, &extraction);
+    let input = extraction.join("registry");
+    let git_times = git_tag_times();
+    let registry = input.join("main.toml");
+    let category = input.join("categories/main/general.toml");
+    let registry_bytes = fs::read(&registry).unwrap();
+    let category_bytes = fs::read(&category).unwrap();
+
+    fs::write(&category, replace_schema(&category_bytes, 3)).unwrap();
+    let output = temporary.path().join("from-old-category");
+    let error = migrate_v4_to_v5(&input, &output, &git_times).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("category file")
+            && message.contains("general.toml")
+            && message.contains("must use schema 4, found 3"),
+        "{message}"
+    );
+    assert!(
+        !output.exists(),
+        "a refused input must leave no destination"
+    );
+
+    fs::write(&category, &category_bytes).unwrap();
+    fs::write(&registry, replace_schema(&registry_bytes, 5)).unwrap();
+    let output = temporary.path().join("from-new-registry");
+    let error = migrate_v4_to_v5(&input, &output, &git_times).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("human registry")
+            && message.contains("main.toml")
+            && message.contains("must use schema 4, found 5"),
+        "{message}"
+    );
+    assert!(
+        !output.exists(),
+        "a refused input must leave no destination"
+    );
+
+    fs::write(&registry, &registry_bytes).unwrap();
+    let output = temporary.path().join("restored");
+    migrate_v4_to_v5(&input, &output, &git_times).unwrap();
+    assert!(output.join("main.toml").is_file());
+}
+
+#[test]
+fn migrate_cli_shows_the_accepted_git_tag_time_form() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-migrate-cli");
+    let input = temporary.path().join("input");
+    let output = temporary.path().join("output");
+    fs::create_dir(&input).unwrap();
+    let accepted = "--git-tag-time=<registry>/<name>@<tag>=<timestamp>";
+
+    let usage = run_cli(&["migrate-v4-to-v5"]);
+    assert!(
+        usage.contains(accepted),
+        "the usage text must show the accepted form: {usage}"
+    );
+    assert!(
+        !usage.contains("--git-tag-time <registry>"),
+        "the usage text must not show the separate form: {usage}"
+    );
+
+    let separate = run_cli(&[
+        "migrate-v4-to-v5",
+        path_text(&input),
+        path_text(&output),
+        "--git-tag-time",
+        "main/example@v1.0.0=2026-08-22T17:57:02Z",
+    ]);
+    assert!(
+        separate.contains("unknown argument"),
+        "the separate form must be rejected: {separate}"
+    );
+    assert!(
+        separate.contains(accepted),
+        "the rejection must repeat the accepted form: {separate}"
+    );
+
+    let malformed = run_cli(&[
+        "migrate-v4-to-v5",
+        path_text(&input),
+        path_text(&output),
+        "--git-tag-time=main/example",
+    ]);
+    assert!(
+        malformed.contains("<registry>/<name>@<tag>=<canonical-timestamp>"),
+        "the value error must show the accepted form: {malformed}"
+    );
+    assert!(
+        !output.exists(),
+        "a rejected argument must leave no destination"
+    );
+}
+
+/// Runs `pkgre-rust` with `arguments` and returns its combined output.
+fn run_cli(arguments: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_pkgre-rust"))
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "the command must fail: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn path_text(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+/// Returns one directory's entry names in sorted order.
+fn entry_names(directory: &Path) -> Vec<String> {
+    let mut names = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+/// Replaces the leading `schema = 4` declaration of one fixture file.
+fn replace_schema(bytes: &[u8], schema: u32) -> Vec<u8> {
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    let replaced = text.replacen("schema = 4", &format!("schema = {schema}"), 1);
+    assert_ne!(text, replaced, "the fixture must declare schema 4");
+    replaced.into_bytes()
+}
+
 fn extract_fixture(fixture: &[u8], destination: &Path) {
     let temporary = TemporaryDirectory::new("pkgre-rust-migrate-extract");
     let archive = temporary.path().join("catalog.tar.gz");

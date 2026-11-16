@@ -177,7 +177,8 @@ fn inspect_with_limits(
         "crate archive contains no regular files"
     );
     for (path, manifest) in contents.manifests {
-        mark_manifest_surface(&path, &manifest, &mut contents.build_surface)?;
+        mark_manifest_surface(&path, &manifest, &mut contents.build_surface)
+            .with_context(|| format!("inspect crate archive {expected_root}"))?;
     }
     let analysis = ArchiveAnalysis {
         compressed_bytes,
@@ -502,12 +503,27 @@ fn mark_manifest_surface(
             );
         }
     }
-    if let Some(library) = manifest.get("lib").and_then(toml::Value::as_table)
-        && library
-            .get("proc-macro")
-            .is_some_and(|value| value.as_bool() == Some(true))
-    {
-        surface.insert(format!("manifest:{path}:proc-macro"), sha256_bytes(b"true"));
+    if let Some(library) = manifest.get("lib").and_then(toml::Value::as_table) {
+        // Cargo accepts the underscore spelling `proc_macro` before edition 2024 and keeps it in
+        // the packaged manifest, so both spellings mark build-time code.
+        let mut proc_macro = false;
+        let mut declared = false;
+        for key in ["proc-macro", "proc_macro"] {
+            let Some(value) = library.get(key) else {
+                continue;
+            };
+            ensure!(
+                !declared,
+                "archived manifest {path:?} declares both lib.proc-macro and lib.proc_macro"
+            );
+            declared = true;
+            proc_macro = value
+                .as_bool()
+                .with_context(|| format!("archived manifest {path:?} has malformed lib.{key}"))?;
+        }
+        if proc_macro {
+            surface.insert(format!("manifest:{path}:proc-macro"), sha256_bytes(b"true"));
+        }
     }
     Ok(())
 }
@@ -665,6 +681,52 @@ mod tests {
                 .keys()
                 .any(|key| key.contains("file:tool"))
         );
+    }
+
+    #[test]
+    fn underscore_proc_macro_spelling_marks_build_time_code() {
+        let archive = archive(&[Entry::file(
+            "demo-1.2.3/Cargo.toml",
+            b"[package]\nname='demo'\nversion='1.2.3'\n[lib]\nproc_macro=true\n",
+            0o644,
+        )]);
+        let result =
+            inspect_crate_archive("demo", &Version::parse("1.2.3").unwrap(), &archive).unwrap();
+        assert!(
+            result
+                .build_surface
+                .keys()
+                .any(|key| key.contains("manifest:Cargo.toml:proc-macro"))
+        );
+    }
+
+    #[test]
+    fn malformed_or_repeated_proc_macro_keys_name_the_archive_and_key() {
+        for (manifest, key) in [
+            (
+                "[package]\nname='demo'\nversion='1.0.0'\n[lib]\nproc_macro=\"true\"\n",
+                "lib.proc_macro",
+            ),
+            (
+                "[package]\nname='demo'\nversion='1.0.0'\n[lib]\nproc-macro=1\n",
+                "lib.proc-macro",
+            ),
+            (
+                "[package]\nname='demo'\nversion='1.0.0'\n[lib]\nproc-macro=true\nproc_macro=true\n",
+                "both lib.proc-macro and lib.proc_macro",
+            ),
+        ] {
+            let archive = archive(&[Entry::file(
+                "demo-1.0.0/Cargo.toml",
+                manifest.as_bytes(),
+                0o644,
+            )]);
+            let error = inspect_crate_archive("demo", &Version::parse("1.0.0").unwrap(), &archive)
+                .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("demo-1.0.0"), "{message}");
+            assert!(message.contains(key), "{message}");
+        }
     }
 
     #[test]

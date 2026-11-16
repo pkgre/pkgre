@@ -290,6 +290,9 @@ pub struct LockedPackage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_sha256: Option<String>,
     /// Deterministic origin publication time of this exact identity.
+    ///
+    /// A crates.io value is the retained source row's `pubtime` and is re-derived on every load;
+    /// a Git-tag value is the tag commit time and is only compared across transitions.
     pub admitted_at: UtcTimestamp,
     /// Immutable origin evidence.
     pub source: LockedSource,
@@ -667,6 +670,9 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
                 "catalog managed path is not a real directory: {}",
                 path.display()
             );
+            if path.file_name() == Some(OsStr::new("objects")) {
+                validate_object_area(path)?;
+            }
             continue;
         }
         match path.extension().and_then(|value| value.to_str()) {
@@ -701,6 +707,32 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
         }
     }
     crate::update::validate_admission_tree_structure(root)?;
+    Ok(())
+}
+
+/// Requires the object area to hold nothing but the exact `crates/` and `rows/` directories.
+fn validate_object_area(object_root: &Path) -> Result<()> {
+    let mut entries = fs::read_dir(object_root)
+        .with_context(|| format!("read object area {}", object_root.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("read entries below {}", object_root.display()))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        ensure!(
+            matches!(entry.file_name().to_str(), Some("crates" | "rows")),
+            "unexpected entry in the object area {}: {}; only the crates/ and rows/ directories are allowed",
+            object_root.display(),
+            path.display()
+        );
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect object area entry {}", path.display()))?;
+        ensure!(
+            metadata.file_type().is_dir(),
+            "object area entry is not a real directory: {}",
+            path.display()
+        );
+    }
     Ok(())
 }
 
@@ -866,7 +898,9 @@ pub fn empty_lock(file: &RegistryFile) -> RegistryLock {
 ///
 /// # Errors
 ///
-/// Returns an error for a missing lock invariant, changed registry/category/name anchor, duplicate identity, or attempted tombstone reactivation.
+/// Returns an error for a missing lock invariant, changed registry/category/name anchor, changed
+/// registry audience, drifted crates.io admission time, duplicate identity, or attempted
+/// tombstone reactivation.
 pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
     let Some(lock) = &input.lock else {
         return Ok(());
@@ -875,6 +909,7 @@ pub fn validate_input_for_update(input: &RegistryInput) -> Result<()> {
     let desired_names = desired_names(&input.file)?;
     let locked_names = validate_locked_names(input, lock, &desired_names)?;
     validate_locked_packages(input, lock, &locked_names)?;
+    validate_locked_admission_times(input, lock)?;
     validate_desired_mirrors(input, lock)?;
     validate_desired_tags(input, lock)
 }
@@ -900,6 +935,14 @@ fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Res
         input.lock_path.display(),
         input.path.display()
     );
+    ensure!(
+        lock.registry.audience == input.file.registry.audience,
+        "serving audience in {} is {:?}, but {} declares {:?}; a locked audience is permanent",
+        input.lock_path.display(),
+        lock.registry.audience.as_str(),
+        input.path.display(),
+        input.file.registry.audience.as_str()
+    );
     let before = lock.registry.download.as_str();
     let after = input.file.registry.download.as_str();
     ensure!(
@@ -907,6 +950,59 @@ fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Res
         "registry download in {} differs from {}; only a retained historical {PUBLISH_DOWNLOAD:?}→{MIRROR_DOWNLOAD:?} migration, a one-way source-specific→router migration, or a one-way router→same-host native migration is allowed",
         input.lock_path.display(),
         input.path.display()
+    );
+    Ok(())
+}
+
+/// Re-derives every re-derivable locked admission time from the catalog's own objects.
+///
+/// A crates.io identity's `admitted-at` is the publication time of the source row bound by its
+/// `source-row-sha256`, so loading can refuse a drifted value without the network. The row is read
+/// only as a regular file, never through a link or another special file. A Git tag's `admitted-at`
+/// is the tag commit time, which no catalog file records, so it stays as locked.
+fn validate_locked_admission_times(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
+    for package in &lock.packages {
+        if matches!(package.source, LockedSource::CratesIo {}) {
+            validate_locked_admission_time(input, package)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_locked_admission_time(input: &RegistryInput, package: &LockedPackage) -> Result<()> {
+    crate::policy::validate_sha256(&package.source_row_sha256).with_context(|| {
+        format!(
+            "invalid source-row hash for {} {}",
+            package.name, package.version
+        )
+    })?;
+    let root = input.path.parent().with_context(|| {
+        format!(
+            "registry file {} has no parent directory",
+            input.path.display()
+        )
+    })?;
+    let row_path = root
+        .join("objects/rows")
+        .join(format!("{}.json", package.source_row_sha256));
+    let bytes = read_regular(&row_path)
+        .with_context(|| format!("read retained source row {}", row_path.display()))?;
+    let record = crate::index::IndexRecord::parse(&bytes)
+        .with_context(|| format!("parse retained source row {}", row_path.display()))?;
+    let derived = crate::migrate::canonicalize_rfc3339(
+        record
+            .pubtime()
+            .with_context(|| format!("read publication time from {}", row_path.display()))?,
+    )
+    .with_context(|| format!("canonicalize publication time in {}", row_path.display()))?;
+    ensure!(
+        package.admitted_at == derived,
+        "locked admission time {} for {} {} in {} differs from {derived} recorded in the retained source row {}",
+        package.admitted_at,
+        package.name,
+        package.version,
+        input.lock_path.display(),
+        row_path.display()
     );
     Ok(())
 }
@@ -1592,6 +1688,49 @@ reserved = []
     }
 
     #[test]
+    fn object_area_admits_only_the_crates_and_rows_directories() {
+        let root = temporary_root("object-area");
+        fs::write(
+            root.join("main.toml"),
+            registry_text(
+                "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n",
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("objects/crates")).unwrap();
+        fs::create_dir_all(root.join("objects/rows")).unwrap();
+        load_registry_inputs(&root).unwrap();
+
+        fs::write(root.join("objects/stray"), b"").unwrap();
+        let error = load_registry_inputs(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/stray"));
+        fs::remove_file(root.join("objects/stray")).unwrap();
+
+        fs::create_dir(root.join("objects/other")).unwrap();
+        let error = load_registry_inputs(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/other"));
+        fs::remove_dir(root.join("objects/other")).unwrap();
+
+        #[cfg(unix)]
+        {
+            let target = root.with_extension("object-link-target");
+            fs::write(&target, b"").unwrap();
+            std::os::unix::fs::symlink(&target, root.join("objects/link")).unwrap();
+            let error = load_registry_inputs(&root).unwrap_err();
+            assert!(format!("{error:#}").contains("objects/link"));
+            fs::remove_file(root.join("objects/link")).unwrap();
+            fs::remove_file(&target).unwrap();
+
+            fs::remove_dir(root.join("objects/rows")).unwrap();
+            std::os::unix::fs::symlink(root.join("objects/crates"), root.join("objects/rows"))
+                .unwrap();
+            let error = load_registry_inputs(&root).unwrap_err();
+            assert!(format!("{error:#}").contains("not a real directory"));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn lock_serialization_is_sorted_and_stable() {
         let mut lock = RegistryLock {
             schema: SCHEMA_VERSION,
@@ -1646,8 +1785,12 @@ reserved = []
     }
 
     fn registry_text(categories: &str) -> String {
+        registry_text_with_audience("public", categories)
+    }
+
+    fn registry_text_with_audience(audience: &str, categories: &str) -> String {
         format!(
-            "schema = 5\n\n[registry]\nname = \"main\"\nindex = \"sparse+https://rust.pkg.re/\"\ndownload = \"{MIRROR_DOWNLOAD}\"\naudience = \"public\"\ncargo-version = \"1.95.0\"\n\n{categories}"
+            "schema = 5\n\n[registry]\nname = \"main\"\nindex = \"sparse+https://rust.pkg.re/\"\ndownload = \"{MIRROR_DOWNLOAD}\"\naudience = {audience:?}\ncargo-version = \"1.95.0\"\n\n{categories}"
         )
     }
 
@@ -1660,6 +1803,271 @@ reserved = []
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    /// Writes one human registry, its canonical lock, and every given source row object.
+    fn write_catalog(root: &Path, human: &str, lock: &RegistryLock, rows: &[Vec<u8>]) {
+        fs::write(root.join("main.toml"), human).unwrap();
+        fs::write(root.join("main.lock"), serialize_lock(lock).unwrap()).unwrap();
+        fs::create_dir_all(root.join("objects/rows")).unwrap();
+        for row in rows {
+            let sha256 = crate::artifact::sha256_bytes(row);
+            fs::write(
+                root.join("objects/rows").join(format!("{sha256}.json")),
+                row,
+            )
+            .unwrap();
+        }
+    }
+
+    fn mirror_row(name: &str, version: &str, pubtime: &str) -> Vec<u8> {
+        let mut row = serde_json::to_vec(&serde_json::json!({
+            "name": name,
+            "vers": version,
+            "deps": [],
+            "cksum": "cc".repeat(32),
+            "features": {},
+            "yanked": true,
+            "pubtime": pubtime,
+        }))
+        .unwrap();
+        row.push(b'\n');
+        row
+    }
+
+    fn mirror_lock(name: &str, version: &str, row: &[u8], admitted_at: &str) -> RegistryLock {
+        RegistryLock {
+            schema: SCHEMA_VERSION,
+            registry: LockedRegistry {
+                name: "main".to_owned(),
+                index: "sparse+https://rust.pkg.re/".to_owned(),
+                download: MIRROR_DOWNLOAD.to_owned(),
+                audience: Audience::Public,
+            },
+            names: vec![LockedName {
+                name: name.to_owned(),
+                category: "general".to_owned(),
+            }],
+            packages: vec![LockedPackage {
+                name: name.to_owned(),
+                version: Version::parse(version).unwrap(),
+                state: PackageState::Active,
+                crate_sha256: "aa".repeat(32),
+                source_row_sha256: crate::artifact::sha256_bytes(row),
+                index_row_sha256: "bb".repeat(32),
+                admission_sha256: None,
+                admitted_at: UtcTimestamp::parse(admitted_at).unwrap(),
+                source: LockedSource::CratesIo {},
+            }],
+        }
+    }
+
+    #[test]
+    fn a_changed_locked_audience_is_refused_with_both_files_and_values() {
+        let root = temporary_root("locked-audience");
+        let categories =
+            "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [] }\n";
+        let lock = RegistryLock {
+            schema: SCHEMA_VERSION,
+            registry: LockedRegistry {
+                name: "main".to_owned(),
+                index: "sparse+https://rust.pkg.re/".to_owned(),
+                download: MIRROR_DOWNLOAD.to_owned(),
+                audience: Audience::Public,
+            },
+            names: Vec::new(),
+            packages: Vec::new(),
+        };
+        write_catalog(&root, &registry_text(categories), &lock, &[]);
+        let inputs = load_registry_inputs(&root).unwrap();
+        validate_input_for_update(&inputs[0]).unwrap();
+
+        fs::write(
+            root.join("main.toml"),
+            registry_text_with_audience("lan-public", categories),
+        )
+        .unwrap();
+        let inputs = load_registry_inputs(&root).unwrap();
+        let error = format!("{:#}", validate_input_for_update(&inputs[0]).unwrap_err());
+        for expected in [
+            "serving audience",
+            &root.join("main.lock").display().to_string(),
+            &root.join("main.toml").display().to_string(),
+            "\"public\"",
+            "\"lan-public\"",
+        ] {
+            assert!(
+                error.contains(expected),
+                "audience refusal must name {expected:?}: {error}"
+            );
+        }
+
+        let error = format!("{:#}", Catalog::load(&root).unwrap_err());
+        assert!(
+            error.contains("serving audience"),
+            "strict catalog loading must refuse a changed locked audience: {error}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_changed_mirror_admission_time_is_refused_with_both_values() {
+        let root = temporary_root("locked-admitted-at");
+        let categories = "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n";
+        let row = mirror_row("serde", "1.0.229", "2025-04-28T22:28:34Z");
+        write_catalog(
+            &root,
+            &registry_text(categories),
+            &mirror_lock("serde", "1.0.229", &row, "2025-04-28T22:28:34Z"),
+            std::slice::from_ref(&row),
+        );
+        let inputs = load_registry_inputs(&root).unwrap();
+        validate_input_for_update(&inputs[0]).unwrap();
+
+        fs::write(
+            root.join("main.lock"),
+            serialize_lock(&mirror_lock(
+                "serde",
+                "1.0.229",
+                &row,
+                "2025-04-28T22:28:35Z",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let inputs = load_registry_inputs(&root).unwrap();
+        let error = format!("{:#}", validate_input_for_update(&inputs[0]).unwrap_err());
+        let row_path = root
+            .join("objects/rows")
+            .join(format!("{}.json", crate::artifact::sha256_bytes(&row)))
+            .display()
+            .to_string();
+        for expected in [
+            "locked admission time",
+            "2025-04-28T22:28:35Z",
+            "2025-04-28T22:28:34Z",
+            &root.join("main.lock").display().to_string(),
+            &row_path,
+        ] {
+            assert!(
+                error.contains(expected),
+                "admission-time refusal must name {expected:?}: {error}"
+            );
+        }
+
+        let error = format!("{:#}", Catalog::load(&root).unwrap_err());
+        assert!(
+            error.contains("locked admission time"),
+            "strict catalog loading must refuse a changed admitted-at: {error}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_offset_source_row_pubtime_derives_the_canonical_admission_time() {
+        let root = temporary_root("locked-admitted-at-offset");
+        let categories = "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n";
+        let row = mirror_row("serde", "1.0.229", "2025-04-29T00:28:34+02:00");
+        write_catalog(
+            &root,
+            &registry_text(categories),
+            &mirror_lock("serde", "1.0.229", &row, "2025-04-28T22:28:34Z"),
+            std::slice::from_ref(&row),
+        );
+        let inputs = load_registry_inputs(&root).unwrap();
+        validate_input_for_update(&inputs[0]).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_source_row_is_refused_and_not_followed() {
+        let root = temporary_root("locked-admitted-at-link");
+        let categories = "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n";
+        let row = mirror_row("serde", "1.0.229", "2025-04-28T22:28:34Z");
+        fs::write(root.join("main.toml"), registry_text(categories)).unwrap();
+        fs::write(
+            root.join("main.lock"),
+            serialize_lock(&mirror_lock(
+                "serde",
+                "1.0.229",
+                &row,
+                "2025-04-28T22:28:34Z",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        // The linked content would pass every check, so only refusing to follow the link stops it.
+        let target = root.with_extension("row");
+        fs::write(&target, &row).unwrap();
+        fs::create_dir_all(root.join("objects/rows")).unwrap();
+        let row_path = root
+            .join("objects/rows")
+            .join(format!("{}.json", crate::artifact::sha256_bytes(&row)));
+        std::os::unix::fs::symlink(&target, &row_path).unwrap();
+        assert!(fs::symlink_metadata(&row_path).unwrap().is_symlink());
+
+        let inputs = load_registry_inputs(&root).unwrap();
+        let error = format!("{:#}", validate_input_for_update(&inputs[0]).unwrap_err());
+        assert!(
+            error.contains("not a regular file") && error.contains(&row_path.display().to_string()),
+            "a linked source row must be refused by path, not followed: {error}"
+        );
+        assert!(
+            format!("{:#}", Catalog::load(&root).unwrap_err()).contains("not a regular file"),
+            "strict catalog loading must refuse a linked source row"
+        );
+        assert!(target.is_file(), "the link target must not be consumed");
+        fs::remove_file(target).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_git_tag_admission_time_is_not_derived_from_the_catalog() {
+        let root = temporary_root("locked-admitted-at-git");
+        let categories = concat!(
+            "[categories.pkgre]\n",
+            "may-depend-on = [\"main/pkgre\"]\n\n",
+            "[categories.pkgre.publish.example-bin]\n",
+            "git = \"https://github.com/pkgre/pkgre\"\n",
+            "tags = [\"rust/v1.0.0\"]\n",
+        );
+        let lock = RegistryLock {
+            schema: SCHEMA_VERSION,
+            registry: LockedRegistry {
+                name: "main".to_owned(),
+                index: "sparse+https://rust.pkg.re/".to_owned(),
+                download: MIRROR_DOWNLOAD.to_owned(),
+                audience: Audience::Public,
+            },
+            names: vec![LockedName {
+                name: "example-bin".to_owned(),
+                category: "pkgre".to_owned(),
+            }],
+            packages: vec![LockedPackage {
+                name: "example-bin".to_owned(),
+                version: Version::parse("1.0.0").unwrap(),
+                state: PackageState::Active,
+                crate_sha256: "aa".repeat(32),
+                source_row_sha256: "dd".repeat(32),
+                index_row_sha256: "bb".repeat(32),
+                admission_sha256: None,
+                admitted_at: UtcTimestamp::parse("2026-01-02T03:04:05Z").unwrap(),
+                source: LockedSource::GitTag {
+                    git: "https://github.com/pkgre/pkgre".to_owned(),
+                    tag: "rust/v1.0.0".to_owned(),
+                    tag_oid: "11".repeat(20),
+                    commit: "22".repeat(20),
+                    package: "example-bin".to_owned(),
+                    path: PathBuf::from("bin"),
+                    cargo_version: Version::parse("1.95.0").unwrap(),
+                },
+            }],
+        };
+        write_catalog(&root, &registry_text(categories), &lock, &[]);
+        let inputs = load_registry_inputs(&root).unwrap();
+        validate_input_for_update(&inputs[0]).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

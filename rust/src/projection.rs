@@ -65,11 +65,35 @@ impl Default for ProjectionLimits {
     }
 }
 
+/// Measured retained state of one projection, for comparison with `ProjectionLimits`.
+///
+/// Each field measures the quantity bounded by the limit of the same name without its `max_`
+/// prefix, so an operator can see how much of every budget a catalog already spends.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProjectionUsage {
+    /// Locked package approvals accepted from the catalog.
+    pub approvals: u64,
+    /// Projected public routes of all response kinds.
+    pub routes: u64,
+    /// Largest inline metadata response body retained by the projection.
+    pub inline_body_bytes: u64,
+    /// Aggregate inline metadata bytes retained by the projection.
+    pub inline_bytes: u64,
+    /// Distinct content-addressed archives retained by the projection.
+    pub archives: u64,
+    /// Largest archive response body retained by the projection.
+    pub archive_body_bytes: u64,
+    /// Aggregate archive bytes retained by the projection.
+    pub archive_bytes: u64,
+    /// Aggregate inline-plus-archive bytes retained by the projection.
+    pub snapshot_body_bytes: u64,
+}
+
 /// One complete deterministic route projection of a validated catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogProjection {
     routes: Arc<Vec<ProjectedRoute>>,
-    retained_body_bytes: u64,
+    usage: ProjectionUsage,
 }
 
 impl CatalogProjection {
@@ -100,11 +124,8 @@ impl CatalogProjection {
         artifacts: &ArtifactMap,
         limits: ProjectionLimits,
     ) -> Result<Self> {
-        ensure_limit(
-            "catalog approvals",
-            usize_as_u64(catalog.approvals.len(), "catalog approval count")?,
-            limits.max_approvals,
-        )?;
+        let approvals = usize_as_u64(catalog.approvals.len(), "catalog approval count")?;
+        ensure_limit("catalog approvals", approvals, limits.max_approvals)?;
         let policy = validate_catalog(catalog)?;
         artifacts.verify(catalog)?;
         let mut routes = BTreeMap::new();
@@ -195,7 +216,7 @@ impl CatalogProjection {
 
         Ok(Self {
             routes: Arc::new(routes.into_values().collect()),
-            retained_body_bytes: accounting.retained_body_bytes()?,
+            usage: accounting.usage(approvals)?,
         })
     }
 
@@ -205,10 +226,16 @@ impl CatalogProjection {
         &self.routes
     }
 
+    /// Returns the retained state this projection measured against its limits.
+    #[must_use]
+    pub const fn usage(&self) -> ProjectionUsage {
+        self.usage
+    }
+
     /// Returns aggregate inline-plus-archive body bytes retained by this snapshot.
     #[must_use]
     pub const fn retained_body_bytes(&self) -> u64 {
-        self.retained_body_bytes
+        self.usage.snapshot_body_bytes
     }
 
     /// Derives deterministic evidence for every route in this immutable snapshot.
@@ -761,8 +788,10 @@ fn validate_projected_path(path: &str) -> Result<()> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ProjectionAccounting {
     routes: u64,
+    inline_body_bytes: u64,
     inline_bytes: u64,
     archives: u64,
+    archive_body_bytes: u64,
     archive_bytes: u64,
 }
 
@@ -787,6 +816,7 @@ impl ProjectionAccounting {
             limits.max_inline_bytes,
         )?;
         ensure_snapshot_total(inline_bytes, self.archive_bytes, limits)?;
+        self.inline_body_bytes = self.inline_body_bytes.max(bytes);
         self.inline_bytes = inline_bytes;
         Ok(())
     }
@@ -806,17 +836,28 @@ impl ProjectionAccounting {
             limits.max_archive_bytes,
         )?;
         ensure_snapshot_total(self.inline_bytes, archive_bytes, limits)?;
+        self.archive_body_bytes = self.archive_body_bytes.max(bytes);
         self.archives = archives;
         self.archive_bytes = archive_bytes;
         Ok(())
     }
 
-    fn retained_body_bytes(self) -> Result<u64> {
-        checked_add(
+    fn usage(self, approvals: u64) -> Result<ProjectionUsage> {
+        let snapshot_body_bytes = checked_add(
             self.inline_bytes,
             self.archive_bytes,
             "snapshot retained body byte count",
-        )
+        )?;
+        Ok(ProjectionUsage {
+            approvals,
+            routes: self.routes,
+            inline_body_bytes: self.inline_body_bytes,
+            inline_bytes: self.inline_bytes,
+            archives: self.archives,
+            archive_body_bytes: self.archive_body_bytes,
+            archive_bytes: self.archive_bytes,
+            snapshot_body_bytes,
+        })
     }
 }
 
@@ -974,7 +1015,19 @@ mod tests {
         exact.add_route(&limits).unwrap();
         exact.add_inline(3, &limits).unwrap();
         exact.add_archive(5, &limits).unwrap();
-        assert_eq!(exact.retained_body_bytes().unwrap(), 8);
+        assert_eq!(
+            exact.usage(0).unwrap(),
+            ProjectionUsage {
+                approvals: 0,
+                routes: 1,
+                inline_body_bytes: 3,
+                inline_bytes: 3,
+                archives: 1,
+                archive_body_bytes: 5,
+                archive_bytes: 5,
+                snapshot_body_bytes: 8,
+            }
+        );
 
         let mut too_many_routes = ProjectionAccounting::default();
         too_many_routes.add_route(&limits).unwrap();
@@ -1063,7 +1116,13 @@ mod tests {
         );
         let projection = CatalogProjection {
             routes: Arc::new(vec![route]),
-            retained_body_bytes: 9,
+            usage: ProjectionUsage {
+                routes: 1,
+                inline_body_bytes: 9,
+                inline_bytes: 9,
+                snapshot_body_bytes: 9,
+                ..ProjectionUsage::default()
+            },
         };
         let cloned = projection.clone();
 
@@ -1446,7 +1505,16 @@ mod tests {
                     ProjectedResponse::redirect(first_party),
                 ),
             ]),
-            retained_body_bytes: 15,
+            usage: ProjectionUsage {
+                routes: 4,
+                inline_body_bytes: 8,
+                inline_bytes: 8,
+                archives: 1,
+                archive_body_bytes: 7,
+                archive_bytes: 7,
+                snapshot_body_bytes: 15,
+                ..ProjectionUsage::default()
+            },
         };
 
         let first = projection.manifest_bytes().unwrap();

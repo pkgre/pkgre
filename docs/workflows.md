@@ -219,7 +219,7 @@ $ pkgre-rust migrate-v4-to-v5 registry-v4 registry-v5 \
 # repeat --git-tag-time for every Git tag of the source
 ```
 
-It parses the schema-4 generated locks and the schema-1 download catalog strictly, rewrites registry + external category files to schema 5 without checking their old schema, asserts `audience = "public"`, rebuilds every lock with one `admitted-at` per package (crates.io row `pubtime`, or a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` per Git tag, the operator's value, not verified), and replaces the download catalog with the schema-2 `redirect` delivery model. It writes only to an absent destination; a failed run leaves a partial destination to delete before a rerun. The output is strictly loaded, policy-checked, artifact-verified and test-rendered.
+It parses the schema-4 generated locks, the schema-1 download catalog, and every registry + external category file strictly, refusing any registry or category file whose `schema` is not 4 by naming it; it rewrites those files to schema 5, asserts `audience = "public"`, rebuilds every lock with one `admitted-at` per package (crates.io row `pubtime`, or a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` per Git tag, the operator's value, not verified), and replaces the download catalog with the schema-2 `redirect` delivery model. It writes only to an absent destination, and it migrates into a private staging directory beside that destination and renames it into place only after the output was strictly loaded, policy-checked, artifact-verified and test-rendered; a failed run removes the staging directory and leaves no destination. The source is never modified.
 
 Validation:
 
