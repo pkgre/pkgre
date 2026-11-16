@@ -182,6 +182,14 @@ impl ApplicationResponse {
     pub fn body(&self) -> Option<&[u8]> {
         self.body.as_deref().map(Vec::as_slice)
     }
+
+    /// Returns the shared response bytes, so a framework body can serve them without copying.
+    ///
+    /// Returns `None` for HEAD, redirect, and error responses.
+    #[must_use]
+    pub fn shared_body(&self) -> Option<&Arc<Vec<u8>>> {
+        self.body.as_ref()
+    }
 }
 
 /// Applies raw-target, method, and exact-route policy in that precedence order.
