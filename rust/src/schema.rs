@@ -928,8 +928,9 @@ fn validate_registry_identity(input: &RegistryInput, lock: &RegistryLock) -> Res
 /// Re-derives every re-derivable locked admission time from the catalog's own objects.
 ///
 /// A crates.io identity's `admitted-at` is the publication time of the source row bound by its
-/// `source-row-sha256`, so loading can refuse a drifted value without the network. A Git tag's
-/// `admitted-at` is the tag commit time, which no catalog file records, so it stays as locked.
+/// `source-row-sha256`, so loading can refuse a drifted value without the network. The row is read
+/// only as a regular file, never through a link or another special file. A Git tag's `admitted-at`
+/// is the tag commit time, which no catalog file records, so it stays as locked.
 fn validate_locked_admission_times(input: &RegistryInput, lock: &RegistryLock) -> Result<()> {
     for package in &lock.packages {
         if matches!(package.source, LockedSource::CratesIo {}) {
@@ -955,7 +956,7 @@ fn validate_locked_admission_time(input: &RegistryInput, package: &LockedPackage
     let row_path = root
         .join("objects/rows")
         .join(format!("{}.json", package.source_row_sha256));
-    let bytes = fs::read(&row_path)
+    let bytes = read_regular(&row_path)
         .with_context(|| format!("read retained source row {}", row_path.display()))?;
     let record = crate::index::IndexRecord::parse(&bytes)
         .with_context(|| format!("parse retained source row {}", row_path.display()))?;
@@ -1903,6 +1904,49 @@ reserved = []
         );
         let inputs = load_registry_inputs(&root).unwrap();
         validate_input_for_update(&inputs[0]).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_source_row_is_refused_and_not_followed() {
+        let root = temporary_root("locked-admitted-at-link");
+        let categories = "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n";
+        let row = mirror_row("serde", "1.0.229", "2025-04-28T22:28:34Z");
+        fs::write(root.join("main.toml"), registry_text(categories)).unwrap();
+        fs::write(
+            root.join("main.lock"),
+            serialize_lock(&mirror_lock(
+                "serde",
+                "1.0.229",
+                &row,
+                "2025-04-28T22:28:34Z",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        // The linked content would pass every check, so only refusing to follow the link stops it.
+        let target = root.with_extension("row");
+        fs::write(&target, &row).unwrap();
+        fs::create_dir_all(root.join("objects/rows")).unwrap();
+        let row_path = root
+            .join("objects/rows")
+            .join(format!("{}.json", crate::artifact::sha256_bytes(&row)));
+        std::os::unix::fs::symlink(&target, &row_path).unwrap();
+        assert!(fs::symlink_metadata(&row_path).unwrap().is_symlink());
+
+        let inputs = load_registry_inputs(&root).unwrap();
+        let error = format!("{:#}", validate_input_for_update(&inputs[0]).unwrap_err());
+        assert!(
+            error.contains("not a regular file") && error.contains(&row_path.display().to_string()),
+            "a linked source row must be refused by path, not followed: {error}"
+        );
+        assert!(
+            format!("{:#}", Catalog::load(&root).unwrap_err()).contains("not a regular file"),
+            "strict catalog loading must refuse a linked source row"
+        );
+        assert!(target.is_file(), "the link target must not be consumed");
+        fs::remove_file(target).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
