@@ -6,7 +6,7 @@ Security-oriented tooling + policy for curated Rust and JavaScript package regis
 
 pkg.re builds deterministic,read-only package install planes from reviewed declarations+immutable evidence. The Rust implementation converts exact crates.io mirror versions+immutable first-party Git tags into a Cargo sparse index. The JavaScript implementation validates a closed exact-version catalog+audited archives,then deterministically renders npm-compatible packuments,same-host immutable redirect markers,and first-party content-addressed objects. No mutable registry API,package-manager publish operation,or upstream metadata fallback is authoritative.
 
-Rust removal replaces curator-controlled yanking:delete a version/tag from desired state but retain its package key;reconciliation preserves an irreversible tombstone+source evidence and renders the row as yanked. Target P9 marker publication retains ordinary removed identities so exact historical locks stay cold-installable;emergency route revocation remains a separate explicit operation.
+Rust removal replaces curator-controlled yanking:delete a version/tag from desired state but retain its package key;reconciliation preserves an irreversible tombstone+source evidence and renders the row as yanked. Serving keeps the tombstone route for ordinary removed identities;emergency route revocation remains a separate explicit operation.
 
 ## Public topology
 
@@ -16,14 +16,19 @@ Current Rust production state:
 |---|---|---|---|---|
 | `pkgre` | `main` | `sparse+https://rust.pkg.re/` | crates.io mirrors+first-party/fork Git tags | `https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}` |
 
-Same-host state (Rust current; JavaScript after its publication gates):
+Rust serving state:
+
+| Ecosystem | Catalog source and service | Canonical archive route | Route authority |
+|---|---|---|---|
+| Rust | `github.com/pkgre/rust`→`pkgre-rust-serve` at `rust.pkg.re` | `https://rust.pkg.re/v1/<registry>/<crate>/<canonical-semver>/<sha256>` | Validated in-memory catalog projection;the `/v1` route redirects to or serves the content-addressed body |
+
+Target same-host state after the JavaScript publication gates:
 
 | Ecosystem | Static index | Canonical archive route | Runtime route authority |
 |---|---|---|---|
-| Rust | `github.com/pkgre/rust`→`rust.pkg.re` | `https://rust.pkg.re/v1/<registry>/<crate>/<canonical-semver>/<sha256>` | Exact static marker at the same Pages path |
 | JavaScript | `github.com/pkgre/js`→`js.pkg.re` | `https://js.pkg.re/v1/js/<registry>/<sha256>` | Exact static marker at the same Pages path |
 
-Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 5 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities.
+Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 5 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities. The serving gate `check-transition` rejects a candidate that adds or removes a registry,so a new alias needs a fresh accepted baseline before the service publishes it.
 
 Current Rust categories:
 
@@ -47,7 +52,7 @@ Current Rust categories:
 - `rust/`:Rust reconciler,validator,admission planner/applicator,schema migrators,deterministic renderer,download-catalog generator,release verifier.
 - `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,and isolated npm/Bun/Deno fixture.
 - [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,two-stage publication,consumer configuration,compatibility matrix,bootstrap+activation gate.
-- `fixtures/redirect-marker-v1/`:provider-neutral exact marker bytes consumed independently by Rust+JavaScript tests;synthetic routes only.
+- `fixtures/redirect-marker-v1/`:provider-neutral exact marker bytes consumed by the JavaScript marker tests;Rust protocol fixtures live in `fixtures/dynamic-registry-v1/`;synthetic routes only.
 - [`docs/catalog.md`](docs/catalog.md):current schema-5 Rust declarations,categories,locks,admissions,routing,removal,migration.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production Rust mirror-update procedure ending in an unmerged curator-review PR.
 - [`docs/workflows.md`](docs/workflows.md):mirror,Git-tag,removal,migration,release workflows.

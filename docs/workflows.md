@@ -237,7 +237,7 @@ Schema 5 allows additions without weakening prior identities:
 1. Add `<alias>.toml` with exact index `sparse+https://rust.pkg.re/r/<alias>/`, categories, and inhabited package reservations; `main` remains.
 2. Use an exact checksum-bearing template (router or same-host native) or one allowed single-source endpoint.
 3. Ensure every cross-registry dependency category edge is explicit. Same-name resolution prefers local registry; a dependency originating in a third registry fails if multiple external homes exist.
-4. Bootstrap/reconcile, then check/render/verify/monotonicity. New alias renders below `/r/<alias>/`; download route uses `/v1/<alias>/...`.
+4. Bootstrap/reconcile, then check/render/verify/monotonicity. The serving gate `check-transition` rejects an added registry, so a new alias needs a fresh accepted baseline/deployment before the service publishes it. New alias renders below `/r/<alias>/`; download route uses `/v1/<alias>/...`.
 5. Add consumer Cargo alias only where that registry should be selected directly.
 
 ## Release gate
@@ -252,13 +252,13 @@ $ pkgre-rust verify-monotonic site-current site-next
 
 Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use their router or same-host native template; rendered inventory expected; protected CI passes; normal merge without force/bypass.
 
-Deploy only rendered site, never catalog. Workflow independently checks/renders/verifies, fetches prior live release, verifies monotonicity, then publishes with read-only source + minimum Pages permission.
+Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only through `check-transition` + a successful snapshot build and keeps the last-known-good snapshot on failure.
 
 ## Post-deployment verification
 
 - Fetch root `https://rust.pkg.re/config.json`; require `https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`.
 - Fetch rows across categories; compare checksums/routes/yank state with `release.json`.
-- A `redirect` mirror route→`307` to static.crates.io; a `retained` mirror or Git route→`307` to the same-host `crates/<sha256>.crate` (body mode serves that body instead). Download + verify SHA-256. Alter case/checksum/query/encoding→`404`; unsupported method→`405`.
+- A `redirect` mirror route→`302` to static.crates.io; a `retained` mirror or Git route→`302` to the same-host `crates/<sha256>.crate` (body mode serves that body with `200` instead). Download + verify SHA-256. A query, fragment, or percent-encoding other than the allowed `%2f`→`400`; an unknown canonical path (changed case or checksum)→`404`; unsupported method→`405`.
 - Compare live release/downloads with committed candidate; require the exact projection, including routes for removed identities.
 - Fresh Cargo home/cache + only `[registries.pkgre] index = "sparse+https://rust.pkg.re/"`; build `--locked` across mirror + Git packages; confirm `Cargo.lock` source is root URL.
 
