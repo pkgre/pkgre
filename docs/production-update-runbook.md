@@ -1,6 +1,8 @@
 # Production mirror-admission runbook
 
-Purpose:execute one live crates.io mirror batch against the schema-4 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
+Purpose:execute one live crates.io mirror batch against the schema-5 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision pinned by the catalog's main-branch `Validate registry` workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
+
+Warning:the checks below predate retained delivery. On a registry that declares `delivery = "retained"` (current production), the expected-diff checks in step 8, the commit list in step 11 (which omits the new crate objects although its `git add -- registry` stages them), the PR-body checklist in step 12, and the abort matrix in step 13 do not hold as written:`update-apply` adds one `objects/crates/<sha256>.crate` per admitted mirror, and schema-2 download routes carry a `delivery` object instead of `source`. Revise those checks before the next production update.
 
 Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 
