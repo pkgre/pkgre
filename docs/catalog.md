@@ -323,7 +323,7 @@ site/
 └── crates/<retained-archive-sha256>.crate
 ```
 
-`release.json` schema 4 records registry/category topology, registry-scoped permanent name homes, and package identities; neither registry `audience` nor `delivery` is part of it. `verify-monotonic` requires every prior registry/category/home/immutable identity to remain exact, permits new registry/category/home/package identities + `active→removed` + source-specific→router transition, authenticates every release package's rendered index row and every active package's route, requires a rendered `crates/<sha256>.crate` file for an active crates.io package with a retained route to exist as a file (presence only, no hash; Git-tag routes get no body check), and rejects reactivation. `verify` re-renders the site and compares every rendered byte.
+`release.json` schema 4 records registry/category topology, registry-scoped permanent name homes, and package identities; neither registry `audience` nor `delivery` is part of it. `verify-monotonic` requires every prior registry/category/home/immutable identity to remain exact, permits new registry/category/home/package identities + `active→removed` + exactly the one-way registry download migrations `check`, `lock` and `check-transition` allow (publish→mirror, source-specific→router, router→same-host native), authenticates every release package's rendered index row and every active package's route, requires a rendered `crates/<sha256>.crate` file for an active crates.io package with a retained route to exist as a file (presence only, no hash; Git-tag routes get no body check), and rejects reactivation. `verify` re-renders the site and compares every rendered byte.
 
 ## Exact migrations
 
