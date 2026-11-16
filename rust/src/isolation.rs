@@ -60,7 +60,7 @@ pub(crate) fn ensure_no_cargo_configuration(directory: &Path) -> Result<()> {
                 let path = ancestor.join(".cargo").join(name);
                 match fs::symlink_metadata(&path) {
                     Ok(_) => bail!(
-                        "Cargo configuration {} covers {} and could replace crates.io; run the command from a directory that no Cargo configuration covers",
+                        "Cargo configuration {} covers {} and could replace crates.io; point TMPDIR at a directory that no Cargo configuration covers",
                         path.display(),
                         directory.display()
                     ),

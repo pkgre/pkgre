@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::artifact::sha256_bytes;
-use crate::isolation::ChildEnvironment;
+use crate::isolation::{ChildEnvironment, ensure_no_cargo_configuration};
 use crate::policy::{
     validate_git_object_id, validate_git_tag, validate_https_repository, validate_package_name,
     validate_relative_path, validate_tag_version,
@@ -183,6 +183,7 @@ pub(crate) fn resolve_git_tag_from(
     cargo_version: &Version,
 ) -> Result<GitTagMaterialization> {
     resolve_git_tag_isolated(
+        &std::env::temp_dir(),
         repository,
         tag,
         expected_package,
@@ -208,7 +209,39 @@ pub(crate) fn resolve_git_tag_from_file(
     cargo_version: &Version,
     fetch_repository: &str,
 ) -> Result<GitTagMaterialization> {
+    resolve_git_tag_from_file_in(
+        &std::env::temp_dir(),
+        repository,
+        tag,
+        expected_package,
+        cargo_version,
+        fetch_repository,
+    )
+}
+
+/// Resolves and reproducibly packages one declared tag from a local repository
+/// below a temporary root a test chooses.
+///
+/// The root lets a test place Cargo configuration above the working directory
+/// that the packaging uses.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe source, ambiguous package, malformed or moved
+/// tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty
+/// checkout, non-reproducible archive, invalid package metadata, or a working
+/// directory that Cargo configuration covers.
+#[cfg(test)]
+pub(crate) fn resolve_git_tag_from_file_in(
+    root: &Path,
+    repository: &str,
+    tag: &str,
+    expected_package: &str,
+    cargo_version: &Version,
+    fetch_repository: &str,
+) -> Result<GitTagMaterialization> {
     resolve_git_tag_isolated(
+        root,
         repository,
         tag,
         expected_package,
@@ -219,6 +252,7 @@ pub(crate) fn resolve_git_tag_from_file(
 }
 
 fn resolve_git_tag_isolated(
+    root: &Path,
     repository: &str,
     tag: &str,
     expected_package: &str,
@@ -230,9 +264,10 @@ fn resolve_git_tag_isolated(
     validate_git_tag(tag)?;
     validate_package_name(expected_package)?;
 
-    let temporary = TemporaryDirectory::new("pkgre-git-package")?;
+    let temporary = TemporaryDirectory::new_in(root, "pkgre-git-package")?;
     let checkout = temporary.path().join("repository");
     let cargo_home = temporary.path().join("cargo-home");
+    ensure_no_cargo_configuration(&cargo_home)?;
     let cargo = pinned_cargo(cargo_version)?;
     prepare_cargo_home(&cargo_home)?;
     let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
@@ -1012,11 +1047,13 @@ mod tests {
 
     #[test]
     fn git_tag_materialization_records_tag_and_is_reproducible() {
-        let temporary = TemporaryDirectory::new("pkgre-git-e2e").unwrap();
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-e2e").unwrap();
         let source = create_test_release(&temporary);
         let source_url = source.to_str().unwrap();
         let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
-        let materialization = resolve_git_tag_from_file(
+        let materialization = resolve_git_tag_from_file_in(
+            &root,
             "https://example.invalid/pkgre-demo",
             TEST_TAG,
             "pkgre-demo",
@@ -1046,6 +1083,56 @@ mod tests {
             &materialization,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn git_tag_packaging_refuses_cargo_configuration_above_the_working_directory() {
+        let temporary =
+            TemporaryDirectory::new_in(&uncovered_temporary_root(), "pkgre-git-config").unwrap();
+        let source = create_test_release(&temporary);
+        let root = temporary.path().join("covered");
+        let configuration = root.join(".cargo");
+        fs::create_dir_all(&configuration).unwrap();
+        let file = configuration.join("config.toml");
+        fs::write(&file, "[net]\noffline = true\n").unwrap();
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let error = resolve_git_tag_from_file_in(
+            &root,
+            "https://example.invalid/pkgre-demo",
+            TEST_TAG,
+            "pkgre-demo",
+            &cargo_version,
+            source.to_str().unwrap(),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&file.display().to_string()),
+            "the error names the configuration it found: {message}"
+        );
+        assert!(
+            message.contains("TMPDIR"),
+            "the error says what to change: {message}"
+        );
+    }
+
+    /// Returns the first of `TMPDIR`, `/tmp`, and `/var/tmp` that no Cargo
+    /// configuration covers.
+    ///
+    /// The packaging refuses a temporary directory that Cargo configuration
+    /// covers, and a development environment or a build sandbox may point
+    /// `TMPDIR` into one.
+    fn uncovered_temporary_root() -> PathBuf {
+        for root in [
+            std::env::temp_dir(),
+            PathBuf::from("/tmp"),
+            PathBuf::from("/var/tmp"),
+        ] {
+            if ensure_no_cargo_configuration(&root).is_ok() {
+                return root;
+            }
+        }
+        panic!("no temporary directory without Cargo configuration is available");
     }
 
     fn create_test_release(temporary: &TemporaryDirectory) -> PathBuf {

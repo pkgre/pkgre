@@ -168,6 +168,8 @@ tags = ["rust/v0.5.0"]
 5. Verify URL/tag/object/commit/package/path/Cargo + archive/row against reviewed tag.
 6. Run `check`, no-op `lock`, verify exact Git route in downloads, render/verify/monotonicity; commit declaration/lock/catalog/objects together.
 
+Every Git and Cargo process of the packaging starts from an empty environment and inherits only `PATH`, `TMPDIR`, the certificate variables, an isolated `CARGO_HOME`, and `RUSTC` pointing at the `rustc` beside the pinned `cargo`; no wrapper and no token variable reaches it. The packaging works in a temporary directory and refuses to run Cargo when that directory or any directory above it holds Cargo configuration, since such configuration could replace crates.io, so set `TMPDIR` to a directory that no Cargo configuration covers; a symbolic link on the way is resolved too, since Cargo follows it.
+
 Self-publication normally uses prior immutable Rust indexer release. A schema/bootstrap release unreadable by its predecessor uses a reviewed build from the exact merged/tagged release commit,then locks the same tag. Rename transition:`pkgre-indexer`+`indexer/v*` remain immutable historical catalog identities;add `pkgre-rust` only after publishing the exact `rust/v0.5.0` tag,then update the production catalog+workflow pin in one reviewed release transaction.
 
 ## Remove version/tag
