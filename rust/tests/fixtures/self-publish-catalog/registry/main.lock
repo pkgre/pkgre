@@ -1,0 +1,57 @@
+schema = 5
+
+[registry]
+name = "main"
+index = "sparse+https://rust.pkg.re/"
+download = "https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
+audience = "public"
+
+[[names]]
+name = "example-bin"
+category = "pkgre"
+
+[[names]]
+name = "example-lib"
+category = "pkgre"
+
+[[names]]
+name = "serde"
+category = "general"
+
+[[packages]]
+name = "example-bin"
+version = "1.0.0"
+state = "active"
+crate-sha256 = "085d7b2f6dec58a0003851fb7d2fe5e3ab4a709da372c85694bdc8a9c444549c"
+source-row-sha256 = "701ac0ef94f97896d0180fe575e4c3fa78ccfc6c36a05a0af40912b4e95993b7"
+index-row-sha256 = "671fbfda72dbf816fd017cb4f82340a3b6ddc8594796d3c4bd3a5f334ed2d27f"
+admitted-at = "2026-01-02T03:04:05Z"
+
+[packages.source]
+kind = "git-tag"
+git = "https://git.example.invalid/example/project"
+tag = "rust/v1.0.0"
+tag-oid = "3333333333333333333333333333333333333333"
+commit = "3333333333333333333333333333333333333333"
+package = "example-bin"
+path = "bin"
+cargo-version = "1.95.0"
+
+[[packages]]
+name = "example-lib"
+version = "1.0.0"
+state = "active"
+crate-sha256 = "e68b110c8e9341ba974650a39d7f78f67869c3cc603d88d68834bc69d6976a29"
+source-row-sha256 = "6852b7c7e73a73e008ad91b42afdad66f7e3d8c9822c159b1f56a16ecb6ac702"
+index-row-sha256 = "024615f1825f45e5504c9801ced4bd95933f06135ff46353824aa9edc9d1d6dd"
+admitted-at = "2026-01-02T03:04:05Z"
+
+[packages.source]
+kind = "git-tag"
+git = "https://git.example.invalid/example/project"
+tag = "rust/v1.0.0"
+tag-oid = "4444444444444444444444444444444444444444"
+commit = "4444444444444444444444444444444444444444"
+package = "example-lib"
+path = "lib"
+cargo-version = "1.95.0"

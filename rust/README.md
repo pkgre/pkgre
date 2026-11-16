@@ -19,6 +19,7 @@ pkgre-rust migrate-retained-delivery <catalog-root>
 pkgre-rust archive-inventory <catalog> <output.json>
 pkgre-rust archive-import <archive-store> <catalog>
 pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
+pkgre-rust self-publish-check <repository> [<accepted-repository>]
 ```
 
 - `update-plan`:evaluate all active mirror compatibility lanes; create an absent compact canonical manifest containing every nonblocked exact request.
@@ -35,6 +36,7 @@ pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
 - `archive-inventory`:write the canonical retained-object inventory of one catalog for an archive store.
 - `archive-import`:require the store's canonical `inventory.json` to equal the catalog's retained set, copy every missing `<sha256>.crate`, verify every digest, then re-run strict load/policy/artifact checks.
 - `check-transition`:strictly load + policy-check accepted and candidate schema-5 catalogs; reject an added or removed registry, a changed registry name/index/audience/cargo-version, a download change other than the allowed one-way migrations, a missing identity, a changed archive/source-row/routed-row hash, source, `admitted-at` or state (`active→removed` included), and a moved category; require every active retained identity's body to exist in `objects/crates/` with a matching SHA-256. It does not compare `delivery`, read row objects, or verify archive bytes beyond that retained-body check.
+- `self-publish-check`:offline checks of `self-publish/crates-io.toml` and `self-publish/crates-io.lock` against `registry/main.lock`, and against an accepted repository when one is given; no network. `<repository>` is the directory that holds `registry/` and `self-publish/`. A repository without `self-publish/` has nothing to check, unless the accepted repository has one: removing the state is refused.
 
 `<catalog>` is exclusive managed state:one `<registry>.toml` + generated `<registry>.lock` per registry; canonical generated `downloads.json`; exact referenced `categories/<registry>/<category>.toml`; paired `admissions/<batch>.{toml,lock}`; content-addressed `objects/{crates,rows}/`. Rows cover all locked identities; crate objects contain active retained-delivery archives:Git tags always, crates.io archives only when the registry declares `delivery = "retained"`. Retain every package key after its desired version/tag list becomes empty; deleting a required key, changing a name's registry/category home, or changing an existing identity's source fails closed.
 
@@ -44,4 +46,4 @@ One registry may contain mirror + publish names only when `download = "https://d
 
 Human admission manifests contain exact category/name/version or tag + optional typed evidence. Mirror apply currently accepts versions only. Generated admission locks retain complete recomputed facts; every package in a batch binds the SHA-256 of the same generated lock. Protected review/merge of the complete catalog PR is authorization; `automatic`/`review-required` only prioritize attention; `blocked` candidates cannot be applied.
 
-Documentation:[`catalog schema`](../docs/catalog.md) | [`production mirror-update runbook`](../docs/production-update-runbook.md) | [`curator workflows`](../docs/workflows.md) | [`security model`](../docs/security.md).
+Documentation:[`catalog schema`](../docs/catalog.md) | [`production mirror-update runbook`](../docs/production-update-runbook.md) | [`curator workflows`](../docs/workflows.md) | [`self-publishing`](../docs/self-publish.md) | [`security model`](../docs/security.md).

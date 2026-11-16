@@ -43,3 +43,12 @@ because the schema-2 download catalog is larger than the schema-1 one.
 
 The f9b5ffa schema-4 fixture is retained as the frozen `migrate-v4-to-v5` input; the d778238
 schema-5 fixture is the current production projection evidence.
+
+## Self-publishing check fixture (`self-publish-catalog/`)
+
+A minimal catalog repository for `pkgre-rust self-publish-check`: registry `main` publishes
+`example-lib` and `example-bin` from `rust/v1.0.0` of one invented repository, reserves the
+mirror name `serde`, and `self-publish/` maps `example-lib` and records an entry for both
+crates. It holds no `objects/` tree, because the self-publishing checks read the catalog
+locks and not the archives. Every name and address is invented; `example.invalid` is
+reserved for documentation.

@@ -1,0 +1,25 @@
+{
+  "schema": 2,
+  "routes": [
+    {
+      "registry": "main",
+      "name": "example-bin",
+      "version": "1.0.0",
+      "sha256": "085d7b2f6dec58a0003851fb7d2fe5e3ab4a709da372c85694bdc8a9c444549c",
+      "delivery": {
+        "delivery": "retained",
+        "path": "main/objects/crates/085d7b2f6dec58a0003851fb7d2fe5e3ab4a709da372c85694bdc8a9c444549c.crate"
+      }
+    },
+    {
+      "registry": "main",
+      "name": "example-lib",
+      "version": "1.0.0",
+      "sha256": "e68b110c8e9341ba974650a39d7f78f67869c3cc603d88d68834bc69d6976a29",
+      "delivery": {
+        "delivery": "retained",
+        "path": "main/objects/crates/e68b110c8e9341ba974650a39d7f78f67869c3cc603d88d68834bc69d6976a29.crate"
+      }
+    }
+  ]
+}
