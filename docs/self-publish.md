@@ -184,11 +184,15 @@ that the catalog publishes from it:
    directory or a directory above it holds `.cargo/config.toml` or `.cargo/config`, as a
    file, directory or symbolic link, since such configuration could replace crates.io.
 6. It compares each derived archive with the archive that the catalog retains: the same
-   files below the top directory, identical bytes for every file except `Cargo.toml`,
-   `Cargo.toml.orig`, `Cargo.lock` and `.cargo_vcs_info.json`; a VCS claim that differs
-   only by `dirty`; a normalized manifest that differs only in the fields the rewrite
-   changed; and two lock files that list the same packages at the same versions under the
-   mapped names.
+   files below the top directory, identical bytes and permissions for every file except
+   `Cargo.toml`, `Cargo.toml.orig`, `Cargo.lock` and `.cargo_vcs_info.json`; a VCS claim
+   that differs only by `dirty`; a normalized manifest that differs only in the fields the
+   rewrite changed, where every dependency's `package` is exactly its expected crates.io
+   name and no `registry` or `registry-index` remains; and two lock files that list the
+   same packages at the same versions under the mapped names, every package outside the
+   workspace with its own registry's source and expected checksum: the catalog's
+   `crate-sha256` in the retained archive, and crates.io's, for a first-party identity the
+   `crate-sha256` of its `crates-io.lock` entry, in the derived one.
 7. It records the result.
 
 Deriving from the tag and proving the result against the retained archive is what lets
