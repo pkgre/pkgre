@@ -1,6 +1,6 @@
 //! Unit tests of the crates.io derivation and of `self-publish-lock`.
 
-mod fixtures;
+pub(crate) mod fixtures;
 
 use std::collections::BTreeMap;
 use std::fs;

@@ -51,6 +51,8 @@ pub(super) struct Member {
     pub(super) library: Option<String>,
     /// Binary target name of `src/main.rs`, when the member has one.
     pub(super) main_binary: Option<String>,
+    /// The manifest fields that crates.io's own rules read.
+    pub(super) facts: super::MemberFacts,
 }
 
 /// One dependency of one workspace member, as Cargo reports it.
@@ -78,6 +80,14 @@ struct MetadataPackage {
     dependencies: Vec<MetadataDependency>,
     targets: Vec<MetadataTarget>,
     publish: Option<Vec<String>>,
+    description: Option<String>,
+    license: Option<String>,
+    license_file: Option<PathBuf>,
+    homepage: Option<String>,
+    documentation: Option<String>,
+    repository: Option<String>,
+    keywords: Option<Vec<String>>,
+    categories: Option<Vec<String>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -131,6 +141,16 @@ impl Workspace {
             .map(|package| Member {
                 library: library_target(&package),
                 main_binary: main_binary_target(&package),
+                facts: super::MemberFacts {
+                    description: package.description,
+                    license: package.license,
+                    license_file: package.license_file,
+                    homepage: package.homepage,
+                    documentation: package.documentation,
+                    repository: package.repository,
+                    keywords: package.keywords.unwrap_or_default(),
+                    categories: package.categories.unwrap_or_default(),
+                },
                 dependencies: package
                     .dependencies
                     .into_iter()

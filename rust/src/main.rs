@@ -287,6 +287,7 @@ fn self_publish_check(arguments: &[OsString]) -> Result<()> {
         entries = summary.entries,
         identities = summary.identities,
         accepted = summary.accepted,
+        network_releases = summary.network_releases,
         path = %repository.display(),
         "checked self-publishing state"
     );

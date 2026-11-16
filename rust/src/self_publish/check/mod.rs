@@ -1,5 +1,5 @@
-//! Offline checks of the self-publishing state against the catalog and against
-//! an accepted repository.
+//! The checks of the self-publishing state against the catalog, against an
+//! accepted repository, and, for the releases a run adds, against the network.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -13,9 +13,10 @@ use super::catalog::{
 use super::config::CratesIoConfig;
 use super::lock::CratesIoLock;
 use super::name;
+use super::network::{self, Services};
 use super::state::{LOCK_FILE, RepositoryState, STATE_DIRECTORY, SelfPublishState};
 
-/// What one run of the offline self-publishing checks found.
+/// What one run of the self-publishing checks found.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SelfPublishCheckSummary {
     /// Whether the repository declares `self-publish/` at all.
@@ -30,9 +31,11 @@ pub struct SelfPublishCheckSummary {
     pub identities: usize,
     /// Whether the candidate was compared with an accepted repository.
     pub accepted: bool,
+    /// Releases whose network checks ran.
+    pub network_releases: usize,
 }
 
-/// Runs the offline self-publishing checks of one catalog repository.
+/// Runs the self-publishing checks of one catalog repository.
 ///
 /// `repository` is the directory that holds `registry/` and `self-publish/`.
 /// When `accepted` is given, its `registry/` and `self-publish/` are the
@@ -41,20 +44,36 @@ pub struct SelfPublishCheckSummary {
 /// repository the checks that compare against one are skipped, and a repository
 /// that has no `self-publish/` directory has nothing to check.
 ///
+/// The network checks read only the releases that the run adds, which are the
+/// self-published identities that the accepted catalog does not hold or whose
+/// entry the accepted lock does not record, so that an unavailable crates.io or
+/// release repository fails only a change that publishes something.
+///
 /// # Errors
 ///
 /// Returns an error for a missing or invalid catalog, a malformed or
-/// non-canonical self-publishing state, a removed self-publishing state, or any
+/// non-canonical self-publishing state, a removed self-publishing state, any
 /// violation of the name rules, the identity and entry correspondence, the
-/// accepted-state comparison, the release-tag convention, or the version rules.
+/// accepted-state comparison, the release-tag convention, or the version rules,
+/// and for any network check of an added release that fails.
 pub fn check_repository(
     repository: &Path,
     accepted: Option<&Path>,
 ) -> Result<SelfPublishCheckSummary> {
+    check_repository_with(repository, accepted, &Services::live())
+}
+
+/// Runs the self-publishing checks of one catalog repository with the given
+/// network services.
+pub(crate) fn check_repository_with(
+    repository: &Path,
+    accepted: Option<&Path>,
+    services: &Services<'_>,
+) -> Result<SelfPublishCheckSummary> {
     let candidate = RepositoryState::load(repository)?;
     let accepted = accepted.map(RepositoryState::load).transpose()?;
     check_state_not_removed(&candidate, accepted.as_ref())?;
-    let Some(self_publish) = candidate.self_publish else {
+    let Some(self_publish) = candidate.self_publish.as_ref() else {
         tracing::info!(
             path = %repository.display(),
             "repository has no self-publish directory; the self-publishing checks are skipped"
@@ -65,13 +84,21 @@ pub fn check_repository(
         tracing::info!(
             "self-publishing checks that compare against an accepted state are skipped: no accepted repository was given"
         );
+        tracing::info!(
+            "the network checks of the releases that a run adds are skipped: no accepted repository was given"
+        );
     }
     let accepted_view = accepted.as_ref().map(|state| AcceptedState {
         catalog: &state.catalog,
         config: state.self_publish.as_ref().map(|state| &state.config),
         lock: state.self_publish.as_ref().map(|state| &state.lock),
     });
-    check_state(&self_publish, &candidate.catalog, accepted_view.as_ref())
+    let mut summary = check_state(self_publish, &candidate.catalog, accepted_view.as_ref())?;
+    if let Some(accepted_view) = accepted_view.as_ref() {
+        summary.network_releases =
+            network::check_added_releases(&candidate, self_publish, accepted_view, services)?;
+    }
+    Ok(summary)
 }
 
 /// Refuses a candidate that removed the self-publishing state of the accepted repository.
@@ -122,6 +149,7 @@ pub(crate) fn check_state(
         entries: candidate.lock.packages.len(),
         identities: self_published.len(),
         accepted: accepted.is_some(),
+        network_releases: 0,
     })
 }
 

@@ -8,13 +8,11 @@ use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
 use tracing::info;
 
-use super::catalog::{CatalogIdentity, GitRelease, is_release_tag};
+use super::catalog::{CatalogIdentity, is_release_tag, release_of_group};
 use super::check::check_state;
-use super::derive::{ReleasedCrate, Sources, derive_release_with};
+use super::derive::{Sources, derive_release_with, retained_crate};
 use super::lock::{CratesIoLock, CratesIoPackage};
 use super::state::{LOCK_FILE, RepositoryState, STATE_DIRECTORY, SelfPublishState};
-use crate::artifact::sha256_bytes;
-use crate::package::read_bounded_archive;
 
 /// One entry that one run derived and recorded.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,7 +116,7 @@ fn run_lock<'a>(
         let curated = identities
             .iter()
             .map(|identity| {
-                read_released_crate(&state.catalog_root, identity).with_context(|| {
+                retained_crate(&state.catalog_root, identity).with_context(|| {
                     format!(
                         "read the curated archive of {} {}",
                         identity.name, identity.version
@@ -258,48 +256,6 @@ pub(super) fn unrecorded_releases(
         unrecorded.insert(key, identities);
     }
     Ok(unrecorded)
-}
-
-/// Returns the release of one group of identities, refusing disagreement.
-fn release_of_group(git: &str, tag: &str, identities: &[CatalogIdentity]) -> Result<GitRelease> {
-    let mut releases = identities
-        .iter()
-        .filter_map(|identity| identity.release.clone());
-    let release = releases
-        .next()
-        .with_context(|| format!("the release tag {tag:?} of {git:?} has no Git publication"))?;
-    for other in releases {
-        ensure!(
-            other.git == release.git
-                && other.tag == release.tag
-                && other.commit == release.commit
-                && other.cargo_version == release.cargo_version,
-            "the identities of tag {tag:?} of {git:?} disagree on their commit or on the Cargo version that packaged them"
-        );
-    }
-    Ok(release)
-}
-
-/// Reads the curated archive that the catalog retains for one identity.
-fn read_released_crate(catalog_root: &Path, identity: &CatalogIdentity) -> Result<ReleasedCrate> {
-    let path = catalog_root
-        .join("objects")
-        .join("crates")
-        .join(format!("{}.crate", identity.crate_sha256));
-    let archive = read_bounded_archive(&path)?;
-    ensure!(
-        sha256_bytes(&archive) == identity.crate_sha256,
-        "the retained archive {} has SHA-256 {}, but registry/main.lock records {}",
-        path.display(),
-        sha256_bytes(&archive),
-        identity.crate_sha256
-    );
-    Ok(ReleasedCrate {
-        name: identity.name.clone(),
-        version: identity.version.clone(),
-        crate_sha256: identity.crate_sha256.clone(),
-        archive,
-    })
 }
 
 /// Writes the lock file atomically: a temporary file in the same directory,
