@@ -2,28 +2,18 @@
 //! an accepted repository.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
-use semver::Version;
 
+use super::catalog::{
+    CATALOG_REGISTRY, CatalogIdentity, CatalogSnapshot, GitRelease, is_release_tag,
+    published_names, release_of, self_published_identities,
+};
 use super::config::CratesIoConfig;
 use super::lock::CratesIoLock;
 use super::name;
-use crate::schema::{Catalog, Source, load_registry_inputs};
-
-/// The only catalog registry that `self-publish/` names.
-const CATALOG_REGISTRY: &str = "main";
-/// Human self-publishing declarations.
-const CONFIG_FILE: &str = "crates-io.toml";
-/// Generated self-publishing records.
-const LOCK_FILE: &str = "crates-io.lock";
-/// Directory of the self-publishing state.
-const STATE_DIRECTORY: &str = "self-publish";
-/// Directory of the catalog's own state.
-const CATALOG_DIRECTORY: &str = "registry";
+use super::state::{LOCK_FILE, RepositoryState, STATE_DIRECTORY, SelfPublishState};
 
 /// What one run of the offline self-publishing checks found.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -81,7 +71,7 @@ pub fn check_repository(
         config: state.self_publish.as_ref().map(|state| &state.config),
         lock: state.self_publish.as_ref().map(|state| &state.lock),
     });
-    check(&self_publish, &candidate.catalog, accepted_view.as_ref())
+    check_state(&self_publish, &candidate.catalog, accepted_view.as_ref())
 }
 
 /// Refuses a candidate that removed the self-publishing state of the accepted repository.
@@ -99,198 +89,23 @@ fn check_state_not_removed(
     Ok(())
 }
 
-/// One repository: its catalog facts and, when declared, its self-publishing state.
-struct RepositoryState {
-    catalog: CatalogSnapshot,
-    self_publish: Option<SelfPublishState>,
-}
-
-/// The parsed self-publishing files of one repository.
-struct SelfPublishState {
-    config: CratesIoConfig,
-    lock: CratesIoLock,
-}
-
-impl RepositoryState {
-    fn load(repository: &Path) -> Result<Self> {
-        let registry = repository.join(CATALOG_DIRECTORY);
-        match fs::symlink_metadata(&registry) {
-            Ok(_) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => bail!(
-                "repository {} has no {CATALOG_DIRECTORY} directory; the argument is the directory that holds {CATALOG_DIRECTORY}/ and {STATE_DIRECTORY}/",
-                repository.display()
-            ),
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("inspect catalog directory {}", registry.display()));
-            }
-        }
-        // Publish declarations carry the repository URLs of names that have no
-        // identity yet; the catalog model keeps only their names.
-        let inputs = load_registry_inputs(&registry)
-            .with_context(|| format!("load catalog {}", registry.display()))?;
-        let declarations = inputs
-            .iter()
-            .filter(|input| input.file.registry.name == CATALOG_REGISTRY)
-            .flat_map(|input| input.file.category_values())
-            .flat_map(|category| category.publish.iter())
-            .map(|(name, declaration)| (name.clone(), declaration.git.clone()))
-            .collect::<Vec<_>>();
-        let catalog = Catalog::load(&registry)
-            .with_context(|| format!("load catalog {}", registry.display()))?;
-        let catalog = CatalogSnapshot::from_catalog(&catalog, declarations);
-        let directory = repository.join(STATE_DIRECTORY);
-        let metadata = match fs::symlink_metadata(&directory) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                return Ok(Self {
-                    catalog,
-                    self_publish: None,
-                });
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("inspect self-publishing directory {}", directory.display())
-                });
-            }
-        };
-        ensure!(
-            metadata.file_type().is_dir(),
-            "self-publishing directory is not a real directory: {}",
-            directory.display()
-        );
-        Ok(Self {
-            catalog,
-            self_publish: Some(SelfPublishState::load(&directory)?),
-        })
-    }
-}
-
-impl SelfPublishState {
-    fn load(directory: &Path) -> Result<Self> {
-        let mut names = fs::read_dir(directory)
-            .with_context(|| format!("read self-publishing directory {}", directory.display()))?
-            .map(|entry| entry.map(|entry| entry.file_name()))
-            .collect::<std::io::Result<Vec<_>>>()
-            .with_context(|| format!("read self-publishing directory {}", directory.display()))?;
-        names.sort();
-        let found = names
-            .iter()
-            .map(|name| name.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        ensure!(
-            found == [LOCK_FILE.to_owned(), CONFIG_FILE.to_owned()],
-            "self-publishing directory {} must hold exactly {CONFIG_FILE} and {LOCK_FILE}, found {found:?}",
-            directory.display()
-        );
-        for name in &names {
-            let path = directory.join(name);
-            let metadata = fs::symlink_metadata(&path)
-                .with_context(|| format!("inspect {}", path.display()))?;
-            ensure!(
-                metadata.file_type().is_file(),
-                "self-publishing file is not a regular file: {}",
-                path.display()
-            );
-        }
-        Ok(Self {
-            config: CratesIoConfig::load(&directory.join(CONFIG_FILE))?,
-            lock: CratesIoLock::load(&directory.join(LOCK_FILE))?,
-        })
-    }
-}
-
 /// The accepted repository, as far as the candidate is compared with it.
-struct AcceptedState<'a> {
-    catalog: &'a CatalogSnapshot,
-    config: Option<&'a CratesIoConfig>,
-    lock: Option<&'a CratesIoLock>,
+pub(crate) struct AcceptedState<'a> {
+    /// The accepted catalog facts.
+    pub(crate) catalog: &'a CatalogSnapshot,
+    /// The accepted declarations.
+    pub(crate) config: Option<&'a CratesIoConfig>,
+    /// The accepted entries.
+    pub(crate) lock: Option<&'a CratesIoLock>,
 }
 
-/// The catalog facts the checks need, taken from `registry/main`.
-#[derive(Clone, Debug, Default)]
-struct CatalogSnapshot {
-    identities: Vec<CatalogIdentity>,
-    mirrors: Vec<String>,
-    publish_names: Vec<String>,
-    publish_declarations: Vec<(String, String)>,
-}
-
-/// One package identity of `registry/main.lock`, active or removed.
-#[derive(Clone, Debug)]
-struct CatalogIdentity {
-    name: String,
-    version: Version,
-    crate_sha256: String,
-    release: Option<GitRelease>,
-}
-
-/// One Git publication of a package identity.
-#[derive(Clone, Debug)]
-struct GitRelease {
-    git: String,
-    tag: String,
-    commit: String,
-    cargo_version: Version,
-}
-
-impl CatalogSnapshot {
-    fn from_catalog(catalog: &Catalog, publish_declarations: Vec<(String, String)>) -> Self {
-        let mut identities = Vec::new();
-        for approval in &catalog.approvals {
-            if approval.registry != CATALOG_REGISTRY {
-                continue;
-            }
-            let release = match &approval.source {
-                Source::CratesIo => None,
-                Source::GitTag {
-                    repository,
-                    tag,
-                    commit,
-                    cargo_version,
-                    ..
-                } => Some(GitRelease {
-                    git: repository.clone(),
-                    tag: tag.clone(),
-                    commit: commit.clone(),
-                    cargo_version: cargo_version.clone(),
-                }),
-            };
-            identities.push(CatalogIdentity {
-                name: approval.name.clone(),
-                version: approval.version.clone(),
-                crate_sha256: approval.archive_sha256.clone(),
-                release,
-            });
-        }
-        let mirrors = catalog
-            .mirror_names
-            .iter()
-            .filter(|key| key.registry == CATALOG_REGISTRY)
-            .map(|key| key.name.clone())
-            .collect();
-        let publish_names = catalog
-            .publish_names
-            .iter()
-            .filter(|key| key.registry == CATALOG_REGISTRY)
-            .map(|key| key.name.clone())
-            .collect();
-        Self {
-            identities,
-            mirrors,
-            publish_names,
-            publish_declarations,
-        }
-    }
-}
-
-fn check(
+pub(crate) fn check_state(
     candidate: &SelfPublishState,
     catalog: &CatalogSnapshot,
     accepted: Option<&AcceptedState<'_>>,
 ) -> Result<SelfPublishCheckSummary> {
     let config = &candidate.config;
-    let published = published_crates(catalog, config);
+    let published = published_names(catalog, config);
     let self_published = self_published_identities(catalog, config);
     check_repository_spelling(config, catalog)?;
     check_accepted_repositories(candidate, accepted)?;
@@ -308,60 +123,6 @@ fn check(
         identities: self_published.len(),
         accepted: accepted.is_some(),
     })
-}
-
-/// Returns the release-tag prefix and Git publication of a self-publishing identity.
-fn release_of<'a>(
-    config: &'a CratesIoConfig,
-    identity: &'a CatalogIdentity,
-) -> Option<(&'a str, &'a GitRelease)> {
-    let release = identity.release.as_ref()?;
-    let prefix = config.prefix_for(&release.git)?;
-    Some((prefix, release))
-}
-
-/// Returns the crate names that a self-publishing repository publishes.
-///
-/// A publish declaration counts even before its first tag, so that a name can be
-/// declared and validated ahead of the crate's first release.
-fn published_crates<'a>(
-    catalog: &'a CatalogSnapshot,
-    config: &CratesIoConfig,
-) -> BTreeSet<&'a str> {
-    let mut names = catalog
-        .identities
-        .iter()
-        .filter(|identity| release_of(config, identity).is_some())
-        .map(|identity| identity.name.as_str())
-        .collect::<BTreeSet<_>>();
-    names.extend(
-        catalog
-            .publish_declarations
-            .iter()
-            .filter(|(_, git)| config.repository(git).is_some())
-            .map(|(name, _)| name.as_str()),
-    );
-    names
-}
-
-/// Returns the identities and releases that come from a release tag of a self-publishing repository.
-fn self_published_identities<'a>(
-    catalog: &'a CatalogSnapshot,
-    config: &CratesIoConfig,
-) -> Vec<(&'a CatalogIdentity, &'a GitRelease)> {
-    catalog
-        .identities
-        .iter()
-        .filter_map(|identity| {
-            let release = identity.release.as_ref()?;
-            let prefix = config.prefix_for(&release.git)?;
-            is_release_tag(prefix, identity, release).then_some((identity, release))
-        })
-        .collect()
-}
-
-fn is_release_tag(prefix: &str, identity: &CatalogIdentity, release: &GitRelease) -> bool {
-    release.tag == format!("{prefix}{}", identity.version)
 }
 
 /// Refuses a repository URL that names a self-publishing repository in another spelling.

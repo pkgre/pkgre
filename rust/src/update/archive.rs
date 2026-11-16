@@ -74,12 +74,55 @@ pub fn inspect_crate_archive(
     expected_version: &Version,
     archive: &[u8],
 ) -> Result<ArchiveAnalysis> {
-    inspect_with_limits(
+    let (analysis, _) = inspect_with_limits(
         expected_name,
         expected_version,
         archive,
         ArchiveLimits::production(),
-    )
+        &[],
+    )?;
+    Ok(analysis)
+}
+
+/// One `.crate` archive as a content comparison reads it.
+pub(crate) struct ComparedArchive {
+    /// Every regular file below the archive root, by path.
+    pub(crate) files: BTreeMap<String, ArchiveFile>,
+    /// The contents of the files the caller asked for, by path.
+    pub(crate) contents: BTreeMap<String, Vec<u8>>,
+}
+
+/// Reads one `.crate` archive and captures the contents of the named files.
+///
+/// The archive is validated exactly as [`inspect_crate_archive`] validates it;
+/// `wanted` names the files whose bytes the caller needs, since the analysis
+/// keeps only their digests.
+///
+/// # Errors
+///
+/// Returns an error for an invalid expected identity, a malformed or
+/// unsupported archive, or any resource or safety limit violation.
+pub(crate) fn read_crate_archive(
+    expected_name: &str,
+    expected_version: &Version,
+    archive: &[u8],
+    wanted: &[&str],
+) -> Result<ComparedArchive> {
+    let (analysis, contents) = inspect_with_limits(
+        expected_name,
+        expected_version,
+        archive,
+        ArchiveLimits::production(),
+        wanted,
+    )?;
+    Ok(ComparedArchive {
+        files: analysis
+            .files
+            .into_iter()
+            .map(|file| (file.path.clone(), file))
+            .collect(),
+        contents,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -108,7 +151,8 @@ fn inspect_with_limits(
     expected_version: &Version,
     archive: &[u8],
     limits: ArchiveLimits,
-) -> Result<ArchiveAnalysis> {
+    wanted: &[&str],
+) -> Result<(ArchiveAnalysis, BTreeMap<String, Vec<u8>>)> {
     ensure!(!expected_name.is_empty(), "expected package name is empty");
     ensure!(!archive.is_empty(), "crate archive is empty");
     ensure!(
@@ -120,7 +164,7 @@ fn inspect_with_limits(
     let decoder = MultiGzDecoder::new(archive);
     let mut reader = BoundedReader::new(decoder, limits.unpacked);
     let expected_root = format!("{expected_name}-{expected_version}");
-    let mut contents = read_tar_entries(&mut reader, &expected_root, limits)?;
+    let mut contents = read_tar_entries(&mut reader, &expected_root, limits, wanted)?;
     require_zero_trailing_data(&mut reader)?;
     let unpacked_bytes = reader.bytes_read();
     ensure!(
@@ -135,13 +179,14 @@ fn inspect_with_limits(
     for (path, manifest) in contents.manifests {
         mark_manifest_surface(&path, &manifest, &mut contents.build_surface)?;
     }
-    Ok(ArchiveAnalysis {
+    let analysis = ArchiveAnalysis {
         compressed_bytes,
         unpacked_bytes,
         files: contents.files.into_values().collect(),
         build_surface: contents.build_surface,
         vcs: contents.vcs,
-    })
+    };
+    Ok((analysis, contents.captured))
 }
 
 #[derive(Default)]
@@ -151,12 +196,14 @@ struct ArchiveContents {
     build_surface: BTreeMap<String, String>,
     manifests: Vec<(String, Vec<u8>)>,
     vcs: Option<EmbeddedVcsInfo>,
+    captured: BTreeMap<String, Vec<u8>>,
 }
 
 fn read_tar_entries<R: Read>(
     reader: &mut BoundedReader<R>,
     expected_root: &str,
     limits: ArchiveLimits,
+    wanted: &[&str],
 ) -> Result<ArchiveContents> {
     let mut contents = ArchiveContents::default();
     let mut zero_blocks = 0_u8;
@@ -182,7 +229,7 @@ fn read_tar_entries<R: Read>(
             "crate archive exceeds {} entries",
             limits.entries
         );
-        contents.read_entry(reader, &header, expected_root, limits.file)?;
+        contents.read_entry(reader, &header, expected_root, limits.file, wanted)?;
     }
 }
 
@@ -193,6 +240,7 @@ impl ArchiveContents {
         header: &[u8; TAR_BLOCK_BYTES],
         expected_root: &str,
         file_limit: u64,
+        wanted: &[&str],
     ) -> Result<()> {
         validate_tar_checksum(header)?;
         let mode = u32::try_from(parse_tar_number(&header[100..108], "mode")?)
@@ -211,7 +259,7 @@ impl ArchiveContents {
         );
         let relative = relative_to_root(&normalized, expected_root)?;
         match entry_type {
-            0 | b'0' => self.read_regular(reader, relative, size, mode, file_limit),
+            0 | b'0' => self.read_regular(reader, relative, size, mode, file_limit, wanted),
             b'5' => {
                 ensure!(size == 0, "tar directory entry has nonzero size");
                 Ok(())
@@ -227,6 +275,7 @@ impl ArchiveContents {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn read_regular<R: Read>(
         &mut self,
         reader: &mut BoundedReader<R>,
@@ -234,6 +283,7 @@ impl ArchiveContents {
         size: u64,
         mode: u32,
         file_limit: u64,
+        wanted: &[&str],
     ) -> Result<()> {
         ensure!(
             !relative.is_empty(),
@@ -264,6 +314,9 @@ impl ArchiveContents {
         if relative == ".cargo_vcs_info.json" {
             ensure!(self.vcs.is_none(), "archive repeats VCS information file");
             self.vcs = Some(parse_vcs_info(&bytes, &sha256)?);
+        }
+        if wanted.contains(&relative.as_str()) {
+            self.captured.insert(relative.clone(), bytes.clone());
         }
         self.files.insert(relative, file);
         Ok(())
@@ -652,6 +705,7 @@ mod tests {
                 &Version::parse("1.0.0").unwrap(),
                 &compressed,
                 ArchiveLimits { entries: 1, ..base },
+                &[],
             )
             .is_err()
         );
@@ -661,6 +715,7 @@ mod tests {
                 &Version::parse("1.0.0").unwrap(),
                 &compressed,
                 ArchiveLimits { file: 2, ..base },
+                &[],
             )
             .is_err()
         );
@@ -673,6 +728,7 @@ mod tests {
                     unpacked: 511,
                     ..base
                 },
+                &[],
             )
             .is_err()
         );
@@ -682,6 +738,7 @@ mod tests {
                 &Version::parse("1.0.0").unwrap(),
                 &compressed,
                 ArchiveLimits { ratio: 1, ..base },
+                &[],
             )
             .is_err()
         );

@@ -182,7 +182,7 @@ pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterializati
     Ok(materialization)
 }
 
-fn resolve_git_tag_from(
+pub(crate) fn resolve_git_tag_from(
     repository: &str,
     tag: &str,
     expected_package: &str,
@@ -426,7 +426,7 @@ fn fetch_tag(
     Ok((tag_oid, commit))
 }
 
-fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
+pub(crate) fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
     inspect_checkout_directory(repository, repository)
 }
 
@@ -512,7 +512,7 @@ fn package_path(repository: &Path, manifest_path: &Path) -> Result<PathBuf> {
     Ok(relative)
 }
 
-fn pinned_cargo(version: &Version) -> Result<PathBuf> {
+pub(crate) fn pinned_cargo(version: &Version) -> Result<PathBuf> {
     let path = if let Some(configured) = std::env::var_os("PKGRE_CARGO") {
         let configured = PathBuf::from(configured);
         ensure!(
@@ -689,7 +689,7 @@ fn run_cargo_package(
     Ok(archive)
 }
 
-fn read_bounded_archive(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_bounded_archive(path: &Path) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("inspect package archive {}", path.display()))?;
     ensure!(
@@ -860,13 +860,17 @@ fn path_arg(path: &Path) -> OsString {
     path.as_os_str().to_owned()
 }
 
-struct TemporaryDirectory {
+pub(crate) struct TemporaryDirectory {
     path: PathBuf,
 }
 
 impl TemporaryDirectory {
-    fn new(prefix: &str) -> Result<Self> {
-        let root = std::env::temp_dir();
+    pub(crate) fn new(prefix: &str) -> Result<Self> {
+        Self::new_in(&std::env::temp_dir(), prefix)
+    }
+
+    /// Creates one unique temporary directory below `root`.
+    pub(crate) fn new_in(root: &Path, prefix: &str) -> Result<Self> {
         for _ in 0..100 {
             let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let path = root.join(format!("{prefix}-{}-{sequence}", std::process::id()));
@@ -882,7 +886,7 @@ impl TemporaryDirectory {
         bail!("could not allocate a unique temporary directory")
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 }
