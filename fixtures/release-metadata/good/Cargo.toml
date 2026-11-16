@@ -1,0 +1,10 @@
+# Complete release metadata, inherited where the workspace sets it: the check
+# accepts this member.
+[package]
+name = "good"
+version.workspace = true
+description = "A member whose release metadata is complete"
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]
+keywords = ["registry", "a-b_c+d", "A1"]

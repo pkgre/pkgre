@@ -1,0 +1,20 @@
+# Fixtures for the flake check `release-metadata`. The workspace sets a version
+# and the two fields that the `good` member inherits; the check must accept
+# `good` and `unpublished`, and refuse every other member.
+[workspace]
+members = [
+  "good",
+  "unpublished",
+  "version-literal",
+  "missing-description",
+  "missing-license",
+  "missing-repository",
+  "keywords-too-many",
+  "keyword-too-long",
+  "keyword-characters",
+]
+
+[workspace.package]
+version = "1.2.3"
+license = "Apache-2.0"
+repository = "https://example.invalid/release-metadata"

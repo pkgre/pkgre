@@ -1,0 +1,9 @@
+# A literal version instead of the inherited workspace version: the check
+# refuses this member.
+[package]
+name = "version-literal"
+version = "1.2.3"
+description = "A member that does not inherit the workspace version"
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]

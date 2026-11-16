@@ -252,6 +252,54 @@
               ./rust-toolchain.toml
             ];
           };
+          # Release metadata of the members published to the pkgre registry,
+          # and a self-test of the rules over fixtures whose metadata is
+          # deliberately wrong.
+          releaseMetadata = import ./nix/release-metadata.nix { inherit (pkgs) lib; };
+          readWorkspace =
+            root:
+            let
+              workspace = builtins.fromTOML (builtins.readFile (root + "/Cargo.toml"));
+            in
+            {
+              inherit workspace;
+              members = map (path: {
+                path = "${path}/Cargo.toml";
+                manifest = builtins.fromTOML (builtins.readFile (root + "/${path}/Cargo.toml"));
+              }) workspace.workspace.members;
+            };
+          releaseMetadataErrors = releaseMetadata.check (readWorkspace ./.);
+          releaseMetadataFixtureErrors = releaseMetadata.check (readWorkspace ./fixtures/release-metadata);
+          fixtureErrorsFor =
+            path:
+            pkgs.lib.filter (
+              error: pkgs.lib.hasPrefix "${path}/Cargo.toml: " error
+            ) releaseMetadataFixtureErrors;
+          # fixture members that must be refused, and members that must be
+          # accepted because they are complete or not published
+          fixtureRefused = [
+            "version-literal"
+            "missing-description"
+            "missing-license"
+            "missing-repository"
+            "keywords-too-many"
+            "keyword-too-long"
+            "keyword-characters"
+          ];
+          fixtureAccepted = [
+            "good"
+            "unpublished"
+          ];
+          releaseMetadataSelfTestFailures =
+            map (path: "${path}/Cargo.toml: the check accepted this fixture, but must refuse it") (
+              pkgs.lib.filter (path: fixtureErrorsFor path == [ ]) fixtureRefused
+            )
+            ++ pkgs.lib.concatMap (
+              path:
+              map (error: "${path}/Cargo.toml: the check refused this fixture, but must accept it: ${error}") (
+                fixtureErrorsFor path
+              )
+            ) fixtureAccepted;
         in
         {
           build-and-test = self.packages.${system}.rust;
@@ -398,6 +446,21 @@
             cargo fmt --all --check
             touch $out
           '';
+          release-metadata = pkgs.runCommand "pkgre-release-metadata" { } (
+            pkgs.lib.optionalString (releaseMetadataSelfTestFailures != [ ]) ''
+              echo "release-metadata: the self-test over fixtures/release-metadata failed:" >&2
+              printf '  %s\n' ${pkgs.lib.escapeShellArgs releaseMetadataSelfTestFailures} >&2
+              exit 1
+            ''
+            + pkgs.lib.optionalString (releaseMetadataErrors != [ ]) ''
+              echo "release-metadata: members published to the pkgre registry carry metadata that crates.io would refuse:" >&2
+              printf '  %s\n' ${pkgs.lib.escapeShellArgs releaseMetadataErrors} >&2
+              exit 1
+            ''
+            + ''
+              touch "$out"
+            ''
+          );
         }
       );
 

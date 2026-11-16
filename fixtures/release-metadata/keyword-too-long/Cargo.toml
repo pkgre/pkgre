@@ -1,0 +1,10 @@
+# A keyword of 21 characters where crates.io accepts 20: the check refuses
+# this member.
+[package]
+name = "keyword-too-long"
+version.workspace = true
+description = "A member with a keyword that is too long"
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]
+keywords = ["abcdefghijklmnopqrstu"]

@@ -1,0 +1,7 @@
+# No description: the check refuses this member.
+[package]
+name = "missing-description"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]
