@@ -34,7 +34,7 @@ Generated locks select permanently:
 (registry, category, normalized Cargo identity, version, source class, lifecycle, archive hash, source-row hash, routed-row hash, origin time, provenance, optional admission hash)
 ```
 
-`origin time` is written when an identity is first locked (admission, Git publication, or migration):a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified; `check` and `lock` never re-derive it, and only `check-transition` rejects a change.
+`origin time` is written when an identity is first locked (admission, Git publication, or migration):a mirror value is its retained source row `pubtime` and loading re-derives it, refusing a mismatch;a Git-tag value is the tag commit time, or the operator's `--git-tag-time` input for a migrated tag, and no catalog file records it, so only `check-transition` rejects a change of it.
 
 Planning is discovery, not authority. `update-plan` performs current evaluation but outputs compact intent. `update-apply` independently recomputes facts at current time + commits intent/facts atomically. `automatic`/`review-required` prioritize attention; neither bypasses registry PR review.
 
@@ -43,8 +43,8 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 ### Registry/category/identity
 
 - Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index cannot disappear/change.
-- `audience` is not an enforced invariant:a lock copies the declared value when it is created or migrated, `check` never compares it, `lock` never refreshes it, `release.json` does not carry it, and only `check-transition` compares the accepted + candidate declarations.
-- Current production categories:`main/{general,acp,filesystem,matrix,mcp,pkgre,sse,terminal,yaml}`. Each category is inhabited + has exact committed direct-dependency allowlist; additions allowed, released category/rule cannot disappear/change.
+- `audience` is a lock invariant:a lock copies the declared value when it is created or migrated and is permanent; loading refuses a lock whose recorded `audience` differs from its declaration, so `check` and `lock` fail before a merge, `release.json` does not carry it, and `check-transition` additionally compares the accepted + candidate declarations.
+- Current production categories:`main/{general,acp,filesystem,matrix,mcp,pkgre,sse,terminal,yaml}`. Each category is inhabited + has exact committed direct-dependency allowlist; additions allowed, released category/rule cannot disappear/change. The serving gate `check_transition` compares every accepted category's `may-depend-on` rule and every accepted package home, with or without versions, so a widened or narrowed rule and a moved or removed reserved name are refused.
 - Current edges:`general→general`; feature category→itself+general; `mcp→general|mcp|sse`; `pkgre→general|pkgre`; same registry grants no implicit edge.
 - One permanent registry/category home per normalized package name within a registry; Cargo ASCII case + `-`/`_` collision defense. Each `name + version` has one immutable `mirror|publish` source class/checksum; one name may use both classes across distinct versions. Same normalized name in another registry is a distinct home.
 - Dependency home resolution prefers the source registry; if absent, exactly one external-registry home is required; multiple external homes are ambiguous + blocked.
@@ -70,7 +70,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 - Plan includes automatic + review-required requests; blocked omitted. Generated template is directly applyable; protected PR review authorizes batch. Typed `manual-full-archive`/`manual-source-delta` is optional.
 - Apply re-fetches sparse history/rows/archives/API/dependency/source evidence, age, route, decisions; rejects yanked/young/blocked/drifted/evidence-invalid request; never substitutes version.
 - Apply transaction fingerprint-guards + stages declaration edits, rows, registry locks, human manifest, generated batch lock, package bindings, and downloads together or not at all.
-- Admission pairs are immutable/canonical/regular/paired/catalog-owned. Lock binds adjacent manifest hash + exact requests + complete plan; each package binds full lock hash; reverse coverage exact, no duplicates/orphans.
+- Admission pairs are immutable/canonical/regular/paired/catalog-owned. Lock binds adjacent manifest hash + exact requests + complete plan; each package binds full lock hash; reverse coverage exact, no duplicates/orphans. The serving gate `check_transition` keeps every accepted pair byte-identical, keeps every accepted package's binding exactly as it was (present or absent), and requires every crates.io identity new since the accepted catalog to be bound to an admission batch that is new in the candidate; Git-tag identities carry no admission evidence.
 - Established catalog rejects ordinary `lock` admission of new mirror identities; bootstrap, empty name anchors, removals, and Git tags remain permitted.
 
 ### Artifacts/lifecycle/rendering
@@ -86,7 +86,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 - Catalog/category/admission/object boundaries reject unrelated paths, traversal, symlinks, nonregular inputs, missing/extra objects, orphan/noncanonical files; downloads are size-bounded + exact.
 - Render output must be absent; `verify` requires byte identity; `verify-monotonic` rejects prior registry/category/home/identity disappearance or mutation, tombstone reactivation, and unauthenticated migration.
 - Historical schema-3→4 migration (removed command) authenticated canonical source; mapped `universe/*→main/*`, `pkgre/tooling→main/pkgre`; preserved immutable artifacts; recomputed registry-dependent routing/admission bindings; never modified source.
-- Historical schema-4→5 migration parsed schema-4 generated locks + the schema-1 download catalog strictly and rewrote registry/category files to schema 5 without checking their old schema; it asserted `audience = "public"`, wrote one `admitted-at` per package (crates.io `pubtime`, or the operator's `--git-tag-time`, which is not verified), and replaced the download catalog with the schema-2 delivery model; it wrote only to an absent destination, left a partial destination on failure, and strictly loaded/policy-checked/artifact-verified/test-rendered the output. It never modified its source.
+- Historical schema-4→5 migration parsed schema-4 generated locks, the schema-1 download catalog, and every registry/category file strictly, refusing a registry or category file whose `schema` was not 4; it asserted `audience = "public"`, wrote one `admitted-at` per package (crates.io `pubtime`, or the operator's `--git-tag-time`, which is not verified), and replaced the download catalog with the schema-2 delivery model; it wrote only to an absent destination, staged the whole output in a private directory beside it, installed it by one rename only after strict load/policy check/artifact verification/test render, and so left no destination at all on failure. It never modified its source.
 - The in-place retained-delivery migration declares `delivery = "retained"` without verifying bodies, and `archive-import` verifies every imported digest before `check`/render/serve accept the catalog; both rewrite the target catalog in place.
 
 ## Review boundary
