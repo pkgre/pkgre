@@ -44,6 +44,9 @@ pub(super) struct Member {
     /// Dependencies, as Cargo reports them, with inherited workspace
     /// dependencies resolved.
     pub(super) dependencies: Vec<MemberDependency>,
+    /// Whether `publish` is exactly `[`pkgre`]`, which makes the member part of
+    /// its repository's releases.
+    pub(super) released: bool,
     /// Library target name, when the member has a library.
     pub(super) library: Option<String>,
     /// Binary target name of `src/main.rs`, when the member has one.
@@ -74,6 +77,7 @@ struct MetadataPackage {
     manifest_path: PathBuf,
     dependencies: Vec<MetadataDependency>,
     targets: Vec<MetadataTarget>,
+    publish: Option<Vec<String>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -136,6 +140,7 @@ impl Workspace {
                         registry: dependency.registry,
                     })
                     .collect(),
+                released: package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]),
                 name: package.name,
                 version: package.version,
                 manifest_path: package.manifest_path,
@@ -147,6 +152,16 @@ impl Workspace {
     /// Returns one member by its Cargo package name.
     pub(super) fn member(&self, name: &str) -> Option<&Member> {
         self.members.iter().find(|member| member.name == name)
+    }
+
+    /// Returns the members that the tag publishes, which are exactly the crates
+    /// that its release must hold.
+    pub(super) fn publishable_members(&self) -> BTreeSet<&str> {
+        self.members
+            .iter()
+            .filter(|member| member.released)
+            .map(|member| member.name.as_str())
+            .collect()
     }
 
     /// Returns every manifest of the workspace: the root manifest and every
@@ -574,7 +589,8 @@ fn rewrite_dependency_table(
             .map(str::to_owned)
             .or_else(|| inherited.get(&key).cloned())
             .unwrap_or_else(|| key.clone());
-        let rename = if expectations.contains(&package) {
+        let resolved = expectations.contains(&package);
+        let rename = if resolved {
             let expected = expectations.crates_io_name(&package)?;
             (expected != key).then(|| expected.to_owned())
         } else if let Some(member) = member {
@@ -591,9 +607,10 @@ fn rewrite_dependency_table(
             entry.remove("registry");
             if let Some(rename) = rename {
                 entry.insert("package", value(rename));
-            } else if member.is_some() {
+            } else if resolved {
                 // The dependency keeps its own name on crates.io, and a stale
-                // `package` key would name another crate there.
+                // `package` key would name another crate there, also in the
+                // `[workspace.dependencies]` table of a virtual root.
                 entry.remove("package");
             }
             continue;

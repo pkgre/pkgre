@@ -271,8 +271,13 @@ pub(super) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
 
 /// Writes the workspace manifests of one fixture release.
 fn write_manifests(root: &Path, variant: Variant) {
-    let mut workspace = String::from(
-        "[workspace]\nmembers = [\"lib\", \"bin\", \"serve\"]\nresolver = \"3\"\n\n[workspace.package]\nversion = \"1.0.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n\n[workspace.dependencies]\nmirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\n",
+    let mirror = if variant.stale_package {
+        "mirrored-dep = { version = \"0.3\", registry = \"pkgre\", package = \"mirrored-dep\" }\n"
+    } else {
+        "mirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\n"
+    };
+    let mut workspace = format!(
+        "[workspace]\nmembers = [\"lib\", \"bin\", \"serve\"]\nresolver = \"3\"\n\n[workspace.package]\nversion = \"1.0.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n\n[workspace.dependencies]\n{mirror}"
     );
     if variant.stale_package {
         workspace.push_str(

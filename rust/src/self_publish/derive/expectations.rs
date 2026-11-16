@@ -118,7 +118,9 @@ fn resolve_package(
     published: &BTreeMap<String, String>,
     package: &super::cargo_lock::LockedPackage,
 ) -> Result<ExpectedPackage> {
-    if let Some(crates_io_name) = published.get(&package.name) {
+    if package.source.is_none()
+        && let Some(crates_io_name) = published.get(&package.name)
+    {
         return Ok(ExpectedPackage {
             crates_io_name: crates_io_name.clone(),
             curated_checksum: None,

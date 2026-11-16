@@ -48,6 +48,17 @@ fn derive_from_catalog(
     curated: &BTreeMap<String, Vec<u8>>,
     source: &Path,
 ) -> Result<Vec<super::DerivedPackage>> {
+    derive_with_members(release, state, curated, source, &RELEASED)
+}
+
+/// Derives the fixture release with the given catalog crates.
+fn derive_with_members(
+    release: &Release,
+    state: &RepositoryState,
+    curated: &BTreeMap<String, Vec<u8>>,
+    source: &Path,
+    members: &[&str],
+) -> Result<Vec<super::DerivedPackage>> {
     let self_publish = state
         .self_publish
         .as_ref()
@@ -58,7 +69,18 @@ fn derive_from_catalog(
         .identity("example-lib", &version)
         .and_then(|identity| identity.release.clone())
         .expect("the catalog holds the release");
-    let released = released_crates(release, curated);
+    let released = members
+        .iter()
+        .map(|name| {
+            let archive = curated.get(*name).cloned().unwrap_or_default();
+            ReleasedCrate {
+                name: (*name).to_owned(),
+                version: release.version(name),
+                crate_sha256: sha256_bytes(&archive),
+                archive,
+            }
+        })
+        .collect::<Vec<_>>();
     let working = fixtures::Temp::new("pkgre-derive-work");
     derive_release_with(
         &facts,
@@ -68,19 +90,6 @@ fn derive_from_catalog(
         &self_publish.lock,
         Sources::local(&release.root, Some(source), working.path()),
     )
-}
-
-/// Returns the released crates of one fixture release.
-fn released_crates(release: &Release, curated: &BTreeMap<String, Vec<u8>>) -> Vec<ReleasedCrate> {
-    RELEASED
-        .iter()
-        .map(|name| ReleasedCrate {
-            name: (*name).to_owned(),
-            version: release.version(name),
-            crate_sha256: sha256_bytes(&curated[*name]),
-            archive: curated[*name].clone(),
-        })
-        .collect()
 }
 
 /// The catalog facts of a fixture release, built without a catalog repository.
@@ -438,6 +447,51 @@ fn derives_when_the_catalog_holds_older_versions_of_a_dependency() {
 }
 
 #[test]
+fn refuses_a_release_that_the_catalog_publishes_partially() {
+    let temporary = fixtures::Temp::new("pkgre-derive-partial");
+    let (source, release, catalog) = fixture(temporary.path(), Variant::default());
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    // The tag marks both members publishable, but the catalog publishes only
+    // the library from it.
+    let error = derive_with_members(
+        &release,
+        &state,
+        &catalog.curated,
+        &source.root,
+        &["example-lib"],
+    )
+    .expect_err("a partial release is refused");
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("publishes exactly its publishable members"),
+        "{error}"
+    );
+    assert!(error.contains("example-bin"), "{error}");
+}
+
+#[test]
+fn refuses_a_catalog_crate_that_the_tag_does_not_publish() {
+    let temporary = fixtures::Temp::new("pkgre-derive-extra");
+    let (source, release, catalog) = fixture(temporary.path(), Variant::default());
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    // `example-serve` is a member, but its `publish` is `false`.
+    let error = derive_with_members(
+        &release,
+        &state,
+        &catalog.curated,
+        &source.root,
+        &["example-lib", "example-bin", "example-serve"],
+    )
+    .expect_err("a catalog crate that the tag does not publish is refused");
+    let error = format!("{error:#}");
+    assert!(
+        error.contains("publishes exactly its publishable members"),
+        "{error}"
+    );
+    assert!(error.contains("example-serve"), "{error}");
+}
+
+#[test]
 fn refuses_a_changed_source_file() {
     let temporary = fixtures::Temp::new("pkgre-derive-changed");
     let (source, release, catalog) = fixture(temporary.path(), Variant::default());
@@ -649,6 +703,17 @@ fn rewrites_a_stale_package_key() {
         Some(fixtures::EARLIER_CRATES_IO_NAME),
         "the stale key becomes the crates.io name"
     );
+    let lib = packages
+        .iter()
+        .find(|package| package.entry.name == "example-lib")
+        .expect("the library is derived");
+    let manifest = archived_manifest(&lib.entry, &lib.archive, &version);
+    assert!(
+        manifest["dependencies"]["mirrored-dep"]
+            .get("package")
+            .is_none(),
+        "a resolved `[workspace.dependencies]` entry drops its stale package key"
+    );
 }
 
 #[test]
@@ -808,6 +873,62 @@ fn refuses_configuration_above_a_symlinked_ancestor() {
     assert!(
         format!("{error:#}").contains("could replace crates.io"),
         "{error:#}"
+    );
+}
+
+#[test]
+fn distinguishes_a_member_from_a_registry_package_of_its_name() {
+    let lock = LockIndex::parse(
+        b"version = 4\n\n[[package]]\nname = \"example-bin\"\nversion = \"1.0.0\"\n\n[[package]]\nname = \"example-bin\"\nversion = \"0.9.0\"\nsource = \"sparse+https://rust.pkg.re/\"\nchecksum = \"0111111111111111111111111111111111111111111111111111111111111111\"\n",
+    )
+    .expect("parse a lock with a member and a registry package of one name");
+    let catalog = CatalogSnapshot {
+        identities: vec![CatalogIdentity {
+            name: "example-bin".to_owned(),
+            version: Version::parse("0.9.0").expect("parse the fixture version"),
+            crate_sha256: "0111111111111111111111111111111111111111111111111111111111111111"
+                .to_owned(),
+            removed: false,
+            release: None,
+        }],
+        mirrors: vec!["example-bin".to_owned()],
+        publish_names: Vec::new(),
+        publish_declarations: Vec::new(),
+    };
+    let published = BTreeMap::from([("example-bin".to_owned(), "example-bin".to_owned())]);
+    let expectations = Expectations::build(
+        &lock,
+        &catalog,
+        &config_for(fixtures::REPOSITORY),
+        &CratesIoLock {
+            schema: CRATES_IO_LOCK_SCHEMA,
+            packages: Vec::new(),
+        },
+        &published,
+    )
+    .expect("build the expectations");
+    let member = expectations
+        .package(
+            "example-bin",
+            &Version::parse("1.0.0").expect("parse the version"),
+        )
+        .expect("the member is expected");
+    assert!(member.member);
+    assert!(member.curated_checksum.is_none() && member.derived_checksum.is_none());
+    let registry = expectations
+        .package(
+            "example-bin",
+            &Version::parse("0.9.0").expect("parse the version"),
+        )
+        .expect("the registry package is expected");
+    assert!(!registry.member);
+    assert_eq!(
+        registry.curated_checksum.as_deref(),
+        Some("0111111111111111111111111111111111111111111111111111111111111111")
+    );
+    assert_eq!(
+        registry.derived_checksum.as_deref(),
+        Some("0111111111111111111111111111111111111111111111111111111111111111")
     );
 }
 

@@ -14,7 +14,7 @@ mod expectations;
 mod git;
 mod workspace;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -217,6 +217,7 @@ pub(super) fn derive_release_with(
     );
 
     let workspace = workspace::Workspace::load(&cargo, &environment, &work, &checkout.root)?;
+    ensure_release_members(&workspace, released, &release.tag)?;
     let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
     let published = published_crates(&workspace, released, config, &release.tag)?;
     let expectations = Expectations::build(&lock, catalog, config, earlier, &published)?;
@@ -308,6 +309,41 @@ pub(super) fn derive_release_with(
             ))
     });
     Ok(packages)
+}
+
+/// Requires the crates that the catalog publishes from the tag to be exactly
+/// the tag's publishable members.
+///
+/// A release tag publishes the crates of its commit, no more and no fewer, so a
+/// partial release cannot be repaired at the same tag.
+///
+/// # Errors
+///
+/// Returns an error naming the publishable members that the catalog does not
+/// publish from the tag, and the catalog crates that the tag does not publish.
+fn ensure_release_members(
+    workspace: &workspace::Workspace,
+    released: &[ReleasedCrate],
+    tag: &str,
+) -> Result<()> {
+    let publishable = workspace.publishable_members();
+    let published = released
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let missing = publishable
+        .difference(&published)
+        .copied()
+        .collect::<Vec<_>>();
+    let extra = published
+        .difference(&publishable)
+        .copied()
+        .collect::<Vec<_>>();
+    ensure!(
+        missing.is_empty() && extra.is_empty(),
+        "Git tag {tag:?} publishes exactly its publishable members, {publishable:?}, but registry/main.lock publishes {published:?} from it: publishable and missing from the catalog {missing:?}, in the catalog but not publishable at the tag {extra:?}"
+    );
+    Ok(())
 }
 
 /// Returns the crates.io name of every released crate, refusing a name that
