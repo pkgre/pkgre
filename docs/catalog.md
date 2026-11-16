@@ -33,7 +33,7 @@ registry/
     └── rows/<source-row-sha256>.json
 ```
 
-A future registry adds `<alias>.toml`, `<alias>.lock`, and optional `categories/<alias>/...`; it does not rename `main` files. `registry/` is exclusive managed state. Orphan paths, nested admission entries, symlinks, special files, noncanonical content, missing/extra pairs, locks without declarations, and unexpected objects fail before network resolution. Keep proposals, transient manifests, inspections, logs, and rendered sites outside this directory.
+A future registry adds `<alias>.toml`, `<alias>.lock`, and optional `categories/<alias>/...`; it does not rename `main` files. `registry/` is exclusive managed state. Orphan paths, nested admission entries, symlinks, special files, noncanonical content, missing/extra pairs, locks without declarations, and unexpected objects fail before network resolution; `objects/` holds only the `crates/` and `rows/` directories, each a real directory, and any other entry there is refused by path. Keep proposals, transient manifests, inspections, logs, and rendered sites outside this directory.
 
 ## Human declarations
 

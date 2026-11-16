@@ -670,6 +670,9 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
                 "catalog managed path is not a real directory: {}",
                 path.display()
             );
+            if path.file_name() == Some(OsStr::new("objects")) {
+                validate_object_area(path)?;
+            }
             continue;
         }
         match path.extension().and_then(|value| value.to_str()) {
@@ -704,6 +707,32 @@ fn validate_catalog_root_entries(paths: &[PathBuf], root: &Path) -> Result<()> {
         }
     }
     crate::update::validate_admission_tree_structure(root)?;
+    Ok(())
+}
+
+/// Requires the object area to hold nothing but the exact `crates/` and `rows/` directories.
+fn validate_object_area(object_root: &Path) -> Result<()> {
+    let mut entries = fs::read_dir(object_root)
+        .with_context(|| format!("read object area {}", object_root.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("read entries below {}", object_root.display()))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        ensure!(
+            matches!(entry.file_name().to_str(), Some("crates" | "rows")),
+            "unexpected entry in the object area {}: {}; only the crates/ and rows/ directories are allowed",
+            object_root.display(),
+            path.display()
+        );
+        let metadata = fs::symlink_metadata(&path)
+            .with_context(|| format!("inspect object area entry {}", path.display()))?;
+        ensure!(
+            metadata.file_type().is_dir(),
+            "object area entry is not a real directory: {}",
+            path.display()
+        );
+    }
     Ok(())
 }
 
@@ -1656,6 +1685,49 @@ reserved = []
         assert!(format!("{error:#}").contains("not a regular file"));
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(target).unwrap();
+    }
+
+    #[test]
+    fn object_area_admits_only_the_crates_and_rows_directories() {
+        let root = temporary_root("object-area");
+        fs::write(
+            root.join("main.toml"),
+            registry_text(
+                "[categories.general]\nmay-depend-on = [\"main/general\"]\nmirror = { serde = [\"1.0.229\"] }\n",
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("objects/crates")).unwrap();
+        fs::create_dir_all(root.join("objects/rows")).unwrap();
+        load_registry_inputs(&root).unwrap();
+
+        fs::write(root.join("objects/stray"), b"").unwrap();
+        let error = load_registry_inputs(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/stray"));
+        fs::remove_file(root.join("objects/stray")).unwrap();
+
+        fs::create_dir(root.join("objects/other")).unwrap();
+        let error = load_registry_inputs(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/other"));
+        fs::remove_dir(root.join("objects/other")).unwrap();
+
+        #[cfg(unix)]
+        {
+            let target = root.with_extension("object-link-target");
+            fs::write(&target, b"").unwrap();
+            std::os::unix::fs::symlink(&target, root.join("objects/link")).unwrap();
+            let error = load_registry_inputs(&root).unwrap_err();
+            assert!(format!("{error:#}").contains("objects/link"));
+            fs::remove_file(root.join("objects/link")).unwrap();
+            fs::remove_file(&target).unwrap();
+
+            fs::remove_dir(root.join("objects/rows")).unwrap();
+            std::os::unix::fs::symlink(root.join("objects/crates"), root.join("objects/rows"))
+                .unwrap();
+            let error = load_registry_inputs(&root).unwrap_err();
+            assert!(format!("{error:#}").contains("not a real directory"));
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

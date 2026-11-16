@@ -1735,6 +1735,50 @@ mod tests {
     }
 
     #[test]
+    fn unrelated_object_area_entries_are_refused_without_mutation() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-object-area");
+        let root = temporary.path().join("catalog");
+        write_catalog(&root, "[mirror]\nalpha = [\"1.0.0\"]\n", "", "");
+        let resolver = FakeResolver::default();
+        reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+        let mut installed = fs::read_dir(root.join("objects"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        installed.sort();
+        assert_eq!(installed, ["crates", "rows"]);
+        assert_eq!(resolver.calls(), 1);
+
+        let stray = root.join("objects/stray");
+        fs::write(&stray, b"").unwrap();
+        let before = snapshot(temporary.path());
+        let error = Catalog::load(&root).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/stray"));
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/stray"));
+        assert_eq!(snapshot(temporary.path()), before);
+        fs::remove_file(&stray).unwrap();
+
+        let other = root.join("objects/other");
+        fs::create_dir(&other).unwrap();
+        let before = snapshot(temporary.path());
+        let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+        assert!(format!("{error:#}").contains("objects/other"));
+        assert_eq!(snapshot(temporary.path()), before);
+        fs::remove_dir(&other).unwrap();
+
+        #[cfg(unix)]
+        {
+            let target = temporary.path().join("object-link-target");
+            fs::write(&target, b"").unwrap();
+            std::os::unix::fs::symlink(&target, root.join("objects/link")).unwrap();
+            let error = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap_err();
+            assert!(format!("{error:#}").contains("objects/link"));
+        }
+        assert_eq!(resolver.calls(), 1);
+    }
+
+    #[test]
     fn one_existing_lock_disables_direct_bootstrap() {
         let temporary = TemporaryDirectory::new("pkgre-lock-partial-bootstrap");
         let root = temporary.path().join("catalog");
