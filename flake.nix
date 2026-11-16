@@ -20,6 +20,9 @@
         "aarch64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      # the root manifest: members inherit its `workspace.package` fields, and
+      # `workspace.members` lists the packages this flake builds
+      workspaceManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
     in
     {
       packages = forAllSystems (
@@ -79,10 +82,15 @@
             let
               manifest = builtins.fromTOML (builtins.readFile ./${packageDirectory}/Cargo.toml);
               packageName = manifest.package.name;
+              version =
+                if manifest.package.version == { workspace = true; } then
+                  workspaceManifest.workspace.package.version
+                else
+                  manifest.package.version;
             in
             rustPlatform.buildRustPackage {
               pname = packageName;
-              inherit (manifest.package) version;
+              inherit version;
               src = source;
               nativeBuildInputs = pkgs.lib.optionals (runtimeInputs != [ ]) [ pkgs.makeWrapper ];
               postInstall = pkgs.lib.optionalString (runtimeInputs != [ ]) ''
