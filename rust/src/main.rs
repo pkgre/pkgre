@@ -75,10 +75,12 @@ fn lock_catalog(arguments: &[OsString]) -> Result<()> {
 
 fn check(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 1)?;
-    let catalog = load_catalog(&arguments[0])?;
-    validate_catalog(&catalog)?;
-    ArtifactMap::load(&catalog)?;
-    info!(packages = catalog.approvals.len(), "catalog is valid");
+    let summary = pkgre_rust::check::check(Path::new(&arguments[0]))?;
+    info!(
+        packages = summary.usage.approvals,
+        margins = %summary.margins(),
+        "catalog is valid"
+    );
     Ok(())
 }
 
