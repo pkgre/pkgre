@@ -215,14 +215,14 @@ mod tests {
     type EntryChange = fn(&mut CratesIoPackage);
 
     #[test]
-    fn canonical_bytes_round_trip_and_sort_by_crates_io_comparison() {
+    fn canonical_bytes_round_trip_and_sort_by_lowercased_name() {
         let unsorted = lock(&[("Example-Bin", "1.0.0"), ("example-lib", "1.0.0")]);
         let bytes = unsorted.serialize().unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
         assert!(text.starts_with("schema = 1\n\n[[packages]]\n"), "{text}");
         assert!(
             text.find("Example-Bin").unwrap() < text.find("example-lib").unwrap(),
-            "canonical order sorts by crates.io's comparison: {text}"
+            "canonical order sorts by lowercased name, then exact name, then version: {text}"
         );
         let parsed = CratesIoLock::parse_canonical(&bytes, path()).unwrap();
         assert_eq!(parsed, unsorted);
@@ -256,6 +256,22 @@ mod tests {
         let error = CratesIoLock::parse_canonical(&unknown, path()).unwrap_err();
         let error = format!("{error:#}");
         assert!(error.contains("unknown field"), "{error}");
+    }
+
+    #[test]
+    fn a_wrong_schema_is_refused_even_when_the_bytes_are_not_canonical() {
+        let canonical = lock(&[("example-bin", "1.0.0"), ("example-lib", "1.0.0")]);
+        let text = String::from_utf8(canonical.serialize().unwrap())
+            .unwrap()
+            .replace("schema = 1", "schema = 2");
+        let marker = "\n[[packages]]\n";
+        let (head, body) = text.split_once(marker).unwrap();
+        let mut blocks = body.split(marker).collect::<Vec<_>>();
+        blocks.reverse();
+        let text = format!("{head}{marker}{}", blocks.join(marker));
+        let error = CratesIoLock::parse_canonical(text.as_bytes(), path()).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("schema must be 1"), "{error}");
     }
 
     #[test]

@@ -95,8 +95,16 @@ impl CratesIoConfig {
     }
 
     /// Returns the declaration of a self-publishing repository.
+    ///
+    /// Repositories are compared in their normalized form, so a URL that only
+    /// differs in the host's case, a trailing `.git`, or, for GitHub, the path's
+    /// case still finds its declaration; the checks then refuse the difference
+    /// in spelling.
     pub(crate) fn repository(&self, git: &str) -> Option<&RepositoryDeclaration> {
-        self.repositories.iter().find(|entry| entry.git == git)
+        let normalized = normalized_git(git);
+        self.repositories
+            .iter()
+            .find(|entry| normalized_git(&entry.git) == normalized)
     }
 
     /// Returns the release-tag prefix of a self-publishing repository.
@@ -166,8 +174,8 @@ impl CratesIoConfig {
             validate_tag_prefix(&repository.tag_prefix)
                 .with_context(|| format!("validate tag-prefix of {:?}", repository.git))?;
             ensure!(
-                repositories.insert(repository.git.as_str()),
-                "self-publishing config names repository {:?} twice",
+                repositories.insert(normalized_git(&repository.git)),
+                "self-publishing config names repository {:?} twice, in two spellings",
                 repository.git
             );
         }
@@ -199,6 +207,36 @@ impl CratesIoConfig {
             );
         }
         Ok(())
+    }
+}
+
+/// Returns the comparison form of a Git repository URL.
+///
+/// The scheme and host are lowercased and a trailing `.git` is dropped, since
+/// they name the same repository; for GitHub the path is lowercased too, since
+/// GitHub compares it case-insensitively. Every other path component keeps its
+/// case, because other hosts may treat it as significant.
+#[must_use]
+pub(crate) fn normalized_git(git: &str) -> String {
+    let (scheme, rest) = git.split_once("://").unwrap_or(("", git));
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority.to_ascii_lowercase();
+    let path = strip_git_suffix(path);
+    let path = if host == "github.com" {
+        path.to_ascii_lowercase()
+    } else {
+        path.to_owned()
+    };
+    format!("{}://{host}/{path}", scheme.to_ascii_lowercase())
+}
+
+/// Drops one trailing `.git`, in any case, from a URL path.
+fn strip_git_suffix(path: &str) -> &str {
+    match path.len().checked_sub(4) {
+        Some(cut) if path.is_char_boundary(cut) && path[cut..].eq_ignore_ascii_case(".git") => {
+            &path[..cut]
+        }
+        _ => path,
     }
 }
 
@@ -320,6 +358,10 @@ reason = "crates.io refused the upload"
                 "twice",
             ),
             (
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = \"https://git.example.invalid/a\"\ntag-prefix = \"rust/v\"\n\n[[repositories]]\ngit = \"https://GIT.example.invalid/a.git\"\ntag-prefix = \"v\"\n",
+                "twice, in two spellings",
+            ),
+            (
                 "schema = 1\nowners = [\"example\"]\n\n[[abandoned]]\nname = \"example\"\nversion = \"1.0.0\"\nreason = \" \"\n",
                 "must give a reason",
             ),
@@ -332,6 +374,38 @@ reason = "crates.io refused the upload"
             let error = format!("{error:#}");
             assert!(error.contains(expected), "{expected:?} not in {error}");
         }
+    }
+
+    #[test]
+    fn repository_urls_compare_in_normalized_form() {
+        assert_eq!(
+            normalized_git("https://Git.Example.Invalid/Owner/Repo.git"),
+            "https://git.example.invalid/Owner/Repo"
+        );
+        assert_eq!(
+            normalized_git("https://GitHub.com/Owner/Repo.git"),
+            normalized_git("https://github.com/owner/repo")
+        );
+        assert_ne!(
+            normalized_git("https://git.example.invalid/Owner/Repo"),
+            normalized_git("https://git.example.invalid/owner/repo")
+        );
+        let config = CratesIoConfig::parse(
+            "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = \"https://git.example.invalid/Owner/Repo\"\ntag-prefix = \"rust/v\"\n"
+                .as_bytes(),
+            path(),
+        )
+        .unwrap();
+        assert!(
+            config
+                .repository("https://GIT.example.invalid/Owner/Repo.git")
+                .is_some()
+        );
+        assert!(
+            config
+                .repository("https://git.example.invalid/owner/repo")
+                .is_none()
+        );
     }
 
     #[test]

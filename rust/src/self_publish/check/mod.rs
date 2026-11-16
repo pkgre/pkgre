@@ -12,7 +12,7 @@ use semver::Version;
 use super::config::CratesIoConfig;
 use super::lock::CratesIoLock;
 use super::name;
-use crate::schema::{Catalog, Source};
+use crate::schema::{Catalog, Source, load_registry_inputs};
 
 /// The only catalog registry that `self-publish/` names.
 const CATALOG_REGISTRY: &str = "main";
@@ -54,14 +54,16 @@ pub struct SelfPublishCheckSummary {
 /// # Errors
 ///
 /// Returns an error for a missing or invalid catalog, a malformed or
-/// non-canonical self-publishing state, or any violation of the name rules,
-/// the identity and entry correspondence, the accepted-state comparison, the
-/// release-tag convention, or the version rules.
+/// non-canonical self-publishing state, a removed self-publishing state, or any
+/// violation of the name rules, the identity and entry correspondence, the
+/// accepted-state comparison, the release-tag convention, or the version rules.
 pub fn check_repository(
     repository: &Path,
     accepted: Option<&Path>,
 ) -> Result<SelfPublishCheckSummary> {
     let candidate = RepositoryState::load(repository)?;
+    let accepted = accepted.map(RepositoryState::load).transpose()?;
+    check_state_not_removed(&candidate, accepted.as_ref())?;
     let Some(self_publish) = candidate.self_publish else {
         tracing::info!(
             path = %repository.display(),
@@ -69,7 +71,6 @@ pub fn check_repository(
         );
         return Ok(SelfPublishCheckSummary::default());
     };
-    let accepted = accepted.map(RepositoryState::load).transpose()?;
     if accepted.is_none() {
         tracing::info!(
             "self-publishing checks that compare against an accepted state are skipped: no accepted repository was given"
@@ -81,6 +82,21 @@ pub fn check_repository(
         lock: state.self_publish.as_ref().map(|state| &state.lock),
     });
     check(&self_publish, &candidate.catalog, accepted_view.as_ref())
+}
+
+/// Refuses a candidate that removed the self-publishing state of the accepted repository.
+fn check_state_not_removed(
+    candidate: &RepositoryState,
+    accepted: Option<&RepositoryState>,
+) -> Result<()> {
+    if candidate.self_publish.is_some() {
+        return Ok(());
+    }
+    ensure!(
+        accepted.is_none_or(|state| state.self_publish.is_none()),
+        "the accepted repository has a {STATE_DIRECTORY} directory but the candidate does not; the self-publishing state is only ever added"
+    );
+    Ok(())
 }
 
 /// One repository: its catalog facts and, when declared, its self-publishing state.
@@ -109,9 +125,20 @@ impl RepositoryState {
                     .with_context(|| format!("inspect catalog directory {}", registry.display()));
             }
         }
+        // Publish declarations carry the repository URLs of names that have no
+        // identity yet; the catalog model keeps only their names.
+        let inputs = load_registry_inputs(&registry)
+            .with_context(|| format!("load catalog {}", registry.display()))?;
+        let declarations = inputs
+            .iter()
+            .filter(|input| input.file.registry.name == CATALOG_REGISTRY)
+            .flat_map(|input| input.file.category_values())
+            .flat_map(|category| category.publish.iter())
+            .map(|(name, declaration)| (name.clone(), declaration.git.clone()))
+            .collect::<Vec<_>>();
         let catalog = Catalog::load(&registry)
             .with_context(|| format!("load catalog {}", registry.display()))?;
-        let catalog = CatalogSnapshot::from_catalog(&catalog);
+        let catalog = CatalogSnapshot::from_catalog(&catalog, declarations);
         let directory = repository.join(STATE_DIRECTORY);
         let metadata = match fs::symlink_metadata(&directory) {
             Ok(metadata) => metadata,
@@ -180,11 +207,13 @@ struct AcceptedState<'a> {
     lock: Option<&'a CratesIoLock>,
 }
 
-/// The catalog facts the checks need, taken from `registry/main.lock`.
+/// The catalog facts the checks need, taken from `registry/main`.
 #[derive(Clone, Debug, Default)]
 struct CatalogSnapshot {
     identities: Vec<CatalogIdentity>,
     mirrors: Vec<String>,
+    publish_names: Vec<String>,
+    publish_declarations: Vec<(String, String)>,
 }
 
 /// One package identity of `registry/main.lock`, active or removed.
@@ -206,7 +235,7 @@ struct GitRelease {
 }
 
 impl CatalogSnapshot {
-    fn from_catalog(catalog: &Catalog) -> Self {
+    fn from_catalog(catalog: &Catalog, publish_declarations: Vec<(String, String)>) -> Self {
         let mut identities = Vec::new();
         for approval in &catalog.approvals {
             if approval.registry != CATALOG_REGISTRY {
@@ -240,9 +269,17 @@ impl CatalogSnapshot {
             .filter(|key| key.registry == CATALOG_REGISTRY)
             .map(|key| key.name.clone())
             .collect();
+        let publish_names = catalog
+            .publish_names
+            .iter()
+            .filter(|key| key.registry == CATALOG_REGISTRY)
+            .map(|key| key.name.clone())
+            .collect();
         Self {
             identities,
             mirrors,
+            publish_names,
+            publish_declarations,
         }
     }
 }
@@ -255,14 +292,15 @@ fn check(
     let config = &candidate.config;
     let published = published_crates(catalog, config);
     let self_published = self_published_identities(catalog, config);
-    check_accepted_entries(candidate, accepted)?;
+    check_repository_spelling(config, catalog)?;
     check_accepted_repositories(candidate, accepted)?;
+    check_accepted_entries(candidate, accepted)?;
     check_abandoned(candidate, accepted)?;
     check_name_permanence(candidate, accepted)?;
     check_names(config, catalog, &published)?;
-    check_entries(candidate, catalog, accepted)?;
+    check_entries(candidate, catalog)?;
     check_gained_release_tags(config, catalog, accepted)?;
-    check_versions(config, &self_published, accepted)?;
+    check_versions(config, catalog, &self_published, accepted)?;
     Ok(SelfPublishCheckSummary {
         declared: true,
         repositories: config.repositories.len(),
@@ -284,35 +322,80 @@ fn release_of<'a>(
 }
 
 /// Returns the crate names that a self-publishing repository publishes.
+///
+/// A publish declaration counts even before its first tag, so that a name can be
+/// declared and validated ahead of the crate's first release.
 fn published_crates<'a>(
     catalog: &'a CatalogSnapshot,
     config: &CratesIoConfig,
 ) -> BTreeSet<&'a str> {
-    catalog
+    let mut names = catalog
         .identities
         .iter()
         .filter(|identity| release_of(config, identity).is_some())
         .map(|identity| identity.name.as_str())
-        .collect()
+        .collect::<BTreeSet<_>>();
+    names.extend(
+        catalog
+            .publish_declarations
+            .iter()
+            .filter(|(_, git)| config.repository(git).is_some())
+            .map(|(name, _)| name.as_str()),
+    );
+    names
 }
 
-/// Returns the identities that come from a release tag of a self-publishing repository.
+/// Returns the identities and releases that come from a release tag of a self-publishing repository.
 fn self_published_identities<'a>(
     catalog: &'a CatalogSnapshot,
     config: &CratesIoConfig,
-) -> Vec<&'a CatalogIdentity> {
+) -> Vec<(&'a CatalogIdentity, &'a GitRelease)> {
     catalog
         .identities
         .iter()
-        .filter(|identity| {
-            release_of(config, identity)
-                .is_some_and(|(prefix, release)| is_release_tag(prefix, identity, release))
+        .filter_map(|identity| {
+            let release = identity.release.as_ref()?;
+            let prefix = config.prefix_for(&release.git)?;
+            is_release_tag(prefix, identity, release).then_some((identity, release))
         })
         .collect()
 }
 
 fn is_release_tag(prefix: &str, identity: &CatalogIdentity, release: &GitRelease) -> bool {
     release.tag == format!("{prefix}{}", identity.version)
+}
+
+/// Refuses a repository URL that names a self-publishing repository in another spelling.
+///
+/// Repositories are matched by their normalized URL, so `https://HOST/owner/repo.git`
+/// would otherwise escape the release-tag rule of its declaration; a catalog that
+/// uses another spelling has to be corrected instead.
+fn check_repository_spelling(config: &CratesIoConfig, catalog: &CatalogSnapshot) -> Result<()> {
+    for identity in &catalog.identities {
+        let Some(release) = &identity.release else {
+            continue;
+        };
+        check_one_spelling(config, &release.git).with_context(|| {
+            format!("check repository of {} {}", identity.name, identity.version)
+        })?;
+    }
+    for (name, git) in &catalog.publish_declarations {
+        check_one_spelling(config, git)
+            .with_context(|| format!("check repository of the publish declaration of {name:?}"))?;
+    }
+    Ok(())
+}
+
+fn check_one_spelling(config: &CratesIoConfig, git: &str) -> Result<()> {
+    let Some(declared) = config.repository(git) else {
+        return Ok(());
+    };
+    ensure!(
+        declared.git == git,
+        "repository {git:?} is another spelling of the self-publishing repository {:?}; use the declared spelling",
+        declared.git
+    );
+    Ok(())
 }
 
 fn check_accepted_entries(
@@ -354,6 +437,12 @@ fn check_accepted_repositories(
                 repository.git
             );
         };
+        ensure!(
+            current.git == repository.git,
+            "self-publishing repository {:?} was respelled {:?}; repositories are only ever added in one spelling",
+            repository.git,
+            current.git
+        );
         ensure!(
             current.tag_prefix == repository.tag_prefix,
             "self-publishing repository {:?} changed tag-prefix from {:?} to {:?}; prefixes are permanent",
@@ -443,25 +532,21 @@ fn check_name_permanence(
     Ok(())
 }
 
-fn check_entries(
-    candidate: &SelfPublishState,
-    catalog: &CatalogSnapshot,
-    accepted: Option<&AcceptedState<'_>>,
-) -> Result<()> {
+fn check_entries(candidate: &SelfPublishState, catalog: &CatalogSnapshot) -> Result<()> {
     let config = &candidate.config;
-    let accepted_lock = accepted.and_then(|state| state.lock);
-    let mut identities: BTreeMap<(&str, &Version), &CatalogIdentity> = BTreeMap::new();
-    for identity in self_published_identities(catalog, config) {
-        identities.insert((identity.name.as_str(), &identity.version), identity);
+    let mut identities = BTreeMap::new();
+    for (identity, release) in self_published_identities(catalog, config) {
+        identities.insert(
+            (identity.name.as_str(), &identity.version),
+            (identity, release),
+        );
     }
-    for ((name, version), identity) in &identities {
+    for ((name, version), (identity, release)) in &identities {
         let Some(entry) = candidate.lock.entry(name, version) else {
             bail!(
                 "self-published identity {name} {version} of registry/{CATALOG_REGISTRY}.lock has no entry in {LOCK_FILE}"
             );
         };
-        let (_, release) = release_of(config, identity)
-            .expect("a self-published identity comes from a release tag");
         ensure!(
             entry.pkgre_crate_sha256 == identity.crate_sha256,
             "entry {name} {version} records pkgre archive checksum {:?} but registry/{CATALOG_REGISTRY}.lock records {:?}",
@@ -492,11 +577,13 @@ fn check_entries(
             entry.cargo_version,
             release.cargo_version
         );
-        if accepted_lock.is_none_or(|lock| lock.entry(name, version).is_none()) {
+        // An abandoned entry keeps the name crates.io never took, so a crate
+        // may be renamed once every one of its entries is abandoned.
+        if config.abandoned_version(name, version).is_none() {
             let effective = config.effective_name(name);
             ensure!(
                 entry.crates_io_name == effective,
-                "new entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}",
+                "entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}; only abandoned entries keep another name",
                 entry.crates_io_name
             );
         }
@@ -527,6 +614,8 @@ fn check_names(
         let effective = config.effective_name(crate_name);
         name::validate(&effective)
             .with_context(|| format!("validate crates.io name of crate {crate_name:?}"))?;
+        // Every mapped name belongs to a published crate, so refusing a mirror
+        // that carries an effective name covers both directions of the rule.
         ensure!(
             !mirrors.contains(&name::canonical(&effective)),
             "crates.io name {effective:?} of crate {crate_name:?} is the name of a crate that registry/{CATALOG_REGISTRY} mirrors"
@@ -546,30 +635,40 @@ fn check_names(
         );
         record_name(&mut used, mapped, crate_name)?;
     }
+    let published_canonical = published
+        .iter()
+        .map(|crate_name| (name::canonical(crate_name), *crate_name))
+        .collect::<BTreeMap<_, _>>();
     let catalog_names = catalog
         .identities
         .iter()
-        .map(|identity| identity.name.as_str())
+        .map(|identity| name::canonical(&identity.name))
+        .chain(catalog.mirrors.iter().map(|mirror| name::canonical(mirror)))
+        .chain(
+            catalog
+                .publish_names
+                .iter()
+                .map(|name| name::canonical(name)),
+        )
         .collect::<BTreeSet<_>>();
     for key in config.names.keys() {
+        if published.contains(key.as_str()) {
+            continue;
+        }
+        if let Some(actual) = published_canonical.get(&name::canonical(key)) {
+            bail!(
+                "[names] key {key:?} does not spell the crate name {actual:?} that a self-publishing repository publishes; use the catalog's spelling"
+            );
+        }
         ensure!(
-            published.contains(key.as_str()) || !catalog_names.contains(key.as_str()),
-            "[names] key {key:?} names crate {key:?}, which registry/{CATALOG_REGISTRY} publishes from a mirror or from a repository that does not self-publish; the stale key must go"
+            !catalog_names.contains(&name::canonical(key)),
+            "[names] key {key:?} names a crate that registry/{CATALOG_REGISTRY} declares as a mirror or publishes from a repository that does not self-publish; the stale key must go"
         );
     }
-    let mapped = config
-        .names
-        .values()
-        .map(|name| name::canonical(name))
-        .collect::<BTreeSet<_>>();
     for mirror in &catalog.mirrors {
         ensure!(
             !name::is_in_default_namespace(mirror),
             "registry/{CATALOG_REGISTRY} mirrors crate {mirror:?}, whose name is in the pkgre-pkgs- namespace that the default rule owns"
-        );
-        ensure!(
-            !mapped.contains(&name::canonical(mirror)),
-            "registry/{CATALOG_REGISTRY} mirrors crate {mirror:?}, which is also a mapped crates.io name"
         );
     }
     Ok(())
@@ -602,19 +701,19 @@ fn check_gained_release_tags(
     let Some(accepted) = accepted else {
         return Ok(());
     };
-    let accepted_identities: BTreeSet<(&str, &Version)> = accepted
+    let accepted_identities = accepted
         .catalog
         .identities
         .iter()
         .map(|identity| (identity.name.as_str(), &identity.version))
-        .collect();
+        .collect::<BTreeSet<_>>();
     for identity in &catalog.identities {
-        if accepted_identities.contains(&(identity.name.as_str(), &identity.version)) {
-            continue;
-        }
         let Some((prefix, release)) = release_of(config, identity) else {
             continue;
         };
+        if accepted_identities.contains(&(identity.name.as_str(), &identity.version)) {
+            continue;
+        }
         let expected = format!("{prefix}{}", identity.version);
         ensure!(
             release.tag == expected,
@@ -624,16 +723,34 @@ fn check_gained_release_tags(
             release.tag,
             release.git
         );
+        // A tag that the accepted catalog already released belongs to the crates
+        // of its commit; a crate added later was not part of that release.
+        if let Some(other) = accepted.catalog.identities.iter().find(|other| {
+            release_of(config, other).is_some_and(|(_, other_release)| {
+                other_release.git == release.git && other_release.tag == release.tag
+            })
+        }) {
+            bail!(
+                "crate {} {} was added to tag {:?} of {:?}, which registry/{CATALOG_REGISTRY}.lock already released for {} {}; a release tag publishes the crates of its commit",
+                identity.name,
+                identity.version,
+                release.tag,
+                release.git,
+                other.name,
+                other.version
+            );
+        }
     }
     Ok(())
 }
 
 fn check_versions(
     config: &CratesIoConfig,
-    self_published: &[&CatalogIdentity],
+    catalog: &CatalogSnapshot,
+    self_published: &[(&CatalogIdentity, &GitRelease)],
     accepted: Option<&AcceptedState<'_>>,
 ) -> Result<()> {
-    for identity in self_published {
+    for (identity, _) in self_published {
         ensure!(
             identity.version.build.is_empty(),
             "release {} {} carries build metadata, which Cargo and crates.io ignore for identity",
@@ -641,52 +758,52 @@ fn check_versions(
             identity.version
         );
     }
-    let empty = CatalogSnapshot::default();
-    let accepted_catalog = accepted.map_or(&empty, |state| state.catalog);
-    let accepted_identities: BTreeSet<(&str, &Version)> = accepted_catalog
+    // Which identities a run adds is a comparison with the accepted state.
+    let Some(accepted) = accepted else {
+        return Ok(());
+    };
+    let accepted_identities = accepted
+        .catalog
         .identities
         .iter()
         .map(|identity| (identity.name.as_str(), &identity.version))
-        .collect();
-    let mut crate_maxima: BTreeMap<&str, &Version> = BTreeMap::new();
-    let mut repository_maxima: BTreeMap<&str, &Version> = BTreeMap::new();
-    for identity in &accepted_catalog.identities {
-        let current = crate_maxima.get(identity.name.as_str()).copied();
-        if current.is_none_or(|maximum| maximum < &identity.version) {
-            crate_maxima.insert(&identity.name, &identity.version);
-        }
-        let Some((prefix, release)) = release_of(config, identity) else {
-            continue;
-        };
-        if !is_release_tag(prefix, identity, release) {
-            continue;
-        }
-        let current = repository_maxima.get(release.git.as_str()).copied();
-        if current.is_none_or(|maximum| maximum < &identity.version) {
-            repository_maxima.insert(&release.git, &identity.version);
-        }
-    }
-    for identity in self_published {
+        .collect::<BTreeSet<_>>();
+    for (identity, release) in self_published {
         if accepted_identities.contains(&(identity.name.as_str(), &identity.version)) {
             continue;
         }
-        if let Some(maximum) = crate_maxima.get(identity.name.as_str()) {
+        // The candidate catalog is the reference, not the accepted one, so that
+        // two releases added in one change are ordered against each other too.
+        for other in &catalog.identities {
+            if other.name != identity.name || other.version == identity.version {
+                continue;
+            }
             ensure!(
-                identity.version > **maximum,
-                "release {} {} does not increase the version of the crate: registry/{CATALOG_REGISTRY}.lock already holds {maximum}",
-                identity.name,
-                identity.version
-            );
-        }
-        let (_, release) = release_of(config, identity)
-            .expect("a self-published identity comes from a release tag");
-        if let Some(maximum) = repository_maxima.get(release.git.as_str()) {
-            ensure!(
-                identity.version > **maximum,
-                "release {} {} does not increase the release version of {:?}: registry/{CATALOG_REGISTRY}.lock already holds {maximum}",
+                identity.version > other.version,
+                "release {} {} does not increase the version of the crate: registry/{CATALOG_REGISTRY}.lock also holds {}",
                 identity.name,
                 identity.version,
-                release.git
+                other.version
+            );
+        }
+        for other in &catalog.identities {
+            let Some((other_prefix, other_release)) = release_of(config, other) else {
+                continue;
+            };
+            if other_release.git != release.git || other_release.tag == release.tag {
+                continue;
+            }
+            if !is_release_tag(other_prefix, other, other_release) {
+                continue;
+            }
+            ensure!(
+                identity.version > other.version,
+                "release {} {} does not increase the release version of {:?}: registry/{CATALOG_REGISTRY}.lock also holds {} from tag {:?}",
+                identity.name,
+                identity.version,
+                release.git,
+                other.version,
+                other_release.tag
             );
         }
     }

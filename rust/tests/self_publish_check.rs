@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// The fixture repository: a catalog that releases `example-lib` under a mapped
@@ -158,4 +161,62 @@ fn refuses_a_directory_that_does_not_hold_a_catalog() {
     let error = stderr(&output);
     assert!(!output.status.success(), "{error}");
     assert!(error.contains("has no registry directory"), "{error}");
+}
+
+#[test]
+fn refuses_removing_the_self_publish_directory_of_the_accepted_repository() {
+    let temporary = TemporaryDirectory::new("pkgre-self-publish-removal");
+    let candidate = temporary.path().join("candidate");
+    copy_tree(&fixture(), &candidate);
+    fs::remove_dir_all(candidate.join("self-publish")).unwrap();
+
+    let output = command()
+        .arg("self-publish-check")
+        .arg(&candidate)
+        .arg(fixture())
+        .output()
+        .expect("the pkgre-rust binary runs");
+    let error = stderr(&output);
+    assert!(!output.status.success(), "{error}");
+    assert!(
+        error.contains("the self-publishing state is only ever added"),
+        "{error}"
+    );
+}
+
+#[test]
+fn refuses_an_extra_file_in_the_self_publish_directory() {
+    let temporary = TemporaryDirectory::new("pkgre-self-publish-extra");
+    let candidate = temporary.path().join("candidate");
+    copy_tree(&fixture(), &candidate);
+    fs::write(candidate.join("self-publish/notes.txt"), "not state\n").unwrap();
+
+    let output = command()
+        .arg("self-publish-check")
+        .arg(&candidate)
+        .output()
+        .expect("the pkgre-rust binary runs");
+    let error = stderr(&output);
+    assert!(!output.status.success(), "{error}");
+    assert!(error.contains("must hold exactly"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_a_symbolic_link_in_the_self_publish_directory() {
+    let temporary = TemporaryDirectory::new("pkgre-self-publish-symlink");
+    let candidate = temporary.path().join("candidate");
+    copy_tree(&fixture(), &candidate);
+    let config = candidate.join("self-publish/crates-io.toml");
+    fs::remove_file(&config).unwrap();
+    symlink("crates-io.lock", &config).unwrap();
+
+    let output = command()
+        .arg("self-publish-check")
+        .arg(&candidate)
+        .output()
+        .expect("the pkgre-rust binary runs");
+    let error = stderr(&output);
+    assert!(!output.status.success(), "{error}");
+    assert!(error.contains("is not a regular file"), "{error}");
 }

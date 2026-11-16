@@ -121,6 +121,8 @@ struct State {
     lock: CratesIoLock,
     identities: Vec<CatalogIdentity>,
     mirrors: Vec<String>,
+    publish_names: Vec<String>,
+    publish_declarations: Vec<(String, String)>,
 }
 
 impl State {
@@ -140,7 +142,16 @@ impl State {
                 entry(&lib, "example-lib"),
             ]),
             identities: vec![bin, lib],
-            mirrors: vec!["serde".to_owned(), "other-mirror".to_owned()],
+            mirrors: vec![
+                "serde".to_owned(),
+                "other-mirror".to_owned(),
+                "reserved-mirror".to_owned(),
+            ],
+            publish_names: vec!["example-bin".to_owned(), "example-lib".to_owned()],
+            publish_declarations: vec![
+                ("example-bin".to_owned(), REPOSITORY.to_owned()),
+                ("example-lib".to_owned(), REPOSITORY.to_owned()),
+            ],
         }
     }
 
@@ -148,6 +159,8 @@ impl State {
         CatalogSnapshot {
             identities: self.identities.clone(),
             mirrors: self.mirrors.clone(),
+            publish_names: self.publish_names.clone(),
+            publish_declarations: self.publish_declarations.clone(),
         }
     }
 
@@ -175,14 +188,33 @@ impl State {
         self.lock.packages.push(entry(&identity, crates_io_name));
         self.identities.push(identity);
     }
+
+    /// Moves every repository reference of the state to one spelling.
+    fn respell_repository(&mut self, git: &str) {
+        for identity in &mut self.identities {
+            if let Some(release) = &mut identity.release {
+                release.git = git.to_owned();
+            }
+        }
+        for package in &mut self.lock.packages {
+            package.git = git.to_owned();
+        }
+        for declaration in &mut self.publish_declarations {
+            declaration.1 = git.to_owned();
+        }
+    }
+
+    fn state(&self) -> SelfPublishState {
+        SelfPublishState {
+            config: parse_config(&self.config),
+            lock: self.lock.clone(),
+        }
+    }
 }
 
 fn check_state(candidate: &State, accepted: Option<&State>) -> Result<SelfPublishCheckSummary> {
     let candidate_snapshot = candidate.snapshot();
-    let candidate_state = SelfPublishState {
-        config: parse_config(&candidate.config),
-        lock: candidate.lock.clone(),
-    };
+    let candidate_state = candidate.state();
     let accepted_config = accepted.map(|state| parse_config(&state.config));
     let accepted_snapshot = accepted.map(State::snapshot);
     let accepted_lock = accepted.map(|state| state.lock.clone());
@@ -207,10 +239,18 @@ fn error_text(result: Result<SelfPublishCheckSummary>) -> String {
     }
 }
 
+fn simple_error_text(result: Result<()>) -> String {
+    match result {
+        Ok(()) => panic!("expected a refusal"),
+        Err(error) => format!("{error:#}"),
+    }
+}
+
 #[track_caller]
-fn assert_refused(candidate: &State, accepted: Option<&State>, expected: &str) {
+fn assert_refused(candidate: &State, accepted: Option<&State>, expected: &str) -> String {
     let error = error_text(check_state(candidate, accepted));
     assert!(error.contains(expected), "{expected:?} not in {error}");
+    error
 }
 
 #[test]
@@ -261,6 +301,22 @@ fn accepts_a_new_mapping_after_every_entry_is_abandoned() {
         &[("example-lib", "1.0.0", "crates.io refused the upload")],
     );
     check_state(&candidate, Some(&accepted)).unwrap();
+    // Without an accepted repository the abandoned entry keeps its name too.
+    check_state(&candidate, None).unwrap();
+}
+
+#[test]
+fn accepts_a_names_key_for_a_declared_crate_without_an_identity() {
+    let mut state = State::base();
+    state.publish_names.push("future-crate".to_owned());
+    state
+        .publish_declarations
+        .push(("future-crate".to_owned(), REPOSITORY.to_owned()));
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("future-crate", "future-name"),
+    ]);
+    check_state(&state, None).unwrap();
 }
 
 #[test]
@@ -317,18 +373,36 @@ fn refuses_a_reserved_name() {
 fn refuses_a_mapped_name_that_is_a_mirror() {
     let mut state = State::base();
     state.set_names(&[("example-lib", "serde")]);
-    assert_refused(&state, None, "registry/main mirrors");
+    let error = assert_refused(&state, None, "registry/main mirrors");
+    assert!(
+        error.contains(
+            "crates.io name \"serde\" of crate \"example-lib\" is the name of a crate that registry/main mirrors"
+        ),
+        "{error}"
+    );
 }
 
 #[test]
-fn refuses_a_mirror_in_the_default_namespace_or_with_a_mapped_name() {
+fn refuses_a_mirror_in_the_default_namespace() {
     let mut state = State::base();
     state.mirrors.push("pkgre-pkgs-x".to_owned());
     assert_refused(&state, None, "pkgre-pkgs- namespace");
+}
 
+#[test]
+fn refuses_a_mapped_name_of_an_undeclared_crate_that_a_mirror_uses() {
     let mut state = State::base();
-    state.mirrors.push("Example_Lib".to_owned());
-    assert_refused(&state, None, "registry/main mirrors");
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("future-crate", "reserved-mirror"),
+    ]);
+    let error = assert_refused(&state, None, "mapped crates.io name");
+    assert!(
+        error.contains(
+            "mapped crates.io name \"reserved-mirror\" of crate \"future-crate\" is the name of a crate that registry/main mirrors"
+        ),
+        "{error}"
+    );
 }
 
 #[test]
@@ -343,6 +417,26 @@ fn refuses_a_stale_names_key() {
         ("forked-crate", "forked-crate"),
     ]);
     assert_refused(&state, None, "the stale key must go");
+}
+
+#[test]
+fn refuses_a_stale_keys_name_for_a_declared_mirror_without_versions() {
+    let mut state = State::base();
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("reserved-mirror", "my-reserved"),
+    ]);
+    assert_refused(&state, None, "declares as a mirror");
+}
+
+#[test]
+fn refuses_a_names_key_that_differs_from_the_catalogs_spelling() {
+    let mut state = State::base();
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("example_bin", "example-binary"),
+    ]);
+    assert_refused(&state, None, "use the catalog's spelling");
 }
 
 #[test]
@@ -410,6 +504,19 @@ fn refuses_a_new_entry_under_a_name_the_mapping_does_not_give() {
 }
 
 #[test]
+fn refuses_removing_a_names_key_that_a_crate_falls_back_from() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.set_names(&[]);
+    assert_refused(&candidate, Some(&accepted), "is permanent");
+
+    // Without an accepted state, the recorded name is still not the default one.
+    let mut candidate = State::base();
+    candidate.set_names(&[]);
+    assert_refused(&candidate, None, "but the mapping gives");
+}
+
+#[test]
 fn refuses_a_changed_or_removed_entry_against_the_accepted_state() {
     let accepted = State::base();
 
@@ -432,7 +539,7 @@ fn refuses_a_changed_or_removed_entry_against_the_accepted_state() {
 }
 
 #[test]
-fn refuses_a_removed_repository_or_a_changed_prefix() {
+fn refuses_a_removed_repository_a_changed_prefix_or_a_respelled_repository() {
     let accepted = State::base();
 
     let mut removed = State::base();
@@ -450,6 +557,52 @@ fn refuses_a_removed_repository_or_a_changed_prefix() {
         &[],
     );
     assert_refused(&changed, Some(&accepted), "changed tag-prefix");
+
+    // A candidate whose catalog and config agree on a new spelling still
+    // respelled the accepted declaration.
+    let respelled_git = "https://git.example.invalid/example/project.git";
+    let mut respelled = State::base();
+    respelled.config = config_text(
+        &[(respelled_git, PREFIX)],
+        &[("example-lib", "example-lib")],
+        &[],
+    );
+    respelled.respell_repository(respelled_git);
+    assert_refused(&respelled, Some(&accepted), "was respelled");
+}
+
+#[test]
+fn refuses_a_catalog_repository_spelled_differently_from_its_declaration() {
+    let mut state = State::base();
+    let other = CatalogIdentity {
+        name: "example-tool".to_owned(),
+        version: Version::parse("2.0.0").unwrap(),
+        crate_sha256: checksum("pkgre example-tool 2.0.0"),
+        release: Some(GitRelease {
+            git: "https://Git.Example.Invalid/example/project.git".to_owned(),
+            tag: "rust/v2.0.0".to_owned(),
+            commit: "5".repeat(40),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        }),
+    };
+    state
+        .lock
+        .packages
+        .push(entry(&other, "pkgre-pkgs-example-tool"));
+    state.identities.push(other);
+    assert_refused(
+        &state,
+        None,
+        "is another spelling of the self-publishing repository",
+    );
+
+    // A publish declaration counts even before it has an identity.
+    let mut state = State::base();
+    state.publish_declarations.push((
+        "future-crate".to_owned(),
+        "https://git.example.invalid/example/project.git".to_owned(),
+    ));
+    assert_refused(&state, None, "publish declaration");
 }
 
 #[test]
@@ -491,10 +644,37 @@ fn refuses_an_identity_from_a_tag_outside_the_release_convention() {
 }
 
 #[test]
+fn refuses_a_crate_added_to_an_already_released_tag() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.add_release(
+        "example-tool",
+        "1.0.0",
+        "rust/v1.0.0",
+        "pkgre-pkgs-example-tool",
+        '5',
+    );
+    assert_refused(&candidate, Some(&accepted), "was added to tag");
+}
+
+#[test]
 fn refuses_a_version_that_does_not_increase_per_crate() {
     let accepted = State::base();
     let mut candidate = State::base();
     candidate.add_release("example-lib", "0.9.0", "rust/v0.9.0", "example-lib", '5');
+    assert_refused(
+        &candidate,
+        Some(&accepted),
+        "does not increase the version of the crate",
+    );
+}
+
+#[test]
+fn refuses_two_releases_added_in_one_change_without_order() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.add_release("example-lib", "1.2.0", "rust/v1.2.0", "example-lib", '5');
+    candidate.add_release("example-lib", "1.1.0", "rust/v1.1.0", "example-lib", '6');
     assert_refused(
         &candidate,
         Some(&accepted),
@@ -521,6 +701,34 @@ fn refuses_a_version_that_does_not_increase_per_repository() {
 }
 
 #[test]
+fn accepts_a_release_tag_that_publishes_several_crates() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate
+        .identities
+        .push(identity("example-tool", "1.1.0", "rust/v1.1.0", '5'));
+    candidate.lock.packages.push(entry(
+        candidate.identities.last().unwrap(),
+        "pkgre-pkgs-example-tool",
+    ));
+    candidate.lock.packages.push(entry(
+        &identity("example-lib", "1.1.0", "rust/v1.1.0", '6'),
+        "example-lib",
+    ));
+    candidate
+        .identities
+        .push(identity("example-lib", "1.1.0", "rust/v1.1.0", '6'));
+    candidate
+        .identities
+        .push(identity("example-bin", "1.1.0", "rust/v1.1.0", '8'));
+    candidate.lock.packages.push(entry(
+        candidate.identities.last().unwrap(),
+        "pkgre-pkgs-example-bin",
+    ));
+    check_state(&candidate, Some(&accepted)).unwrap();
+}
+
+#[test]
 fn refuses_a_release_version_with_build_metadata() {
     let mut state = State::base();
     let release = identity("example-lib", "1.1.0+build.1", "rust/v1.1.0+build.1", '5');
@@ -530,10 +738,33 @@ fn refuses_a_release_version_with_build_metadata() {
 }
 
 #[test]
+fn refuses_removing_the_self_publishing_state_of_the_accepted_repository() {
+    let state = State::base();
+    let candidate = RepositoryState {
+        catalog: CatalogSnapshot::default(),
+        self_publish: None,
+    };
+    let accepted = RepositoryState {
+        catalog: CatalogSnapshot::default(),
+        self_publish: Some(state.state()),
+    };
+    let error = simple_error_text(check_state_not_removed(&candidate, Some(&accepted)));
+    assert!(error.contains("is only ever added"), "{error}");
+    check_state_not_removed(&candidate, None).unwrap();
+    let declared = RepositoryState {
+        catalog: CatalogSnapshot::default(),
+        self_publish: Some(state.state()),
+    };
+    check_state_not_removed(&declared, Some(&accepted)).unwrap();
+}
+
+#[test]
 fn an_accepted_catalog_without_self_publishing_state_still_bounds_versions() {
     let accepted = CatalogSnapshot {
         identities: vec![mirror_identity("example-lib", "1.0.0")],
         mirrors: Vec::new(),
+        publish_names: Vec::new(),
+        publish_declarations: Vec::new(),
     };
     let candidate_catalog = CatalogSnapshot {
         identities: vec![
@@ -541,6 +772,8 @@ fn an_accepted_catalog_without_self_publishing_state_still_bounds_versions() {
             identity("example-lib", "0.9.0", "rust/v0.9.0", '5'),
         ],
         mirrors: Vec::new(),
+        publish_names: Vec::new(),
+        publish_declarations: Vec::new(),
     };
     let lock = lock_with(vec![entry(&candidate_catalog.identities[1], "example-lib")]);
     let candidate = SelfPublishState {

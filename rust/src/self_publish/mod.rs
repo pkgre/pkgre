@@ -8,16 +8,13 @@
 //! belong to the catalog registry `main`.
 //!
 //! [`check_repository`] reads a repository's catalog with the ordinary catalog
-//! loader and runs the offline checks. The checks that need the network, and
-//! the generation of lock entries, are later work: [`NetworkAccess`] is the
-//! seam for the first, and the canonical form of `crates-io.lock` is the seam
-//! for the second.
+//! loader and runs the checks that need no network. The checks that need the
+//! network, and the generation of lock entries, are later work; the canonical
+//! form of `crates-io.lock` is the seam for the second.
 
 mod check;
 mod config;
 mod lock;
 mod name;
-mod network;
 
 pub use check::{SelfPublishCheckSummary, check_repository};
-pub use network::{CratesIoCrate, NetworkAccess, NoNetwork, ReleaseTag};
