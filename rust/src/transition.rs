@@ -23,19 +23,22 @@ pub enum RejectReason {
     MissingIdentity(String),
     /// An accepted identity changed immutable archive, source, or admission evidence.
     MutatedIdentity(String),
-    /// A package name moved to another category, changing its dependency scope.
+    /// An accepted package identity, `registry/name/version`, changed its category.
     CategoryMove(String),
     /// A retained body object is missing or does not match its content hash.
     MissingRetainedBody(String),
     /// An accepted admission manifest or generated lock is missing or differs in the candidate.
     MutatedAdmissionFile(String),
+    /// An admission manifest or generated lock could not be inspected, named, or read.
+    AdmissionEvidenceUnreadable(String),
     /// A crates.io identity that is new since the accepted catalog has no admission binding.
     MissingAdmissionEvidence(String),
     /// An admission binding does not name an admission batch new in the candidate.
     AdmissionBatchNotNew(String),
     /// An accepted category disappeared or changed its `may-depend-on` rule.
     CategoryRuleChanged(String),
-    /// An accepted package name moved to another category.
+    /// An accepted package name's permanent home, `registry/name`, changed category; this covers
+    /// names with and without versions, while [`RejectReason::CategoryMove`] covers one identity.
     HomeMoved(String),
     /// An accepted package name disappeared from the candidate.
     MissingHome(String),
@@ -61,6 +64,9 @@ impl fmt::Display for RejectReason {
             }
             Self::MutatedAdmissionFile(detail) => {
                 write!(formatter, "admission evidence changed: {detail}")
+            }
+            Self::AdmissionEvidenceUnreadable(detail) => {
+                write!(formatter, "admission evidence unreadable: {detail}")
             }
             Self::MissingAdmissionEvidence(identity) => {
                 write!(formatter, "identity has no admission evidence: {identity}")
@@ -131,8 +137,8 @@ pub fn check_transition(accepted_root: &Path, candidate_root: &Path) -> Result<(
         }
     }
 
-    let accepted_admissions = admission_files(accepted_root)?;
-    let candidate_admissions = admission_files(candidate_root)?;
+    let accepted_admissions = admission_files(accepted_root, "accepted")?;
+    let candidate_admissions = admission_files(candidate_root, "candidate")?;
     verify_admission_files(&accepted_admissions, &candidate_admissions)?;
 
     verify_identities(&accepted, &candidate)?;
@@ -243,15 +249,19 @@ fn verify_identities(accepted: &Catalog, candidate: &Catalog) -> Result<(), Reje
 }
 
 /// Returns every admission manifest and generated lock name with its complete-content SHA-256.
-fn admission_files(root: &Path) -> Result<BTreeMap<String, String>, RejectReason> {
+///
+/// `side` names the catalog in diagnostics. Each entry is inspected without following links, so a
+/// link swapped in after load is never read through. A failure to inspect, name, or read an entry
+/// is reported as unreadable evidence, because it is not a change the candidate made.
+fn admission_files(root: &Path, side: &str) -> Result<BTreeMap<String, String>, RejectReason> {
     let directory = root.join(ADMISSIONS_DIRECTORY);
     let mut files = BTreeMap::new();
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(files),
         Err(error) => {
-            return Err(RejectReason::MutatedAdmissionFile(format!(
-                "inspect admission directory {}: {error}",
+            return Err(RejectReason::AdmissionEvidenceUnreadable(format!(
+                "{side}: inspect admission directory {}: {error}",
                 directory.display()
             )));
         }
@@ -259,8 +269,8 @@ fn admission_files(root: &Path) -> Result<BTreeMap<String, String>, RejectReason
     for entry in entries {
         let path = entry
             .map_err(|error| {
-                RejectReason::MutatedAdmissionFile(format!(
-                    "read admission directory {}: {error}",
+                RejectReason::AdmissionEvidenceUnreadable(format!(
+                    "{side}: read admission directory {}: {error}",
                     directory.display()
                 ))
             })?
@@ -269,15 +279,26 @@ fn admission_files(root: &Path) -> Result<BTreeMap<String, String>, RejectReason
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| {
-                RejectReason::MutatedAdmissionFile(format!(
-                    "admission filename is not valid UTF-8: {}",
+                RejectReason::AdmissionEvidenceUnreadable(format!(
+                    "{side}: admission filename is not valid UTF-8: {}",
                     path.display()
                 ))
             })?
             .to_owned();
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            RejectReason::AdmissionEvidenceUnreadable(format!(
+                "{side}: inspect admission file {}: {error}",
+                path.display()
+            ))
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(RejectReason::MutatedAdmissionFile(format!(
+                "{ADMISSIONS_DIRECTORY}/{name} is not a regular file"
+            )));
+        }
         let bytes = fs::read(&path).map_err(|error| {
-            RejectReason::MutatedAdmissionFile(format!(
-                "read admission file {}: {error}",
+            RejectReason::AdmissionEvidenceUnreadable(format!(
+                "{side}: read admission file {}: {error}",
                 path.display()
             ))
         })?;
@@ -633,6 +654,19 @@ mod tests {
                 .expect("fixture reserved name exists");
         }
 
+        /// Drops one category after its names moved elsewhere, as a shrinking declaration would.
+        fn remove_category(&mut self, category: &'static str) {
+            self.rules
+                .remove(category)
+                .expect("fixture category exists");
+            self.mirrors
+                .remove(category)
+                .expect("fixture category exists");
+            self.publishes
+                .remove(category)
+                .expect("fixture category exists");
+        }
+
         fn write(&self) {
             fs::write(self.root.join("main.toml"), self.registry_toml()).unwrap();
             let lock = serialize_lock(&self.lock()).unwrap();
@@ -721,6 +755,12 @@ mod tests {
                 names,
                 packages: self.packages.clone(),
             }
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
         }
     }
 
@@ -867,6 +907,22 @@ mod tests {
     }
 
     #[test]
+    fn accepts_an_unbound_accepted_mirror_beside_a_new_bound_mirror() {
+        let accepted = Fixture::without_admission("unbound-accepted");
+        accepted.write();
+        let mut candidate = Fixture::without_admission("unbound-candidate");
+        let added = candidate.add_crates_io("general", "added", "1.0.0");
+        candidate.admit(
+            "2025-02-02-added",
+            "2025-02-02T02:00:00Z",
+            &[(added, "general")],
+        );
+        candidate.write();
+        check_transition(accepted.root(), candidate.root())
+            .expect("an accepted unbound mirror must stay unbound while a new mirror is bound");
+    }
+
+    #[test]
     fn rejects_new_mirror_without_admission_evidence() {
         let accepted = Fixture::new("missing-evidence-accepted");
         accepted.write();
@@ -899,8 +955,10 @@ mod tests {
         // also cover a new one. Bind the new identity to the accepted batch directly instead.
         let accepted_catalog = Catalog::load(accepted.root()).unwrap();
         let mut candidate_catalog = Catalog::load(candidate.root()).unwrap();
-        let accepted_batches = batch_digests(&admission_files(accepted.root()).unwrap());
-        let candidate_batches = batch_digests(&admission_files(candidate.root()).unwrap());
+        let accepted_batches =
+            batch_digests(&admission_files(accepted.root(), "accepted").unwrap());
+        let candidate_batches =
+            batch_digests(&admission_files(candidate.root(), "candidate").unwrap());
         let accepted_binding = accepted_catalog
             .approvals
             .iter()
@@ -1010,6 +1068,17 @@ mod tests {
             Err(RejectReason::CategoryRuleChanged(
                 "category main/extra may-depend-on [main/extra, main/general] became [main/extra]"
                     .to_owned()
+            ))
+        );
+
+        let mut removed = Fixture::new("rules-removed");
+        removed.move_name("extra", "extra", "general");
+        removed.remove_category("extra");
+        removed.write();
+        assert_eq!(
+            check_transition(accepted.root(), removed.root()),
+            Err(RejectReason::CategoryRuleChanged(
+                "category main/extra disappeared".to_owned()
             ))
         );
     }
