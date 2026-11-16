@@ -546,18 +546,40 @@ mod tests {
                 .entry(name)
                 .or_default()
                 .push(version);
+            let row_sha256 = self.write_crates_io_row(name, version);
             self.packages.push(LockedPackage {
                 name: name.to_owned(),
                 version: Version::parse(version).unwrap(),
                 state: PackageState::Active,
                 crate_sha256: archive_sha256(name, version),
-                source_row_sha256: source_row_sha256(name, version),
+                source_row_sha256: row_sha256,
                 index_row_sha256: index_row_sha256(name, version),
                 admission_sha256: None,
                 admitted_at: UtcTimestamp::parse(PUBLISHED_AT).unwrap(),
                 source: LockedSource::CratesIo {},
             });
             self.packages.len() - 1
+        }
+
+        /// Retains the crates.io source row of one mirror, whose `pubtime` loading re-derives
+        /// `admitted-at` from, and returns its content address.
+        fn write_crates_io_row(&self, name: &str, version: &str) -> String {
+            let mut row = serde_json::to_vec(&serde_json::json!({
+                "name": name,
+                "vers": version,
+                "deps": [],
+                "cksum": archive_sha256(name, version),
+                "features": {},
+                "yanked": false,
+                "pubtime": PUBLISHED_AT,
+            }))
+            .unwrap();
+            row.push(b'\n');
+            let sha256 = crate::artifact::sha256_bytes(&row);
+            let rows = self.root.join("objects/rows");
+            fs::create_dir_all(&rows).unwrap();
+            fs::write(rows.join(format!("{sha256}.json")), row).unwrap();
+            sha256
         }
 
         fn reserve(&mut self, category: &'static str, name: &'static str) {
