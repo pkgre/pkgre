@@ -1,0 +1,23 @@
+schema = 1
+
+[[packages]]
+name = "example-bin"
+version = "1.0.0"
+crates-io-name = "pkgre-pkgs-example-bin"
+crate-sha256 = "31f8b37f202a573f352f9c059a0b71266a3bde16c7328f30754ada5a10f4c010"
+pkgre-crate-sha256 = "085d7b2f6dec58a0003851fb7d2fe5e3ab4a709da372c85694bdc8a9c444549c"
+git = "https://git.example.invalid/example/project"
+tag = "rust/v1.0.0"
+commit = "3333333333333333333333333333333333333333"
+cargo-version = "1.95.0"
+
+[[packages]]
+name = "example-lib"
+version = "1.0.0"
+crates-io-name = "example-lib"
+crate-sha256 = "82d3345014432b87044fa3a74c87e5579704c2f202b9ee9c78e29c5fc8a014f5"
+pkgre-crate-sha256 = "e68b110c8e9341ba974650a39d7f78f67869c3cc603d88d68834bc69d6976a29"
+git = "https://git.example.invalid/example/project"
+tag = "rust/v1.0.0"
+commit = "4444444444444444444444444444444444444444"
+cargo-version = "1.95.0"

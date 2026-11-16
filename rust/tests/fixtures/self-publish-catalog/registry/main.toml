@@ -1,0 +1,25 @@
+schema = 5
+
+[registry]
+name = "main"
+index = "sparse+https://rust.pkg.re/"
+download = "https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
+audience = "public"
+cargo-version = "1.95.0"
+
+[categories.general]
+may-depend-on = ["main/general"]
+
+[categories.general.mirror]
+serde = []
+
+[categories.pkgre]
+may-depend-on = ["main/general", "main/pkgre"]
+
+[categories.pkgre.publish.example-bin]
+git = "https://git.example.invalid/example/project"
+tags = ["rust/v1.0.0"]
+
+[categories.pkgre.publish.example-lib]
+git = "https://git.example.invalid/example/project"
+tags = ["rust/v1.0.0"]

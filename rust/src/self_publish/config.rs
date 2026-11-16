@@ -1,0 +1,348 @@
+//! Strict human-written `self-publish/crates-io.toml`.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+
+use anyhow::{Context, Result, ensure};
+use semver::Version;
+use serde::Deserialize;
+
+use super::name;
+use crate::policy::{validate_git_tag, validate_https_repository};
+
+/// Supported `crates-io.toml` schema.
+pub(crate) const CRATES_IO_CONFIG_SCHEMA: u32 = 1;
+
+/// Maximum length of a GitHub login, in characters.
+const MAX_OWNER_LOGIN_LENGTH: usize = 39;
+
+/// The human self-publishing declarations of one catalog repository.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct CratesIoConfig {
+    /// Wire schema.
+    pub(crate) schema: u32,
+    /// crates.io logins that must own every crate this workflow publishes.
+    #[serde(default)]
+    pub(crate) owners: Vec<String>,
+    /// Self-publishing repositories, by the URL their publish declarations use.
+    #[serde(default)]
+    pub(crate) repositories: Vec<RepositoryDeclaration>,
+    /// Optional crates.io names, keyed by the crate's `pkgre` name.
+    #[serde(default)]
+    pub(crate) names: BTreeMap<String, String>,
+    /// Versions that will never reach crates.io.
+    #[serde(default)]
+    pub(crate) abandoned: Vec<AbandonedVersion>,
+}
+
+/// One self-publishing repository and its release-tag prefix.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub(crate) struct RepositoryDeclaration {
+    /// Credential-free HTTPS Git repository.
+    pub(crate) git: String,
+    /// Prefix that turns a version into a release tag.
+    pub(crate) tag_prefix: String,
+}
+
+/// One release that crates.io never took.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AbandonedVersion {
+    /// Cargo package name, as `crates-io.lock` spells it.
+    pub(crate) name: String,
+    /// Exact Cargo version that was not published to crates.io.
+    pub(crate) version: Version,
+    /// Why crates.io did not take it.
+    pub(crate) reason: String,
+}
+
+impl CratesIoConfig {
+    /// Loads one regular human `crates-io.toml`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a missing, unsafe, unreadable, malformed, or
+    /// unsupported file, or an invalid declaration.
+    pub(crate) fn load(path: &Path) -> Result<Self> {
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("inspect self-publishing config {}", path.display()))?;
+        ensure!(
+            metadata.file_type().is_file(),
+            "self-publishing config is not a regular file: {}",
+            path.display()
+        );
+        let bytes = fs::read(path)
+            .with_context(|| format!("read self-publishing config {}", path.display()))?;
+        Self::parse(&bytes, path)
+    }
+
+    /// Parses and validates one `crates-io.toml`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or unsupported content, or an invalid
+    /// declaration.
+    pub(crate) fn parse(bytes: &[u8], path: &Path) -> Result<Self> {
+        let config: Self = toml::from_slice(bytes)
+            .with_context(|| format!("parse self-publishing config {}", path.display()))?;
+        config
+            .validate()
+            .with_context(|| format!("validate self-publishing config {}", path.display()))?;
+        Ok(config)
+    }
+
+    /// Returns the declaration of a self-publishing repository.
+    pub(crate) fn repository(&self, git: &str) -> Option<&RepositoryDeclaration> {
+        self.repositories.iter().find(|entry| entry.git == git)
+    }
+
+    /// Returns the release-tag prefix of a self-publishing repository.
+    pub(crate) fn prefix_for(&self, git: &str) -> Option<&str> {
+        self.repository(git).map(|entry| entry.tag_prefix.as_str())
+    }
+
+    /// Returns the crates.io name of a crate, mapped or by the default rule.
+    #[must_use]
+    pub(crate) fn effective_name(&self, crate_name: &str) -> String {
+        self.names
+            .get(crate_name)
+            .cloned()
+            .unwrap_or_else(|| name::default_name(crate_name))
+    }
+
+    /// Returns the record of one abandoned crate version.
+    pub(crate) fn abandoned_version(
+        &self,
+        name: &str,
+        version: &Version,
+    ) -> Option<&AbandonedVersion> {
+        self.abandoned
+            .iter()
+            .find(|record| record.name == name && record.version == *version)
+    }
+
+    /// Returns whether every given crate version of `name` is recorded as abandoned.
+    #[must_use]
+    pub(crate) fn all_abandoned<'a>(
+        &self,
+        name: &str,
+        versions: impl IntoIterator<Item = &'a Version>,
+    ) -> bool {
+        let mut seen = false;
+        for version in versions {
+            seen = true;
+            if self.abandoned_version(name, version).is_none() {
+                return false;
+            }
+        }
+        seen
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == CRATES_IO_CONFIG_SCHEMA,
+            "self-publishing config schema must be {CRATES_IO_CONFIG_SCHEMA}, not {}",
+            self.schema
+        );
+        ensure!(
+            !self.owners.is_empty(),
+            "self-publishing config must declare at least one crates.io owner"
+        );
+        let mut logins = BTreeSet::new();
+        for login in &self.owners {
+            validate_owner_login(login)?;
+            ensure!(
+                logins.insert(login.to_ascii_lowercase()),
+                "self-publishing config names owner {login:?} twice"
+            );
+        }
+        let mut repositories = BTreeSet::new();
+        for repository in &self.repositories {
+            validate_https_repository(&repository.git)
+                .context("validate self-publishing repository")?;
+            validate_tag_prefix(&repository.tag_prefix)
+                .with_context(|| format!("validate tag-prefix of {:?}", repository.git))?;
+            ensure!(
+                repositories.insert(repository.git.as_str()),
+                "self-publishing config names repository {:?} twice",
+                repository.git
+            );
+        }
+        for crate_name in self.names.keys() {
+            crate::policy::validate_package_name(crate_name)
+                .with_context(|| format!("validate [names] key {crate_name:?}"))?;
+        }
+        let mut abandoned = BTreeSet::new();
+        for record in &self.abandoned {
+            crate::policy::validate_package_name(&record.name)
+                .with_context(|| format!("validate abandoned record for {:?}", record.name))?;
+            ensure!(
+                !record.reason.trim().is_empty(),
+                "abandoned record {} {} must give a reason",
+                record.name,
+                record.version
+            );
+            ensure!(
+                !record.reason.chars().any(char::is_control),
+                "abandoned record {} {} has a control character in its reason",
+                record.name,
+                record.version
+            );
+            ensure!(
+                abandoned.insert((record.name.as_str(), record.version.clone())),
+                "abandoned record {} {} is declared twice",
+                record.name,
+                record.version
+            );
+        }
+        Ok(())
+    }
+}
+
+fn validate_owner_login(login: &str) -> Result<()> {
+    ensure!(
+        !login.is_empty() && login.chars().count() <= MAX_OWNER_LOGIN_LENGTH,
+        "crates.io owner {login:?} must contain 1..={MAX_OWNER_LOGIN_LENGTH} characters"
+    );
+    ensure!(login.is_ascii(), "crates.io owner {login:?} must be ASCII");
+    ensure!(
+        login
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+        "crates.io owner {login:?} must be a GitHub login"
+    );
+    ensure!(
+        login
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+            && login
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric),
+        "crates.io owner {login:?} must start and end with an ASCII alphanumeric"
+    );
+    Ok(())
+}
+
+/// Validates a release-tag prefix.
+///
+/// The prefix is empty or `v`, or ends with `/` or `/v`, so that the tag's
+/// final component is the version or `v` and the version, which is the
+/// registry's own tag rule. Prefix and a version must also form a safe Git ref.
+fn validate_tag_prefix(prefix: &str) -> Result<()> {
+    ensure!(
+        prefix.is_empty() || prefix == "v" || prefix.ends_with('/') || prefix.ends_with("/v"),
+        "tag-prefix {prefix:?} must be empty, \"v\", or end with \"/\" or \"/v\""
+    );
+    validate_git_tag(&format!("{prefix}0.0.0"))
+        .context("tag-prefix does not form a safe Git tag with a version")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VALID: &str = r#"
+schema = 1
+owners = ["example-owner"]
+
+[[repositories]]
+git = "https://git.example.invalid/example/project"
+tag-prefix = "rust/v"
+
+[names]
+example-lib = "example-lib"
+
+[[abandoned]]
+name = "example-lib"
+version = "0.9.0"
+reason = "crates.io refused the upload"
+"#;
+
+    fn path() -> &'static Path {
+        Path::new("crates-io.toml")
+    }
+
+    #[test]
+    fn a_valid_config_parses() {
+        let config = CratesIoConfig::parse(VALID.as_bytes(), path()).unwrap();
+        assert_eq!(config.schema, CRATES_IO_CONFIG_SCHEMA);
+        assert_eq!(config.owners, ["example-owner"]);
+        assert_eq!(
+            config.prefix_for("https://git.example.invalid/example/project"),
+            Some("rust/v")
+        );
+        assert_eq!(config.effective_name("example-lib"), "example-lib");
+        assert_eq!(
+            config.effective_name("example-bin"),
+            "pkgre-pkgs-example-bin"
+        );
+        assert!(
+            config
+                .abandoned_version("example-lib", &Version::parse("0.9.0").unwrap())
+                .is_some()
+        );
+        assert!(config.all_abandoned("example-lib", [&Version::parse("0.9.0").unwrap()]));
+        assert!(!config.all_abandoned("example-lib", []));
+    }
+
+    #[test]
+    fn unknown_fields_and_wrong_schemas_are_refused() {
+        let unknown = "schema = 1\nowners = [\"example-owner\"]\nextra = true\n";
+        let error = CratesIoConfig::parse(unknown.as_bytes(), path()).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("unknown field"), "{error}");
+
+        let schema = "schema = 2\nowners = [\"example-owner\"]\n";
+        let error = CratesIoConfig::parse(schema.as_bytes(), path()).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("schema must be 1"), "{error}");
+    }
+
+    #[test]
+    fn invalid_declarations_are_refused() {
+        for (text, expected) in [
+            ("schema = 1\n", "at least one crates.io owner"),
+            ("schema = 1\nowners = []\n", "at least one crates.io owner"),
+            ("schema = 1\nowners = [\"-x\"]\n", "must start and end"),
+            ("schema = 1\nowners = [\"Example\", \"example\"]\n", "twice"),
+            (
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = \"https://git.example.invalid/a\"\ntag-prefix = \"rust\"\n",
+                "tag-prefix",
+            ),
+            (
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = \"https://git.example.invalid/a\"\ntag-prefix = \"rust/v\"\n\n[[repositories]]\ngit = \"https://git.example.invalid/a\"\ntag-prefix = \"v\"\n",
+                "twice",
+            ),
+            (
+                "schema = 1\nowners = [\"example\"]\n\n[[abandoned]]\nname = \"example\"\nversion = \"1.0.0\"\nreason = \" \"\n",
+                "must give a reason",
+            ),
+            (
+                "schema = 1\nowners = [\"example\"]\n\n[[abandoned]]\nname = \"example\"\nversion = \"1.0.0\"\nreason = \"a\"\n\n[[abandoned]]\nname = \"example\"\nversion = \"1.0.0\"\nreason = \"b\"\n",
+                "declared twice",
+            ),
+        ] {
+            let error = CratesIoConfig::parse(text.as_bytes(), path()).unwrap_err();
+            let error = format!("{error:#}");
+            assert!(error.contains(expected), "{expected:?} not in {error}");
+        }
+    }
+
+    #[test]
+    fn every_accepted_tag_prefix_shape_forms_a_release_tag() {
+        for prefix in ["", "v", "rust/", "rust/v"] {
+            validate_tag_prefix(prefix).unwrap();
+        }
+        for prefix in ["rust", "vv", "/", "rust//", "-rust/v"] {
+            assert!(validate_tag_prefix(prefix).is_err(), "{prefix:?}");
+        }
+        // A trailing slash after `v` is still a prefix whose tag ends in the version.
+        validate_tag_prefix("v/").unwrap();
+    }
+}

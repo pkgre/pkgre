@@ -15,7 +15,8 @@ const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <ca
   pkgre-rust migrate-retained-delivery <catalog-root>
   pkgre-rust archive-inventory <catalog> <output.json>
   pkgre-rust archive-import <archive-store> <catalog>
-  pkgre-rust check-transition <accepted-catalog> <candidate-catalog>";
+  pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
+  pkgre-rust self-publish-check <repository> [<accepted-repository>]";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -50,6 +51,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("archive-inventory") => archive_inventory(&values),
         Some("archive-import") => archive_import_command(&values),
         Some("check-transition") => check_transition_command(&values),
+        Some("self-publish-check") => self_publish_check(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -262,6 +264,27 @@ fn check_transition_command(arguments: &[OsString]) -> Result<()> {
         accepted = %accepted.display(),
         candidate = %candidate.display(),
         "candidate is a valid accepted-to-candidate transition"
+    );
+    Ok(())
+}
+
+fn self_publish_check(arguments: &[OsString]) -> Result<()> {
+    ensure!(
+        matches!(arguments.len(), 1 | 2),
+        "wrong number of arguments\n{USAGE}"
+    );
+    let repository = Path::new(&arguments[0]);
+    let accepted = arguments.get(1).map(Path::new);
+    let summary = pkgre_rust::self_publish::check_repository(repository, accepted)?;
+    info!(
+        declared = summary.declared,
+        repositories = summary.repositories,
+        names = summary.names,
+        entries = summary.entries,
+        identities = summary.identities,
+        accepted = summary.accepted,
+        path = %repository.display(),
+        "checked self-publishing state"
     );
     Ok(())
 }

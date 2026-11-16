@@ -1,0 +1,560 @@
+//! Unit tests of the offline self-publishing checks.
+
+use std::fmt::Write as _;
+use std::path::Path;
+
+use anyhow::Result;
+use semver::Version;
+use sha2::{Digest, Sha256};
+
+use super::super::lock::{CRATES_IO_LOCK_SCHEMA, CratesIoPackage};
+use super::*;
+
+const REPOSITORY: &str = "https://git.example.invalid/example/project";
+const PREFIX: &str = "rust/v";
+
+fn checksum(label: &str) -> String {
+    let digest = Sha256::digest(label.as_bytes());
+    digest.iter().fold(String::new(), |mut text, byte| {
+        write!(text, "{byte:02x}").unwrap();
+        text
+    })
+}
+
+fn config_text(
+    repositories: &[(&str, &str)],
+    names: &[(&str, &str)],
+    abandoned: &[(&str, &str, &str)],
+) -> String {
+    let mut text = String::from("schema = 1\nowners = [\"example-owner\"]\n");
+    for (git, prefix) in repositories {
+        write!(
+            text,
+            "\n[[repositories]]\ngit = {git:?}\ntag-prefix = {prefix:?}\n"
+        )
+        .unwrap();
+    }
+    if !names.is_empty() {
+        text.push_str("\n[names]\n");
+        for (crate_name, crates_io_name) in names {
+            writeln!(text, "{crate_name} = {crates_io_name:?}").unwrap();
+        }
+    }
+    for (name, version, reason) in abandoned {
+        write!(
+            text,
+            "\n[[abandoned]]\nname = {name:?}\nversion = {version:?}\nreason = {reason:?}\n"
+        )
+        .unwrap();
+    }
+    text
+}
+
+fn parse_config(text: &str) -> CratesIoConfig {
+    CratesIoConfig::parse(text.as_bytes(), Path::new(CONFIG_FILE)).unwrap()
+}
+
+fn identity(name: &str, version: &str, tag: &str, commit: char) -> CatalogIdentity {
+    CatalogIdentity {
+        name: name.to_owned(),
+        version: Version::parse(version).unwrap(),
+        crate_sha256: checksum(&format!("pkgre {name} {version}")),
+        release: Some(GitRelease {
+            git: REPOSITORY.to_owned(),
+            tag: tag.to_owned(),
+            commit: commit.to_string().repeat(40),
+            cargo_version: Version::parse("1.95.0").unwrap(),
+        }),
+    }
+}
+
+fn forked_identity(name: &str, version: &str, tag: &str) -> CatalogIdentity {
+    let mut identity = identity(name, version, tag, '7');
+    identity
+        .release
+        .as_mut()
+        .expect("a forked identity is a Git identity")
+        .git = "https://git.example.invalid/fork/project".to_owned();
+    identity
+}
+
+fn mirror_identity(name: &str, version: &str) -> CatalogIdentity {
+    CatalogIdentity {
+        name: name.to_owned(),
+        version: Version::parse(version).unwrap(),
+        crate_sha256: checksum(&format!("crates.io {name} {version}")),
+        release: None,
+    }
+}
+
+fn entry(identity: &CatalogIdentity, crates_io_name: &str) -> CratesIoPackage {
+    let release = identity
+        .release
+        .as_ref()
+        .expect("an entry comes from a Git identity");
+    CratesIoPackage {
+        name: identity.name.clone(),
+        version: identity.version.clone(),
+        crates_io_name: crates_io_name.to_owned(),
+        crate_sha256: checksum(&format!(
+            "crates.io archive {} {}",
+            identity.name, identity.version
+        )),
+        pkgre_crate_sha256: identity.crate_sha256.clone(),
+        git: release.git.clone(),
+        tag: release.tag.clone(),
+        commit: release.commit.clone(),
+        cargo_version: release.cargo_version.clone(),
+    }
+}
+
+fn lock_with(packages: Vec<CratesIoPackage>) -> CratesIoLock {
+    CratesIoLock {
+        schema: CRATES_IO_LOCK_SCHEMA,
+        packages,
+    }
+}
+
+#[derive(Clone)]
+struct State {
+    config: String,
+    lock: CratesIoLock,
+    identities: Vec<CatalogIdentity>,
+    mirrors: Vec<String>,
+}
+
+impl State {
+    /// A repository that releases `example-lib` under a mapped name and
+    /// `example-bin` under the default prefix, at `rust/v1.0.0`.
+    fn base() -> Self {
+        let lib = identity("example-lib", "1.0.0", "rust/v1.0.0", '3');
+        let bin = identity("example-bin", "1.0.0", "rust/v1.0.0", '4');
+        Self {
+            config: config_text(
+                &[(REPOSITORY, PREFIX)],
+                &[("example-lib", "example-lib")],
+                &[],
+            ),
+            lock: lock_with(vec![
+                entry(&bin, "pkgre-pkgs-example-bin"),
+                entry(&lib, "example-lib"),
+            ]),
+            identities: vec![bin, lib],
+            mirrors: vec!["serde".to_owned(), "other-mirror".to_owned()],
+        }
+    }
+
+    fn snapshot(&self) -> CatalogSnapshot {
+        CatalogSnapshot {
+            identities: self.identities.clone(),
+            mirrors: self.mirrors.clone(),
+        }
+    }
+
+    fn set_names(&mut self, names: &[(&str, &str)]) {
+        self.config = config_text(&[(REPOSITORY, PREFIX)], names, &[]);
+    }
+
+    fn set_abandoned(&mut self, abandoned: &[(&str, &str, &str)]) {
+        self.config = config_text(
+            &[(REPOSITORY, PREFIX)],
+            &[("example-lib", "example-lib")],
+            abandoned,
+        );
+    }
+
+    fn add_release(
+        &mut self,
+        name: &str,
+        version: &str,
+        tag: &str,
+        crates_io_name: &str,
+        commit: char,
+    ) {
+        let identity = identity(name, version, tag, commit);
+        self.lock.packages.push(entry(&identity, crates_io_name));
+        self.identities.push(identity);
+    }
+}
+
+fn check_state(candidate: &State, accepted: Option<&State>) -> Result<SelfPublishCheckSummary> {
+    let candidate_snapshot = candidate.snapshot();
+    let candidate_state = SelfPublishState {
+        config: parse_config(&candidate.config),
+        lock: candidate.lock.clone(),
+    };
+    let accepted_config = accepted.map(|state| parse_config(&state.config));
+    let accepted_snapshot = accepted.map(State::snapshot);
+    let accepted_lock = accepted.map(|state| state.lock.clone());
+    let accepted_view = accepted.map(|_| AcceptedState {
+        catalog: accepted_snapshot
+            .as_ref()
+            .expect("an accepted state has a catalog"),
+        config: accepted_config.as_ref(),
+        lock: accepted_lock.as_ref(),
+    });
+    check(
+        &candidate_state,
+        &candidate_snapshot,
+        accepted_view.as_ref(),
+    )
+}
+
+fn error_text(result: Result<SelfPublishCheckSummary>) -> String {
+    match result {
+        Ok(summary) => panic!("expected a refusal, got {summary:?}"),
+        Err(error) => format!("{error:#}"),
+    }
+}
+
+#[track_caller]
+fn assert_refused(candidate: &State, accepted: Option<&State>, expected: &str) {
+    let error = error_text(check_state(candidate, accepted));
+    assert!(error.contains(expected), "{expected:?} not in {error}");
+}
+
+#[test]
+fn accepts_a_valid_state_and_the_canonical_lock_round_trips() {
+    let state = State::base();
+    let summary = check_state(&state, None).unwrap();
+    assert!(summary.declared);
+    assert_eq!(summary.repositories, 1);
+    assert_eq!(summary.names, 1);
+    assert_eq!(summary.entries, 2);
+    assert_eq!(summary.identities, 2);
+    assert!(!summary.accepted);
+
+    let summary = check_state(&state, Some(&state)).unwrap();
+    assert!(summary.accepted);
+
+    let bytes = state.lock.serialize().unwrap();
+    assert_eq!(
+        CratesIoLock::parse_canonical(&bytes, Path::new(LOCK_FILE)).unwrap(),
+        state.lock
+    );
+}
+
+#[test]
+fn accepts_an_earlier_non_release_identity_and_a_removed_identity() {
+    let mut state = State::base();
+    // An earlier identity of the same repository from a tag outside the
+    // release convention, as the catalog has before a repository adopts
+    // self-publishing: it has no entry of its own.
+    state
+        .identities
+        .push(identity("example-indexer", "0.3.0", "indexer/v0.3.0", '5'));
+    // A removed self-published identity keeps its entry.
+    let removed = identity("example-lib", "0.9.0", "rust/v0.9.0", '6');
+    state.lock.packages.push(entry(&removed, "example-lib"));
+    state.identities.push(removed);
+    check_state(&state, Some(&state)).unwrap();
+}
+
+#[test]
+fn accepts_a_new_mapping_after_every_entry_is_abandoned() {
+    let mut accepted = State::base();
+    accepted.set_abandoned(&[("example-lib", "1.0.0", "crates.io refused the upload")]);
+    let mut candidate = accepted.clone();
+    candidate.config = config_text(
+        &[(REPOSITORY, PREFIX)],
+        &[("example-lib", "example-renamed")],
+        &[("example-lib", "1.0.0", "crates.io refused the upload")],
+    );
+    check_state(&candidate, Some(&accepted)).unwrap();
+}
+
+#[test]
+fn refuses_a_mapped_name_in_the_default_namespace() {
+    let mut state = State::base();
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("example-bin", "pkgre-pkgs-other"),
+    ]);
+    assert_refused(&state, None, "pkgre-pkgs- namespace");
+}
+
+#[test]
+fn refuses_two_names_equal_under_crates_ios_comparison() {
+    let mut state = State::base();
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("example-bin", "Example-Lib"),
+    ]);
+    assert_refused(&state, None, "both use the crates.io name");
+
+    state.set_names(&[
+        ("example-lib", "example-name"),
+        ("example-bin", "Example_Name"),
+    ]);
+    assert_refused(&state, None, "both use the crates.io name");
+}
+
+#[test]
+fn refuses_a_name_longer_than_64_characters() {
+    let mut state = State::base();
+    let long = "a".repeat(65);
+    state.set_names(&[("example-lib", long.as_str())]);
+    assert_refused(&state, None, "longer than 64 characters");
+
+    // 60 characters plus the default prefix is longer than crates.io allows.
+    let mut state = State::base();
+    let long_crate = "b".repeat(60);
+    let identity = identity(&long_crate, "1.0.0", "rust/v1.0.0", '5');
+    let default = name::default_name(&long_crate);
+    state.lock.packages.push(entry(&identity, &default));
+    state.identities.push(identity);
+    assert_refused(&state, None, "longer than 64 characters");
+}
+
+#[test]
+fn refuses_a_reserved_name() {
+    let mut state = State::base();
+    state.set_names(&[("example-lib", "example-lib"), ("example-bin", "NUL")]);
+    assert_refused(&state, None, "reserves the crate name");
+}
+
+#[test]
+fn refuses_a_mapped_name_that_is_a_mirror() {
+    let mut state = State::base();
+    state.set_names(&[("example-lib", "serde")]);
+    assert_refused(&state, None, "registry/main mirrors");
+}
+
+#[test]
+fn refuses_a_mirror_in_the_default_namespace_or_with_a_mapped_name() {
+    let mut state = State::base();
+    state.mirrors.push("pkgre-pkgs-x".to_owned());
+    assert_refused(&state, None, "pkgre-pkgs- namespace");
+
+    let mut state = State::base();
+    state.mirrors.push("Example_Lib".to_owned());
+    assert_refused(&state, None, "registry/main mirrors");
+}
+
+#[test]
+fn refuses_a_stale_names_key() {
+    // A crate of the catalog that no self-publishing repository publishes.
+    let mut state = State::base();
+    state
+        .identities
+        .push(forked_identity("forked-crate", "1.0.0", "fork/v1.0.0"));
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("forked-crate", "forked-crate"),
+    ]);
+    assert_refused(&state, None, "the stale key must go");
+}
+
+#[test]
+fn accepts_a_names_key_before_the_crates_first_release() {
+    let mut state = State::base();
+    state.set_names(&[
+        ("example-lib", "example-lib"),
+        ("future-crate", "future-name"),
+    ]);
+    check_state(&state, None).unwrap();
+
+    // A declared name follows the name rules even before its crate exists.
+    state.set_names(&[("example-lib", "example-lib"), ("future-crate", "nul")]);
+    assert_refused(&state, None, "reserves the crate name");
+}
+
+#[test]
+fn refuses_a_missing_entry() {
+    let mut state = State::base();
+    state
+        .lock
+        .packages
+        .retain(|entry| entry.name != "example-bin");
+    assert_refused(&state, None, "has no entry in crates-io.lock");
+}
+
+#[test]
+fn refuses_an_entry_without_a_self_published_identity() {
+    let mut state = State::base();
+    let other = identity("other-crate", "1.0.0", "rust/v1.0.0", '5');
+    state
+        .lock
+        .packages
+        .push(entry(&other, "pkgre-pkgs-other-crate"));
+    assert_refused(&state, None, "has no self-published identity");
+}
+
+#[test]
+fn refuses_an_entry_that_disagrees_with_its_identity() {
+    let changes: &[fn(&mut CratesIoPackage)] = &[
+        |entry| entry.pkgre_crate_sha256 = "0".repeat(64),
+        |entry| entry.commit = "0".repeat(40),
+        |entry| entry.tag = "rust/v1.0.1".to_owned(),
+        |entry| entry.git = "https://git.example.invalid/other".to_owned(),
+        |entry| entry.cargo_version = Version::parse("1.96.0").unwrap(),
+    ];
+    for change in changes {
+        let mut state = State::base();
+        let target = state
+            .lock
+            .packages
+            .iter_mut()
+            .find(|entry| entry.name == "example-lib")
+            .unwrap();
+        change(target);
+        assert_refused(&state, None, "but registry/main.lock records");
+    }
+}
+
+#[test]
+fn refuses_a_new_entry_under_a_name_the_mapping_does_not_give() {
+    let mut state = State::base();
+    state.add_release("example-lib", "1.1.0", "rust/v1.1.0", "other-name", '5');
+    assert_refused(&state, None, "but the mapping gives");
+}
+
+#[test]
+fn refuses_a_changed_or_removed_entry_against_the_accepted_state() {
+    let accepted = State::base();
+
+    let mut changed = State::base();
+    let target = changed
+        .lock
+        .packages
+        .iter_mut()
+        .find(|entry| entry.name == "example-lib")
+        .unwrap();
+    target.crate_sha256 = "0".repeat(64);
+    assert_refused(&changed, Some(&accepted), "changed in crates-io.lock");
+
+    let mut removed = State::base();
+    removed
+        .lock
+        .packages
+        .retain(|entry| entry.name != "example-bin");
+    assert_refused(&removed, Some(&accepted), "was removed from crates-io.lock");
+}
+
+#[test]
+fn refuses_a_removed_repository_or_a_changed_prefix() {
+    let accepted = State::base();
+
+    let mut removed = State::base();
+    removed.config = config_text(&[], &[("example-lib", "example-lib")], &[]);
+    assert_refused(
+        &removed,
+        Some(&accepted),
+        "was removed from [[repositories]]",
+    );
+
+    let mut changed = State::base();
+    changed.config = config_text(
+        &[(REPOSITORY, "rust2/v")],
+        &[("example-lib", "example-lib")],
+        &[],
+    );
+    assert_refused(&changed, Some(&accepted), "changed tag-prefix");
+}
+
+#[test]
+fn refuses_an_abandoned_record_without_an_entry_or_one_that_disappears() {
+    let mut state = State::base();
+    state.set_abandoned(&[("example-lib", "2.0.0", "crates.io refused the upload")]);
+    assert_refused(&state, None, "names no entry of crates-io.lock");
+
+    let mut accepted = State::base();
+    accepted.set_abandoned(&[("example-lib", "1.0.0", "crates.io refused the upload")]);
+    let candidate = State::base();
+    assert_refused(&candidate, Some(&accepted), "was removed");
+
+    let mut candidate = accepted.clone();
+    candidate.set_abandoned(&[("example-lib", "1.0.0", "a different reason")]);
+    assert_refused(&candidate, Some(&accepted), "changed");
+}
+
+#[test]
+fn refuses_a_changed_name_while_an_entry_is_not_abandoned() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.set_names(&[("example-lib", "example-renamed")]);
+    assert_refused(&candidate, Some(&accepted), "is permanent");
+}
+
+#[test]
+fn refuses_an_identity_from_a_tag_outside_the_release_convention() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate
+        .identities
+        .push(identity("example-lib", "1.1.0", "cli/v1.1.0", '5'));
+    assert_refused(
+        &candidate,
+        Some(&accepted),
+        "a tag of a self-publishing repository is its tag-prefix followed by the version",
+    );
+}
+
+#[test]
+fn refuses_a_version_that_does_not_increase_per_crate() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.add_release("example-lib", "0.9.0", "rust/v0.9.0", "example-lib", '5');
+    assert_refused(
+        &candidate,
+        Some(&accepted),
+        "does not increase the version of the crate",
+    );
+}
+
+#[test]
+fn refuses_a_version_that_does_not_increase_per_repository() {
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.add_release(
+        "example-tool",
+        "0.5.0",
+        "rust/v0.5.0",
+        "pkgre-pkgs-example-tool",
+        '5',
+    );
+    assert_refused(
+        &candidate,
+        Some(&accepted),
+        "does not increase the release version",
+    );
+}
+
+#[test]
+fn refuses_a_release_version_with_build_metadata() {
+    let mut state = State::base();
+    let release = identity("example-lib", "1.1.0+build.1", "rust/v1.1.0+build.1", '5');
+    state.lock.packages.push(entry(&release, "example-lib"));
+    state.identities.push(release);
+    assert_refused(&state, None, "carries build metadata");
+}
+
+#[test]
+fn an_accepted_catalog_without_self_publishing_state_still_bounds_versions() {
+    let accepted = CatalogSnapshot {
+        identities: vec![mirror_identity("example-lib", "1.0.0")],
+        mirrors: Vec::new(),
+    };
+    let candidate_catalog = CatalogSnapshot {
+        identities: vec![
+            mirror_identity("example-lib", "1.0.0"),
+            identity("example-lib", "0.9.0", "rust/v0.9.0", '5'),
+        ],
+        mirrors: Vec::new(),
+    };
+    let lock = lock_with(vec![entry(&candidate_catalog.identities[1], "example-lib")]);
+    let candidate = SelfPublishState {
+        config: parse_config(&State::base().config),
+        lock,
+    };
+    let accepted_view = AcceptedState {
+        catalog: &accepted,
+        config: None,
+        lock: None,
+    };
+    let error = error_text(check(&candidate, &candidate_catalog, Some(&accepted_view)));
+    assert!(
+        error.contains("does not increase the version of the crate"),
+        "{error}"
+    );
+}

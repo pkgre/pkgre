@@ -1,0 +1,10 @@
+schema = 1
+
+owners = ["example-owner"]
+
+[[repositories]]
+git = "https://git.example.invalid/example/project"
+tag-prefix = "rust/v"
+
+[names]
+example-lib = "example-lib"

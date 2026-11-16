@@ -16,6 +16,7 @@ pub mod projection;
 pub mod render;
 pub mod request_target;
 pub mod schema;
+pub mod self_publish;
 pub mod serve;
 pub mod transition;
 pub mod update;
