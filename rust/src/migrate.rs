@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
@@ -22,11 +23,95 @@ use crate::schema::{
 };
 use crate::update::UtcTimestamp;
 
-/// Copies one catalog tree recursively into a fresh output directory.
+static STAGING_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// A private staging directory beside one migration destination.
+///
+/// Every migration step writes into it, so a failed run leaves nothing at the destination.
+/// [`MigrationStaging::install`] renames the completed tree into place in one step; dropping
+/// the staging directory before that removes everything a failed run produced.
+struct MigrationStaging {
+    path: PathBuf,
+    installed: bool,
+}
+
+impl MigrationStaging {
+    /// Allocates an unused staging path in the destination's own parent directory.
+    fn sibling_of(output: &Path) -> Result<Self> {
+        let parent = output.parent().unwrap_or_else(|| Path::new("."));
+        let name = output
+            .file_name()
+            .and_then(|value| value.to_str())
+            .with_context(|| {
+                format!(
+                    "output directory name {} is not valid UTF-8",
+                    output.display()
+                )
+            })?;
+        for _ in 0..100 {
+            let sequence = STAGING_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let candidate = parent.join(format!(
+                ".{name}.pkgre-migrate-{}-{sequence}",
+                std::process::id()
+            ));
+            match fs::symlink_metadata(&candidate) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Self {
+                        path: candidate,
+                        installed: false,
+                    });
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("inspect staging path {}", candidate.display()));
+                }
+            }
+        }
+        bail!(
+            "could not allocate a staging directory beside {}",
+            output.display()
+        )
+    }
+
+    /// Returns the staging path every migration step writes into.
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Renames the completed staging directory into place as the destination.
+    fn install(mut self, output: &Path) -> Result<()> {
+        ensure!(
+            !output.exists(),
+            "output directory {} already exists",
+            output.display()
+        );
+        fs::rename(&self.path, output).with_context(|| {
+            format!(
+                "install migrated catalog {} as {}",
+                self.path.display(),
+                output.display()
+            )
+        })?;
+        self.installed = true;
+        Ok(())
+    }
+}
+
+impl Drop for MigrationStaging {
+    fn drop(&mut self) {
+        if self.installed {
+            return;
+        }
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Copies one catalog tree recursively into a fresh destination directory.
 fn copy_tree(input: &Path, output: &Path) -> Result<()> {
     ensure!(
         !output.exists(),
-        "output directory {} already exists",
+        "destination directory {} already exists",
         output.display()
     );
     copy_entry(input, output)
@@ -66,6 +151,74 @@ fn copy_entry(input: &Path, output: &Path) -> Result<()> {
             .with_context(|| format!("copy {} to {}", input.display(), output.display()))?;
         Ok(())
     }
+}
+
+/// Reads one human catalog file and ensures it declares schema 4.
+fn read_schema_four_document(path: &Path, kind: &str) -> Result<toml_edit::DocumentMut> {
+    let raw = fs::read(path).with_context(|| format!("read {kind} {}", path.display()))?;
+    let text = String::from_utf8(raw)
+        .with_context(|| format!("{kind} {} is not UTF-8", path.display()))?;
+    let document = text
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("parse {kind} {}", path.display()))?;
+    let schema = document.get("schema").and_then(toml_edit::Item::as_integer);
+    ensure!(
+        schema == Some(4),
+        "{kind} {} must use schema 4, found {}",
+        path.display(),
+        schema.map_or_else(|| "no integer schema".to_owned(), |value| value.to_string())
+    );
+    Ok(document)
+}
+
+/// Collects the root registry files and the external category files of one catalog tree.
+fn human_document_paths(root: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut human_paths = Vec::<PathBuf>::new();
+    for entry in fs::read_dir(root).with_context(|| format!("read {}", root.display()))? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) == Some("toml") {
+            human_paths.push(path);
+        }
+    }
+    human_paths.sort();
+
+    let mut category_paths = Vec::<PathBuf>::new();
+    let categories_root = root.join("categories");
+    if categories_root.is_dir() {
+        for registry_dir in fs::read_dir(&categories_root)
+            .with_context(|| format!("read {}", categories_root.display()))?
+        {
+            let registry_dir = registry_dir?.path();
+            if !registry_dir.is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(&registry_dir)
+                .with_context(|| format!("read {}", registry_dir.display()))?
+            {
+                let path = entry?.path();
+                if path.extension().and_then(|value| value.to_str()) == Some("toml") {
+                    category_paths.push(path);
+                }
+            }
+        }
+    }
+    category_paths.sort();
+    Ok((human_paths, category_paths))
+}
+
+/// Ensures every root registry file and external category file of `input` declares schema 4.
+///
+/// The check reads the source tree, so a refused file is named by the path the operator knows
+/// rather than by its staged copy.
+fn ensure_schema_four_sources(input: &Path) -> Result<()> {
+    let (human_paths, category_paths) = human_document_paths(input)?;
+    for path in &human_paths {
+        read_schema_four_document(path, "human registry")?;
+    }
+    for path in &category_paths {
+        read_schema_four_document(path, "category file")?;
+    }
+    Ok(())
 }
 
 /// Exact schema-4 shape of one generated lock registry identity.
@@ -307,12 +460,7 @@ fn derive_admitted_at(
 
 /// Rewrites one human registry file with the asserted serving audience.
 fn rewrite_human_registry(path: &Path, audience: Audience) -> Result<()> {
-    let raw = fs::read(path).with_context(|| format!("read human registry {}", path.display()))?;
-    let text = String::from_utf8(raw)
-        .with_context(|| format!("human registry {} is not UTF-8", path.display()))?;
-    let mut document = text
-        .parse::<toml_edit::DocumentMut>()
-        .with_context(|| format!("parse human registry {}", path.display()))?;
+    let mut document = read_schema_four_document(path, "human registry")?;
     let registry = document
         .get_mut("registry")
         .and_then(|value| value.as_table_mut())
@@ -348,59 +496,47 @@ pub struct MigrationSummary {
 
 /// Migrates one schema-4 catalog tree to schema 5 in a fresh output directory.
 ///
+/// The whole migration runs in a private staging directory beside the destination, which is
+/// renamed into place only after the migration and every validation gate succeeded. A failed
+/// run therefore leaves no destination at all, rather than a partial tree to delete by hand.
+///
 /// # Errors
 ///
-/// Returns an error for any unsupported, malformed, or inconsistent input or for any
-/// failed validation gate on the migrated output.
+/// Returns an error for an existing destination, for any unsupported, malformed, or
+/// inconsistent input, or for any failed validation gate on the migrated output.
 pub fn migrate_v4_to_v5(
     input: &Path,
     output: &Path,
     git_times: &[(String, String)],
 ) -> Result<MigrationSummary> {
-    copy_tree(input, output)?;
+    ensure!(
+        !output.exists(),
+        "output directory {} already exists",
+        output.display()
+    );
+    ensure_schema_four_sources(input)?;
+    let staging = MigrationStaging::sibling_of(output)?;
+    copy_tree(input, staging.path())?;
+    let summary = migrate_staged(input, staging.path(), git_times)?;
+    staging.install(output)?;
+    Ok(summary)
+}
+
+/// Migrates the staged copy of one schema-4 catalog tree and validates the result.
+fn migrate_staged(
+    input: &Path,
+    staging: &Path,
+    git_times: &[(String, String)],
+) -> Result<MigrationSummary> {
     let mut git_time_map = BTreeMap::<String, BTreeMap<String, String>>::new();
     for entry in git_times {
         let (registry, key, value) = parse_git_time_entry(entry)?;
         git_time_map.entry(registry).or_default().insert(key, value);
     }
 
-    let mut human_paths = Vec::<PathBuf>::new();
-    for entry in fs::read_dir(output).with_context(|| format!("read {}", output.display()))? {
-        let path = entry?.path();
-        if path.extension().and_then(|value| value.to_str()) == Some("toml") {
-            human_paths.push(path);
-        }
-    }
-    human_paths.sort();
-
-    let mut category_paths = Vec::<PathBuf>::new();
-    let categories_root = output.join("categories");
-    if categories_root.is_dir() {
-        for registry_dir in fs::read_dir(&categories_root)
-            .with_context(|| format!("read {}", categories_root.display()))?
-        {
-            let registry_dir = registry_dir?.path();
-            if !registry_dir.is_dir() {
-                continue;
-            }
-            for entry in fs::read_dir(&registry_dir)
-                .with_context(|| format!("read {}", registry_dir.display()))?
-            {
-                let path = entry?.path();
-                if path.extension().and_then(|value| value.to_str()) == Some("toml") {
-                    category_paths.push(path);
-                }
-            }
-        }
-    }
-    category_paths.sort();
+    let (human_paths, category_paths) = human_document_paths(staging)?;
     for path in &category_paths {
-        let raw =
-            fs::read(path).with_context(|| format!("read category file {}", path.display()))?;
-        let mut document = String::from_utf8(raw)
-            .with_context(|| format!("category file {} is not UTF-8", path.display()))?
-            .parse::<toml_edit::DocumentMut>()
-            .with_context(|| format!("parse category file {}", path.display()))?;
+        let mut document = read_schema_four_document(path, "category file")?;
         document.insert("schema", toml_edit::Item::Value(toml_edit::Value::from(5)));
         fs::write(path, document.to_string())
             .with_context(|| format!("write category file {}", path.display()))?;
@@ -408,7 +544,7 @@ pub fn migrate_v4_to_v5(
 
     let mut migrated = Vec::new();
     for human_path in &human_paths {
-        let migrated_lock = migrate_registry_lock(human_path, output, &git_time_map)?;
+        let migrated_lock = migrate_registry_lock(human_path, staging, &git_time_map)?;
         migrated.push(MigratedRegistry {
             name: migrated_lock.registry.name.clone(),
             packages: migrated_lock.packages.len(),
@@ -416,14 +552,14 @@ pub fn migrate_v4_to_v5(
     }
     ensure!(!migrated.is_empty(), "catalog has no registry declarations");
 
-    replace_download_catalog(input, output)?;
+    replace_download_catalog(input, staging)?;
 
-    let catalog = crate::schema::Catalog::load(output)
-        .with_context(|| format!("validate migrated catalog {}", output.display()))?;
+    let catalog = crate::schema::Catalog::load(staging)
+        .with_context(|| format!("validate migrated catalog {}", staging.display()))?;
     validate_catalog(&catalog)
-        .with_context(|| format!("validate migrated catalog {}", output.display()))?;
+        .with_context(|| format!("validate migrated catalog {}", staging.display()))?;
     let artifacts = crate::artifact::ArtifactMap::load(&catalog)?;
-    let render_check = output.join(".migrate-render-check");
+    let render_check = staging.join(".migrate-render-check");
     crate::render::render(&catalog, &artifacts, &render_check)?;
     fs::remove_dir_all(&render_check)
         .with_context(|| format!("remove render check {}", render_check.display()))?;
@@ -440,7 +576,7 @@ pub fn migrate_v4_to_v5(
 /// Returns an error for any malformed input registry or a failed schema-5 rewrite.
 fn migrate_registry_lock(
     human_path: &Path,
-    output: &Path,
+    staging: &Path,
     git_time_map: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> Result<RegistryLock> {
     rewrite_human_registry(human_path, Audience::Public)?;
@@ -462,7 +598,7 @@ fn migrate_registry_lock(
         v4.schema
     );
 
-    let objects = output.join("objects");
+    let objects = staging.join("objects");
     let registry_times = git_time_map
         .get(&v4.registry.name)
         .cloned()
@@ -501,7 +637,7 @@ fn migrate_registry_lock(
 }
 
 /// Replaces the schema-1 download catalog with the derived schema-2 catalog.
-fn replace_download_catalog(input: &Path, output: &Path) -> Result<()> {
+fn replace_download_catalog(input: &Path, staging: &Path) -> Result<()> {
     let input_downloads = input.join(DOWNLOAD_CATALOG_FILE);
     let v1_bytes = fs::read(&input_downloads)
         .with_context(|| format!("read download catalog {}", input_downloads.display()))?;
@@ -515,7 +651,7 @@ fn replace_download_catalog(input: &Path, output: &Path) -> Result<()> {
     );
 
     let mut locks = Vec::new();
-    for registry in fs::read_dir(output).with_context(|| format!("read {}", output.display()))? {
+    for registry in fs::read_dir(staging).with_context(|| format!("read {}", staging.display()))? {
         let path = registry?.path();
         if path.extension().and_then(|value| value.to_str()) != Some("lock") {
             continue;
@@ -556,9 +692,9 @@ fn replace_download_catalog(input: &Path, output: &Path) -> Result<()> {
     }
     let downloads = DownloadCatalog::from_routes(routes);
     let canonical = downloads.canonical_bytes()?;
-    let output_downloads = output.join(DOWNLOAD_CATALOG_FILE);
-    fs::write(&output_downloads, &canonical)
-        .with_context(|| format!("write download catalog {}", output_downloads.display()))?;
+    let staged_downloads = staging.join(DOWNLOAD_CATALOG_FILE);
+    fs::write(&staged_downloads, &canonical)
+        .with_context(|| format!("write download catalog {}", staged_downloads.display()))?;
 
     verify_v1_routes_covered(&v1, &downloads)
 }
