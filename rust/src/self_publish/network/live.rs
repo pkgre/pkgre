@@ -1,8 +1,10 @@
 //! The live crates.io documents and the live release repository.
 //!
-//! Every request is a read over HTTPS, bounded in size and time, with a fixed
-//! user agent that names the project's repository, no proxy or token variable,
-//! and the empty-environment allowlist of the workflow's child processes.
+//! Every request is a read over HTTPS, with a fixed user agent that names the
+//! project's repository, no proxy or token variable, and the empty-environment
+//! allowlist of the workflow's child processes. crates.io's documents are
+//! bounded in size and time; a Git transfer that stops making progress is
+//! aborted, and the release's branch is fetched without its blobs.
 
 use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
@@ -63,19 +65,14 @@ impl CratesIo for LiveCratesIo {
                 "crates.io answered HTTP {status} for {url}, so the owners of {name:?} could not be read"
             ),
         };
-        let document: OwnersDocument = serde_json::from_slice(&body)
-            .with_context(|| format!("parse the crates.io owners of {name:?}"))?;
-        document
-            .users
-            .into_iter()
-            .map(OwnerDocument::into_owner)
-            .collect::<Result<Vec<_>>>()
+        parse_owners(&body)
+            .with_context(|| format!("parse the crates.io owners of {name:?}"))
             .map(Some)
     }
 
     fn versions(&self, name: &str) -> Result<Option<Vec<CratesIoVersion>>> {
         name::validate_syntax(name).context("read the versions of a crates.io crate")?;
-        let url = format!("{SPARSE_ROOT}/{}", index_path(name));
+        let url = sparse_url(name);
         let response = request(&url, "read the crates.io sparse index", MAX_INDEX_BYTES)
             .with_context(|| format!("the crates.io versions of {name:?} could not be read"))?;
         let body = match response.status {
@@ -98,14 +95,44 @@ impl CratesIo for LiveCratesIo {
             "crates.io answered HTTP {} for {url}, so its category slugs could not be read",
             response.status
         );
-        let document: SlugsDocument =
-            serde_json::from_slice(&response.body).context("parse the crates.io category slugs")?;
-        Ok(document
-            .category_slugs
-            .into_iter()
-            .map(|slug| slug.slug)
-            .collect())
+        parse_slugs(&response.body).context("parse the crates.io category slugs")
     }
+}
+
+/// Returns the sparse-index URL of one crate name.
+pub(super) fn sparse_url(name: &str) -> String {
+    format!("{SPARSE_ROOT}/{}", index_path(name))
+}
+
+/// Parses the owners document of one crates.io crate.
+///
+/// # Errors
+///
+/// Returns an error for a malformed document or an owner of a kind this crate
+/// does not know.
+pub(super) fn parse_owners(body: &[u8]) -> Result<Vec<Owner>> {
+    let document: OwnersDocument =
+        serde_json::from_slice(body).context("parse the owners document")?;
+    document
+        .users
+        .into_iter()
+        .map(OwnerDocument::into_owner)
+        .collect()
+}
+
+/// Parses the category-slug document of crates.io.
+///
+/// # Errors
+///
+/// Returns an error for a malformed document.
+pub(super) fn parse_slugs(body: &[u8]) -> Result<BTreeSet<String>> {
+    let document: SlugsDocument =
+        serde_json::from_slice(body).context("parse the category-slug document")?;
+    Ok(document
+        .category_slugs
+        .into_iter()
+        .map(|slug| slug.slug)
+        .collect())
 }
 
 /// A release repository, read over Git.
@@ -115,18 +142,18 @@ impl ReleaseRepository for LiveReleaseRepository {
     fn inspect_tag(&self, git: &str, tag: &str) -> Result<ReleaseTag> {
         validate_https_repository(git)?;
         validate_git_tag(tag)?;
-        inspect_tag(git, tag, &ChildEnvironment::plain()).with_context(|| {
+        inspect_tag(git, tag, &ChildEnvironment::plain(), false).with_context(|| {
             format!("the release tag {tag:?} of the repository {git:?} could not be read")
         })
     }
 }
 
 /// One crates.io API response.
-struct Response {
+pub(super) struct Response {
     /// HTTP status code.
-    status: u16,
+    pub(super) status: u16,
     /// Response body, bounded by the request's limit.
-    body: Vec<u8>,
+    pub(super) body: Vec<u8>,
 }
 
 /// The owners document of one crates.io crate.
@@ -187,7 +214,7 @@ struct SlugDocument {
 ///
 /// Returns an error for a malformed row, a row of another package, or two rows
 /// of the same version.
-fn parse_versions(name: &str, body: &[u8]) -> Result<Vec<CratesIoVersion>> {
+pub(super) fn parse_versions(name: &str, body: &[u8]) -> Result<Vec<CratesIoVersion>> {
     let mut versions = Vec::new();
     let mut identities = BTreeSet::new();
     for (number, line) in body.split(|byte| *byte == b'\n').enumerate() {
@@ -209,14 +236,22 @@ fn parse_versions(name: &str, body: &[u8]) -> Result<Vec<CratesIoVersion>> {
         versions.push(CratesIoVersion {
             version,
             checksum: record.checksum()?.to_owned(),
+            yanked: record.yanked()?,
         });
     }
     Ok(versions)
 }
 
 /// Reads one release tag and its position in the repository.
-fn inspect_tag(git: &str, tag: &str, environment: &ChildEnvironment) -> Result<ReleaseTag> {
-    let branch = default_branch(git, environment)?;
+///
+/// `allow_file` permits a `file:` repository, which only a test does.
+pub(super) fn inspect_tag(
+    git: &str,
+    tag: &str,
+    environment: &ChildEnvironment,
+    allow_file: bool,
+) -> Result<ReleaseTag> {
+    let branch = default_branch(git, environment, allow_file)?;
     let temporary = TemporaryDirectory::new("pkgre-release-tag")?;
     let checkout = temporary.path().join("repository");
     let branch_reference = format!("refs/remotes/origin/{branch}");
@@ -228,6 +263,7 @@ fn inspect_tag(git: &str, tag: &str, environment: &ChildEnvironment) -> Result<R
         &branch_reference,
         &tag_reference,
         environment,
+        allow_file,
     )?;
     let kind = git::stdout(
         &checkout,
@@ -237,12 +273,23 @@ fn inspect_tag(git: &str, tag: &str, environment: &ChildEnvironment) -> Result<R
             OsString::from(&tag_reference),
         ],
         environment,
-        false,
+        allow_file,
     )?;
     ensure!(
         matches!(kind.as_str(), "tag" | "commit"),
         "the release tag {tag:?} is a {kind:?} object, not a tag"
     );
+    let tag_oid = git::stdout(
+        &checkout,
+        [
+            OsString::from("rev-parse"),
+            OsString::from("--verify"),
+            OsString::from(&tag_reference),
+        ],
+        environment,
+        allow_file,
+    )?;
+    validate_git_object_id(&tag_oid).context("invalid fetched Git tag object ID")?;
     let commit = git::stdout(
         &checkout,
         [
@@ -251,11 +298,18 @@ fn inspect_tag(git: &str, tag: &str, environment: &ChildEnvironment) -> Result<R
             OsString::from(format!("{tag_reference}^{{commit}}")),
         ],
         environment,
-        false,
+        allow_file,
     )?;
     validate_git_object_id(&commit).context("invalid fetched Git commit ID")?;
-    let on_default_branch = is_ancestor(&checkout, &commit, &branch_reference, environment)?;
+    let on_default_branch = is_ancestor(
+        &checkout,
+        &commit,
+        &branch_reference,
+        environment,
+        allow_file,
+    )?;
     Ok(ReleaseTag {
+        tag_oid,
         commit,
         annotated: kind == "tag",
         on_default_branch,
@@ -264,6 +318,9 @@ fn inspect_tag(git: &str, tag: &str, environment: &ChildEnvironment) -> Result<R
 }
 
 /// Fetches the default branch and the release tag into a fresh repository.
+///
+/// Both fetches ask for the commits and trees only, since the tag's position is
+/// tested on commits: the blobs of the branch never cross the network.
 fn fetch_tag_and_branch(
     checkout: &Path,
     git: &str,
@@ -271,6 +328,7 @@ fn fetch_tag_and_branch(
     branch_reference: &str,
     tag_reference: &str,
     environment: &ChildEnvironment,
+    allow_file: bool,
 ) -> Result<()> {
     git::run(
         None,
@@ -280,7 +338,7 @@ fn fetch_tag_and_branch(
             checkout.as_os_str().to_owned(),
         ],
         environment,
-        false,
+        allow_file,
     )?;
     git::run(
         Some(checkout),
@@ -291,7 +349,7 @@ fn fetch_tag_and_branch(
             OsString::from(git),
         ],
         environment,
-        false,
+        allow_file,
     )?;
     git::run(
         Some(checkout),
@@ -299,11 +357,12 @@ fn fetch_tag_and_branch(
             OsString::from("fetch"),
             OsString::from("--quiet"),
             OsString::from("--no-tags"),
+            OsString::from("--filter=blob:none"),
             OsString::from("origin"),
             OsString::from(format!("refs/heads/{branch}:{branch_reference}")),
         ],
         environment,
-        false,
+        allow_file,
     )?;
     git::run(
         Some(checkout),
@@ -311,11 +370,12 @@ fn fetch_tag_and_branch(
             OsString::from("fetch"),
             OsString::from("--quiet"),
             OsString::from("--no-tags"),
+            OsString::from("--filter=blob:none"),
             OsString::from("origin"),
             OsString::from(format!("{tag_reference}:{tag_reference}")),
         ],
         environment,
-        false,
+        allow_file,
     )?;
     Ok(())
 }
@@ -326,6 +386,7 @@ fn is_ancestor(
     commit: &str,
     reference: &str,
     environment: &ChildEnvironment,
+    allow_file: bool,
 ) -> Result<bool> {
     let output = git::spawn(
         git::command(
@@ -337,7 +398,7 @@ fn is_ancestor(
                 OsString::from(reference),
             ],
             environment,
-            false,
+            allow_file,
         ),
         "test the ancestry of the release tag's commit",
     )?;
@@ -353,7 +414,7 @@ fn is_ancestor(
 }
 
 /// Returns the default branch that the repository's `HEAD` names.
-fn default_branch(git: &str, environment: &ChildEnvironment) -> Result<String> {
+fn default_branch(git: &str, environment: &ChildEnvironment, allow_file: bool) -> Result<String> {
     let output = git::spawn(
         git::command(
             None,
@@ -364,12 +425,22 @@ fn default_branch(git: &str, environment: &ChildEnvironment) -> Result<String> {
                 OsString::from("HEAD"),
             ],
             environment,
-            false,
+            allow_file,
         ),
         "read the repository's default branch",
     )?;
     git::require_success(&output, "read the repository's default branch")?;
     let stdout = String::from_utf8(output.stdout).context("Git wrote non-UTF-8 output")?;
+    parse_default_branch(&stdout)
+}
+
+/// Returns the default branch that one `ls-remote --symref` output names.
+///
+/// # Errors
+///
+/// Returns an error when the output names no default branch, or names one that
+/// is not a safe Git ref.
+pub(super) fn parse_default_branch(stdout: &str) -> Result<String> {
     for line in stdout.lines() {
         let Some(reference) = line.strip_prefix("ref: ") else {
             continue;
@@ -386,7 +457,7 @@ fn default_branch(git: &str, environment: &ChildEnvironment) -> Result<String> {
         validate_branch(branch)?;
         return Ok(branch.to_owned());
     }
-    bail!("the repository {git:?} names no default branch")
+    bail!("the repository names no default branch")
 }
 
 /// Refuses a branch name that cannot be fetched as one ref.
@@ -475,20 +546,28 @@ fn request(url: &str, action: &str, max_bytes: usize) -> Result<Response> {
         output.status,
         bounded_lossy(&output.stderr)
     );
+    let response = split_status(&output.stdout).with_context(|| action.to_owned())?;
     ensure!(
-        output.stdout.len() >= 3,
-        "{action}: curl reported no HTTP status"
+        response.body.len() <= max_bytes,
+        "{action}: the response exceeded {max_bytes} bytes"
     );
-    let split = output.stdout.len() - 3;
-    let (body, status) = output.stdout.split_at(split);
+    Ok(response)
+}
+
+/// Splits the HTTP status code that `curl --write-out` appends from the body.
+///
+/// # Errors
+///
+/// Returns an error when the output is too short to hold a status, or when the
+/// status is not a three-digit number.
+pub(super) fn split_status(stdout: &[u8]) -> Result<Response> {
+    ensure!(stdout.len() >= 3, "curl reported no HTTP status");
+    let split = stdout.len() - 3;
+    let (body, status) = stdout.split_at(split);
     let status = std::str::from_utf8(status)
         .context("curl wrote a non-UTF-8 HTTP status")?
         .parse::<u16>()
         .context("curl wrote an HTTP status that is not a number")?;
-    ensure!(
-        body.len() <= max_bytes,
-        "{action}: the response exceeded {max_bytes} bytes"
-    );
     Ok(Response {
         status,
         body: body.to_vec(),

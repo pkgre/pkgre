@@ -44,9 +44,10 @@ pub struct SelfPublishCheckSummary {
 /// repository the checks that compare against one are skipped, and a repository
 /// that has no `self-publish/` directory has nothing to check.
 ///
-/// The network checks read only the releases that the run adds, so that an
-/// unavailable crates.io or release repository fails only a change that
-/// publishes something.
+/// The network checks read only the releases that the run adds, which are the
+/// self-published identities that the accepted catalog does not hold or whose
+/// entry the accepted lock does not record, so that an unavailable crates.io or
+/// release repository fails only a change that publishes something.
 ///
 /// # Errors
 ///

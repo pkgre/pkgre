@@ -1,11 +1,13 @@
 //! The network checks of the releases that a run adds.
 //!
-//! A run checks only the releases it adds: the self-published identities that
-//! the candidate has and the accepted repository does not, so that an
-//! unavailable crates.io or release repository fails only a change that
-//! publishes something. Every network read sits behind [`CratesIo`] and
-//! [`ReleaseRepository`], so that the tests run offline, and a run that adds no
-//! release makes no request at all.
+//! A release is added when one of its self-published identities is missing from
+//! the accepted catalog, or when its `crates-io.lock` entry is missing from the
+//! accepted lock, which covers a new release, a repository newly declared in
+//! `[[repositories]]`, and a newly declared `self-publish/` alike. Only such a
+//! release is checked, so that an unavailable crates.io or release repository
+//! fails only a change that publishes something. Every network read sits behind
+//! [`CratesIo`] and [`ReleaseRepository`], so that the tests run offline, and a
+//! run that adds no release makes no request at all.
 
 mod live;
 
@@ -31,6 +33,10 @@ pub(crate) use live::{LiveCratesIo, LiveReleaseRepository};
 const MAX_KEYWORDS: usize = 5;
 /// Longest keyword, in bytes, that crates.io accepts.
 const MAX_KEYWORD_BYTES: usize = 20;
+/// Most categories that crates.io accepts on one crate.
+const MAX_CATEGORIES: usize = 5;
+/// Longest description, in bytes, that crates.io accepts.
+const MAX_DESCRIPTION_BYTES: usize = 1000;
 /// Largest archive, in bytes, that crates.io accepts.
 const MAX_ARCHIVE_BYTES: usize = 10 * 1024 * 1024;
 
@@ -59,6 +65,8 @@ pub(crate) struct CratesIoVersion {
     pub(crate) version: Version,
     /// SHA-256 of the published `.crate` archive.
     pub(crate) checksum: String,
+    /// Whether crates.io yanked the version.
+    pub(crate) yanked: bool,
 }
 
 /// crates.io, as the checks and the upload routine read it.
@@ -97,6 +105,8 @@ pub(crate) trait CratesIo {
 /// What a release tag's repository says about the tag.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ReleaseTag {
+    /// The object the tag names, which is the tag object of an annotated tag.
+    pub(crate) tag_oid: String,
     /// The peeled commit of the tag.
     pub(crate) commit: String,
     /// Whether the tag is annotated.
@@ -203,7 +213,7 @@ pub(crate) fn check_added_releases(
     accepted: &AcceptedState<'_>,
     services: &Services<'_>,
 ) -> Result<usize> {
-    let releases = added_releases(&state.catalog, &self_publish.config, accepted.catalog);
+    let releases = added_releases(&state.catalog, &self_publish.config, accepted);
     if releases.is_empty() {
         tracing::info!("the run adds no release; the network checks make no request");
         return Ok(0);
@@ -227,17 +237,28 @@ pub(crate) fn check_added_releases(
 }
 
 /// Returns the releases that the candidate adds, grouped by repository and tag.
+///
+/// A self-published identity is added when the accepted catalog does not hold
+/// it, or when the accepted `crates-io.lock` does not record it. The second
+/// case covers a repository newly declared in `[[repositories]]` and a newly
+/// declared `self-publish/`: their identities are already in the accepted
+/// catalog, but their entries are new, and entries are permanent once merged.
+/// An accepted repository without `self-publish/` records no entry at all.
 fn added_releases(
     catalog: &CatalogSnapshot,
     config: &CratesIoConfig,
-    accepted: &CatalogSnapshot,
+    accepted: &AcceptedState<'_>,
 ) -> BTreeMap<(String, String), Vec<CatalogIdentity>> {
     let mut releases: BTreeMap<(String, String), Vec<CatalogIdentity>> = BTreeMap::new();
     for (identity, release) in self_published_identities(catalog, config) {
-        if accepted
+        let known = accepted
+            .catalog
             .identity(&identity.name, &identity.version)
-            .is_some()
-        {
+            .is_some();
+        let recorded = accepted
+            .lock
+            .is_some_and(|lock| lock.entry(&identity.name, &identity.version).is_some());
+        if known && recorded {
             continue;
         }
         releases
@@ -260,10 +281,30 @@ fn check_release(
     crates_io: &mut CratesIoState<'_>,
 ) -> Result<()> {
     let release = release_of_group(git, tag, identities)?;
+    for identity in identities {
+        ensure!(
+            !identity.removed,
+            "the catalog removed {} {}, whose archive it no longer retains, so the release cannot be checked; only an active identity can be",
+            identity.name,
+            identity.version
+        );
+    }
     let inspected = services.repositories.inspect_tag(git, tag)?;
     ensure!(
         inspected.annotated,
         "the release tag {tag:?} of {git:?} is lightweight; a release tag is an annotated tag"
+    );
+    ensure!(
+        inspected.tag_oid == release.tag_oid,
+        "release tag {tag:?} of {git:?} is object {}, but registry/main.lock records {}",
+        inspected.tag_oid,
+        release.tag_oid
+    );
+    ensure!(
+        inspected.commit == release.commit,
+        "release tag {tag:?} of {git:?} names commit {}, but registry/main.lock records {}",
+        inspected.commit,
+        release.commit
     );
     ensure!(
         inspected.on_default_branch,
@@ -357,13 +398,13 @@ fn check_name(
     if let Some(versions) = crates_io.versions(&entry.crates_io_name)?
         && let Some(published) = versions
             .iter()
-            .find(|published| published.version == identity.version)
+            .find(|published| same_version(&published.version, &identity.version))
     {
         ensure!(
             published.checksum == entry.crate_sha256,
             "crates.io has crate {} version {} with archive checksum {}, but crates-io.lock records {} for {} {}",
             entry.crates_io_name,
-            identity.version,
+            published.version,
             published.checksum,
             entry.crate_sha256,
             identity.name,
@@ -371,6 +412,17 @@ fn check_name(
         );
     }
     Ok(())
+}
+
+/// Returns whether two versions are the same crates.io version.
+///
+/// crates.io and Cargo ignore build metadata for identity, so `0.5.0+build`
+/// and `0.5.0` are one version there.
+fn same_version(left: &Version, right: &Version) -> bool {
+    left.major == right.major
+        && left.minor == right.minor
+        && left.patch == right.patch
+        && left.pre == right.pre
 }
 
 /// Checks that crates.io's owners of one crate name are the expected users.
@@ -400,9 +452,11 @@ fn check_owners(crates_io_name: &str, expected: &BTreeSet<String>, owners: &[Own
 /// # Errors
 ///
 /// Returns an error naming the crate, the version, the rule, and what the crate
-/// has instead: a missing description or license, too many keywords or a
-/// keyword that crates.io refuses, an archive over crates.io's upload limit, or
-/// a category that crates.io does not know.
+/// has instead: a missing or too long description, a missing license, too many
+/// keywords or a keyword that crates.io refuses, too many categories or one
+/// that crates.io does not know, an archive over crates.io's upload limit, or a
+/// homepage, documentation, or repository URL that crates.io would refuse. The
+/// SPDX license expression itself is not checked.
 fn check_crates_io_rules(
     name: &str,
     version: &Version,
@@ -417,6 +471,13 @@ fn check_crates_io_rules(
             .is_some_and(|description| !description.trim().is_empty()),
         "crate {name} {version} has no description, which crates.io requires"
     );
+    if let Some(description) = &facts.description {
+        ensure!(
+            description.len() <= MAX_DESCRIPTION_BYTES,
+            "crate {name} {version} has a description of {} bytes, but crates.io takes at most {MAX_DESCRIPTION_BYTES}",
+            description.len()
+        );
+    }
     let licensed = facts
         .license
         .as_deref()
@@ -448,13 +509,52 @@ fn check_crates_io_rules(
         archive_bytes <= MAX_ARCHIVE_BYTES,
         "crate {name} {version} has a crates.io archive of {archive_bytes} bytes, but crates.io takes at most {MAX_ARCHIVE_BYTES}"
     );
+    ensure!(
+        facts.categories.len() <= MAX_CATEGORIES,
+        "crate {name} {version} has {} categories, but crates.io takes at most {MAX_CATEGORIES}",
+        facts.categories.len()
+    );
     for category in &facts.categories {
         ensure!(
             category_slugs.contains(category),
             "crate {name} {version} declares the category {category:?}, which is not one of crates.io's category slugs"
         );
     }
+    for (field, url) in [
+        ("homepage", &facts.homepage),
+        ("documentation", &facts.documentation),
+        ("repository", &facts.repository),
+    ] {
+        if let Some(url) = url {
+            ensure!(
+                is_http_url(url),
+                "crate {name} {version} has the {field} {url:?}, but crates.io requires an http or https URL with an authority"
+            );
+        }
+    }
     Ok(())
+}
+
+/// Returns whether crates.io accepts one manifest URL.
+///
+/// crates.io requires `http://` or `https://` and a URL that parses; without a
+/// URL parser this check requires the scheme, an authority, and no whitespace
+/// or control character, which is what a manifest can carry into the package.
+fn is_http_url(url: &str) -> bool {
+    let Some(rest) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .expect("a split yields at least one part");
+    !authority.is_empty()
+        && !url
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
 }
 
 /// Returns whether crates.io accepts one keyword.

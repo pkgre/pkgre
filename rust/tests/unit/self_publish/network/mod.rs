@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use semver::Version;
 
-use super::super::check::{SelfPublishCheckSummary, check_repository_with};
+use super::super::check::{AcceptedState, SelfPublishCheckSummary, check_repository_with};
 use super::super::derive::MemberFacts;
 use super::super::derive::tests::fixtures::{self, LocalSource, Release, Variant};
 use super::super::lock::{CratesIoLock, CratesIoPackage};
 use super::super::lock_command::{LocalNetwork, self_publish_lock_in};
 use super::super::state::LOCK_FILE;
+use super::live;
 use super::{
     CratesIo, CratesIoVersion, DerivationSources, LiveCratesIo, LiveReleaseRepository,
     LocalSources, Owner, OwnerKind, ReleaseRepository, ReleaseTag, Services, check_crates_io_rules,
@@ -24,6 +25,8 @@ use crate::artifact::sha256_bytes;
 const LIB: &str = "example-lib";
 /// The crate that the fixture gives the default crates.io name.
 const BIN: &str = "example-bin";
+/// The repository of the fixture.
+const REPOSITORY: &str = fixtures::REPOSITORY;
 
 /// One answer of a fake service.
 enum Answer<T> {
@@ -59,10 +62,7 @@ fn fixture_without_derivation(parent: &Path) -> Fixture {
 /// does, by deriving it.
 fn fixture_with_derivation(parent: &Path, variant: Variant) -> Fixture {
     let fixture = build_fixture(parent, variant);
-    let repositories = BTreeMap::from([(
-        fixtures::REPOSITORY.to_owned(),
-        fixture.release.root.clone(),
-    )]);
+    let repositories = BTreeMap::from([(REPOSITORY.to_owned(), fixture.release.root.clone())]);
     self_publish_lock_in(
         &fixture.candidate.root,
         &LocalNetwork {
@@ -110,13 +110,98 @@ fn record_entries(candidate: &fixtures::Catalog, release: &Release) {
             crates_io_name: crates_io_name.to_owned(),
             crate_sha256: fixtures::crate_checksum(crates_io_name, fixtures::VERSION),
             pkgre_crate_sha256: sha256_bytes(archive),
-            git: fixtures::REPOSITORY.to_owned(),
+            git: REPOSITORY.to_owned(),
             tag: fixtures::tag(),
             commit: release.commit.clone(),
             cargo_version: Version::parse(fixtures::CARGO_VERSION)
                 .expect("parse the pinned version"),
         });
     }
+    fs::write(
+        &path,
+        lock.serialize().expect("serialize the fixture entries"),
+    )
+    .expect("write the fixture entries");
+}
+
+/// Copies every regular file of `from` to `to`, keeping the layout.
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).expect("create the copy");
+    let mut entries = fs::read_dir(from)
+        .expect("read the tree")
+        .map(|entry| entry.expect("read an entry").path())
+        .collect::<Vec<_>>();
+    entries.sort();
+    for path in entries {
+        let metadata = fs::symlink_metadata(&path).expect("inspect an entry");
+        let target = to.join(path.file_name().expect("an entry has a name"));
+        if metadata.is_dir() {
+            copy_tree(&path, &target);
+        } else {
+            assert!(metadata.is_file(), "{} is a regular file", path.display());
+            fs::copy(&path, &target).expect("copy a file");
+        }
+    }
+}
+
+/// Builds an accepted repository with the candidate's catalog and no
+/// self-publishing state: the change that adopts `self-publish/`.
+fn accepted_without_self_publishing(fixture: &Fixture) -> PathBuf {
+    let accepted = fixture
+        .candidate
+        .root
+        .parent()
+        .expect("the candidate has a parent")
+        .join("accepted-adoption");
+    copy_tree(
+        &fixture.candidate.root.join("registry"),
+        &accepted.join("registry"),
+    );
+    accepted
+}
+
+/// Builds an accepted repository that records the earlier release only and does
+/// not declare the fixture repository: the change that adds the repository.
+fn accepted_without_the_repository(fixture: &Fixture) -> PathBuf {
+    let accepted = fixture
+        .candidate
+        .root
+        .parent()
+        .expect("the candidate has a parent")
+        .join("accepted-repository");
+    copy_tree(
+        &fixture.candidate.root.join("registry"),
+        &accepted.join("registry"),
+    );
+    fs::create_dir_all(accepted.join("self-publish")).expect("create the self-publishing state");
+    fs::write(
+        accepted.join("self-publish/crates-io.toml"),
+        "schema = 1\n\nowners = [\"example-owner\"]\n\n[names]\nexample-lib = \"example-library\"\n",
+    )
+    .expect("write the accepted config");
+    let mut lock = CratesIoLock::load(&fixture.candidate.root.join("self-publish").join(LOCK_FILE))
+        .expect("load the fixture entries");
+    lock.packages
+        .retain(|package| package.name == "earlier-lib");
+    fs::write(
+        accepted.join("self-publish/crates-io.lock"),
+        lock.serialize().expect("serialize the accepted entries"),
+    )
+    .expect("write the accepted entries");
+    accepted
+}
+
+/// Records a `crate-sha256` that no derivation reproduces for one crate.
+fn record_a_bogus_checksum(fixture: &Fixture, name: &str) {
+    let path = fixture.candidate.root.join("self-publish").join(LOCK_FILE);
+    let mut lock = CratesIoLock::load(&path).expect("load the fixture entries");
+    let version = fixture.release.version(name);
+    let entry = lock
+        .packages
+        .iter_mut()
+        .find(|package| package.name == name && package.version == version)
+        .unwrap_or_else(|| panic!("the fixture records {name} {version}"));
+    entry.crate_sha256 = "c".repeat(64);
     fs::write(
         &path,
         lock.serialize().expect("serialize the fixture entries"),
@@ -134,27 +219,34 @@ fn services<'a>(
         crates_io,
         repositories,
         derivation: DerivationSources::Local(LocalSources {
-            repositories: BTreeMap::from([(
-                fixtures::REPOSITORY.to_owned(),
-                fixture.release.root.clone(),
-            )]),
+            repositories: BTreeMap::from([(REPOSITORY.to_owned(), fixture.release.root.clone())]),
             directory: Some(fixture.source.root.clone()),
             root: fixture.work.path().to_path_buf(),
         }),
     }
 }
 
-/// Runs the checks of one fixture against the given fakes.
-fn check(
+/// Runs the checks of one fixture against the given accepted repository.
+fn check_against(
     fixture: &Fixture,
+    accepted: &Path,
     crates_io: &FakeCratesIo,
     repositories: &FakeRepository,
 ) -> Result<SelfPublishCheckSummary> {
     check_repository_with(
         &fixture.candidate.root,
-        Some(&fixture.accepted.root),
+        Some(accepted),
         &services(fixture, crates_io, repositories),
     )
+}
+
+/// Runs the checks of one fixture against its own accepted repository.
+fn check(
+    fixture: &Fixture,
+    crates_io: &FakeCratesIo,
+    repositories: &FakeRepository,
+) -> Result<SelfPublishCheckSummary> {
+    check_against(fixture, &fixture.accepted.root, crates_io, repositories)
 }
 
 /// Returns the error text of a refusal.
@@ -176,9 +268,10 @@ fn recorded_entry(fixture: &Fixture, name: &str) -> CratesIoPackage {
 }
 
 /// Returns one release tag, as a fake repository reports it.
-fn release_tag(annotated: bool, on_default_branch: bool) -> ReleaseTag {
+fn release_tag(fixture: &Fixture, annotated: bool, on_default_branch: bool) -> ReleaseTag {
     ReleaseTag {
-        commit: "a".repeat(40),
+        tag_oid: fixture.release.tag_oid.clone(),
+        commit: fixture.release.commit.clone(),
         annotated,
         on_default_branch,
         default_branch: "main".to_owned(),
@@ -190,6 +283,8 @@ fn release_tag(annotated: bool, on_default_branch: bool) -> ReleaseTag {
 struct FakeCratesIo {
     /// Refuse every request, for a run that must not read the network.
     forbidden: bool,
+    /// Report crates.io as unavailable.
+    unavailable: bool,
     /// Owners by crate name.
     owners: BTreeMap<String, Answer<Option<Vec<Owner>>>>,
     /// Versions by crate name.
@@ -223,11 +318,8 @@ impl FakeCratesIo {
     /// Returns a fake whose crates.io is unavailable.
     fn unavailable() -> Self {
         Self {
-            forbidden: false,
-            owners: BTreeMap::new(),
-            versions: BTreeMap::new(),
-            slugs: None,
-            calls: Cell::new(0),
+            unavailable: true,
+            ..Self::default()
         }
     }
 
@@ -254,11 +346,14 @@ impl FakeCratesIo {
         self.calls.get()
     }
 
-    /// Counts one request.
+    /// Counts one request, and refuses it when the fake must not answer.
     fn count(&self) -> Result<()> {
         self.calls.set(self.calls.get() + 1);
         if self.forbidden {
             bail!("crates.io must not be read by this run");
+        }
+        if self.unavailable {
+            bail!("crates.io is unavailable");
         }
         Ok(())
     }
@@ -308,10 +403,8 @@ impl FakeRepository {
     /// Returns a fake that reports one tag of the fixture repository.
     fn of(tag: ReleaseTag) -> Self {
         let mut fake = Self::default();
-        fake.tags.insert(
-            (fixtures::REPOSITORY.to_owned(), fixtures::tag()),
-            Answer::Value(tag),
-        );
+        fake.tags
+            .insert((REPOSITORY.to_owned(), fixtures::tag()), Answer::Value(tag));
         fake
     }
 
@@ -327,7 +420,7 @@ impl FakeRepository {
     fn unavailable() -> Self {
         let mut fake = Self::default();
         fake.tags.insert(
-            (fixtures::REPOSITORY.to_owned(), fixtures::tag()),
+            (REPOSITORY.to_owned(), fixtures::tag()),
             Answer::Unavailable,
         );
         fake
@@ -367,7 +460,7 @@ fn accepts_a_release_that_crates_io_does_not_have_yet() {
     let fixture = fixture_with_derivation(temporary.path(), Variant::default());
     let crates_io =
         FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let summary = check(&fixture, &crates_io, &repositories)
         .expect("the network checks accept a release that crates.io does not have");
     assert_eq!(summary.network_releases, 1);
@@ -392,12 +485,35 @@ fn accepts_a_name_with_the_expected_owners_and_the_recorded_version() {
         Some(vec![CratesIoVersion {
             version: entry.version.clone(),
             checksum: entry.crate_sha256.clone(),
+            yanked: false,
         }]),
     );
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let summary = check(&fixture, &crates_io, &repositories)
         .expect("crates.io holds the recorded version with the expected owners");
     assert_eq!(summary.network_releases, 1);
+}
+
+#[test]
+fn refuses_a_published_version_with_build_metadata_and_another_checksum() {
+    let temporary = fixtures::Temp::new("pkgre-network-build-metadata");
+    let fixture = fixture_with_derivation(temporary.path(), Variant::default());
+    let entry = recorded_entry(&fixture, LIB);
+    let mut crates_io = FakeCratesIo::missing(&[fixtures::BIN_CRATES_IO_NAME]);
+    // crates.io ignores build metadata, so this is the release's version.
+    crates_io.with_versions(
+        fixtures::LIB_CRATES_IO_NAME,
+        Some(vec![CratesIoVersion {
+            version: Version::parse("1.0.0+build").expect("parse a version"),
+            checksum: "b".repeat(64),
+            yanked: false,
+        }]),
+    );
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
+    let error = error_text(check(&fixture, &crates_io, &repositories));
+    assert!(error.contains("1.0.0+build"), "{error}");
+    assert!(error.contains(&"b".repeat(64)), "{error}");
+    assert!(error.contains(&entry.crate_sha256), "{error}");
 }
 
 #[test]
@@ -412,7 +528,7 @@ fn refuses_an_extra_owner() {
             user_owner("someone-else"),
         ]),
     );
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("someone-else"), "{error}");
     assert!(error.contains("expects exactly the users"), "{error}");
@@ -424,7 +540,7 @@ fn refuses_a_missing_owner() {
     let fixture = fixture_without_derivation(temporary.path());
     let mut crates_io = FakeCratesIo::missing(&[fixtures::BIN_CRATES_IO_NAME]);
     crates_io.with_owners(fixtures::LIB_CRATES_IO_NAME, Some(Vec::new()));
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("example-owner"), "{error}");
     assert!(error.contains("expects exactly the users"), "{error}");
@@ -445,7 +561,7 @@ fn refuses_a_team_owner() {
             },
         ]),
     );
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("github:example:release"), "{error}");
     assert!(error.contains("team"), "{error}");
@@ -462,9 +578,10 @@ fn refuses_a_version_with_another_checksum() {
         Some(vec![CratesIoVersion {
             version: entry.version.clone(),
             checksum: "b".repeat(64),
+            yanked: false,
         }]),
     );
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("crates.io has crate"), "{error}");
     assert!(error.contains(&"b".repeat(64)), "{error}");
@@ -476,7 +593,7 @@ fn refuses_a_lightweight_tag() {
     let temporary = fixtures::Temp::new("pkgre-network-lightweight");
     let fixture = fixture_without_derivation(temporary.path());
     let crates_io = FakeCratesIo::forbidden();
-    let repositories = FakeRepository::of(release_tag(false, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, false, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("lightweight"), "{error}");
     assert!(error.contains("annotated"), "{error}");
@@ -488,10 +605,38 @@ fn refuses_a_tag_whose_commit_is_not_on_the_default_branch() {
     let temporary = fixtures::Temp::new("pkgre-network-off-branch");
     let fixture = fixture_without_derivation(temporary.path());
     let crates_io = FakeCratesIo::forbidden();
-    let repositories = FakeRepository::of(release_tag(true, false));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, false));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("default branch"), "{error}");
     assert!(error.contains("main"), "{error}");
+    assert_eq!(crates_io.calls(), 0);
+}
+
+#[test]
+fn refuses_a_tag_object_that_the_catalog_does_not_record() {
+    let temporary = fixtures::Temp::new("pkgre-network-other-tag-object");
+    let fixture = fixture_without_derivation(temporary.path());
+    let crates_io = FakeCratesIo::forbidden();
+    let mut tag = release_tag(&fixture, true, true);
+    tag.tag_oid = "b".repeat(40);
+    let repositories = FakeRepository::of(tag);
+    let error = error_text(check(&fixture, &crates_io, &repositories));
+    assert!(error.contains("registry/main.lock records"), "{error}");
+    assert!(error.contains(&"b".repeat(40)), "{error}");
+    assert_eq!(crates_io.calls(), 0);
+}
+
+#[test]
+fn refuses_a_commit_that_the_catalog_does_not_record() {
+    let temporary = fixtures::Temp::new("pkgre-network-other-commit");
+    let fixture = fixture_without_derivation(temporary.path());
+    let crates_io = FakeCratesIo::forbidden();
+    let mut tag = release_tag(&fixture, true, true);
+    tag.commit = "d".repeat(40);
+    let repositories = FakeRepository::of(tag);
+    let error = error_text(check(&fixture, &crates_io, &repositories));
+    assert!(error.contains("registry/main.lock records"), "{error}");
+    assert!(error.contains(&"d".repeat(40)), "{error}");
     assert_eq!(crates_io.calls(), 0);
 }
 
@@ -503,7 +648,7 @@ fn refuses_an_unavailable_release_repository() {
     let repositories = FakeRepository::unavailable();
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("unavailable"), "{error}");
-    assert!(error.contains(fixtures::REPOSITORY), "{error}");
+    assert!(error.contains(REPOSITORY), "{error}");
     assert_eq!(crates_io.calls(), 0);
 }
 
@@ -511,11 +656,8 @@ fn refuses_an_unavailable_release_repository() {
 fn refuses_an_unavailable_crates_io() {
     let temporary = fixtures::Temp::new("pkgre-network-no-crates-io");
     let fixture = fixture_without_derivation(temporary.path());
-    let mut crates_io = FakeCratesIo::unavailable();
-    crates_io
-        .owners
-        .insert(fixtures::LIB_CRATES_IO_NAME.to_owned(), Answer::Unavailable);
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let crates_io = FakeCratesIo::unavailable();
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("crates.io is unavailable"), "{error}");
     assert!(error.contains("network checks of release tag"), "{error}");
@@ -534,7 +676,7 @@ fn refuses_an_unknown_category() {
     let mut crates_io =
         FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
     crates_io.with_slugs(&["development-tools", "command-line-utilities"]);
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let error = error_text(check(&fixture, &crates_io, &repositories));
     assert!(error.contains("no-such-category"), "{error}");
     assert!(error.contains("category slugs"), "{error}");
@@ -553,12 +695,92 @@ fn accepts_a_category_that_crates_io_knows() {
     let mut crates_io =
         FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
     crates_io.with_slugs(&["development-tools", "command-line-utilities"]);
-    let repositories = FakeRepository::of(release_tag(true, true));
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
     let summary = check(&fixture, &crates_io, &repositories)
         .expect("crates.io knows the category of the release");
     assert_eq!(summary.network_releases, 1);
     // Owners and versions of both names, and the category slugs once.
     assert_eq!(crates_io.calls(), 5);
+}
+
+#[test]
+fn refuses_a_recorded_checksum_that_the_derivation_does_not_reproduce() {
+    let temporary = fixtures::Temp::new("pkgre-network-recorded-checksum");
+    let fixture = fixture_with_derivation(temporary.path(), Variant::default());
+    let derived = recorded_entry(&fixture, LIB).crate_sha256;
+    record_a_bogus_checksum(&fixture, LIB);
+    let crates_io =
+        FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
+    let error = error_text(check(&fixture, &crates_io, &repositories));
+    assert!(
+        error.contains("reproduces the crates.io archive"),
+        "{error}"
+    );
+    assert!(error.contains(&"c".repeat(64)), "{error}");
+    assert!(error.contains(&derived), "{error}");
+}
+
+#[test]
+fn checks_the_entries_that_adopting_self_publishing_adds() {
+    let temporary = fixtures::Temp::new("pkgre-network-adoption");
+    let fixture = fixture_with_derivation(temporary.path(), Variant::default());
+    let accepted = accepted_without_self_publishing(&fixture);
+    let mut crates_io =
+        FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
+    // The accepted repository records no entry at all, so the earlier release's
+    // entry is new too, and its crates.io state is checked before the fixture
+    // release is derived.
+    crates_io.with_versions(
+        fixtures::EARLIER_CRATES_IO_NAME,
+        Some(vec![CratesIoVersion {
+            version: Version::parse("0.9.0").expect("parse a version"),
+            checksum: "e".repeat(64),
+            yanked: false,
+        }]),
+    );
+    let mut repositories = FakeRepository::of(release_tag(&fixture, true, true));
+    repositories.tags.insert(
+        (REPOSITORY.to_owned(), fixtures::EARLIER_TAG.to_owned()),
+        Answer::Value(ReleaseTag {
+            tag_oid: "9".repeat(40),
+            commit: "9".repeat(40),
+            annotated: true,
+            on_default_branch: true,
+            default_branch: "main".to_owned(),
+        }),
+    );
+    let error = error_text(check_against(
+        &fixture,
+        &accepted,
+        &crates_io,
+        &repositories,
+    ));
+    assert!(error.contains(fixtures::EARLIER_CRATES_IO_NAME), "{error}");
+    assert!(error.contains("0.9.0"), "{error}");
+    assert!(error.contains(&"e".repeat(64)), "{error}");
+}
+
+#[test]
+fn refuses_entries_of_a_repository_that_the_accepted_state_did_not_declare() {
+    let temporary = fixtures::Temp::new("pkgre-network-repository-added");
+    let fixture = fixture_with_derivation(temporary.path(), Variant::default());
+    let accepted = accepted_without_the_repository(&fixture);
+    record_a_bogus_checksum(&fixture, LIB);
+    let crates_io =
+        FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
+    let error = error_text(check_against(
+        &fixture,
+        &accepted,
+        &crates_io,
+        &repositories,
+    ));
+    assert!(
+        error.contains("reproduces the crates.io archive"),
+        "{error}"
+    );
+    assert_eq!(repositories.calls(), 1);
 }
 
 #[test]
@@ -584,6 +806,9 @@ fn valid_facts() -> MemberFacts {
         description: Some("An example crate".to_owned()),
         license: Some("MIT".to_owned()),
         license_file: None,
+        homepage: Some("https://example.invalid/example".to_owned()),
+        documentation: Some("http://example.invalid/docs".to_owned()),
+        repository: Some("https://example.invalid/example/project".to_owned()),
         keywords: vec!["example".to_owned()],
         categories: Vec::new(),
     }
@@ -617,6 +842,7 @@ fn crates_io_rules_accept_a_crate_that_meets_them() {
         categories: vec!["development-tools".to_owned()],
         license: None,
         license_file: Some(PathBuf::from("LICENSE")),
+        description: Some("d".repeat(1000)),
         ..valid_facts()
     };
     check_crates_io_rules(
@@ -630,6 +856,7 @@ fn crates_io_rules_accept_a_crate_that_meets_them() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn crates_io_rules_refuse_what_crates_io_refuses() {
     let cases: &[(MemberFacts, usize, &str, &str)] = &[
         (
@@ -649,6 +876,15 @@ fn crates_io_rules_refuse_what_crates_io_refuses() {
             0,
             "no description",
             "description",
+        ),
+        (
+            MemberFacts {
+                description: Some("d".repeat(1001)),
+                ..valid_facts()
+            },
+            0,
+            "description of 1001 bytes",
+            "at most 1000",
         ),
         (
             MemberFacts {
@@ -710,12 +946,64 @@ fn crates_io_rules_refuse_what_crates_io_refuses() {
         ),
         (
             MemberFacts {
+                categories: vec![
+                    "development-tools".to_owned(),
+                    "development-tools::build-utils".to_owned(),
+                    "development-tools::cargo-plugins".to_owned(),
+                    "development-tools::debugging".to_owned(),
+                    "development-tools::ffi".to_owned(),
+                    "development-tools::procedural-macro-helpers".to_owned(),
+                ],
+                ..valid_facts()
+            },
+            0,
+            "6 categories",
+            "at most 5",
+        ),
+        (
+            MemberFacts {
                 categories: vec!["no-such-category".to_owned()],
                 ..valid_facts()
             },
             0,
             "no-such-category",
             "category slugs",
+        ),
+        (
+            MemberFacts {
+                homepage: Some("example.invalid/example".to_owned()),
+                ..valid_facts()
+            },
+            0,
+            "homepage",
+            "http or https",
+        ),
+        (
+            MemberFacts {
+                documentation: Some("ftp://example.invalid/docs".to_owned()),
+                ..valid_facts()
+            },
+            0,
+            "documentation",
+            "http or https",
+        ),
+        (
+            MemberFacts {
+                repository: Some("https:///example/project".to_owned()),
+                ..valid_facts()
+            },
+            0,
+            "repository",
+            "authority",
+        ),
+        (
+            MemberFacts {
+                homepage: Some("https://example.invalid/a b".to_owned()),
+                ..valid_facts()
+            },
+            0,
+            "homepage",
+            "http or https",
         ),
     ];
     for (facts, archive_bytes, expected, also) in cases {
@@ -728,6 +1016,268 @@ fn crates_io_rules_refuse_what_crates_io_refuses() {
             "the version is named: {error}"
         );
     }
+}
+
+#[test]
+fn added_releases_cover_new_identities_and_new_entries_of_two_repositories() {
+    let config = super::super::config::CratesIoConfig::parse(
+        b"schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = \"https://git.example.invalid/a\"\ntag-prefix = \"a/v\"\n\n[[repositories]]\ngit = \"https://git.example.invalid/b\"\ntag-prefix = \"b/v\"\n",
+        Path::new("crates-io.toml"),
+    )
+    .expect("parse the fixture config");
+    let known = fixture_identity(
+        "known",
+        "1.0.0",
+        "https://git.example.invalid/a",
+        "a/v1.0.0",
+    );
+    let new_version = fixture_identity(
+        "known",
+        "1.1.0",
+        "https://git.example.invalid/a",
+        "a/v1.1.0",
+    );
+    let adopted = fixture_identity(
+        "adopted",
+        "1.0.0",
+        "https://git.example.invalid/b",
+        "b/v1.0.0",
+    );
+    let catalog = super::super::catalog::CatalogSnapshot {
+        identities: vec![known.clone(), new_version.clone(), adopted.clone()],
+        ..super::super::catalog::CatalogSnapshot::default()
+    };
+    let accepted = super::super::catalog::CatalogSnapshot {
+        identities: vec![known.clone(), adopted.clone()],
+        ..super::super::catalog::CatalogSnapshot::default()
+    };
+    let lock = CratesIoLock {
+        schema: super::super::lock::CRATES_IO_LOCK_SCHEMA,
+        packages: vec![fixture_entry(&known)],
+    };
+    let accepted_view = AcceptedState {
+        catalog: &accepted,
+        config: None,
+        lock: Some(&lock),
+    };
+    let releases = super::added_releases(&catalog, &config, &accepted_view);
+    assert_eq!(
+        releases
+            .iter()
+            .map(|((git, tag), identities)| (git.as_str(), tag.as_str(), identities.len()))
+            .collect::<Vec<_>>(),
+        [
+            ("https://git.example.invalid/a", "a/v1.1.0", 1),
+            ("https://git.example.invalid/b", "b/v1.0.0", 1),
+        ]
+    );
+}
+
+/// Returns one Git identity of the fixture repository.
+fn fixture_identity(
+    name: &str,
+    version: &str,
+    git: &str,
+    tag: &str,
+) -> super::super::catalog::CatalogIdentity {
+    super::super::catalog::CatalogIdentity {
+        name: name.to_owned(),
+        version: Version::parse(version).expect("parse a version"),
+        crate_sha256: fixtures::crate_checksum(name, version),
+        removed: false,
+        release: Some(super::super::catalog::GitRelease {
+            git: git.to_owned(),
+            tag: tag.to_owned(),
+            tag_oid: "a".repeat(40),
+            commit: "a".repeat(40),
+            cargo_version: Version::parse(fixtures::CARGO_VERSION)
+                .expect("parse the pinned version"),
+        }),
+    }
+}
+
+/// Returns one `crates-io.lock` entry of a fixture identity.
+fn fixture_entry(identity: &super::super::catalog::CatalogIdentity) -> CratesIoPackage {
+    CratesIoPackage {
+        name: identity.name.clone(),
+        version: identity.version.clone(),
+        crates_io_name: format!("pkgre-pkgs-{}", identity.name),
+        crate_sha256: identity.crate_sha256.clone(),
+        pkgre_crate_sha256: identity.crate_sha256.clone(),
+        git: identity
+            .release
+            .as_ref()
+            .expect("a fixture identity has a release")
+            .git
+            .clone(),
+        tag: identity
+            .release
+            .as_ref()
+            .expect("a fixture identity has a release")
+            .tag
+            .clone(),
+        commit: "a".repeat(40),
+        cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the pinned version"),
+    }
+}
+
+#[test]
+fn sparse_index_urls_follow_cargo_layout() {
+    for (name, path) in [
+        ("a", "1/a"),
+        ("ab", "2/ab"),
+        ("abc", "3/a/abc"),
+        ("abcd", "ab/cd/abcd"),
+        ("example-lib", "ex/am/example-lib"),
+    ] {
+        assert_eq!(
+            live::sparse_url(name),
+            format!("https://index.crates.io/{path}"),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn parses_sparse_index_rows_and_refuses_an_ambiguous_one() {
+    let row = |name: &str, version: &str, checksum: char, yanked: bool| {
+        format!(
+            "{{\"name\":\"{name}\",\"vers\":\"{version}\",\"deps\":[],\"cksum\":\"{}\",\"features\":{{}},\"yanked\":{yanked}}}\n",
+            checksum.to_string().repeat(64)
+        )
+    };
+    let body = format!(
+        "{}\n{}{}",
+        row("demo", "1.0.0", 'a', false),
+        row("demo", "1.1.0", 'b', true),
+        row("demo", "1.2.0", 'c', false)
+    );
+    let versions = live::parse_versions("demo", body.as_bytes()).expect("parse the rows");
+    assert_eq!(versions.len(), 3);
+    assert_eq!(versions[0].version, Version::parse("1.0.0").unwrap());
+    assert_eq!(versions[0].checksum, "a".repeat(64));
+    assert!(!versions[0].yanked);
+    assert!(versions[1].yanked);
+    assert_eq!(versions[2].checksum, "c".repeat(64));
+
+    let duplicate = format!(
+        "{}{}",
+        row("demo", "1.0.0", 'a', false),
+        row("demo", "1.0.0", 'b', false)
+    );
+    let error = live::parse_versions("demo", duplicate.as_bytes()).unwrap_err();
+    assert!(format!("{error:#}").contains("repeats"), "{error:#}");
+
+    let other = row("other", "1.0.0", 'a', false);
+    let error = live::parse_versions("demo", other.as_bytes()).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("names a package other than"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn parses_the_owners_document_and_refuses_an_unknown_kind() {
+    let body = br#"{"users":[{"kind":"user","id":1,"login":"example-owner"},{"kind":"team","id":2,"login":"github:example:release"}]}"#;
+    let owners = live::parse_owners(body).expect("parse the owners");
+    assert_eq!(
+        owners,
+        [
+            Owner {
+                login: "example-owner".to_owned(),
+                kind: OwnerKind::User,
+            },
+            Owner {
+                login: "github:example:release".to_owned(),
+                kind: OwnerKind::Team,
+            },
+        ]
+    );
+
+    let unknown = br#"{"users":[{"kind":"robot","id":3,"login":"robot"}]}"#;
+    let error = live::parse_owners(unknown).unwrap_err();
+    let error = format!("{error:#}");
+    assert!(error.contains("unknown kind"), "{error}");
+
+    let malformed = b"not a document";
+    assert!(live::parse_owners(malformed).is_err());
+}
+
+#[test]
+fn parses_the_category_slug_document() {
+    let body = br#"{"category_slugs":[{"id":"a","slug":"development-tools","description":"d"},{"id":"b","slug":"command-line-utilities","description":"d"}]}"#;
+    let slugs = live::parse_slugs(body).expect("parse the slugs");
+    assert_eq!(
+        slugs,
+        BTreeSet::from([
+            "command-line-utilities".to_owned(),
+            "development-tools".to_owned(),
+        ])
+    );
+    assert!(live::parse_slugs(b"{}").is_err());
+}
+
+#[test]
+fn parses_the_default_branch_of_a_symref_listing() {
+    let stdout = "ref: refs/heads/trunk\tHEAD\n0123456789abcdef0123456789abcdef01234567\tHEAD\n";
+    assert_eq!(live::parse_default_branch(stdout).unwrap(), "trunk");
+    assert!(live::parse_default_branch("").is_err());
+    assert!(
+        live::parse_default_branch("0123456789abcdef0123456789abcdef01234567\tHEAD\n").is_err()
+    );
+    let unsafe_branch = "ref: refs/heads/bad..name\tHEAD\n";
+    assert!(live::parse_default_branch(unsafe_branch).is_err());
+}
+
+#[test]
+fn splits_the_status_code_from_a_response_body() {
+    let response = live::split_status(b"{}\n200").expect("split the response");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, b"{}\n");
+    assert!(live::split_status(b"20").is_err());
+    assert!(live::split_status(b"{}x20").is_err());
+    assert!(live::split_status(b"{}abc").is_err());
+}
+
+#[test]
+fn inspects_a_local_repository_whose_default_branch_is_not_main() {
+    let temporary = fixtures::Temp::new("pkgre-network-local-repository");
+    let root = temporary.path().join("origin");
+    fs::create_dir_all(&root).expect("create the repository");
+    fixtures::git(&root, &["init", "--quiet", "-b", "trunk"]);
+    fs::write(root.join("file"), "one\n").expect("write a file");
+    fixtures::git(&root, &["add", "."]);
+    fixtures::git(&root, &["commit", "--quiet", "-m", "one"]);
+    fixtures::git(&root, &["tag", "-a", "on/v1", "-m", "release"]);
+    fixtures::git(&root, &["tag", "light/v1"]);
+    fixtures::git(&root, &["checkout", "--quiet", "-b", "side"]);
+    fs::write(root.join("file"), "two\n").expect("write a file");
+    fixtures::git(&root, &["commit", "--quiet", "-am", "two"]);
+    fixtures::git(&root, &["tag", "-a", "off/v1", "-m", "release"]);
+    fixtures::git(&root, &["checkout", "--quiet", "trunk"]);
+    let url = format!("file://{}", root.display());
+    let environment = super::super::isolation::ChildEnvironment::plain();
+
+    let annotated =
+        live::inspect_tag(&url, "on/v1", &environment, true).expect("read the annotated tag");
+    assert!(annotated.annotated);
+    assert!(annotated.on_default_branch);
+    assert_eq!(annotated.default_branch, "trunk");
+    assert_ne!(annotated.tag_oid, annotated.commit);
+
+    let lightweight =
+        live::inspect_tag(&url, "light/v1", &environment, true).expect("read the lightweight tag");
+    assert!(!lightweight.annotated);
+    assert_eq!(lightweight.tag_oid, lightweight.commit);
+
+    let off_branch =
+        live::inspect_tag(&url, "off/v1", &environment, true).expect("read the off-branch tag");
+    assert!(off_branch.annotated);
+    assert!(!off_branch.on_default_branch);
+
+    let error = live::inspect_tag(&url, "missing/v1", &environment, true).unwrap_err();
+    let error = format!("{error:#}");
+    assert!(error.contains("missing/v1"), "{error}");
 }
 
 #[test]

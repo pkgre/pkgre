@@ -21,6 +21,11 @@ const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 /// `current_dir` is where Git runs, absent for a command that names its
 /// directory as an argument, such as `git init`. `allow_file` permits a
 /// `file:` URL, which only a test does.
+///
+/// A transfer that stops making progress is aborted: `http.lowSpeedLimit` and
+/// `http.lowSpeedTime` end an HTTP transfer below 1000 bytes per second for 60
+/// seconds. Git has no overall time limit, so a transfer that keeps making
+/// progress is not interrupted.
 pub(super) fn command<I, S>(
     current_dir: Option<&Path>,
     arguments: I,
@@ -43,6 +48,10 @@ where
             OsStr::new("protocol.https.allow=always"),
             OsStr::new("-c"),
             OsStr::new(&format!("protocol.file.allow={file_policy}")),
+            OsStr::new("-c"),
+            OsStr::new("http.lowSpeedLimit=1000"),
+            OsStr::new("-c"),
+            OsStr::new("http.lowSpeedTime=60"),
         ])
         .args(arguments);
     environment.apply_with(

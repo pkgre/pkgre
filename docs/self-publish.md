@@ -300,38 +300,54 @@ silently.
 
 ## Network checks
 
-With an accepted repository, the command also checks the releases that the run adds: the
-self-published identities that the candidate has and the accepted repository does not. A run
-without an accepted repository, and a run that adds no release, makes no request at all, so
-an unavailable crates.io or release repository fails only a change that publishes something.
-For each added release, one repository and tag, and each of its crates:
+With an accepted repository, the command also checks the releases that the run adds. A
+release is added when one of its self-published identities is missing from the accepted
+catalog, or when its `crates-io.lock` entry is missing from the accepted lock. The second
+case covers a repository newly declared in `[[repositories]]` and a newly declared
+`self-publish/` as well as a new release: their identities are already in the accepted
+catalog, but their entries are new, and an entry is permanent once it is merged. An accepted
+repository without `self-publish/` records no entry at all.
+
+A run without an accepted repository, and a run that adds no release, makes no request at
+all, so an unavailable crates.io or release repository fails only a change that publishes
+something. For each added release, one repository and tag, and each of its crates:
 
 - The release repository's default branch, read with `git ls-remote --symref`. The branch and
-  the tag are fetched into a temporary repository with the workflow's Git safety settings,
-  and the tag must be annotated and its commit an ancestor of the default branch, so that a
-  release is a deliberate, reviewed commit of the branch that is published.
+  the tag are fetched into a temporary repository with the workflow's Git safety settings.
+  The tag must be annotated, its object and its commit must be the ones that
+  `registry/main.lock` records, and its commit must be an ancestor of the default branch, so
+  that a release is a deliberate, reviewed commit of the branch that is published.
 - crates.io's sparse index, `https://index.crates.io/`, for the published versions of each
   crates.io name, and crates.io's API, `https://crates.io/api/v1/crates/<name>/owners`, for
   its owners. A name either does not exist, or is owned by exactly the users of `owners` and
-  by no team; a version either does not exist, or exists with the recorded `crate-sha256`. A
-  missing crate is a 404, not an error.
+  by no team; a version either does not exist, or exists with the recorded `crate-sha256`,
+  compared without build metadata, which crates.io ignores. A missing crate is a 404, not an
+  error.
 - crates.io's category slugs, `https://crates.io/api/v1/category_slugs`. Every category a
   crate declares is one of them, which is stricter than crates.io, which only drops an
   unknown category with a warning.
-- crates.io's own rules for a package: a description, a license or a `license-file`, at most
-  5 keywords of at most 20 bytes each and of the characters crates.io accepts, a derived
-  archive of at most 10 MB, and the categories above.
+- crates.io's own rules for a package: a description of at most 1000 bytes, a license or a
+  `license-file`, at most 5 keywords of at most 20 bytes each and of the characters crates.io
+  accepts, at most 5 categories, a `homepage`, `documentation` and `repository` that are
+  `http` or `https` URLs with an authority, a derived archive of at most 10 MB, and the
+  categories above. The license expression itself is not validated as SPDX: crates.io refuses
+  an expression it cannot parse, and that refusal reaches the upload, not the checks.
 - The derivation of the release, exactly as `self-publish-lock` runs it: the catalog
   publishes exactly the tag's publishable members, the manifests and the lock file are
   rewritten, the crates are packaged twice with the pinned Cargo, every derived archive is
   compared with the archive the catalog retains, and the derived `crate-sha256` is the one
   `crates-io.lock` records.
 
-Every request is a read over HTTPS, bounded in size and time, with a fixed user agent that
-names this repository, no proxy or token variable, and the empty environment of the
-workflow's child processes. crates.io's API is read at most once a second, and each crate
-name is read once per run. The category slugs are read only when a crate declares a
-category.
+Every request is a read over HTTPS with a fixed user agent that names this repository, no
+proxy or token variable, and the empty environment of the workflow's child processes.
+crates.io's documents are bounded: `curl` reads at most 4 MiB of an API document and 16 MiB
+of a sparse-index file, with a 20-second connection timeout and a 120-second overall limit,
+and crates.io's API is read at most once a second. The Git transfers are bounded differently:
+`http.lowSpeedLimit` and `http.lowSpeedTime` abort a transfer that stays below 1000 bytes per
+second for 60 seconds, so a stalled server ends the check, but a transfer that keeps making
+progress has no overall time limit. The fetches ask for commits and trees only, so the blobs
+of the default branch never cross the network. Each crate name is read once per run, and the
+category slugs only when a crate declares a category.
 
 A failed check is a refusal that names the crate, the version, the check and what was found.
 An unavailable crates.io or release repository is an error that names the service and says

@@ -139,6 +139,12 @@ pub(super) struct MemberFacts {
     pub(super) license: Option<String>,
     /// The `license-file` field.
     pub(super) license_file: Option<PathBuf>,
+    /// The `homepage` field.
+    pub(super) homepage: Option<String>,
+    /// The `documentation` field.
+    pub(super) documentation: Option<String>,
+    /// The `repository` field.
+    pub(super) repository: Option<String>,
     /// The `keywords` field.
     pub(super) keywords: Vec<String>,
     /// The `categories` field.
