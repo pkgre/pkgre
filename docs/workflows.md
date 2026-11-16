@@ -12,9 +12,7 @@ pkgre-rust check <catalog>
 pkgre-rust render <catalog> <new-output>
 pkgre-rust verify <catalog> <existing-output>
 pkgre-rust verify-monotonic <previous-site> <next-site>
-pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
-pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
-pkgre-rust migrate-v4-to-v5 <schema-4-catalog> <new-schema-5-catalog>
+pkgre-rust migrate-v4-to-v5 <schema-4-catalog> <new-schema-5-catalog> [--git-tag-time=<registry>/<name>@<tag>=<timestamp>]...
 pkgre-rust migrate-retained-delivery <catalog-root>
 pkgre-rust archive-inventory <catalog> <output.json>
 pkgre-rust archive-import <archive-store> <catalog>
@@ -108,7 +106,7 @@ $ pkgre-rust update-apply registry 2026-08-24-routine.toml
 
 Apply re-fetches/recomputes every request; rejects young/yanked/blocked/route/evidence failures; appends declarations; writes source rows, registry locks, downloads, `admissions/<batch>.{toml,lock}`; binds full batch-lock hash into packages; strict-loads + test-renders staging; atomically installs. It never substitutes another version.
 
-6. Review + commit all catalog changes together. Required:a new active package/request; one exact `main` crates.io route/request; one row object/request; exactly one admission pair/batch; a mirror `.crate` object only where the registry declares `delivery = "retained"`; every new package `admission-sha256 = sha256(admissions/<batch>.lock)`.
+6. Review + commit all catalog changes together. Required:a new active package/request; one exact `main` route/request; one row object/request; exactly one admission pair/batch; a mirror `.crate` object only where the registry declares `delivery = "retained"`; every new package `admission-sha256 = sha256(admissions/<batch>.lock)`.
 
 ```console
 $ pkgre-rust check registry
@@ -172,23 +170,23 @@ Changing a package name's registry/category home, changing any locked identity's
 
 ## Migrations
 
-### Schema 2→3 historical
+### Schema 2→3 historical (removed command)
 
 ```console
 $ pkgre-rust migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
-Require clean strict source + absent destination. Authenticate inventory/objects/rows/hashes; inspect old→new category mapping; run check/render/verify/monotonicity; source remains unchanged.
+`migrate-v2-to-v3` is no longer a command of the current tool, which answers `unknown command`. The procedure required a clean strict source + absent destination, authenticated inventory/objects/rows/hashes, inspected the old→new category mapping, ran check/render/verify/monotonicity with the historical tool revision, and left the source unchanged.
 
-### Schema 3→4 single root main
+### Schema 3→4 single root main (removed command)
 
 ```console
 $ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 ```
 
-Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; files become `main.toml`/`main.lock`; index becomes root; download becomes `v1/main`. Migration preserves immutable artifacts/provenance, recomputes registry-dependent routed hashes, rewrites/rebinds admissions, strict-loads/renders/reproduces staging, installs absent destination only.
+`migrate-v3-to-v4` is no longer a command of the current tool; this section records the historical procedure. Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; files become `main.toml`/`main.lock`; index becomes root; download becomes `v1/main`. Migration preserves immutable artifacts/provenance, recomputes registry-dependent routed hashes, rewrites/rebinds admissions, strict-loads/renders/reproduces staging, installs absent destination only.
 
-Validation:
+Validation with the historical tool revision, which still accepted schema 4 (the current tool rejects schema-4 catalogs, whose files lack `audience` and whose schema is unsupported):
 
 ```console
 $ pkgre-rust check registry-v4
@@ -200,14 +198,15 @@ $ pkgre-rust verify-monotonic site-v3 site-next
 
 Replace source catalog only after review + rerun at final path. Never hand-edit migration output.
 
-### Schema 4→5
+### Schema 4→5 (production, completed)
 
 ```console
 $ pkgre-rust migrate-v4-to-v5 registry-v4 registry-v5 \
     --git-tag-time=main/pkgre-indexer@indexer/v0.1.1=2026-08-22T17:57:02Z
+# repeat --git-tag-time for every Git tag of the source
 ```
 
-Source must be strict canonical schema 4; destination absent. The migration rewrites every registry + external category file to schema 5, asserts `audience = "public"`, rebuilds every lock with one deterministic `admitted-at` per package (crates.io row `pubtime`, or a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` per Git tag), and replaces the schema-1 download catalog with the schema-2 delivery model.
+It parses the schema-4 generated locks and the schema-1 download catalog strictly, rewrites registry + external category files to schema 5 without checking their old schema, asserts `audience = "public"`, rebuilds every lock with one `admitted-at` per package (crates.io row `pubtime`, or a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` per Git tag, the operator's value, not verified), and replaces the download catalog with the schema-2 `redirect` delivery model. It writes only to an absent destination; a failed run leaves a partial destination to delete before a rerun. The output is strictly loaded, policy-checked, artifact-verified and test-rendered.
 
 Validation:
 
@@ -219,17 +218,17 @@ $ pkgre-rust verify registry-v5 site-next
 $ pkgre-rust verify-monotonic site-current site-next
 ```
 
-`site-current` is the deployed schema-4 site, since this revision renders schema 5 only. Both sides carry a schema-4 `release.json`, so `verify-monotonic` checks identity/topology monotonicity, not the catalog schema bump.
+`site-current` was the deployed schema-4 site; this revision renders schema 5 only. Both sides carry a schema-4 `release.json`, so `verify-monotonic` checks identity/topology monotonicity, not the catalog schema bump.
 
-Optional in-place retained delivery after review:
+Retained delivery (completed for production):
 
 ```console
 $ pkgre-rust migrate-retained-delivery registry-v5
-$ pkgre-rust archive-inventory registry-v5 <archive-store>/inventory.json
-$ pkgre-rust archive-import <archive-store> registry-v5
+$ pkgre-rust archive-inventory registry-v5 /absolute/path/to/archive-store/inventory.json
+$ pkgre-rust archive-import /absolute/path/to/archive-store registry-v5
 ```
 
-`migrate-retained-delivery` declares `delivery = "retained"` + rewrites `downloads.json`; it does not verify archive bodies. `archive-inventory` writes the canonical inventory of the migrated catalog's retained set; `archive-import` requires the store inventory to equal that set, verifies every digest, and re-runs strict load/policy/artifact checks; commit the imported `objects/crates/*` with the declarations. Never hand-edit migration output.
+`migrate-retained-delivery` declares `delivery = "retained"` + rewrites `downloads.json` in place; it does not verify archive bodies. `archive-inventory` writes the canonical inventory of the migrated catalog's retained set. Place one `<sha256>.crate` for every inventoried object in the store, Git-tag archives included, and pass the store as an absolute path: `archive-import` requires the store inventory to equal the retained set, verifies every digest, and re-runs strict load/policy/artifact checks; a relative store path is rejected as escaping the store. Commit the imported `objects/crates/*` with the declarations. Never hand-edit migration output.
 
 ## Add future registry/category
 
@@ -251,16 +250,16 @@ $ pkgre-rust verify registry site-next
 $ pkgre-rust verify-monotonic site-current site-next
 ```
 
-Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use own router; rendered inventory expected; protected CI passes; normal merge without force/bypass.
+Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use their router or same-host native template; rendered inventory expected; protected CI passes; normal merge without force/bypass.
 
 Deploy only rendered site, never catalog. Workflow independently checks/renders/verifies, fetches prior live release, verifies monotonicity, then publishes with read-only source + minimum Pages permission.
 
 ## Post-deployment verification
 
-- Fetch root `https://rust.pkg.re/config.json`; require `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`.
+- Fetch root `https://rust.pkg.re/config.json`; require `https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`.
 - Fetch rows across categories; compare checksums/routes/yank state with `release.json`.
-- Exact mirror + Git routes→`307` to static.crates.io + content-addressed pkg.re; download + verify SHA-256. Alter case/checksum/query/encoding→`404`; unsupported method→`405`.
-- Compare live release/downloads with committed candidate; require exact active projection.
+- A `redirect` mirror route→`307` to static.crates.io; a `retained` mirror or Git route→`307` to the same-host `crates/<sha256>.crate` (body mode serves that body instead). Download + verify SHA-256. Alter case/checksum/query/encoding→`404`; unsupported method→`405`.
+- Compare live release/downloads with committed candidate; require the exact projection, including routes for removed identities.
 - Fresh Cargo home/cache + only `[registries.pkgre] index = "sparse+https://rust.pkg.re/"`; build `--locked` across mirror + Git packages; confirm `Cargo.lock` source is root URL.
 
 Keep consumer validation private:no consumer names/paths/manifests/locks/dependency discovery/credentials/tokens in public logs/issues.

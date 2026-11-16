@@ -14,8 +14,6 @@ pkgre-rust check <catalog>
 pkgre-rust render <catalog> <output>
 pkgre-rust verify <catalog> <output>
 pkgre-rust verify-monotonic <previous-site> <next-site>
-pkgre-rust migrate-v2-to-v3 <schema-2-catalog> <new-schema-3-catalog>
-pkgre-rust migrate-v3-to-v4 <schema-3-catalog> <new-schema-4-catalog>
 pkgre-rust migrate-v4-to-v5 <schema-4-catalog> <new-schema-5-catalog> [--git-tag-time=<registry>/<name>@<tag>=<timestamp>]...
 pkgre-rust migrate-retained-delivery <catalog-root>
 pkgre-rust archive-inventory <catalog> <output.json>
@@ -32,13 +30,11 @@ pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
 - `render`:write a new complete Pages tree. Catalog registry `main` renders at the site root; other registry aliases render below `/r/<alias>/`; output must be absent.
 - `verify`:re-render + require exact entry/byte equality with an existing site.
 - `verify-monotonic`:permit registries/categories/package identities to be added, `active→removed`, and source-specific→exact-router `dl`; reject removal/mutation/reactivation; authenticate exact release-manifest schema-2→3 + schema-3→4 migrations.
-- `migrate-v2-to-v3`:strictly authenticate canonical schema 2; map `core`/`matrix`/`pkgre` into schema-3 `universe`/`pkgre`; preserve source rows + Git archives; install only to an absent destination.
-- `migrate-v3-to-v4`:strictly authenticate canonical schema 3; map `universe/<category>→main/<category>` + `pkgre/tooling→main/pkgre`; rewrite routed rows/admission bindings exactly; retain immutable artifacts; install only to an absent destination.
-- `migrate-v4-to-v5`:strictly authenticate canonical schema 4; rewrite every registry + external category file to schema 5 with `audience = "public"`; rebuild every lock with one deterministic `admitted-at` per package (crates.io row `pubtime`, or a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` for each Git tag); replace the schema-1 download catalog with the schema-2 delivery model; install only to an absent destination.
+- `migrate-v4-to-v5`:parse every generated schema-4 lock strictly (exact fields, `schema = 4`) and the schema-1 download catalog strictly; rewrite registry + external category files to schema 5 with `audience = "public"` without checking their old schema or canonical form; rebuild every lock with one `admitted-at` per package (crates.io row `pubtime`, or a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` per Git tag, which is the operator's value and is not verified); replace the download catalog with the schema-2 `redirect` delivery model; write only to an absent destination, leaving a partial destination behind on failure (delete it before a retry); the output is strictly loaded, policy-checked, artifact-verified and test-rendered.
 - `migrate-retained-delivery`:add `delivery = "retained"` to every root registry in place and rewrite `downloads.json` to the exact derived schema-2 bytes; archive bodies are imported separately and deliberately not verified here.
 - `archive-inventory`:write the canonical retained-object inventory of one catalog for an archive store.
 - `archive-import`:require the store's canonical `inventory.json` to equal the catalog's retained set, copy every missing `<sha256>.crate`, verify every digest, then re-run strict load/policy/artifact checks.
-- `check-transition`:strictly load accepted + candidate schema-5 catalogs; reject a changed registry topology (including `audience`), a disappeared/mutated identity, a moved category, or a missing/mismatched retained body.
+- `check-transition`:strictly load + policy-check accepted and candidate schema-5 catalogs; reject an added or removed registry, a changed registry name/index/audience/cargo-version, a download change other than the allowed one-way migrations, a missing identity, a changed archive/source-row/routed-row hash, source, `admitted-at` or state (`active→removed` included), and a moved category; require every active retained identity's body to exist in `objects/crates/` with a matching SHA-256. It does not compare `delivery`, read row objects, or verify archive bytes beyond that retained-body check.
 
 `<catalog>` is exclusive managed state:one `<registry>.toml` + generated `<registry>.lock` per registry; canonical generated `downloads.json`; exact referenced `categories/<registry>/<category>.toml`; paired `admissions/<batch>.{toml,lock}`; content-addressed `objects/{crates,rows}/`. Rows cover all locked identities; crate objects contain active retained-delivery archives:Git tags always, crates.io archives only when the registry declares `delivery = "retained"`. Retain every package key after its desired version/tag list becomes empty; deleting a required key, changing a name's registry/category home, or changing an existing identity's source fails closed.
 

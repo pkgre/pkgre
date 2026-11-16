@@ -34,13 +34,16 @@ Generated locks select permanently:
 (registry, category, normalized Cargo identity, version, source class, lifecycle, archive hash, source-row hash, routed-row hash, origin time, provenance, optional admission hash)
 ```
 
+`origin time` is written when an identity is first locked (admission, Git publication, or migration):a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified; `check` and `lock` never re-derive it, and only `check-transition` rejects a change.
+
 Planning is discovery, not authority. `update-plan` performs current evaluation but outputs compact intent. `update-apply` independently recomputes facts at current time + commits intent/facts atomically. `automatic`/`review-required` prioritize attention; neither bypasses registry PR review.
 
 ## Enforced invariants
 
 ### Registry/category/identity
 
-- Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index/audience cannot disappear/change.
+- Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index cannot disappear/change.
+- `audience` is not an enforced invariant:a lock copies the declared value when it is created or migrated, `check` never compares it, `lock` never refreshes it, `release.json` does not carry it, and only `check-transition` compares the accepted + candidate declarations.
 - Current production categories:`main/{general,acp,filesystem,matrix,mcp,pkgre,sse,terminal,yaml}`. Each category is inhabited + has exact committed direct-dependency allowlist; additions allowed, released category/rule cannot disappear/change.
 - Current edges:`general→general`; feature category→itself+general; `mcp→general|mcp|sse`; `pkgre→general|pkgre`; same registry grants no implicit edge.
 - One permanent registry/category home per normalized package name within a registry; Cargo ASCII case + `-`/`_` collision defense. Each `name + version` has one immutable `mirror|publish` source class/checksum; one name may use both classes across distinct versions. Same normalized name in another registry is a distinct home.
@@ -49,7 +52,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 
 ### Download proxy
 
-- Current pre-P9 Rust production metadata still advertises `https://dl.rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}`;the gated target changes only the host to `rust.pkg.re`. JS uses same-host `https://js.pkg.re/v1/js/<registry>/<sha256>` from first publication. No `dl.js.pkg.re` exists.
+- Current Rust production metadata advertises the same-host `https://rust.pkg.re/v1/<registry>/{crate}/{version}/{sha256-checksum}` template and declares `delivery = "retained"`;the `dl.rust.pkg.re` router remains an allowed alternative template + the canonical redirect-route origin. JS uses same-host `https://js.pkg.re/v1/js/<registry>/<sha256>` from first publication. No `dl.js.pkg.re` exists.
 - Runtime route authority=exact static marker at the canonical route on the route-selected Pages custom host. No request-time `downloads.json`,GitHub API/raw,live registry metadata,refresh/LKG state,or caller-selected origin exists.
 - Route identity=Rust exact canonical registry alias+case-sensitive name+canonical SemVer+lowercase 64-hex checksum;JS exact canonical registry alias+lowercase 64-hex checksum. Query/fragment/percent encoding/non-ASCII/duplicate or dot segments/malformed/oversized targets fail `404` before origin access.
 - Origin mapping is closed:resolve only `pkgre.github.io`;connect only to answers:443 admitted by a conservative global-unicast/special-purpose filter whose range boundaries+current Pages addresses are fixture-tested;URL/TLS SNI/WebPKI hostname verification/HTTP Host remain route-selected `rust.pkg.re|js.pkg.re`;root-relative path unchanged;environment proxies+redirects disabled;timeouts,MIME,and body are bounded.
@@ -82,8 +85,9 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 - Complete replacement staged, strict-loaded, object-verified, test-rendered, then same-parent installed with rollback.
 - Catalog/category/admission/object boundaries reject unrelated paths, traversal, symlinks, nonregular inputs, missing/extra objects, orphan/noncanonical files; downloads are size-bounded + exact.
 - Render output must be absent; `verify` requires byte identity; `verify-monotonic` rejects prior registry/category/home/identity disappearance or mutation, tombstone reactivation, and unauthenticated migration.
-- Schema-3→4 migration authenticates canonical source; maps `universe/*→main/*`, `pkgre/tooling→main/pkgre`; preserves immutable artifacts; recomputes registry-dependent routing/admission bindings; never modifies source.
-- Schema-4→5 migration requires canonical schema-4 input; asserts `audience = "public"` + one deterministic `admitted-at` origin per package; replaces the schema-1 download catalog with the schema-2 delivery model; validates the absent-destination output end to end. The in-place retained-delivery migration declares `delivery = "retained"` without verifying bodies; `archive-import` verifies every imported digest before `check`/render/serve accept the catalog. Neither modifies source.
+- Historical schema-3→4 migration (removed command) authenticated canonical source; mapped `universe/*→main/*`, `pkgre/tooling→main/pkgre`; preserved immutable artifacts; recomputed registry-dependent routing/admission bindings; never modified source.
+- Historical schema-4→5 migration parsed schema-4 generated locks + the schema-1 download catalog strictly and rewrote registry/category files to schema 5 without checking their old schema; it asserted `audience = "public"`, wrote one `admitted-at` per package (crates.io `pubtime`, or the operator's `--git-tag-time`, which is not verified), and replaced the download catalog with the schema-2 delivery model; it wrote only to an absent destination, left a partial destination on failure, and strictly loaded/policy-checked/artifact-verified/test-rendered the output. It never modified its source.
+- The in-place retained-delivery migration declares `delivery = "retained"` without verifying bodies, and `archive-import` verifies every imported digest before `check`/render/serve accept the catalog; both rewrite the target catalog in place.
 
 ## Review boundary
 

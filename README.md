@@ -10,13 +10,13 @@ Rust removal replaces curator-controlled yanking:delete a version/tag from desir
 
 ## Public topology
 
-Current Rust production state before the gated P9 migration:
+Current Rust production state:
 
 | Cargo alias | Catalog alias | Sparse URL | Sources | Advertised download template |
 |---|---|---|---|---|
-| `pkgre` | `main` | `sparse+https://rust.pkg.re/` | crates.io mirrors+first-party/fork Git tags | `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}` |
+| `pkgre` | `main` | `sparse+https://rust.pkg.re/` | crates.io mirrors+first-party/fork Git tags | `https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}` |
 
-Target same-host state after the ecosystem-specific publication gates:
+Same-host state (Rust current; JavaScript after its publication gates):
 
 | Ecosystem | Static index | Canonical archive route | Runtime route authority |
 |---|---|---|---|
@@ -95,8 +95,6 @@ $ pkgre-rust check registry
 $ pkgre-rust render registry site-next
 $ pkgre-rust verify registry site-next
 $ pkgre-rust verify-monotonic site-current site-next
-$ pkgre-rust migrate-v2-to-v3 registry-v2 registry-v3
-$ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 ```
 
 `update-plan` evaluates current network evidence but emits only a compact,hash-free human manifest containing category/name/exact version. Every nonblocked generated manifest is directly applyable;optional typed evidence may be added. `update-apply` re-fetches+recomputes all facts,then atomically adds declarations,source rows,registry locks,canonical `downloads.json`,and immutable `admissions/<batch>.{toml,lock}`. Package `admission-sha256` fields bind the complete generated batch lock. `lock` handles bootstrap,empty name reservations,removals,Git tags,and download-catalog convergence;it cannot directly add mirror identities to an established catalog.

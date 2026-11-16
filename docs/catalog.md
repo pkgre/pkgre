@@ -45,7 +45,7 @@ schema = 5
 [registry]
 name = "main"
 index = "sparse+https://rust.pkg.re/"
-download = "https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
+download = "https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
 cargo-version = "1.95.0"
 audience = "public"
 delivery = "retained"
@@ -100,9 +100,9 @@ example = ["1.0.0"]
 Declaration rules:
 
 - Filename stem = `[registry].name`; `main` index is root; every other alias index is `sparse+https://rust.pkg.re/r/<alias>/`; Cargo version is `1.95.0` across registries.
-- `[registry].audience` is mandatory:`public` for a publicly reachable registry, `lan-public` for a LAN-reachable one asserted by serving topology. Generated locks record it; `check-transition` rejects a candidate catalog that changes an accepted registry's audience.
+- `[registry].audience` is mandatory:`public` for a publicly reachable registry, `lan-public` for a LAN-reachable one asserted by serving topology. A generated lock copies it when the lock is created or migrated, but `check` never compares it and `lock` does not refresh it; only `check-transition` compares the accepted + candidate declarations, and `release.json` does not carry it.
 - `[registry].delivery` is optional:`redirect` (the default when absent) points each crates.io archive at its exact checksum-bound router URL; `retained` stores the registry's crates.io archives as `objects/crates/<sha256>.crate` and renders them at `crates/<sha256>.crate`. Git-tag archives are always retained.
-- Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index/audience, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; additions are allowed.
+- Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; additions are allowed.
 - Category identity = `<registry>/<local>`; components are canonical lowercase ASCII aliases/kebab-case, ≤64 bytes each, start/end alphanumeric, and the category registry must exist.
 - Inline category = `may-depend-on` + optional `mirror`/`publish`; external reference = only `file`; external file = `schema`, `may-depend-on`, optional `mirror`/`publish`.
 - Every `may-depend-on` target must be an existing category; same registry grants no implicit permission; every category must reserve ≥1 package name.
@@ -137,7 +137,7 @@ schema = 5
 [registry]
 name = "main"
 index = "sparse+https://rust.pkg.re/"
-download = "https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
+download = "https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}"
 audience = "public"
 
 [[names]]
@@ -158,7 +158,7 @@ admitted-at = "<canonical-YYYY-MM-DDTHH:MM:SSZ>"
 kind = "crates-io"
 ```
 
-The containing lock supplies registry identity, including the declared `audience`; package/name entries are therefore registry-scoped even though they omit a repeated registry field. Git provenance additionally records:
+The containing lock supplies registry identity, including its recorded `audience`; package/name entries are therefore registry-scoped even though they omit a repeated registry field. Git provenance additionally records:
 
 ```toml
 [packages.source]
@@ -178,9 +178,9 @@ cargo-version = "1.95.0"
 | `source-row-sha256` | Exact unrouted crates.io row or deterministic Git-package row |
 | `index-row-sha256` | Canonical routed row with `yanked = false`; removal changes only rendered yank state |
 | `admission-sha256` | SHA-256 of complete generated admission `.lock`; all candidates in a batch share it; forbidden on Git identities |
-| `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for a mirror, the peeled commit time for a Git tag |
+| `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for an admitted mirror, the peeled commit time for a newly published Git tag; a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified against the commit |
 
-Never hand-edit locks. Load validates canonical form, registry/category/source anchors, provenance, object hashes, row identity/checksum, routed-row hash, and exact admission↔package coverage. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
+Never hand-edit locks. Load validates canonical form, registry/category/source anchors, provenance, object hashes, row identity/checksum, routed-row hash, and exact admission↔package coverage; it never re-derives `admitted-at`, and only `check-transition` rejects a change of it. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
 
 ## Generated download catalog
 
@@ -261,7 +261,7 @@ Planning facts are not authority:apply always recomputes using its own current U
 
 ## Mirror materialization
 
-For each candidate, the indexer fetches complete sparse history + exact `.crate`, selects one matching non-yanked ≥30-day row, validates Cargo metadata, and requires archive SHA-256 = row `cksum`. Planning/apply also analyze bounded archive/dependency/API/source evidence. Exact selected row + newline becomes a retained row object. `redirect` delivery discards the verified archive bytes and the route follows the checksum-bound router to `static.crates.io`; `retained` delivery stores them as `objects/crates/<sha256>.crate` and the route serves that same-host body. Either way Cargo validates against the curated checksum; the archive origin controls availability, not accepted metadata/integrity.
+For each candidate, the indexer fetches complete sparse history + exact `.crate`, selects one matching non-yanked ≥30-day row, validates Cargo metadata, and requires archive SHA-256 = row `cksum`. Planning/apply also analyze bounded archive/dependency/API/source evidence. Exact selected row + newline becomes a retained row object. `redirect` delivery discards the verified archive bytes and the route follows the checksum-bound router to `static.crates.io`; `retained` delivery stores them as `objects/crates/<sha256>.crate`, and the route redirects to, or in body mode serves, the same-host content-addressed body. Either way Cargo validates against the curated checksum; the archive origin controls availability, not accepted metadata/integrity.
 
 ## Reconciliation
 
@@ -323,44 +323,45 @@ site/
 └── crates/<retained-archive-sha256>.crate
 ```
 
-`release.json` schema 4 records registry/category topology, registry-scoped permanent name homes, and package identities; neither registry `audience` nor `delivery` is part of it. `verify-monotonic` requires every prior registry/category/home/immutable identity to remain exact, permits new registry/category/home/package identities + `active→removed` + source-specific→router transition, authenticates routes including every retained body, and rejects reactivation.
+`release.json` schema 4 records registry/category topology, registry-scoped permanent name homes, and package identities; neither registry `audience` nor `delivery` is part of it. `verify-monotonic` requires every prior registry/category/home/immutable identity to remain exact, permits new registry/category/home/package identities + `active→removed` + source-specific→router transition, authenticates every release package's rendered index row and every active package's route, requires a rendered `crates/<sha256>.crate` file for an active crates.io package with a retained route to exist as a file (presence only, no hash; Git-tag routes get no body check), and rejects reactivation. `verify` re-renders the site and compares every rendered byte.
 
 ## Exact migrations
 
-Historical schema 2→3:
+Historical schema 2→3 (removed command):
 
 ```console
 $ pkgre-rust migrate-v2-to-v3 registry-v2 registry-v3
 ```
 
-Source must be strict canonical schema-2 `core`/`matrix`/`pkgre`; destination absent. It maps into schema-3 `universe`/`pkgre`, authenticates all rows/objects/hashes, reproduces staging, and never modifies source.
+`migrate-v2-to-v3` is no longer a command of the current tool, which answers `unknown command`; this section records the historical procedure. Source had to be strict canonical schema-2 `core`/`matrix`/`pkgre` with an absent destination; it mapped into schema-3 `universe`/`pkgre`, authenticated all rows/objects/hashes, reproduced staging, and never modified source.
 
-Historical production schema 3→4:
+Historical production schema 3→4 (removed command):
 
 ```console
 $ pkgre-rust migrate-v3-to-v4 registry-v3 registry-v4
 ```
 
-Source must be strict canonical schema 3; destination absent. Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; both old registries collapse into root `main`; current direct download endpoints become `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`. It preserves names/package identities/source rows/Git archives/checksums/provenance; recomputes only registry-dependent routed-row hashes; rewrites admission categories/routes + generated admission-lock hashes and rebinds package `admission-sha256`; validates bidirectional coverage; strict-loads/renders/reproduces staging; installs by one rename. Source is never modified. `verify-monotonic` explicitly authenticates the 3→4 mapping.
+`migrate-v3-to-v4` is no longer a command of the current tool; this section records the historical procedure. Source had to be strict canonical schema 3 with an absent destination. Exact mapping:`universe/<category>→main/<category>`; `pkgre/tooling→main/pkgre`; both old registries collapse into root `main`; current direct download endpoints become `https://dl.rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`. It preserves names/package identities/source rows/Git archives/checksums/provenance; recomputes only registry-dependent routed-row hashes; rewrites admission categories/routes + generated admission-lock hashes and rebinds package `admission-sha256`; validates bidirectional coverage; strict-loads/renders/reproduces staging; installs by one rename. Source is never modified. `verify-monotonic` explicitly authenticates the 3→4 mapping.
 
-Current schema 4→5:
+Production schema 4→5 (completed):
 
 ```console
 $ pkgre-rust migrate-v4-to-v5 registry-v4 registry-v5 \
     --git-tag-time=main/pkgre-indexer@indexer/v0.1.1=2026-08-22T17:57:02Z
+# repeat --git-tag-time for every Git tag of the source
 ```
 
-Source must be strict canonical schema 4; destination absent. It copies the tree, rewrites every root `<registry>.toml` + external category file to `schema = 5`, asserts `audience = "public"` in every registry, and rebuilds every generated lock in canonical schema-5 form:`audience` in `[registry]` + one `admitted-at` per package, taken from the crates.io row `pubtime` for a mirror and from a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` argument for each Git tag. It replaces the schema-1 download catalog with the schema-2 delivery model (`redirect`; no `delivery` declaration is added), then strict-loads, policy-checks, artifact-verifies, and test-renders the output. Source is never modified.
+This migration is complete for the production `main` registry, so the procedure below is historical. It parses every generated schema-4 lock strictly (exact fields, `schema = 4`) and the schema-1 download catalog strictly, but rewrites each root `<registry>.toml` + external category file to `schema = 5` through TOML editing without checking their old schema or canonical form; it asserts `audience = "public"` in every registry and rebuilds every lock with `audience` in `[registry]` + one `admitted-at` per package, taken from the crates.io row `pubtime` for a mirror and from a required `--git-tag-time=<registry>/<name>@<tag>=<timestamp>` argument for each Git tag (the operator's value, not verified against the tag). It replaces the download catalog with the schema-2 `redirect` delivery model (no `delivery` declaration is added), then strict-loads, policy-checks, artifact-verifies, and test-renders the output. It writes only to an absent destination and leaves a partial destination behind on failure; delete it before a rerun. The source is never modified.
 
-Schema-5 retained delivery in place:
+Schema-5 retained delivery (completed for production):
 
 ```console
 $ pkgre-rust migrate-retained-delivery registry
-$ pkgre-rust archive-inventory registry <archive-store>/inventory.json
-$ pkgre-rust archive-import <archive-store> registry
+$ pkgre-rust archive-inventory registry /absolute/path/to/archive-store/inventory.json
+$ pkgre-rust archive-import /absolute/path/to/archive-store registry
 ```
 
-`migrate-retained-delivery` adds `delivery = "retained"` to every root `<registry>.toml` and rewrites `downloads.json` to the exact derived schema-2 bytes, deliberately without verifying archive bodies. `archive-inventory` derives the canonical retained-object inventory of the migrated catalog. `archive-import` requires the store's `inventory.json` to equal the catalog's retained set, copies every missing `<sha256>.crate`, verifies every digest, then re-runs strict load/policy/artifact checks; `check`, `render`, and serving fail closed until that import lands.
+`migrate-retained-delivery` adds `delivery = "retained"` to every root `<registry>.toml` and rewrites `downloads.json` to the exact derived schema-2 bytes, deliberately without verifying archive bodies; it rewrites the catalog in place. `archive-inventory` derives the canonical retained-object inventory of the migrated catalog. Place one `<sha256>.crate` file for every inventoried object in the store, Git-tag archives included, and pass the store as an absolute path: `archive-import` reads `<store>/inventory.json`, requires its retained set to equal the catalog's, copies every missing `<sha256>.crate`, verifies every digest, then re-runs strict load/policy/artifact checks. A relative store path is rejected as escaping the store. `check`, `render`, and serving fail closed until the import lands; the import rewrites the target catalog in place.
 
 ## Removal
 
