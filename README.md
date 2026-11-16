@@ -23,7 +23,7 @@ Target same-host state after the ecosystem-specific publication gates:
 | Rust | `github.com/pkgre/rust`→`rust.pkg.re` | `https://rust.pkg.re/v1/<registry>/<crate>/<canonical-semver>/<sha256>` | Exact static marker at the same Pages path |
 | JavaScript | `github.com/pkgre/js`→`js.pkg.re` | `https://js.pkg.re/v1/js/<registry>/<sha256>` | Exact static marker at the same Pages path |
 
-Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 4 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities.
+Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 5 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities.
 
 Current Rust categories:
 
@@ -48,7 +48,7 @@ Current Rust categories:
 - `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,and isolated npm/Bun/Deno fixture.
 - [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,two-stage publication,consumer configuration,compatibility matrix,bootstrap+activation gate.
 - `fixtures/redirect-marker-v1/`:provider-neutral exact marker bytes consumed independently by Rust+JavaScript tests;synthetic routes only.
-- [`docs/catalog.md`](docs/catalog.md):current schema-4 Rust declarations,categories,locks,admissions,routing,removal,migration.
+- [`docs/catalog.md`](docs/catalog.md):current schema-5 Rust declarations,categories,locks,admissions,routing,removal,migration.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production Rust mirror-update procedure ending in an unmerged curator-review PR.
 - [`docs/workflows.md`](docs/workflows.md):mirror,Git-tag,removal,migration,release workflows.
 - [`docs/security.md`](docs/security.md):trust model,enforced invariants,exclusions.

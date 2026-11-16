@@ -1,6 +1,6 @@
 # Production mirror-admission runbook
 
-Purpose:execute one live crates.io mirror batch against the schema-4 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
+Purpose:execute one live crates.io mirror batch against the schema-5 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision deployed by the catalog's main-branch Pages workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
 
 Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 

@@ -12,7 +12,7 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 - Generated admission lock:complete network-backed facts recomputed at apply + hash-bound into every admitted package lock.
 - `pkgre-rust`:enforces schema, admission policy/binding, lifecycle, artifacts, routing, downloads, rendering, migration, and release invariants; bugs can invalidate guarantees.
 - Nix pins + Rust/Cargo `1.95.0`:tooling inputs + Git-package semantics.
-- GitHub Pages custom-host TLS+static content,DNS,rain/nginx are route-authorization/delivery dependencies;crates.io CDN+registry.npmjs.org are admitted third-party archive dependencies;Cargo checksum/npm SRI reject bytes differing from curated metadata.
+- GitHub Pages custom-host TLS+static content,DNS,rain/nginx are route-authorization/delivery dependencies;crates.io CDN+registry.npmjs.org are admitted third-party archive dependencies for redirect-delivered archives;Cargo checksum/npm SRI reject bytes differing from curated metadata.
 - crates.io sparse/API/archive + public Git during plan/apply:candidate evidence origins; observations gain authority only after exact recomputation + transaction + protected PR review.
 
 ## Authority boundaries
@@ -20,6 +20,7 @@ Reduce ambient Cargo supply-chain authority from “anything resolvable on crate
 Human files select:
 
 ```text
+registry declaration: (catalog registry, index, download template, audience, optional delivery)
 mirror declaration: (catalog registry, category, package, exact version)
 publish declaration: (catalog registry, category, package, HTTPS Git, immutable tag)
 category policy: exact may-depend-on set
@@ -30,7 +31,7 @@ removal: omission from retained package key's version/tag list
 Generated locks select permanently:
 
 ```text
-(registry, category, normalized Cargo identity, version, source class, lifecycle, archive hash, source-row hash, routed-row hash, provenance, optional admission hash)
+(registry, category, normalized Cargo identity, version, source class, lifecycle, archive hash, source-row hash, routed-row hash, origin time, provenance, optional admission hash)
 ```
 
 Planning is discovery, not authority. `update-plan` performs current evaluation but outputs compact intent. `update-apply` independently recomputes facts at current time + commits intent/facts atomically. `automatic`/`review-required` prioritize attention; neither bypasses registry PR review.
@@ -39,7 +40,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 
 ### Registry/category/identity
 
-- Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index cannot disappear/change.
+- Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index/audience cannot disappear/change.
 - Current production categories:`main/{general,acp,filesystem,matrix,mcp,pkgre,sse,terminal,yaml}`. Each category is inhabited + has exact committed direct-dependency allowlist; additions allowed, released category/rule cannot disappear/change.
 - Current edges:`general→general`; feature category→itself+general; `mcp→general|mcp|sse`; `pkgre→general|pkgre`; same registry grants no implicit edge.
 - One permanent registry/category home per normalized package name within a registry; Cargo ASCII case + `-`/`_` collision defense. Each `name + version` has one immutable `mirror|publish` source class/checksum; one name may use both classes across distinct versions. Same normalized name in another registry is a distinct home.
@@ -71,17 +72,18 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 
 ### Artifacts/lifecycle/rendering
 
-- Mirror archive = crates.io artifact checksum in exact retained row; archive verified then discarded; upstream-yanked versions rejected.
+- Mirror archive = crates.io artifact checksum in exact retained row; archive verified then discarded unless the registry declares `delivery = "retained"`, which stores it as `objects/crates/<sha256>.crate`; upstream-yanked versions rejected.
 - First-party package binds HTTPS repo + literal tag + tag object + peeled commit + package/version/path + pinned Cargo + reproducible archive.
 - Current first-party manifest sets exactly `publish = ["pkgre"]`; every dependency explicitly names `registry = "pkgre"`; path/Git/crates.io/unknown sources fail.
-- Archive/source-row/routed-active-row SHA-256 binds every package; only active Git-tag archives retained locally.
-- `downloads.json` equals exact active-lock projection `(registry, case-sensitive name, version, archive hash, closed source enum)` + is reauthenticated by release verification.
-- Lifecycle append-only:additions + `active→removed`; removal retains source row + yanked history, removes unshared Git archive, cannot reverse.
+- Archive/source-row/routed-active-row SHA-256 binds every package; only active retained-delivery archives are stored locally: Git tags always, crates.io archives when the registry declares `retained`.
+- `downloads.json` equals exact locked-identity projection `(registry, case-sensitive name, version, archive hash, closed redirect|retained delivery)` + is reauthenticated by release verification.
+- Lifecycle append-only:additions + `active→removed`; removal retains source row + yanked history, removes unshared retained archive, cannot reverse.
 - Existing locks/objects/rows/admissions/homes pass local preflight before public fetch.
 - Complete replacement staged, strict-loaded, object-verified, test-rendered, then same-parent installed with rollback.
 - Catalog/category/admission/object boundaries reject unrelated paths, traversal, symlinks, nonregular inputs, missing/extra objects, orphan/noncanonical files; downloads are size-bounded + exact.
 - Render output must be absent; `verify` requires byte identity; `verify-monotonic` rejects prior registry/category/home/identity disappearance or mutation, tombstone reactivation, and unauthenticated migration.
 - Schema-3→4 migration authenticates canonical source; maps `universe/*→main/*`, `pkgre/tooling→main/pkgre`; preserves immutable artifacts; recomputes registry-dependent routing/admission bindings; never modifies source.
+- Schema-4→5 migration requires canonical schema-4 input; asserts `audience = "public"` + one deterministic `admitted-at` origin per package; replaces the schema-1 download catalog with the schema-2 delivery model; validates the absent-destination output end to end. The in-place retained-delivery migration declares `delivery = "retained"` without verifying bodies; `archive-import` verifies every imported digest before `check`/render/serve accept the catalog. Neither modifies source.
 
 ## Review boundary
 
@@ -118,8 +120,8 @@ Cargo has no universal registry allowlist and cannot enforce pkg.re categories:a
 - Planning/apply requires current crates.io sparse/API/archive + promoted public Git availability; outage/deletion/rate limit can stop admission.
 - Existing Git tag is not re-fetched/reproduced during `check`; retained archive/row is operational authority.
 - No prevention of admitted build-script/proc-macro/native/runtime network/process behavior; isolate builds/credentials separately.
-- SHA-256/SRI provide integrity,not availability;Pages custom-host TLS/DNS/rain/nginx/proxy/crates.io/npmjs outage can stop delivery. Runtime authorization has no independent LKG:an unavailable marker origin fails `503`;a missing marker fails `404`.
-- Removed rows remain visible as yanked; shared active Git content can remain downloadable; crates.io controls mirror availability.
+- SHA-256/SRI provide integrity,not availability;Pages custom-host TLS/DNS/rain/nginx/proxy outage + any then-required archive origin outage can stop delivery. Runtime authorization has no independent LKG:an unavailable marker origin fails `503`;a missing marker fails `404`.
+- Removed rows remain visible as yanked; shared active retained content can remain downloadable; a `redirect` mirror's availability follows crates.io, a `retained` body follows the registry's own storage.
 - Git dependencies bypass registry routing + remain unsupported.
 - Locks cannot distinguish legitimate reviewed replacement from privileged actor replacing locks + matching objects without history review; branch protection, protected merge, monotonic releases, and retained history provide boundary.
 
