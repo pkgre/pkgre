@@ -100,7 +100,7 @@ example = ["1.0.0"]
 Declaration rules:
 
 - Filename stem = `[registry].name`; `main` index is root; every other alias index is `sparse+https://rust.pkg.re/r/<alias>/`; Cargo version is `1.95.0` across registries.
-- `[registry].audience` is mandatory:`public` for a publicly reachable registry, `lan-public` for a LAN-reachable one asserted by serving topology. A generated lock copies it when the lock is created or migrated, but `check` never compares it and `lock` does not refresh it; only `check-transition` compares the accepted + candidate declarations, and `release.json` does not carry it.
+- `[registry].audience` is mandatory:`public` for a publicly reachable registry, `lan-public` for a LAN-reachable one asserted by serving topology. A generated lock copies it when the lock is created or migrated and is permanent: loading refuses a lock whose recorded `audience` differs from the declaration, so `check` and `lock` fail before a merge; `check-transition` still compares the accepted + candidate declarations, and `release.json` does not carry it.
 - `[registry].delivery` is optional:`redirect` (the default when absent) points each crates.io archive at its exact checksum-bound router URL; `retained` stores the registry's crates.io archives as `objects/crates/<sha256>.crate` and renders them at `crates/<sha256>.crate`. Git-tag archives are always retained.
 - Catalog must contain `main`; additional canonical aliases are allowed. Once released, registry identity/index, categories/rules, package homes, and existing package identities/sources cannot be removed/mutated; package/category/version additions are allowed, but the serving gate `check-transition` rejects a candidate that adds or removes a registry.
 - Category identity = `<registry>/<local>`; components are canonical lowercase ASCII aliases/kebab-case, ≤64 bytes each, start/end alphanumeric, and the category registry must exist.
@@ -178,9 +178,9 @@ cargo-version = "1.95.0"
 | `source-row-sha256` | Exact unrouted crates.io row or deterministic Git-package row |
 | `index-row-sha256` | Canonical routed row with `yanked = false`; removal changes only rendered yank state |
 | `admission-sha256` | SHA-256 of complete generated admission `.lock`; all candidates in a batch share it; forbidden on Git identities |
-| `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for an admitted mirror, the peeled commit time for a newly published Git tag; a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified against the commit |
+| `admitted-at` | Immutable origin time in canonical whole-second UTC: the crates.io row `pubtime` for an admitted mirror, the peeled commit time for a newly published Git tag; a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified against the commit. Loading re-derives a mirror value from its retained source row and refuses a mismatch |
 
-Never hand-edit locks. Load validates canonical form, registry/category/source anchors, provenance, object hashes, row identity/checksum, routed-row hash, and exact admission↔package coverage; it never re-derives `admitted-at`, and only `check-transition` rejects a change of it. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
+Never hand-edit locks. Load validates canonical form, registry/category/source anchors, the recorded `audience`, provenance, object hashes, row identity/checksum, routed-row hash, and exact admission↔package coverage, and re-derives every mirror `admitted-at` from its retained source row `pubtime`; a Git-tag `admitted-at` is the tag commit time, which no catalog file records, so only `check-transition` rejects a change of it. Historical/bootstrap mirrors may omit `admission-sha256`; ordinary `lock` cannot create another unbound mirror identity after bootstrap.
 
 ## Generated download catalog
 

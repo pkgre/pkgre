@@ -34,7 +34,7 @@ Generated locks select permanently:
 (registry, category, normalized Cargo identity, version, source class, lifecycle, archive hash, source-row hash, routed-row hash, origin time, provenance, optional admission hash)
 ```
 
-`origin time` is written when an identity is first locked (admission, Git publication, or migration):a migrated Git-tag value is the operator's `--git-tag-time` input and is not verified; `check` and `lock` never re-derive it, and only `check-transition` rejects a change.
+`origin time` is written when an identity is first locked (admission, Git publication, or migration):a mirror value is its retained source row `pubtime` and loading re-derives it, refusing a mismatch;a Git-tag value is the tag commit time, or the operator's `--git-tag-time` input for a migrated tag, and no catalog file records it, so only `check-transition` rejects a change of it.
 
 Planning is discovery, not authority. `update-plan` performs current evaluation but outputs compact intent. `update-apply` independently recomputes facts at current time + commits intent/facts atomically. `automatic`/`review-required` prioritize attention; neither bypasses registry PR review.
 
@@ -43,7 +43,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 ### Registry/category/identity
 
 - Catalog must contain `main` at `sparse+https://rust.pkg.re/`; every other canonical alias `<name>` maps exactly to `sparse+https://rust.pkg.re/r/<name>/`; additions allowed, released registry identity/index cannot disappear/change.
-- `audience` is not an enforced invariant:a lock copies the declared value when it is created or migrated, `check` never compares it, `lock` never refreshes it, `release.json` does not carry it, and only `check-transition` compares the accepted + candidate declarations.
+- `audience` is a lock invariant:a lock copies the declared value when it is created or migrated and is permanent; loading refuses a lock whose recorded `audience` differs from its declaration, so `check` and `lock` fail before a merge, `release.json` does not carry it, and `check-transition` additionally compares the accepted + candidate declarations.
 - Current production categories:`main/{general,acp,filesystem,matrix,mcp,pkgre,sse,terminal,yaml}`. Each category is inhabited + has exact committed direct-dependency allowlist; additions allowed, released category/rule cannot disappear/change.
 - Current edges:`general→general`; feature category→itself+general; `mcp→general|mcp|sse`; `pkgre→general|pkgre`; same registry grants no implicit edge.
 - One permanent registry/category home per normalized package name within a registry; Cargo ASCII case + `-`/`_` collision defense. Each `name + version` has one immutable `mirror|publish` source class/checksum; one name may use both classes across distinct versions. Same normalized name in another registry is a distinct home.
