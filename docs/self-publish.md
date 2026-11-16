@@ -13,7 +13,8 @@ repository, beside `registry/`, which stays the reconciler's exclusive state.
 
 Both files carry `schema = 1`, belong to catalog registry `main`, and are strict:an unknown
 field fails. A repository without `self-publish/` has no self-publishing state; the checks
-report that and check nothing.
+report that and check nothing, unless the accepted repository has one, because removing the
+state is not allowed.
 
 ## Principles
 
@@ -79,14 +80,21 @@ that its publish declarations in `registry/` use. `tag-prefix` turns a version i
 release tag:`tag-prefix` is empty or `v`, or ends with `/` or `/v`, so that the tag's final
 component is the version, or `v` and the version. Prefix and version together are a safe Git
 ref. Repositories are declared once each, and a repository and its prefix are permanent.
+Repositories are compared in a normalized form:the scheme and host are lowercased, a trailing
+`.git` is dropped, and for GitHub the path is lowercased too. A Git identity or publish
+declaration that names a self-publishing repository in another spelling is refused, so that
+it cannot escape the release rules of its declaration.
 
 ### Names
 
 `[names]` maps a crate's `pkgre` name to its crates.io name. Without an entry the crates.io
 name is `pkgre-pkgs-` followed by the `pkgre` name as the catalog spells it:`pkgre-rust`
-becomes `pkgre-pkgs-pkgre-rust`. A key has to name a crate that a self-publishing repository
-publishes in `registry/main.lock`; a stale key is refused. The crates.io name rules below
-apply to every name the workflow uses.
+becomes `pkgre-pkgs-pkgre-rust`. A key either spells a crate name that a self-publishing
+repository publishes or declares, exactly as the catalog spells it, or names no crate of the
+catalog at all, so that a name can be declared before the crate's first release. A key that
+names a crate the catalog publishes from a mirror or from a repository that does not
+self-publish is stale, and refused. The crates.io name rules below apply to every name the
+workflow uses.
 
 ### Abandoned versions
 
@@ -101,8 +109,8 @@ versions.
 
 `self-publish/crates-io.lock` holds one entry per crate version released to crates.io, in
 canonical form and order. Its bytes are exact:the checks refuse a file that differs from the
-canonical serialization, which orders entries by crates.io's comparison of their names and
-then by version. An empty lock is exactly:
+canonical serialization, which orders entries by lowercased name, then by the exact name,
+then by version, as `registry/main.lock` does. An empty lock is exactly:
 
 ```toml
 schema = 1
@@ -150,13 +158,14 @@ Checked offline, on every run:
 - A mapped name does not start with `pkgre-pkgs-`. That namespace belongs to the default
   rule, which keeps the two kinds of names apart.
 - A crates.io name is not the name of a crate that `registry/main` mirrors, which belongs to
-  someone else on crates.io. Conversely, a mirror may not be named `pkgre-pkgs-…` or carry a
-  mapped name, which readers would take for one of ours.
-- Every key of `[names]` either names a crate that a self-publishing repository publishes,
-  or names no crate of the catalog at all, so that a name can be declared before its crate's
-  first release. A key that names a crate the catalog publishes from a mirror or from a
-  repository that does not self-publish is stale, and refused: the mapping would claim a
-  name that belongs to someone else.
+  someone else on crates.io. Conversely, a mirror may not carry a name the workflow uses,
+  mapped or default, or be named `pkgre-pkgs-…`, which readers would take for one of ours.
+- Every key of `[names]` either spells a crate name that a self-publishing repository
+  publishes or declares, exactly as the catalog spells it, or names no crate of the catalog
+  at all, so that a name can be declared before its crate's first release. A key that names
+  a crate the catalog publishes from a mirror or from a repository that does not
+  self-publish is stale, and refused: the mapping would claim a name that belongs to someone
+  else.
 - Once a crate has an entry in `self-publish/crates-io.lock`, its crates.io name never
   changes, and neither does its entry in `[names]`, unless every entry of that crate is
   abandoned.
@@ -197,5 +206,6 @@ abandoned, that each Git identity the candidate gains comes from a release tag, 
 versions increase. Without an accepted repository those comparisons are skipped, and the
 command says so; the candidate's own files, name rules, entry correspondence and abandoned
 records are still checked. A repository without `self-publish/` is accepted with a message
-that there is nothing to check. A directory that does not hold `registry/` is refused, so a
-wrong path does not pass silently.
+that there is nothing to check, unless the accepted repository has one: removing the state is
+refused. A directory that does not hold `registry/` is refused, so a wrong path does not pass
+silently.
