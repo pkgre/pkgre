@@ -43,6 +43,7 @@ Current Rust categories:
 
 ## Components
 
+- [`cli/`](cli/README.md):the `pkgre` command-line tool;`pkgre install` adds the `pkgre` registry alias to the user's own Cargo configuration.
 - `rust/`:Rust reconciler,validator,admission planner/applicator,schema migrators,deterministic renderer,download-catalog generator,release verifier.
 - `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,and isolated npm/Bun/Deno fixture.
 - [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,two-stage publication,consumer configuration,compatibility matrix,bootstrap+activation gate.
@@ -151,6 +152,8 @@ directory = ".cargo/disabled-crates-io"
 ```
 
 Create+commit `.cargo/disabled-crates-io/`. Do not use `source.crates-io.replace-with = "pkgre"`:source replacement is local configuration and Cargo can reinterpret crates.io identities when another user lacks it. Explicit `registry = "pkgre"` records the root sparse source in `Cargo.lock` and fails closed when a clone omits the alias configuration.
+
+For the user's own Cargo setup rather than a project's,`pkgre install` ([`cli/README.md`](cli/README.md)) adds only the `[registries.pkgre]` alias above to the Cargo home's configuration:it neither sets the default registry nor replaces crates.io,so the project configuration stays the fail-closed choice.
 
 ## License
 
