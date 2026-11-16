@@ -45,12 +45,13 @@
               ./.cargo/config.toml
               ./Cargo.lock
               ./Cargo.toml
+              ./cli
               ./rust
             ];
           };
           pkgreCargoDeps = self.lib.${system}.rust.cargoDeps {
             src = cargoDepsSrc;
-            cargoHash = "sha256-RBh+tpSZcPmc2+65z93ai6gkUzlqepyP94Ebpm+OQS0=";
+            cargoHash = "sha256-lkFfaUCjCni0OmzgIw3PnwkyrNh2vvA29m1v48OK8do=";
             name = "pkgre-rust-cargo-deps";
           };
           source = pkgs.lib.fileset.toSource {
@@ -58,6 +59,7 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./cli
               ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
               ./js/package.json
@@ -130,6 +132,11 @@
               pkgs.gnutar
             ];
           };
+          pkgreCli = mkRustPackage {
+            packageDirectory = "cli";
+            description = "Command-line tool for the pkgre curated package registries";
+            mainProgram = "pkgre";
+          };
           jsCompatibilityClients = import ./nix/js-compatibility-clients.nix { inherit pkgs system; };
           jsManifest = builtins.fromJSON (builtins.readFile ./js/package.json);
           jsSource = pkgs.lib.fileset.toSource {
@@ -182,6 +189,7 @@
           default = rustIndexer;
           rust = rustIndexer;
           indexer = rustIndexer;
+          cli = pkgreCli;
           js = pkgreJs;
           js-client-node-minimum = jsCompatibilityClients.nodeMinimum;
           js-client-node-current = jsCompatibilityClients.nodeCurrent;
@@ -227,6 +235,7 @@
             fileset = pkgs.lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./cli
               ./fixtures/dynamic-registry-v1
               ./fixtures/redirect-marker-v1
               ./js/package.json
@@ -238,6 +247,7 @@
         in
         {
           build-and-test = self.packages.${system}.rust;
+          cli = self.packages.${system}.cli;
           js = self.packages.${system}.js;
           js-compatibility-node-minimum = mkJsCompatibilityCheck {
             name = "node-minimum";

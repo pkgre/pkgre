@@ -1,0 +1,24 @@
+[package]
+name = "pkgre"
+version = "0.5.0"
+description = "Command-line tool for the pkgre curated package registries"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]
+readme = "README.md"
+keywords = ["registry", "packaging", "cargo", "cli", "configuration"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["/src", "/tests", "/Cargo.toml", "/README.md"]
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { version = "1.0", registry = "pkgre" }
+clap = { version = "4.6", registry = "pkgre" }
+toml_edit = { version = "=0.25.13", registry = "pkgre" }
+
+[dev-dependencies]
+tempfile = { version = "3", registry = "pkgre" }
