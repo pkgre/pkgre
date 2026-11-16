@@ -1,339 +1,294 @@
-//! Translating `Cargo.lock` from the curated registry to crates.io.
+//! The checkout's `Cargo.lock`: its packages, and the translation to crates.io.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
-use toml_edit::{ArrayOfTables, DocumentMut, Item, TableLike, value};
+use toml_edit::{DocumentMut, Item, TableLike, value};
 
-use super::super::catalog::{CatalogIdentity, CatalogSnapshot};
-use super::super::config::CratesIoConfig;
-use super::super::lock::CratesIoLock;
-use super::cargo::{CRATES_IO_INDEX, CURATED_INDEX};
-use super::workspace::{ReleasePlan, Workspace};
+use super::cargo::CRATES_IO_INDEX;
+use super::expectations::Expectations;
 
-/// The curated registry's sources, as a lock file spells them.
-const CURATED_LOCK_SOURCES: [&str; 2] = [CURATED_INDEX, "registry+sparse+https://rust.pkg.re/"];
+/// One package of a lock file.
+#[derive(Clone, Debug)]
+pub(super) struct LockedPackage {
+    /// Cargo package name.
+    pub(super) name: String,
+    /// Exact package version.
+    pub(super) version: Version,
+    /// Package source, absent for a workspace member.
+    pub(super) source: Option<String>,
+    /// Package checksum, absent for a workspace member.
+    pub(super) checksum: Option<String>,
+    /// Resolved dependencies, by package name and version.
+    pub(super) dependencies: Vec<(String, Version)>,
+}
+
+/// The packages of one `Cargo.lock`, with every dependency resolved.
+pub(super) struct LockIndex {
+    packages: Vec<LockedPackage>,
+}
+
+impl LockIndex {
+    /// Reads and resolves one `Cargo.lock`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a lock that cannot be read or parsed, or a
+    /// dependency entry that names no package of the lock or an ambiguous one.
+    pub(super) fn load(path: &Path) -> Result<Self> {
+        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        Self::parse(&bytes).with_context(|| format!("parse {}", path.display()))
+    }
+
+    /// Parses and resolves one `Cargo.lock`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed lock, or a dependency entry that names
+    /// no package of the lock or an ambiguous one.
+    pub(super) fn parse(bytes: &[u8]) -> Result<Self> {
+        let text = std::str::from_utf8(bytes).context("the lock file is not UTF-8")?;
+        let document: DocumentMut = text.parse().context("parse the lock file")?;
+        let entries = document
+            .get("package")
+            .and_then(Item::as_array_of_tables)
+            .context("the lock file has no [[package]] array")?;
+        let mut packages = Vec::new();
+        for entry in entries {
+            let name = entry
+                .get("name")
+                .and_then(Item::as_str)
+                .context("a lock package has no name")?
+                .to_owned();
+            let version = entry
+                .get("version")
+                .and_then(Item::as_str)
+                .with_context(|| format!("lock package {name:?} has no version"))?;
+            let version = Version::parse(version)
+                .with_context(|| format!("parse the version of lock package {name:?}"))?;
+            let dependencies = entry
+                .get("dependencies")
+                .and_then(Item::as_array)
+                .map(|array| {
+                    array
+                        .iter()
+                        .map(|item| {
+                            item.as_str()
+                                .map(str::to_owned)
+                                .context("a lock dependency is not a string")
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?
+                .unwrap_or_default();
+            packages.push((
+                LockedPackage {
+                    name,
+                    version,
+                    source: entry
+                        .get("source")
+                        .and_then(Item::as_str)
+                        .map(str::to_owned),
+                    checksum: entry
+                        .get("checksum")
+                        .and_then(Item::as_str)
+                        .map(str::to_owned),
+                    dependencies: Vec::new(),
+                },
+                dependencies,
+            ));
+        }
+        let mut index = Self {
+            packages: packages
+                .iter()
+                .map(|(package, _)| package.clone())
+                .collect(),
+        };
+        for (position, (package, dependencies)) in packages.iter().enumerate() {
+            let resolved = dependencies
+                .iter()
+                .map(|dependency| index.resolve_dependency(&package.name, dependency))
+                .collect::<Result<Vec<_>>>()?;
+            index.packages[position].dependencies = resolved;
+        }
+        Ok(index)
+    }
+
+    /// Resolves one dependency entry of a lock package.
+    ///
+    /// Cargo writes `name`, `name version`, or, when two packages share a name
+    /// and version, `name version (source)`.
+    fn resolve_dependency(&self, package: &str, entry: &str) -> Result<(String, Version)> {
+        let (name, rest) = match entry.split_once(' ') {
+            Some((name, rest)) => (name, Some(rest)),
+            None => (entry, None),
+        };
+        let (version, source) = match rest {
+            Some(rest) => match rest.split_once(" (") {
+                Some((version, source)) => (
+                    Some(version),
+                    Some(source.strip_suffix(')').unwrap_or(source)),
+                ),
+                None => (Some(rest), None),
+            },
+            None => (None, None),
+        };
+        let mut candidates = self
+            .packages
+            .iter()
+            .filter(|candidate| candidate.name == name)
+            .filter(|candidate| {
+                version.is_none_or(|version| candidate.version.to_string() == version)
+            })
+            .filter(|candidate| {
+                source.is_none_or(|source| candidate.source.as_deref() == Some(source))
+            });
+        let Some(candidate) = candidates.next() else {
+            bail!(
+                "the dependency {entry:?} of lock package {package:?} names no package of the lock"
+            );
+        };
+        ensure!(
+            candidates.next().is_none(),
+            "the dependency {entry:?} of lock package {package:?} matches several packages of the lock"
+        );
+        Ok((candidate.name.clone(), candidate.version.clone()))
+    }
+
+    /// Returns every package of the lock, in file order.
+    pub(super) fn packages(&self) -> &[LockedPackage] {
+        &self.packages
+    }
+
+    /// Returns one exact package of the lock.
+    pub(super) fn package(&self, name: &str, version: &Version) -> Option<&LockedPackage> {
+        self.packages
+            .iter()
+            .find(|package| package.name == name && package.version == *version)
+    }
+}
+
+/// Translates one `Cargo.lock` to crates.io, in the package entries and in every
+/// dependency list.
+///
+/// Mirrored identities keep their name, version, and checksum; a first-party
+/// identity of an earlier release takes its crates.io name and the checksum of
+/// its `crates-io.lock` entry; a released workspace member takes its crates.io
+/// name.
+///
+/// # Errors
+///
+/// Returns an error for a lock that cannot be read or parsed, holds a package
+/// that the catalog does not resolve, or would hold two packages of one name and
+/// version after the translation.
+pub(super) fn translate_lock(checkout: &Path, expectations: &Expectations) -> Result<()> {
+    let path = checkout.join("Cargo.lock");
+    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let index = LockIndex::parse(&bytes).with_context(|| format!("resolve {}", path.display()))?;
+    let text =
+        String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8", path.display()))?;
+    let mut document: DocumentMut = text
+        .parse()
+        .with_context(|| format!("parse {}", path.display()))?;
+    let mut identities = BTreeSet::new();
+    for package in index.packages() {
+        let expected = expectations
+            .package(&package.name, &package.version)
+            .with_context(|| {
+                format!(
+                    "translate lock package {name} {version}",
+                    name = package.name,
+                    version = package.version
+                )
+            })?;
+        ensure!(
+            identities.insert((expected.crates_io_name.clone(), package.version.clone())),
+            "the translation would hold two packages named {} {}",
+            expected.crates_io_name,
+            package.version
+        );
+    }
+    apply(&mut document, &index, expectations)?;
+    fs::write(&path, document.to_string())
+        .with_context(|| format!("write translated {}", path.display()))?;
+    Ok(())
+}
+
+/// The new name, source, and checksum of one lock package.
+struct Translated {
+    name: String,
+    source: Option<String>,
+    checksum: Option<String>,
+}
+
+impl Translated {
+    /// Returns the translation of one package of the lock.
+    fn of(expectations: &Expectations, package: &LockedPackage) -> Result<Self> {
+        let expected = expectations.package(&package.name, &package.version)?;
+        match (&expected.curated_checksum, &expected.derived_checksum) {
+            (None, None) => Ok(Self {
+                name: expected.crates_io_name.clone(),
+                source: None,
+                checksum: None,
+            }),
+            (Some(_), Some(checksum)) => Ok(Self {
+                name: expected.crates_io_name.clone(),
+                source: Some(crates_io_source()),
+                checksum: Some(checksum.clone()),
+            }),
+            (curated, derived) => bail!(
+                "package {} {} has curated checksum {curated:?} but derived checksum {derived:?}",
+                package.name,
+                package.version
+            ),
+        }
+    }
+}
 
 /// The source that every external package of a translated lock names.
 fn crates_io_source() -> String {
     format!("registry+{CRATES_IO_INDEX}")
 }
 
-/// What one lock package becomes.
-#[derive(Clone, Debug)]
-struct Translated {
-    /// Package name in the translated lock.
-    name: String,
-    /// What happens to the `source` field.
-    source: SourceChange,
-    /// Replacement for the `checksum` field, absent to keep it.
-    checksum: Option<String>,
-}
-
-/// What happens to the `source` field of one lock package.
-#[derive(Clone, Debug)]
-enum SourceChange {
-    /// A workspace member keeps no source.
-    Keep,
-    /// The package moves to another registry.
-    Replace(String),
-}
-
-/// One package of a lock, as read.
-#[derive(Clone, Debug)]
-struct LockedPackage {
-    name: String,
-    version: Version,
-    source: Option<String>,
-    checksum: Option<String>,
-}
-
-/// Translates one `Cargo.lock` to crates.io, in the package entries and in every
-/// dependency list.
-///
-/// Mirrored identities keep their name, version, and checksum. A first-party
-/// identity of an earlier release takes its crates.io name and the checksum of
-/// its `crates-io.lock` entry. A released workspace member takes its crates.io
-/// name.
-///
-/// # Errors
-///
-/// Returns the crate names that the translation renamed, which a comparison
-/// with the curated archive maps the curated names through.
-///
-/// # Errors
-///
-/// Returns an error for a lock that cannot be read or parsed, holds a package
-/// whose source is not the curated registry or a workspace member, holds an
-/// identity the catalog does not have, or maps one package name to several
-/// crates.io names.
-pub(super) fn translate_lock(
-    checkout: &Path,
-    workspace: &Workspace,
-    plan: &ReleasePlan,
-    catalog: &CatalogSnapshot,
-    config: &CratesIoConfig,
-    earlier: &CratesIoLock,
-) -> Result<BTreeMap<String, String>> {
-    let path = checkout.join("Cargo.lock");
-    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let text =
-        String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8", path.display()))?;
-    let mut document: DocumentMut = text
-        .parse()
-        .with_context(|| format!("parse {}", path.display()))?;
-    let packages = read_packages(&document)?;
-    let mut translated = BTreeMap::new();
-    let mut renames: BTreeMap<String, String> = BTreeMap::new();
-    for package in &packages {
-        let target = translate_package(workspace, plan, catalog, config, earlier, package)
-            .with_context(|| {
-                format!(
-                    "translate lock package {} {}",
-                    package.name, package.version
-                )
-            })?;
-        if target.name != package.name {
-            match renames.get(&package.name) {
-                Some(previous) => ensure!(
-                    previous == &target.name,
-                    "lock packages named {:?} become both {previous:?} and {:?} on crates.io",
-                    package.name,
-                    target.name
-                ),
-                None => {
-                    renames.insert(package.name.clone(), target.name.clone());
-                }
-            }
-        }
-        translated.insert((package.name.clone(), package.version.clone()), target);
-    }
-    // Two versions of one crate share its crates.io name; two different crates
-    // may not.
-    let mut names: BTreeMap<&str, (&String, &Version)> = BTreeMap::new();
-    for ((name, version), target) in &translated {
-        if let Some((other_name, other_version)) =
-            names.insert(target.name.as_str(), (name, version))
-            && other_name != name
-        {
-            bail!(
-                "lock packages {other_name} {other_version} and {name} {version} both become {:?} on crates.io",
-                target.name
-            );
-        }
-    }
-    apply(&mut document, &translated, &renames)?;
-    fs::write(&path, document.to_string())
-        .with_context(|| format!("write translated {}", path.display()))?;
-    Ok(renames)
-}
-
-/// Returns every package of one lock.
-fn read_packages(document: &DocumentMut) -> Result<Vec<LockedPackage>> {
-    let mut packages = Vec::new();
-    for package in lock_packages(document)? {
+/// Applies the translation to one lock document.
+fn apply(document: &mut DocumentMut, index: &LockIndex, expectations: &Expectations) -> Result<()> {
+    let packages = document
+        .get_mut("package")
+        .and_then(Item::as_array_of_tables_mut)
+        .context("the lock file has no [[package]] array")?;
+    for package in packages.iter_mut() {
         let name = package
             .get("name")
             .and_then(Item::as_str)
-            .context("lock package has no name")?;
+            .context("a lock package has no name")?
+            .to_owned();
         let version = package
             .get("version")
             .and_then(Item::as_str)
             .with_context(|| format!("lock package {name:?} has no version"))?;
         let version = Version::parse(version)
             .with_context(|| format!("parse the version of lock package {name:?}"))?;
-        packages.push(LockedPackage {
-            name: name.to_owned(),
-            version,
-            source: package
-                .get("source")
-                .and_then(Item::as_str)
-                .map(str::to_owned),
-            checksum: package
-                .get("checksum")
-                .and_then(Item::as_str)
-                .map(str::to_owned),
-        });
-    }
-    Ok(packages)
-}
-
-/// Returns the `[[package]]` array of one lock.
-fn lock_packages(document: &DocumentMut) -> Result<&ArrayOfTables> {
-    document
-        .get("package")
-        .and_then(Item::as_array_of_tables)
-        .context("lock file has no [[package]] array")
-}
-
-/// Translates one lock package.
-fn translate_package(
-    workspace: &Workspace,
-    plan: &ReleasePlan,
-    catalog: &CatalogSnapshot,
-    config: &CratesIoConfig,
-    earlier: &CratesIoLock,
-    package: &LockedPackage,
-) -> Result<Translated> {
-    match &package.source {
-        None => translate_member(workspace, plan, package),
-        Some(source) if CURATED_LOCK_SOURCES.contains(&source.as_str()) => {
-            let identity = catalog
-                .identity(&package.name, &package.version)
-                .with_context(|| {
-                    format!(
-                        "registry/main.lock holds no identity for the curated package {} {}",
-                        package.name, package.version
-                    )
-                })?;
-            translate_identity(plan, config, earlier, identity, package)
+        let locked = index
+            .package(&name, &version)
+            .with_context(|| format!("the lock holds no package {name} {version}"))?;
+        let translated = Translated::of(expectations, locked)
+            .with_context(|| format!("translate lock package {name} {version}"))?;
+        package.insert("name", value(translated.name.as_str()));
+        match &translated.source {
+            Some(source) => {
+                package.insert("source", value(source.as_str()));
+            }
+            None => {
+                package.remove("source");
+            }
         }
-        Some(source) if source == &crates_io_source() => bail!(
-            "lock package {} {} comes from crates.io directly, which the curated registry cannot serve",
-            package.name,
-            package.version
-        ),
-        Some(source) => bail!(
-            "lock package {} {} uses the unsupported source {source:?}",
-            package.name,
-            package.version
-        ),
-    }
-}
-
-/// Translates a lock package without a source, which must be a workspace member.
-fn translate_member(
-    workspace: &Workspace,
-    plan: &ReleasePlan,
-    package: &LockedPackage,
-) -> Result<Translated> {
-    let member = workspace.member(&package.name).with_context(|| {
-        format!(
-            "lock package {} {} has no source and is not a workspace member",
-            package.name, package.version
-        )
-    })?;
-    ensure!(
-        member.version == package.version,
-        "lock package {} {} disagrees with the workspace member's version {}",
-        package.name,
-        package.version,
-        member.version
-    );
-    let name = plan
-        .crates_io_name(&package.name)
-        .map_or_else(|| package.name.clone(), str::to_owned);
-    Ok(Translated {
-        name,
-        source: SourceChange::Keep,
-        checksum: None,
-    })
-}
-
-/// Translates a lock package of the curated registry.
-fn translate_identity(
-    plan: &ReleasePlan,
-    config: &CratesIoConfig,
-    earlier: &CratesIoLock,
-    identity: &CatalogIdentity,
-    package: &LockedPackage,
-) -> Result<Translated> {
-    let source = SourceChange::Replace(crates_io_source());
-    let Some(release) = &identity.release else {
-        let checksum = package.checksum.as_deref().with_context(|| {
-            format!(
-                "lock package {} {} has no checksum, but crates.io serves it byte for byte",
-                package.name, package.version
-            )
-        })?;
-        ensure!(
-            checksum == identity.crate_sha256,
-            "lock package {} {} records checksum {checksum:?} but registry/main.lock records {:?}; crates.io serves the mirrored bytes",
-            package.name,
-            package.version,
-            identity.crate_sha256
-        );
-        return Ok(Translated {
-            name: package.name.clone(),
-            source,
-            checksum: None,
-        });
-    };
-    if plan.is_released(&identity.name) {
-        bail!(
-            "{} is released from the same tag, and crates.io cannot resolve a dependency between two released crates of one tag",
-            identity.name
-        );
-    }
-    if config
-        .abandoned_version(&identity.name, &identity.version)
-        .is_some()
-    {
-        bail!(
-            "{} {} is abandoned on crates.io",
-            identity.name,
-            identity.version
-        );
-    }
-    let entry = earlier
-        .entry(&identity.name, &identity.version)
-        .with_context(|| {
-            format!(
-                "{} {} comes from tag {:?} of {:?}, which has no entry in crates-io.lock; crates.io does not have it yet",
-                identity.name, identity.version, release.tag, release.git
-            )
-        })?;
-    ensure!(
-        entry.pkgre_crate_sha256 == identity.crate_sha256,
-        "entry {} {} records pkgre archive checksum {:?} but registry/main.lock records {:?}",
-        identity.name,
-        identity.version,
-        entry.pkgre_crate_sha256,
-        identity.crate_sha256
-    );
-    Ok(Translated {
-        name: entry.crates_io_name.clone(),
-        source,
-        checksum: Some(entry.crate_sha256.clone()),
-    })
-}
-
-/// Applies the translation to one lock document.
-fn apply(
-    document: &mut DocumentMut,
-    translated: &BTreeMap<(String, Version), Translated>,
-    renames: &BTreeMap<String, String>,
-) -> Result<()> {
-    let packages = document
-        .get_mut("package")
-        .and_then(Item::as_array_of_tables_mut)
-        .context("lock file has no [[package]] array")?;
-    for package in packages.iter_mut() {
-        let name = package
-            .get("name")
-            .and_then(Item::as_str)
-            .context("lock package has no name")?
-            .to_owned();
-        let version = package
-            .get("version")
-            .and_then(Item::as_str)
-            .context("lock package has no version")?;
-        let version = Version::parse(version)
-            .with_context(|| format!("parse the version of lock package {name:?}"))?;
-        let target = translated
-            .get(&(name.clone(), version))
-            .with_context(|| format!("lock package {name} has no translation"))?;
-        package.insert("name", value(target.name.as_str()));
-        if let SourceChange::Replace(source) = &target.source {
-            package.insert("source", value(source.as_str()));
-        }
-        if let Some(checksum) = &target.checksum {
+        if let Some(checksum) = &translated.checksum {
             package.insert("checksum", value(checksum.as_str()));
         }
-        rewrite_dependencies(package, translated, renames)
+        rewrite_dependencies(package, locked, expectations)
             .with_context(|| format!("rewrite the dependencies of lock package {name}"))?;
     }
     Ok(())
@@ -342,8 +297,8 @@ fn apply(
 /// Rewrites the `dependencies` list of one lock package.
 fn rewrite_dependencies(
     package: &mut dyn TableLike,
-    translated: &BTreeMap<(String, Version), Translated>,
-    renames: &BTreeMap<String, String>,
+    locked: &LockedPackage,
+    expectations: &Expectations,
 ) -> Result<()> {
     let Some(Item::Value(dependencies)) = package.get_mut("dependencies") else {
         return Ok(());
@@ -352,29 +307,21 @@ fn rewrite_dependencies(
         bail!("lock package dependencies are not an array");
     };
     let mut rewritten = Vec::with_capacity(array.len());
-    for item in array.iter() {
-        let text = item.as_str().context("lock dependency is not a string")?;
-        let (name, version) = match text.split_once(' ') {
-            Some((name, version)) => (name, Some(version)),
-            None => (text, None),
-        };
-        let new_name = if let Some(version) = version {
-            let version = Version::parse(version)
-                .with_context(|| format!("parse the version of dependency {text:?}"))?;
-            translated
-                .get(&(name.to_owned(), version))
-                .with_context(|| format!("lock dependency {text:?} has no package"))?
-                .name
-                .clone()
+    for (position, item) in array.iter().enumerate() {
+        let text = item.as_str().context("a lock dependency is not a string")?;
+        let (name, version) = locked
+            .dependencies
+            .get(position)
+            .with_context(|| format!("the dependency {text:?} has no resolved identity"))?;
+        let expected = expectations.package(name, version)?;
+        // A version qualifier stays, since Cargo writes it only when two packages
+        // share a name; a source qualifier names the old registry, which every
+        // external package leaves for crates.io.
+        let qualified = text.split(' ').nth(1).is_some();
+        rewritten.push(if qualified {
+            format!("{} {version}", expected.crates_io_name)
         } else {
-            renames
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| name.to_owned())
-        };
-        rewritten.push(match version {
-            Some(version) => format!("{new_name} {version}"),
-            None => new_name,
+            expected.crates_io_name.clone()
         });
     }
     let mut array = toml_edit::Array::new();

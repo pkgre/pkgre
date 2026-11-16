@@ -15,7 +15,10 @@ use super::super::config::CratesIoConfig;
 use super::super::isolation::ensure_no_cargo_configuration;
 use super::super::lock::{CRATES_IO_LOCK_SCHEMA, CratesIoLock, CratesIoPackage};
 use super::super::state::RepositoryState;
-use super::{DerivationSources, DerivedPackage, ReleasedCrate, derive_release};
+use super::cargo_lock::LockIndex;
+use super::compare::{ArchiveToCompare, compare_archives};
+use super::expectations::Expectations;
+use super::{ReleasedCrate, Sources, derive_release_with};
 use crate::artifact::sha256_bytes;
 use crate::update::read_crate_archive;
 use fixtures::{LocalSource, Release, Variant};
@@ -23,13 +26,28 @@ use fixtures::{LocalSource, Release, Variant};
 /// The released crates of the fixture, by package name.
 const RELEASED: [&str; 2] = ["example-lib", "example-bin"];
 
+/// Builds the release, its curated archives, and the catalog repository.
+fn fixture(parent: &Path, variant: Variant) -> (LocalSource, Release, fixtures::Catalog) {
+    let source = LocalSource::build(&parent.join("local"));
+    let release = fixtures::release(parent, &source, variant);
+    let catalog = fixtures::catalog(parent, &source, &release, variant);
+    (source, release, catalog)
+}
+
+/// Builds only the source and the release, for a refusal that needs no catalog.
+fn release_only(parent: &Path, variant: Variant) -> (LocalSource, Release) {
+    let source = LocalSource::build(&parent.join("local"));
+    let release = fixtures::release(parent, &source, variant);
+    (source, release)
+}
+
 /// Derives the fixture release from a catalog repository.
 fn derive_from_catalog(
     release: &Release,
     state: &RepositoryState,
     curated: &BTreeMap<String, Vec<u8>>,
     source: &Path,
-) -> Result<Vec<DerivedPackage>> {
+) -> Result<Vec<super::DerivedPackage>> {
     let self_publish = state
         .self_publish
         .as_ref()
@@ -42,17 +60,13 @@ fn derive_from_catalog(
         .expect("the catalog holds the release");
     let released = released_crates(release, curated);
     let working = fixtures::Temp::new("pkgre-derive-work");
-    derive_release(
+    derive_release_with(
         &facts,
         &released,
         &state.catalog,
         &self_publish.config,
         &self_publish.lock,
-        Some(&DerivationSources {
-            fetch_repository: &release.root,
-            directory: Some(source),
-            root: working.path(),
-        }),
+        Sources::local(&release.root, Some(source), working.path()),
     )
 }
 
@@ -67,14 +81,6 @@ fn released_crates(release: &Release, curated: &BTreeMap<String, Vec<u8>>) -> Ve
             archive: curated[*name].clone(),
         })
         .collect()
-}
-
-/// Builds the release, its curated archives, and the catalog repository.
-fn fixture(parent: &Path, variant: Variant) -> (LocalSource, Release, fixtures::Catalog) {
-    let source = LocalSource::build(&parent.join("local"));
-    let release = fixtures::release(parent, &source, variant);
-    let catalog = fixtures::catalog(parent, &source, &release, variant);
-    (source, release, catalog)
 }
 
 /// The catalog facts of a fixture release, built without a catalog repository.
@@ -108,7 +114,7 @@ fn memory_state(release: &Release, variant: Variant) -> MemoryState {
         removed: false,
         release: Some(GitRelease {
             git: fixtures::REPOSITORY.to_owned(),
-            tag: "rust/v0.9.0".to_owned(),
+            tag: fixtures::EARLIER_TAG.to_owned(),
             tag_oid: "9".repeat(40),
             commit: "9".repeat(40),
             cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the version"),
@@ -125,6 +131,21 @@ fn memory_state(release: &Release, variant: Variant) -> MemoryState {
                 tag: "fork/v1.0.0".to_owned(),
                 tag_oid: "7".repeat(40),
                 commit: "7".repeat(40),
+                cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the version"),
+            }),
+        });
+    }
+    if variant.server_needs_first_party {
+        identities.push(CatalogIdentity {
+            name: "unknown-lib".to_owned(),
+            version: Version::parse("1.0.0").expect("parse the fixture version"),
+            crate_sha256: fixtures::crate_checksum("unknown-lib", "1.0.0"),
+            removed: false,
+            release: Some(GitRelease {
+                git: fixtures::REPOSITORY.to_owned(),
+                tag: "rust/v0.8.0".to_owned(),
+                tag_oid: "8".repeat(40),
+                commit: "8".repeat(40),
                 cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the version"),
             }),
         });
@@ -161,37 +182,46 @@ fn memory_state(release: &Release, variant: Variant) -> MemoryState {
         publish_names,
         publish_declarations,
     };
-    let config = CratesIoConfig::parse(
+    let config = config_for(fixtures::REPOSITORY);
+    let mut lock = CratesIoLock {
+        schema: CRATES_IO_LOCK_SCHEMA,
+        packages: Vec::new(),
+    };
+    lock.packages.push(earlier_entry());
+    MemoryState {
+        catalog,
+        config,
+        lock,
+    }
+}
+
+/// Returns the `crates-io.lock` entry of the fixture's earlier release.
+fn earlier_entry() -> CratesIoPackage {
+    CratesIoPackage {
+        name: "earlier-lib".to_owned(),
+        version: Version::parse("0.9.0").expect("parse the fixture version"),
+        crates_io_name: fixtures::EARLIER_CRATES_IO_NAME.to_owned(),
+        crate_sha256: fixtures::crate_checksum(fixtures::EARLIER_CRATES_IO_NAME, "0.9.0"),
+        pkgre_crate_sha256: fixtures::crate_checksum("earlier-lib", "0.9.0"),
+        git: fixtures::REPOSITORY.to_owned(),
+        tag: fixtures::EARLIER_TAG.to_owned(),
+        commit: "9".repeat(40),
+        cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the pinned version"),
+    }
+}
+
+/// Returns the self-publishing config of one fixture repository.
+fn config_for(repository: &str) -> CratesIoConfig {
+    CratesIoConfig::parse(
         format!(
-            "schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = {:?}\ntag-prefix = {:?}\n\n[names]\nexample-lib = {:?}\n",
-            fixtures::REPOSITORY,
+            "schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = {repository:?}\ntag-prefix = {:?}\n\n[names]\nexample-lib = {:?}\n",
             fixtures::TAG_PREFIX,
             fixtures::LIB_CRATES_IO_NAME
         )
         .as_bytes(),
         Path::new("crates-io.toml"),
     )
-    .expect("parse the fixture config");
-    let mut lock = CratesIoLock {
-        schema: CRATES_IO_LOCK_SCHEMA,
-        packages: Vec::new(),
-    };
-    lock.packages.push(CratesIoPackage {
-        name: "earlier-lib".to_owned(),
-        version: Version::parse("0.9.0").expect("parse the fixture version"),
-        crates_io_name: "pkgre-pkgs-earlier-lib".to_owned(),
-        crate_sha256: fixtures::crate_checksum("earlier-lib", "0.9.0"),
-        pkgre_crate_sha256: fixtures::crate_checksum("earlier-lib", "0.9.0"),
-        git: fixtures::REPOSITORY.to_owned(),
-        tag: "rust/v0.9.0".to_owned(),
-        commit: "9".repeat(40),
-        cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the pinned version"),
-    });
-    MemoryState {
-        catalog,
-        config,
-        lock,
-    }
+    .expect("parse the fixture config")
 }
 
 /// Derives a fixture release against the catalog facts of `MemoryState`, with
@@ -200,7 +230,7 @@ fn derive_from_memory(
     release: &Release,
     state: &MemoryState,
     source: &Path,
-) -> Result<Vec<DerivedPackage>> {
+) -> Result<Vec<super::DerivedPackage>> {
     let version = Version::parse(fixtures::VERSION).expect("parse the fixture version");
     let facts = state
         .catalog
@@ -217,18 +247,42 @@ fn derive_from_memory(
         })
         .collect::<Vec<_>>();
     let working = fixtures::Temp::new("pkgre-derive-work");
-    derive_release(
+    derive_release_with(
         &facts,
         &released,
         &state.catalog,
         &state.config,
         &state.lock,
-        Some(&DerivationSources {
-            fetch_repository: &release.root,
-            directory: Some(source),
-            root: working.path(),
-        }),
+        Sources::local(&release.root, Some(source), working.path()),
     )
+}
+
+/// Returns the expectations of one fixture catalog, as the derivation builds
+/// them.
+fn expectations_for(release: &Release, state: &RepositoryState) -> Expectations {
+    let self_publish = state
+        .self_publish
+        .as_ref()
+        .expect("the catalog declares state");
+    let lock = LockIndex::load(&release.root.join("Cargo.lock")).expect("load the fixture lock");
+    let published = BTreeMap::from([
+        (
+            "example-lib".to_owned(),
+            fixtures::LIB_CRATES_IO_NAME.to_owned(),
+        ),
+        (
+            "example-bin".to_owned(),
+            fixtures::BIN_CRATES_IO_NAME.to_owned(),
+        ),
+    ]);
+    Expectations::build(
+        &lock,
+        &state.catalog,
+        &self_publish.config,
+        &self_publish.lock,
+        &published,
+    )
+    .expect("build the expectations")
 }
 
 #[test]
@@ -293,19 +347,27 @@ fn derives_the_release_and_compares_it_with_the_curated_archives() {
     );
     assert_eq!(manifest["bin"][0]["name"].as_str(), Some("example-bin"));
     assert_eq!(manifest["bin"][0]["path"].as_str(), Some("src/main.rs"));
-
-    // The lock translation renames the earlier release to its crates.io name,
-    // keeps the mirrored identity's name, and names crates.io for both.
+    // The earlier release is renamed in the inherited dependency and in the
+    // build dependency, and both locks carry the checksum of their own registry.
+    assert_eq!(
+        manifest["dependencies"]["earlier-lib"]["package"].as_str(),
+        Some(fixtures::EARLIER_CRATES_IO_NAME)
+    );
     let lock = archived_lock(&bin.entry, &bin.archive, &version);
     let packages = lock["package"].as_array().expect("the lock holds packages");
     let earlier = packages
         .iter()
-        .find(|package| package["name"].as_str() == Some("pkgre-pkgs-earlier-lib"))
+        .find(|package| package["name"].as_str() == Some(fixtures::EARLIER_CRATES_IO_NAME))
         .expect("the earlier release is renamed in the lock");
     assert_eq!(earlier["version"].as_str(), Some("0.9.0"));
     assert_eq!(
         earlier["checksum"].as_str(),
-        Some(fixtures::crate_checksum("earlier-lib", "0.9.0").as_str())
+        Some(fixtures::crate_checksum(fixtures::EARLIER_CRATES_IO_NAME, "0.9.0").as_str())
+    );
+    assert_ne!(
+        earlier["checksum"].as_str(),
+        Some(fixtures::crate_checksum("earlier-lib", "0.9.0").as_str()),
+        "the crates.io checksum is not the curated archive's"
     );
     let mirrored = packages
         .iter()
@@ -314,6 +376,12 @@ fn derives_the_release_and_compares_it_with_the_curated_archives() {
     assert_eq!(
         mirrored["source"].as_str(),
         Some("registry+https://github.com/rust-lang/crates.io-index")
+    );
+    // The unpublished server's build dependency is renamed as well.
+    let serve_manifest = archived_manifest(&lib.entry, &lib.archive, &version);
+    assert_eq!(
+        serve_manifest["package"]["name"].as_str(),
+        Some(fixtures::LIB_CRATES_IO_NAME)
     );
 }
 
@@ -329,6 +397,44 @@ fn archived_lock(entry: &CratesIoPackage, archive: &[u8], version: &Version) -> 
     let archive = read_crate_archive(&entry.crates_io_name, version, archive, &["Cargo.lock"])
         .expect("read the derived archive");
     toml::from_slice(archive.contents["Cargo.lock"].as_slice()).expect("parse the lock")
+}
+
+#[test]
+fn derives_when_the_catalog_holds_older_versions_of_a_dependency() {
+    let temporary = fixtures::Temp::new("pkgre-derive-versions");
+    let (source, release, catalog) = fixture(temporary.path(), Variant::default());
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    // The catalog keeps an older version of a dependency, which the tag's lock
+    // does not use. The derivation must resolve the dependency through the lock.
+    let mut snapshot = state.catalog.clone();
+    snapshot.identities.push(CatalogIdentity {
+        name: "mirrored-dep".to_owned(),
+        version: Version::parse("0.3.1").expect("parse the fixture version"),
+        crate_sha256: "5".repeat(64),
+        removed: false,
+        release: None,
+    });
+    snapshot.identities.push(CatalogIdentity {
+        name: "earlier-lib".to_owned(),
+        version: Version::parse("0.10.0").expect("parse the fixture version"),
+        crate_sha256: "6".repeat(64),
+        removed: false,
+        release: Some(GitRelease {
+            git: fixtures::REPOSITORY.to_owned(),
+            tag: "rust/v0.10.0".to_owned(),
+            tag_oid: "a".repeat(40),
+            commit: "a".repeat(40),
+            cargo_version: Version::parse(fixtures::CARGO_VERSION).expect("parse the version"),
+        }),
+    });
+    let state = RepositoryState {
+        catalog: snapshot,
+        catalog_root: state.catalog_root.clone(),
+        self_publish: state.self_publish,
+    };
+    let packages = derive_from_catalog(&release, &state, &catalog.curated, &source.root)
+        .expect("older catalog versions do not change the resolution");
+    assert_eq!(packages.len(), 2);
 }
 
 #[test]
@@ -362,6 +468,189 @@ fn refuses_a_changed_source_file() {
     assert!(error.contains("src/lib.rs"), "{error}");
 }
 
+/// One edit of a derived archive's files.
+type ArchiveEdit = fn(&mut BTreeMap<String, fixtures::ArchiveFile>);
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn refuses_a_redirected_dependency_or_lock_source() {
+    let temporary = fixtures::Temp::new("pkgre-derive-redirect");
+    let (source, release, catalog) = fixture(temporary.path(), Variant::default());
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    let packages = derive_from_catalog(&release, &state, &catalog.curated, &source.root)
+        .expect("derive the fixture release");
+    let bin = packages
+        .iter()
+        .find(|package| package.entry.name == "example-bin")
+        .expect("the binary is derived");
+    let expectations = expectations_for(&release, &state);
+    let version = Version::parse(fixtures::VERSION).expect("parse the fixture version");
+    let curated = ArchiveToCompare {
+        name: "example-bin",
+        bytes: &catalog.curated["example-bin"],
+    };
+    let compare = |archive: &[u8]| {
+        compare_archives(
+            &version,
+            &curated,
+            &ArchiveToCompare {
+                name: fixtures::BIN_CRATES_IO_NAME,
+                bytes: archive,
+            },
+            &expectations,
+        )
+        .map_err(|error| format!("{error:#}"))
+    };
+    let files = fixtures::archive_files(fixtures::BIN_CRATES_IO_NAME, &version, &bin.archive);
+    // An unchanged repack must still compare equal.
+    compare(&fixtures::tar_gz(
+        fixtures::BIN_CRATES_IO_NAME,
+        &version,
+        &files,
+    ))
+    .expect("an unchanged repack compares equal");
+
+    let cases: &[(&str, ArchiveEdit, &str)] = &[
+        (
+            "dependency renamed to another crate",
+            |files| {
+                let text = manifest_text(files);
+                files.insert(
+                    "Cargo.toml".to_owned(),
+                    fixtures::ArchiveFile {
+                        contents: text
+                            .replacen(
+                                "[dependencies.mirrored-dep]\n",
+                                "[dependencies.mirrored-dep]\npackage = \"evil-crate\"\n",
+                                1,
+                            )
+                            .into_bytes(),
+                        mode: 0o644,
+                    },
+                );
+            },
+            "is renamed to Some(\"evil-crate\")",
+        ),
+        (
+            "dependency moved to another registry",
+            |files| {
+                let text = manifest_text(files);
+                files.insert(
+                    "Cargo.toml".to_owned(),
+                    fixtures::ArchiveFile {
+                        contents: text
+                            .replacen(
+                                "[dependencies.mirrored-dep]\n",
+                                "[dependencies.mirrored-dep]\nregistry-index = \"sparse+https://evil.example/\"\n",
+                                1,
+                            )
+                            .into_bytes(),
+                        mode: 0o644,
+                    },
+                );
+            },
+            "names another registry",
+        ),
+        (
+            "lock package moved to another registry without a checksum",
+            |files| {
+                let lock = lock_text(files);
+                let mut out = String::new();
+                let mut in_mirrored = false;
+                for line in lock.lines() {
+                    if line.starts_with("name = ") {
+                        in_mirrored = line == "name = \"mirrored-dep\"";
+                    }
+                    if in_mirrored && line.starts_with("source = ") {
+                        out.push_str("source = \"sparse+https://evil.example/\"\n");
+                        continue;
+                    }
+                    if in_mirrored && line.starts_with("checksum = ") {
+                        continue;
+                    }
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                files.insert(
+                    "Cargo.lock".to_owned(),
+                    fixtures::ArchiveFile {
+                        contents: out.into_bytes(),
+                        mode: 0o644,
+                    },
+                );
+            },
+            "comes from Some(\"sparse+https://evil.example/\")",
+        ),
+        (
+            "source file made executable",
+            |files| {
+                let path = "src/main.rs";
+                let file = files.get_mut(path).expect("the archive holds the source");
+                file.mode = 0o755;
+            },
+            "differs in its permissions",
+        ),
+    ];
+    for (label, edit, expected) in cases {
+        let mut tampered = files.clone();
+        edit(&mut tampered);
+        let archive = fixtures::tar_gz(fixtures::BIN_CRATES_IO_NAME, &version, &tampered);
+        let error = compare(&archive).expect_err(label);
+        assert!(
+            error.contains(expected),
+            "{label}: {expected:?} not in {error}"
+        );
+    }
+}
+
+/// Returns the derived manifest of one set of archive files.
+fn manifest_text(files: &BTreeMap<String, fixtures::ArchiveFile>) -> String {
+    String::from_utf8(
+        files
+            .get("Cargo.toml")
+            .expect("the archive holds a manifest")
+            .contents
+            .clone(),
+    )
+    .expect("the manifest is UTF-8")
+}
+
+/// Returns the derived lock of one set of archive files.
+fn lock_text(files: &BTreeMap<String, fixtures::ArchiveFile>) -> String {
+    String::from_utf8(
+        files
+            .get("Cargo.lock")
+            .expect("the archive holds a lock")
+            .contents
+            .clone(),
+    )
+    .expect("the lock is UTF-8")
+}
+
+#[test]
+fn rewrites_a_stale_package_key() {
+    let temporary = fixtures::Temp::new("pkgre-derive-stale");
+    let variant = Variant {
+        stale_package: true,
+        ..Variant::default()
+    };
+    let (source, release, catalog) = fixture(temporary.path(), variant);
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    let packages = derive_from_catalog(&release, &state, &catalog.curated, &source.root)
+        .expect("the stale package key is rewritten");
+    let version = Version::parse(fixtures::VERSION).expect("parse the fixture version");
+    let bin = packages
+        .iter()
+        .find(|package| package.entry.name == "example-bin")
+        .expect("the binary is derived");
+    let manifest = archived_manifest(&bin.entry, &bin.archive, &version);
+    assert_eq!(
+        manifest["dependencies"]["earlier-lib"]["package"].as_str(),
+        Some(fixtures::EARLIER_CRATES_IO_NAME),
+        "the stale key becomes the crates.io name"
+    );
+}
+
 #[test]
 fn refuses_a_dependency_between_two_released_crates_of_one_tag() {
     let temporary = fixtures::Temp::new("pkgre-derive-sibling");
@@ -369,8 +658,7 @@ fn refuses_a_dependency_between_two_released_crates_of_one_tag() {
         sibling_dependency: true,
         ..Variant::default()
     };
-    let source = LocalSource::build(&temporary.path().join("local"));
-    let release = fixtures::release(temporary.path(), &source, variant);
+    let (source, release) = release_only(temporary.path(), variant);
     let state = memory_state(&release, variant);
     let error = derive_from_memory(&release, &state, &source.root)
         .expect_err("a dependency between two released crates is refused");
@@ -389,8 +677,7 @@ fn refuses_a_dependency_on_a_fork() {
         fork_dependency: true,
         ..Variant::default()
     };
-    let source = LocalSource::build(&temporary.path().join("local"));
-    let release = fixtures::release(temporary.path(), &source, variant);
+    let (source, release) = release_only(temporary.path(), variant);
     let state = memory_state(&release, variant);
     let error = derive_from_memory(&release, &state, &source.root)
         .expect_err("a dependency on a fork is refused");
@@ -400,19 +687,60 @@ fn refuses_a_dependency_on_a_fork() {
 }
 
 #[test]
-fn refuses_patch_tables() {
-    let temporary = fixtures::Temp::new("pkgre-derive-patch");
+fn refuses_a_first_party_dependency_without_an_entry() {
+    let temporary = fixtures::Temp::new("pkgre-derive-no-entry");
+    let (source, release) = release_only(temporary.path(), Variant::default());
+    let mut state = memory_state(&release, Variant::default());
+    state.lock.packages.clear();
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a first-party dependency without an entry is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains("earlier-lib"), "{error}");
+    assert!(error.contains("has no entry in crates-io.lock"), "{error}");
+}
+
+#[test]
+fn refuses_an_unreleased_members_dependency_that_crates_io_lacks() {
+    let temporary = fixtures::Temp::new("pkgre-derive-server");
     let variant = Variant {
-        patch: true,
+        server_needs_first_party: true,
         ..Variant::default()
     };
-    let source = LocalSource::build(&temporary.path().join("local"));
-    let release = fixtures::release(temporary.path(), &source, variant);
+    let (source, release) = release_only(temporary.path(), variant);
     let state = memory_state(&release, variant);
-    let error =
-        derive_from_memory(&release, &state, &source.root).expect_err("a [patch] table is refused");
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("an unpublished member's unresolvable dependency is refused");
     let error = format!("{error:#}");
-    assert!(error.contains("[patch]"), "{error}");
+    assert!(error.contains("unknown-lib"), "{error}");
+    assert!(error.contains("has no entry in crates-io.lock"), "{error}");
+}
+
+#[test]
+fn refuses_patch_and_replace_tables() {
+    for (label, variant) in [
+        (
+            "[patch]",
+            Variant {
+                patch: true,
+                ..Variant::default()
+            },
+        ),
+        (
+            "[replace]",
+            Variant {
+                replace: true,
+                ..Variant::default()
+            },
+        ),
+    ] {
+        let temporary = fixtures::Temp::new("pkgre-derive-table");
+        let (source, release) = release_only(temporary.path(), variant);
+        let state = memory_state(&release, variant);
+        let error = derive_from_memory(&release, &state, &source.root)
+            .expect_err("a table that crates.io cannot carry is refused");
+        let error = format!("{error:#}");
+        assert!(error.contains(label), "{error}");
+    }
 }
 
 #[test]
@@ -455,35 +783,53 @@ fn refuses_cargo_configuration_above_the_working_directory() {
             format!("{error:#}").contains("Cargo configuration"),
             "{error:#}"
         );
+        fs::remove_file(configuration.join("config.toml")).expect("remove the link");
     }
 }
 
-/// Copies every regular file of `source` to `destination`, keeping the layout.
-fn copy_tree(source: &Path, destination: &Path) {
-    fs::create_dir_all(destination).expect("create the copy");
-    let mut entries = fs::read_dir(source)
-        .expect("read the source")
-        .map(|entry| entry.expect("read the entry").path())
-        .collect::<Vec<_>>();
-    entries.sort();
-    for path in entries {
-        let metadata = fs::symlink_metadata(&path).expect("inspect the entry");
-        let target = destination.join(path.file_name().expect("the entry has a name"));
-        if metadata.is_dir() {
-            copy_tree(&path, &target);
-        } else {
-            assert!(metadata.is_file(), "{} is a regular file", path.display());
-            fs::copy(&path, &target).expect("copy the file");
-        }
-    }
+#[test]
+#[cfg(unix)]
+fn refuses_configuration_above_a_symlinked_ancestor() {
+    let temporary = fixtures::Temp::new("pkgre-cargo-symlink");
+    let physical = temporary.path().join("physical");
+    fs::create_dir_all(physical.join("sub")).expect("create the physical directory");
+    let link = temporary.path().join("link");
+    std::os::unix::fs::symlink(&physical, &link).expect("create the symbolic link");
+    let working = link.join("sub/work");
+    ensure_no_cargo_configuration(&working).expect("the physical directory has no configuration");
+    fs::create_dir_all(physical.join(".cargo")).expect("create the configuration directory");
+    fs::write(
+        physical.join(".cargo/config.toml"),
+        "[alias]\nprobe = \"version\"\n",
+    )
+    .expect("write the configuration");
+    let error = ensure_no_cargo_configuration(&working)
+        .expect_err("configuration behind a symbolic link is refused");
+    assert!(
+        format!("{error:#}").contains("could replace crates.io"),
+        "{error:#}"
+    );
 }
 
-/// Returns the checkout of the repository that these tests belong to.
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("the manifest directory has a parent")
-        .to_path_buf()
+#[test]
+fn parses_lock_dependency_entries_with_a_source() {
+    let lock = LockIndex::parse(
+        b"version = 4\n\n[[package]]\nname = \"example-bin\"\nversion = \"1.0.0\"\ndependencies = [\n \"pinned 0.3.0\",\n \"qualified 0.2.0 (sparse+https://rust.pkg.re/)\",\n]\n\n[[package]]\nname = \"pinned\"\nversion = \"0.3.0\"\nsource = \"sparse+https://rust.pkg.re/\"\nchecksum = \"0111111111111111111111111111111111111111111111111111111111111111\"\n\n[[package]]\nname = \"qualified\"\nversion = \"0.2.0\"\nsource = \"sparse+https://rust.pkg.re/\"\nchecksum = \"0211111111111111111111111111111111111111111111111111111111111111\"\n",
+    )
+    .expect("parse a lock with a qualified dependency");
+    let package = lock
+        .package(
+            "example-bin",
+            &Version::parse("1.0.0").expect("parse the version"),
+        )
+        .expect("the lock holds the binary");
+    assert_eq!(package.dependencies.len(), 2);
+    assert_eq!(package.dependencies[0].0, "pinned");
+    assert_eq!(package.dependencies[1].0, "qualified");
+    assert_eq!(
+        package.dependencies[1].1,
+        Version::parse("0.2.0").expect("parse the version")
+    );
 }
 
 #[test]
@@ -496,7 +842,7 @@ fn self_publish_lock_records_the_entries_and_changes_nothing_twice() {
         source: &source.root,
         root: temporary.path(),
     };
-    let summary = super::super::lock_command::self_publish_lock_in(&catalog.root, Some(&local))
+    let summary = super::super::lock_command::self_publish_lock_in(&catalog.root, &local)
         .expect("record the release");
     assert!(summary.changed);
     assert_eq!(summary.releases, 1);
@@ -518,13 +864,17 @@ fn self_publish_lock_records_the_entries_and_changes_nothing_twice() {
         assert_eq!(recorded.git, fixtures::REPOSITORY);
         assert_eq!(recorded.tag, fixtures::tag());
         assert_eq!(recorded.commit, release.commit);
+        assert_ne!(
+            recorded.crate_sha256, recorded.pkgre_crate_sha256,
+            "an earlier release's crates.io checksum is not its curated checksum"
+        );
     }
     crate::self_publish::check_repository(&catalog.root, None)
         .expect("the offline checks accept the written lock");
 
     let path = catalog.root.join("self-publish/crates-io.lock");
     let before = fs::read(&path).expect("read the written lock");
-    let second = super::super::lock_command::self_publish_lock_in(&catalog.root, Some(&local))
+    let second = super::super::lock_command::self_publish_lock_in(&catalog.root, &local)
         .expect("a second run derives nothing");
     assert!(!second.changed);
     assert!(second.entries.is_empty());
@@ -534,16 +884,7 @@ fn self_publish_lock_records_the_entries_and_changes_nothing_twice() {
 
 #[test]
 fn refuses_to_derive_a_removed_identity() {
-    let config = CratesIoConfig::parse(
-        format!(
-            "schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = {:?}\ntag-prefix = {:?}\n",
-            fixtures::REPOSITORY,
-            fixtures::TAG_PREFIX
-        )
-        .as_bytes(),
-        Path::new("crates-io.toml"),
-    )
-    .expect("parse the fixture config");
+    let config = config_for(fixtures::REPOSITORY);
     let state = RepositoryState {
         catalog: CatalogSnapshot {
             identities: vec![CatalogIdentity {
@@ -582,9 +923,13 @@ fn refuses_to_derive_a_removed_identity() {
 }
 
 #[test]
-#[ignore = "needs the network: it reads crates.io's index and the pkgre registry"]
+#[ignore = "needs the network and PKGRE_REHEARSAL_CATALOG"]
 #[allow(clippy::too_many_lines)]
 fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
+    let catalog_root = PathBuf::from(
+        std::env::var_os("PKGRE_REHEARSAL_CATALOG")
+            .expect("set PKGRE_REHEARSAL_CATALOG to a checkout of the catalog repository"),
+    );
     let repository = repository_root();
     let temporary = fixtures::Temp::new("pkgre-rehearsal");
     let clone = temporary.path().join("clone");
@@ -603,13 +948,12 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
     let mut released = Vec::new();
     let mut facts = None;
     for name in ["pkgre", "pkgre-rust"] {
-        let materialization = crate::package::resolve_git_tag_from(
+        let materialization = crate::package::resolve_git_tag_from_file(
             "https://github.com/pkgre/pkgre",
             "rust/v0.5.0",
             name,
             &cargo_version,
             clone.to_str().expect("the clone path is UTF-8"),
-            true,
         )
         .expect("package the release with the reconciler's own packaging");
         released.push(ReleasedCrate {
@@ -628,74 +972,48 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
             });
         }
     }
-    let lock: TomlValue =
-        toml::from_slice(&fs::read(clone.join("Cargo.lock")).expect("read the tag's own lock"))
-            .expect("parse the tag's own lock");
-    let mut identities = Vec::new();
-    let mut mirrors = Vec::new();
-    for package in lock["package"].as_array().expect("the lock holds packages") {
-        if package.get("source").and_then(TomlValue::as_str) != Some("sparse+https://rust.pkg.re/")
-        {
-            continue;
-        }
-        let name = package["name"].as_str().expect("a name").to_owned();
-        let version = package["version"]
-            .as_str()
-            .expect("a version")
-            .parse()
-            .expect("a version");
-        mirrors.push(name.clone());
-        identities.push(CatalogIdentity {
-            name,
-            version,
-            crate_sha256: package["checksum"].as_str().expect("a checksum").to_owned(),
-            removed: false,
-            release: None,
-        });
-    }
+    // The catalog comes from the repository that holds it, read-only, so that
+    // every dependency resolves against the real `registry/main.lock`, with its
+    // several versions per name.
+    let mut snapshot = CatalogSnapshot::load(&catalog_root).expect("load the production catalog");
     for package in &released {
-        identities.push(CatalogIdentity {
+        snapshot.identities.push(CatalogIdentity {
             name: package.name.clone(),
             version: package.version.clone(),
             crate_sha256: package.crate_sha256.clone(),
             removed: false,
             release: facts.clone(),
         });
+        snapshot.publish_names.push(package.name.clone());
+        snapshot.publish_declarations.push((
+            package.name.clone(),
+            "https://github.com/pkgre/pkgre".to_owned(),
+        ));
     }
-    let config = CratesIoConfig::parse(
-        b"schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = \"https://github.com/pkgre/pkgre\"\ntag-prefix = \"rust/v\"\n\n[names]\npkgre = \"pkgre\"\n",
-        Path::new("crates-io.toml"),
-    )
-    .expect("parse the rehearsal config");
-    let snapshot = CatalogSnapshot {
-        identities,
-        mirrors,
-        publish_names: vec!["pkgre".to_owned(), "pkgre-rust".to_owned()],
-        publish_declarations: vec![
-            (
-                "pkgre".to_owned(),
-                "https://github.com/pkgre/pkgre".to_owned(),
-            ),
-            (
-                "pkgre-rust".to_owned(),
-                "https://github.com/pkgre/pkgre".to_owned(),
-            ),
-        ],
+    let config = match std::fs::read(catalog_root.join("self-publish/crates-io.toml")) {
+        Ok(bytes) => {
+            CratesIoConfig::parse(&bytes, &catalog_root.join("self-publish/crates-io.toml"))
+                .expect("parse the production self-publishing config")
+        }
+        Err(_) => rehearsal_config(),
     };
-    let packages = derive_release(
+    let earlier = match std::fs::read(catalog_root.join("self-publish/crates-io.lock")) {
+        Ok(bytes) => {
+            CratesIoLock::parse_canonical(&bytes, &catalog_root.join("self-publish/crates-io.lock"))
+                .expect("parse the production entries")
+        }
+        Err(_) => CratesIoLock {
+            schema: CRATES_IO_LOCK_SCHEMA,
+            packages: Vec::new(),
+        },
+    };
+    let packages = derive_release_with(
         &facts.expect("the release has facts"),
         &released,
         &snapshot,
         &config,
-        &CratesIoLock {
-            schema: CRATES_IO_LOCK_SCHEMA,
-            packages: Vec::new(),
-        },
-        Some(&DerivationSources {
-            fetch_repository: &clone,
-            directory: None,
-            root: temporary.path(),
-        }),
+        &earlier,
+        Sources::local(&clone, None, temporary.path()),
     )
     .expect("derive the release against live crates.io");
     assert_eq!(packages.len(), 2);
@@ -709,4 +1027,41 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
             package.entry.pkgre_crate_sha256,
         );
     }
+}
+
+/// Copies every regular file of `source` to `destination`, keeping the layout.
+fn copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).expect("create the copy");
+    let mut entries = fs::read_dir(source)
+        .expect("read the source")
+        .map(|entry| entry.expect("read the entry").path())
+        .collect::<Vec<_>>();
+    entries.sort();
+    for path in entries {
+        let metadata = fs::symlink_metadata(&path).expect("inspect the entry");
+        let target = destination.join(path.file_name().expect("the entry has a name"));
+        if metadata.is_dir() {
+            copy_tree(&path, &target);
+        } else {
+            assert!(metadata.is_file(), "{} is a regular file", path.display());
+            fs::copy(&path, &target).expect("copy the file");
+        }
+    }
+}
+
+/// Returns the self-publishing config of the rehearsal release.
+fn rehearsal_config() -> CratesIoConfig {
+    CratesIoConfig::parse(
+        b"schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = \"https://github.com/pkgre/pkgre\"\ntag-prefix = \"rust/v\"\n\n[names]\npkgre = \"pkgre\"\n",
+        Path::new("crates-io.toml"),
+    )
+    .expect("parse the rehearsal config")
+}
+
+/// Returns the checkout of the repository that these tests belong to.
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the manifest directory has a parent")
+        .to_path_buf()
 }

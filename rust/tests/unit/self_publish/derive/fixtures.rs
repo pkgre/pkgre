@@ -4,11 +4,14 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use flate2::Compression;
+use flate2::read::MultiGzDecoder;
+use flate2::write::GzEncoder;
 use semver::Version;
 
 use super::super::super::isolation::{ChildEnvironment, ensure_no_cargo_configuration};
@@ -40,6 +43,11 @@ pub(super) const CARGO_VERSION: &str = "1.95.0";
 pub(super) const LIB_CRATES_IO_NAME: &str = "example-library";
 /// The crates.io name of `example-bin`, which the default rule gives.
 pub(super) const BIN_CRATES_IO_NAME: &str = "pkgre-pkgs-example-bin";
+/// The older release whose identities the fixture resolves through
+/// `crates-io.lock`.
+pub(super) const EARLIER_TAG: &str = "rust/v0.9.0";
+/// The crates.io name of the earlier release.
+pub(super) const EARLIER_CRATES_IO_NAME: &str = "pkgre-pkgs-earlier-lib";
 
 /// A temporary directory that no Cargo configuration covers.
 ///
@@ -108,15 +116,23 @@ impl Release {
     }
 }
 
-/// The changes that one refusal fixture makes to the base workspace.
+/// The changes that one fixture makes to the base workspace.
 #[derive(Clone, Copy, Debug, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub(super) struct Variant {
     /// Let the released binary depend on the released library by path.
     pub(super) sibling_dependency: bool,
     /// Declare a `[patch.crates-io]` table in the root manifest.
     pub(super) patch: bool,
+    /// Declare a `[replace]` table in the root manifest.
+    pub(super) replace: bool,
+    /// Declare a stale `package` key on the earlier release.
+    pub(super) stale_package: bool,
     /// Let the released binary depend on a Git identity of a fork.
     pub(super) fork_dependency: bool,
+    /// Let the unpublished server depend on a first-party identity that
+    /// `crates-io.lock` does not record.
+    pub(super) server_needs_first_party: bool,
 }
 
 /// A local directory source that stands in for crates.io and the curated
@@ -130,12 +146,13 @@ pub(super) struct LocalSource {
 
 /// The crates that the local source offers, and that the fixture workspace
 /// depends on.
-pub(super) const LOCAL_CRATES: [(&str, &str); 5] = [
+pub(super) const LOCAL_CRATES: [(&str, &str); 6] = [
     ("mirrored-dep", "0.3.0"),
     ("mirrored-dev", "0.1.0"),
     ("other-mirror", "0.2.0"),
     ("earlier-lib", "0.9.0"),
     ("forked-dep", "1.0.0"),
+    ("unknown-lib", "1.0.0"),
 ];
 
 impl LocalSource {
@@ -149,22 +166,22 @@ impl LocalSource {
         for (name, version) in LOCAL_CRATES {
             source.add(name, version);
         }
-        // The crates.io package of the earlier release is the same bytes under
-        // its crates.io name, so that both the curated and the derived
-        // resolution find it.
-        source.add_alias("earlier-lib", "0.9.0", "pkgre-pkgs-earlier-lib");
+        // The crates.io package of the earlier release is the same source under
+        // its crates.io name. Its manifest is rewritten, so its checksum differs
+        // from the curated archive's, as it does in reality.
+        source.add_alias(EARLIER_CRATES_IO_NAME, "0.9.0");
         source
     }
 
     /// Adds one crate to the source.
-    pub(super) fn add(&mut self, name: &str, version: &str) {
+    fn add(&mut self, name: &str, version: &str) {
         let checksum = crate_checksum(name, version);
         self.add_with_checksum(name, version, checksum);
     }
 
-    /// Adds one crate under another package name, with the same bytes.
-    fn add_alias(&mut self, name: &str, version: &str, alias: &str) {
-        let checksum = self.checksum(name, version);
+    /// Adds one crate under another package name, with another checksum.
+    fn add_alias(&mut self, alias: &str, version: &str) {
+        let checksum = crate_checksum(alias, version);
         self.add_with_checksum(alias, version, checksum);
     }
 
@@ -202,14 +219,14 @@ impl LocalSource {
     }
 }
 
-/// Returns the checksum that the local source reports for one crate.
+/// Returns the checksum that the local source reports for one curated crate.
 pub(super) fn crate_checksum(name: &str, version: &str) -> String {
     sha256_bytes(format!("{name} {version}").as_bytes())
 }
 
 /// Builds one fixture release repository below `parent`.
 ///
-/// The signed tag is `rust/v1.0.0`; the workspace holds the released
+/// The annotated tag is `rust/v1.0.0`; the workspace holds the released
 /// `example-lib` and `example-bin` and the unpublished `example-serve`.
 pub(super) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> Release {
     let root = parent.join("source-repository");
@@ -257,18 +274,31 @@ fn write_manifests(root: &Path, variant: Variant) {
     let mut workspace = String::from(
         "[workspace]\nmembers = [\"lib\", \"bin\", \"serve\"]\nresolver = \"3\"\n\n[workspace.package]\nversion = \"1.0.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n\n[workspace.dependencies]\nmirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\n",
     );
-    if variant.patch {
-        workspace
-            .push_str("\n[patch.crates-io]\nmirrored-dep = { path = \"vendor/mirrored-dep\" }\n");
+    if variant.stale_package {
+        workspace.push_str(
+            "earlier-lib = { version = \"0.9\", registry = \"pkgre\", package = \"earlier-lib\" }\n",
+        );
+    } else {
+        workspace.push_str("earlier-lib = { version = \"0.9\", registry = \"pkgre\" }\n");
+    }
+    if variant.patch || variant.replace {
         let vendor = root.join("vendor/mirrored-dep/src");
-        fs::create_dir_all(&vendor).expect("create the patch directory");
+        fs::create_dir_all(&vendor).expect("create the vendor directory");
         fs::write(
             root.join("vendor/mirrored-dep/Cargo.toml"),
             "[package]\nname = \"mirrored-dep\"\nversion = \"0.3.0\"\nedition = \"2021\"\nlicense = \"MIT\"\ndescription = \"A patched crate\"\n",
         )
-        .expect("write the patch manifest");
+        .expect("write the vendor manifest");
         fs::write(vendor.join("lib.rs"), "pub fn value() -> u32 { 0 }\n")
-            .expect("write the patch source");
+            .expect("write the vendor source");
+    }
+    if variant.patch {
+        workspace
+            .push_str("\n[patch.crates-io]\nmirrored-dep = { path = \"vendor/mirrored-dep\" }\n");
+    }
+    if variant.replace {
+        workspace
+            .push_str("\n[replace]\n\"mirrored-dep:0.3.0\" = { path = \"vendor/mirrored-dep\" }\n");
     }
     fs::write(root.join("Cargo.toml"), workspace).expect("write the root manifest");
     fs::write(
@@ -277,7 +307,7 @@ fn write_manifests(root: &Path, variant: Variant) {
     )
     .expect("write the library manifest");
     let mut binary = String::from(
-        "[package]\nname = \"example-bin\"\ndescription = \"An example binary\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n\n[dependencies]\nmirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\nearlier-lib = { version = \"0.9\", registry = \"pkgre\" }\n",
+        "[package]\nname = \"example-bin\"\ndescription = \"An example binary\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n\n[dependencies]\nmirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\nearlier-lib.workspace = true\n",
     );
     if variant.sibling_dependency {
         binary.push_str("example-lib = { path = \"../lib\" }\n");
@@ -286,18 +316,20 @@ fn write_manifests(root: &Path, variant: Variant) {
         binary.push_str("forked-dep = { version = \"1.0\", registry = \"pkgre\" }\n");
     }
     fs::write(root.join("bin/Cargo.toml"), binary).expect("write the binary manifest");
-    fs::write(
-        root.join("serve/Cargo.toml"),
-        "[package]\nname = \"example-serve\"\ndescription = \"An example server\"\nversion = \"0.2.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\npublish = false\n\n[dependencies]\nexample-lib = { path = \"../lib\" }\nother-mirror = { version = \"0.2\", registry = \"pkgre\" }\n",
-    )
-    .expect("write the server manifest");
+    let mut server = String::from(
+        "[package]\nname = \"example-serve\"\ndescription = \"An example server\"\nversion = \"0.2.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\npublish = false\n\n[dependencies]\nexample-lib = { path = \"../lib\" }\nother-mirror = { version = \"0.2\", registry = \"pkgre\" }\n\n[build-dependencies]\nearlier-lib = { version = \"0.9\", registry = \"pkgre\" }\n",
+    );
+    if variant.server_needs_first_party {
+        server.push_str("unknown-lib = { version = \"1.0\", registry = \"pkgre\" }\n");
+    }
+    fs::write(root.join("serve/Cargo.toml"), server).expect("write the server manifest");
 }
 
 /// Generates the fixture's `Cargo.lock` against the local source.
 fn generate_lockfile(root: &Path, source: &Path) {
     let temporary = Temp::new("pkgre-fixture-lock");
     let home = temporary.path().join("cargo-home");
-    prepare_cargo_home(&home, RegistrySources::LocalCurated(source))
+    prepare_cargo_home(&home, RegistrySources::LocalCurated(source.to_path_buf()))
         .expect("prepare the fixture Cargo home");
     let cargo = pinned_cargo(&Version::parse(CARGO_VERSION).expect("parse the pinned version"))
         .expect("locate the pinned Cargo");
@@ -316,8 +348,8 @@ fn generate_lockfile(root: &Path, source: &Path) {
     );
 }
 
-/// Packages the curated archives of one checkout, as the reconciler would
-/// package them but from the local source, and returns them by package name.
+/// Packages the curated archives of one checkout from the local source, and
+/// returns them by package name.
 pub(super) fn curated_archives(
     checkout: &Path,
     source: &Path,
@@ -325,7 +357,7 @@ pub(super) fn curated_archives(
 ) -> BTreeMap<String, Vec<u8>> {
     let temporary = Temp::new("pkgre-curated-archive");
     let home = temporary.path().join("cargo-home");
-    prepare_cargo_home(&home, RegistrySources::LocalCurated(source))
+    prepare_cargo_home(&home, RegistrySources::LocalCurated(source.to_path_buf()))
         .expect("prepare the curated Cargo home");
     let cargo = pinned_cargo(&Version::parse(CARGO_VERSION).expect("parse the pinned version"))
         .expect("locate the pinned Cargo");
@@ -356,7 +388,7 @@ fn commit_and_tag(root: &Path) {
     git(root, &["tag", "-a", &tag(), "-m", "example 1.0.0"]);
 }
 
-/// Runs one Git command in the fixture repository and returns its output.
+/// Runs one Git command in a directory and returns its output.
 pub(super) fn git(root: &Path, arguments: &[&str]) -> String {
     let output = Command::new("git")
         .args([
@@ -393,8 +425,8 @@ pub(super) struct Catalog {
     pub(super) curated: BTreeMap<String, Vec<u8>>,
 }
 
-/// Builds a catalog repository for one fixture release, with an empty
-/// `crates-io.lock`.
+/// Builds a catalog repository for one fixture release, with one entered earlier
+/// release and no entry for the fixture release.
 pub(super) fn catalog(
     parent: &Path,
     source: &LocalSource,
@@ -419,7 +451,7 @@ pub(super) fn catalog(
         ("other-mirror", "0.2.0"),
     ];
     write_registry_file(&registry.join("main.toml"), variant, &mirrors);
-    let lock = registry_lock(release, variant, &mirrors, &curated);
+    let lock = registry_lock(release, variant, &mirrors, &curated, source);
     fs::write(
         registry.join("main.lock"),
         serialize_lock(&lock).expect("serialize the fixture lock"),
@@ -446,8 +478,7 @@ pub(super) fn catalog(
             .expect("serialize the fixture routes"),
     )
     .expect("write the fixture routes");
-    for (name, archive) in &curated {
-        let _ = name;
+    for archive in curated.values() {
         fs::write(
             registry
                 .join("objects/crates")
@@ -467,23 +498,28 @@ pub(super) fn catalog(
         schema: CRATES_IO_LOCK_SCHEMA,
         packages: Vec::new(),
     };
-    earlier.packages.push(CratesIoPackage {
-        name: "earlier-lib".to_owned(),
-        version: Version::parse("0.9.0").expect("parse a fixture version"),
-        crates_io_name: "pkgre-pkgs-earlier-lib".to_owned(),
-        crate_sha256: crate_checksum("earlier-lib", "0.9.0"),
-        pkgre_crate_sha256: crate_checksum("earlier-lib", "0.9.0"),
-        git: REPOSITORY.to_owned(),
-        tag: "rust/v0.9.0".to_owned(),
-        commit: "9".repeat(40),
-        cargo_version: Version::parse(CARGO_VERSION).expect("parse the pinned version"),
-    });
+    earlier.packages.push(earlier_entry(source));
     fs::write(
         root.join("self-publish/crates-io.lock"),
         earlier.serialize().expect("serialize the fixture entries"),
     )
     .expect("write the fixture lock");
     Catalog { root, curated }
+}
+
+/// Returns the `crates-io.lock` entry of the fixture's earlier release.
+pub(super) fn earlier_entry(source: &LocalSource) -> CratesIoPackage {
+    CratesIoPackage {
+        name: "earlier-lib".to_owned(),
+        version: Version::parse("0.9.0").expect("parse a fixture version"),
+        crates_io_name: EARLIER_CRATES_IO_NAME.to_owned(),
+        crate_sha256: source.checksum(EARLIER_CRATES_IO_NAME, "0.9.0"),
+        pkgre_crate_sha256: source.checksum("earlier-lib", "0.9.0"),
+        git: REPOSITORY.to_owned(),
+        tag: EARLIER_TAG.to_owned(),
+        commit: "9".repeat(40),
+        cargo_version: Version::parse(CARGO_VERSION).expect("parse the pinned version"),
+    }
 }
 
 /// Writes the human registry file of one fixture catalog.
@@ -494,9 +530,11 @@ fn write_registry_file(path: &Path, variant: Variant, mirrors: &[(&str, &str)]) 
     for (name, version) in mirrors {
         writeln!(text, "{name} = [\"{version}\"]").expect("writing to a string");
     }
-    text.push_str("\n[categories.pkgre]\nmay-depend-on = [\"main/general\", \"main/pkgre\"]\n\n[categories.pkgre.publish.earlier-lib]\ngit = \"");
-    text.push_str(REPOSITORY);
-    text.push_str("\"\ntags = [\"rust/v0.9.0\"]\n");
+    write!(
+        text,
+        "\n[categories.pkgre]\nmay-depend-on = [\"main/general\", \"main/pkgre\"]\n\n[categories.pkgre.publish.earlier-lib]\ngit = \"{REPOSITORY}\"\ntags = [\"{EARLIER_TAG}\"]\n"
+    )
+    .expect("writing to a string");
     for name in ["example-bin", "example-lib"] {
         write!(
             text,
@@ -512,6 +550,13 @@ fn write_registry_file(path: &Path, variant: Variant, mirrors: &[(&str, &str)]) 
         )
         .expect("writing to a string");
     }
+    if variant.server_needs_first_party {
+        write!(
+            text,
+            "\n[categories.pkgre.publish.unknown-lib]\ngit = \"{REPOSITORY}\"\ntags = [\"rust/v0.8.0\"]\n"
+        )
+        .expect("writing to a string");
+    }
     fs::write(path, text).expect("write the fixture registry file");
 }
 
@@ -522,6 +567,7 @@ fn registry_lock(
     variant: Variant,
     mirrors: &[(&str, &str)],
     curated: &BTreeMap<String, Vec<u8>>,
+    source: &LocalSource,
 ) -> RegistryLock {
     let mut names = Vec::new();
     let mut packages = Vec::new();
@@ -534,7 +580,7 @@ fn registry_lock(
             name: (*name).to_owned(),
             version: Version::parse(version).expect("parse a fixture version"),
             state: PackageState::Active,
-            crate_sha256: crate_checksum(name, version),
+            crate_sha256: source.checksum(name, version),
             source_row_sha256: checksum("row", name, version),
             index_row_sha256: checksum("index", name, version),
             admission_sha256: None,
@@ -550,14 +596,14 @@ fn registry_lock(
         name: "earlier-lib".to_owned(),
         version: Version::parse("0.9.0").expect("parse a fixture version"),
         state: PackageState::Active,
-        crate_sha256: crate_checksum("earlier-lib", "0.9.0"),
+        crate_sha256: source.checksum("earlier-lib", "0.9.0"),
         source_row_sha256: checksum("row", "earlier-lib", "0.9.0"),
         index_row_sha256: checksum("index", "earlier-lib", "0.9.0"),
         admission_sha256: None,
         admitted_at: admitted_at(),
         source: LockedSource::GitTag {
             git: REPOSITORY.to_owned(),
-            tag: "rust/v0.9.0".to_owned(),
+            tag: EARLIER_TAG.to_owned(),
             tag_oid: "9".repeat(40),
             commit: "9".repeat(40),
             package: "earlier-lib".to_owned(),
@@ -574,7 +620,7 @@ fn registry_lock(
             name: "forked-dep".to_owned(),
             version: Version::parse("1.0.0").expect("parse a fixture version"),
             state: PackageState::Active,
-            crate_sha256: crate_checksum("forked-dep", "1.0.0"),
+            crate_sha256: source.checksum("forked-dep", "1.0.0"),
             source_row_sha256: checksum("row", "forked-dep", "1.0.0"),
             index_row_sha256: checksum("index", "forked-dep", "1.0.0"),
             admission_sha256: None,
@@ -586,6 +632,31 @@ fn registry_lock(
                 commit: "7".repeat(40),
                 package: "forked-dep".to_owned(),
                 path: PathBuf::from("crates/forked-dep"),
+                cargo_version: Version::parse(CARGO_VERSION).expect("parse the pinned version"),
+            },
+        });
+    }
+    if variant.server_needs_first_party {
+        names.push(LockedName {
+            name: "unknown-lib".to_owned(),
+            category: "pkgre".to_owned(),
+        });
+        packages.push(LockedPackage {
+            name: "unknown-lib".to_owned(),
+            version: Version::parse("1.0.0").expect("parse a fixture version"),
+            state: PackageState::Active,
+            crate_sha256: source.checksum("unknown-lib", "1.0.0"),
+            source_row_sha256: checksum("row", "unknown-lib", "1.0.0"),
+            index_row_sha256: checksum("index", "unknown-lib", "1.0.0"),
+            admission_sha256: None,
+            admitted_at: admitted_at(),
+            source: LockedSource::GitTag {
+                git: REPOSITORY.to_owned(),
+                tag: "rust/v0.8.0".to_owned(),
+                tag_oid: "8".repeat(40),
+                commit: "8".repeat(40),
+                package: "unknown-lib".to_owned(),
+                path: PathBuf::from("unknown"),
                 cargo_version: Version::parse(CARGO_VERSION).expect("parse the pinned version"),
             },
         });
@@ -640,4 +711,105 @@ fn checksum(kind: &str, name: &str, version: &str) -> String {
 /// Returns the deterministic admission timestamp of the fixture.
 fn admitted_at() -> UtcTimestamp {
     UtcTimestamp::parse("2026-01-02T03:04:05Z").expect("parse the fixture timestamp")
+}
+
+/// One file of a repacked archive.
+#[derive(Clone, Debug)]
+pub(super) struct ArchiveFile {
+    /// File contents.
+    pub(super) contents: Vec<u8>,
+    /// Portable permission bits.
+    pub(super) mode: u32,
+}
+
+/// Reads every file of one derived archive, by path below the archive root.
+pub(super) fn archive_files(
+    name: &str,
+    version: &Version,
+    archive: &[u8],
+) -> BTreeMap<String, ArchiveFile> {
+    let analysis = crate::update::read_crate_archive(name, version, archive, &[])
+        .expect("read the derived archive");
+    let paths = analysis.files.keys().cloned().collect::<Vec<_>>();
+    let wanted = paths.iter().map(String::as_str).collect::<Vec<_>>();
+    let contents =
+        crate::update::read_crate_archive(name, version, archive, &wanted).expect("read the files");
+    analysis
+        .files
+        .into_iter()
+        .map(|(path, file)| {
+            let contents = contents
+                .contents
+                .get(&path)
+                .unwrap_or_else(|| panic!("the archive holds {path}"))
+                .clone();
+            (
+                path,
+                ArchiveFile {
+                    contents,
+                    mode: file.mode,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Writes one archive from a set of files, with the root `<name>-<version>`.
+///
+/// The archives are gzipped ustar streams, as Cargo writes them; the tests
+/// rewrite one to prove that the comparison catches a changed field.
+pub(super) fn tar_gz(
+    name: &str,
+    version: &Version,
+    files: &BTreeMap<String, ArchiveFile>,
+) -> Vec<u8> {
+    let root = format!("{name}-{version}");
+    let mut tar = Vec::new();
+    for (path, file) in files {
+        let full = format!("{root}/{path}");
+        let mut header = [0_u8; 512];
+        let name = full.as_bytes();
+        assert!(
+            name.len() < 100,
+            "the test archive path is too long: {full}"
+        );
+        header[..name.len()].copy_from_slice(name);
+        set_octal(&mut header[100..108], u64::from(file.mode));
+        set_octal(&mut header[108..116], 0);
+        set_octal(&mut header[116..124], 0);
+        set_octal(&mut header[124..136], file.contents.len() as u64);
+        set_octal(&mut header[136..148], 0);
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum = header.iter().map(|byte| u64::from(*byte)).sum();
+        set_octal(&mut header[148..156], checksum);
+        tar.extend_from_slice(&header);
+        tar.extend_from_slice(&file.contents);
+        let padding = (512 - file.contents.len() % 512) % 512;
+        tar.resize(tar.len() + padding, 0);
+    }
+    tar.resize(tar.len() + 1024, 0);
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&tar).expect("compress the archive");
+    encoder.finish().expect("finish the archive")
+}
+
+/// Writes one octal tar field.
+fn set_octal(field: &mut [u8], value: u64) {
+    let digits = format!("{:0width$o}", value, width = field.len() - 2);
+    assert_eq!(digits.len(), field.len() - 2);
+    field[..digits.len()].copy_from_slice(digits.as_bytes());
+    field[field.len() - 2] = 0;
+    field[field.len() - 1] = b' ';
+}
+
+/// Reads the whole decompressed stream of one archive, for diagnostics.
+#[allow(dead_code)]
+pub(super) fn decompress(archive: &[u8]) -> Vec<u8> {
+    let mut decoder = MultiGzDecoder::new(archive);
+    let mut bytes = Vec::new();
+    decoder.read_to_end(&mut bytes).expect("decompress");
+    bytes
 }

@@ -6,14 +6,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
-use semver::{Version, VersionReq};
+use semver::Version;
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value, value};
 
-use super::super::catalog::{CatalogIdentity, CatalogSnapshot};
-use super::super::config::CratesIoConfig;
 use super::super::isolation::ChildEnvironment;
-use super::super::lock::CratesIoLock;
 use super::cargo::{CURATED_INDEX, run_cargo};
+use super::cargo_lock::LockIndex;
+use super::expectations::Expectations;
 
 /// The curated registry that the tagged manifests resolve from.
 pub(super) const CURATED_REGISTRY: &str = "pkgre";
@@ -49,17 +48,13 @@ pub(super) struct Member {
     pub(super) library: Option<String>,
     /// Binary target name of `src/main.rs`, when the member has one.
     pub(super) main_binary: Option<String>,
-    /// Whether `publish` is exactly `[`pkgre`]`.
-    pub(super) released: bool,
 }
 
-/// One dependency of one workspace member.
+/// One dependency of one workspace member, as Cargo reports it.
 #[derive(Clone, Debug)]
 pub(super) struct MemberDependency {
     /// Cargo package name the dependency resolves to.
     pub(super) package: String,
-    /// Requirement on the dependency's version.
-    pub(super) requirement: String,
     /// Cargo dependency source, absent for a path dependency.
     pub(super) source: Option<String>,
     /// Cargo registry alias the dependency declares, if any.
@@ -79,13 +74,11 @@ struct MetadataPackage {
     manifest_path: PathBuf,
     dependencies: Vec<MetadataDependency>,
     targets: Vec<MetadataTarget>,
-    publish: Option<Vec<String>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct MetadataDependency {
     name: String,
-    req: String,
     source: Option<String>,
     registry: Option<String>,
 }
@@ -139,12 +132,10 @@ impl Workspace {
                     .into_iter()
                     .map(|dependency| MemberDependency {
                         package: dependency.name,
-                        requirement: dependency.req,
                         source: dependency.source,
                         registry: dependency.registry,
                     })
                     .collect(),
-                released: package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]),
                 name: package.name,
                 version: package.version,
                 manifest_path: package.manifest_path,
@@ -202,315 +193,156 @@ fn main_binary_target(package: &MetadataPackage) -> Option<String> {
 
 /// What one release does to the members of its workspace.
 pub(super) struct ReleasePlan {
-    /// Every member by name: its crates.io name when the release publishes it.
-    members: BTreeMap<String, Option<String>>,
+    /// The crates the release publishes, with their crates.io names.
+    published: BTreeMap<String, String>,
     /// Library target names to pin, by member.
     libraries: BTreeMap<String, String>,
     /// Binary target names of `src/main.rs` to pin, by member.
     binaries: BTreeMap<String, String>,
-    /// The members the release publishes.
-    released: BTreeSet<String>,
 }
 
 impl ReleasePlan {
     /// Plans the rewrite of one release's workspace.
     ///
-    /// `published` are the identities that the catalog publishes from the tag,
-    /// with their crates.io names.
-    ///
     /// # Errors
     ///
-    /// Returns an error when the tag's publishable members and the catalog's
-    /// identities differ, or when a dependency of the workspace is one that
+    /// Returns an error when the dependencies of the workspace include one that
     /// crates.io cannot resolve.
     pub(super) fn new(
         workspace: &Workspace,
-        catalog: &CatalogSnapshot,
-        config: &CratesIoConfig,
-        earlier: &CratesIoLock,
+        lock: &LockIndex,
+        expectations: &Expectations,
         published: &BTreeMap<String, String>,
     ) -> Result<Self> {
-        let released = workspace
-            .members
-            .iter()
-            .filter(|member| member.released)
-            .map(|member| member.name.clone())
-            .collect::<BTreeSet<_>>();
-        ensure!(
-            released == published.keys().cloned().collect::<BTreeSet<_>>(),
-            "the tag publishes {released:?} but registry/main.lock holds {:?}; a release tag publishes exactly its publishable members",
-            published.keys().collect::<Vec<_>>()
-        );
-        let mut members = BTreeMap::new();
-        let mut libraries = BTreeMap::new();
-        let mut binaries = BTreeMap::new();
-        for member in &workspace.members {
-            let Some(crates_io_name) = published.get(&member.name) else {
-                members.insert(member.name.clone(), None);
-                continue;
-            };
-            members.insert(member.name.clone(), Some(crates_io_name.clone()));
-            if let Some(library) = &member.library
-                && *library == derived_library_name(&member.name)
-            {
-                // The installed library keeps the curated name, which Cargo
-                // would otherwise derive from the crates.io package name.
-                libraries.insert(member.name.clone(), library.clone());
-            }
-            if let Some(binary) = &member.main_binary
-                && *binary == member.name
-            {
-                binaries.insert(member.name.clone(), binary.clone());
-            }
-        }
         let plan = Self {
-            members,
-            libraries,
-            binaries,
-            released,
+            published: published.clone(),
+            libraries: library_pins(workspace, published),
+            binaries: binary_pins(workspace),
         };
-        plan.validate_dependencies(workspace, catalog, config, earlier)?;
+        plan.validate_dependencies(workspace, lock, expectations)?;
         Ok(plan)
     }
 
     /// Returns the crates.io name of a released member.
     pub(super) fn crates_io_name(&self, member: &str) -> Option<&str> {
-        self.members.get(member).and_then(|name| name.as_deref())
+        self.published.get(member).map(String::as_str)
     }
 
     /// Returns whether the release publishes one member.
     pub(super) fn is_released(&self, member: &str) -> bool {
-        self.released.contains(member)
+        self.published.contains_key(member)
     }
 
-    /// Refuses every dependency that crates.io cannot resolve.
+    /// Refuses a dependency of a released crate on another member of the tag.
     fn validate_dependencies(
         &self,
         workspace: &Workspace,
-        catalog: &CatalogSnapshot,
-        config: &CratesIoConfig,
-        earlier: &CratesIoLock,
+        lock: &LockIndex,
+        expectations: &Expectations,
     ) -> Result<()> {
         for member in &workspace.members {
             for dependency in &member.dependencies {
-                let context = || format!("crate {} depends on {}", member.name, dependency.package);
-                self.check_dependency_source(member, dependency)
+                check_dependency_source(member, dependency)?;
+            }
+            let locked = lock
+                .package(&member.name, &member.version)
+                .with_context(|| {
+                    format!(
+                        "the lock holds no package {} {}",
+                        member.name, member.version
+                    )
+                })?;
+            for (package, version) in &locked.dependencies {
+                if workspace.member(package).is_none() {
+                    continue;
+                }
+                let context = || format!("crate {} depends on {package}", member.name);
+                if self.is_released(&member.name) && self.is_released(package) {
+                    return Err(anyhow::anyhow!(
+                        "crate {} depends on {package}, and both are released from the same tag; crates.io cannot resolve a dependency between two released crates of one tag",
+                        member.name
+                    ))
+                    .with_context(context);
+                }
+                if self.is_released(&member.name) {
+                    return Err(anyhow::anyhow!(
+                        "crate {} depends on {package}, which the tag does not publish; crates.io cannot resolve a path to it",
+                        member.name
+                    ))
+                    .with_context(context);
+                }
+                expectations
+                    .package(package, version)
                     .with_context(context)?;
-                self.classify(
-                    catalog,
-                    config,
-                    earlier,
-                    Some(member.name.as_str()),
-                    &dependency.package,
-                    &dependency.requirement,
-                )
-                .with_context(context)?;
             }
         }
         Ok(())
     }
+}
 
-    /// Refuses a dependency whose Cargo source is not the curated registry or a
-    /// workspace member.
-    fn check_dependency_source(
-        &self,
-        member: &Member,
-        dependency: &MemberDependency,
-    ) -> Result<()> {
-        if self.members.contains_key(&dependency.package) {
-            ensure!(
-                dependency.source.is_none(),
-                "{} is a workspace member but has the dependency source {:?}",
-                dependency.package,
-                dependency.source
-            );
-            return Ok(());
-        }
-        let source = dependency.source.as_deref().with_context(|| {
-            format!(
-                "{} is not a workspace member and names no dependency source",
-                dependency.package
-            )
-        })?;
-        if source == "registry+https://github.com/rust-lang/crates.io-index" {
-            bail!(
-                "{} takes {} from crates.io directly, which the curated registry cannot serve; every dependency comes from registry {CURATED_REGISTRY:?}",
-                member.name,
-                dependency.package
-            );
-        }
-        ensure!(
-            CURATED_SOURCES.contains(&source),
-            "{} takes {} from the unsupported source {source:?}; every dependency comes from registry {CURATED_REGISTRY:?}",
+/// Refuses a dependency whose Cargo source is not the curated registry or a
+/// workspace member.
+fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Result<()> {
+    let Some(source) = &dependency.source else {
+        return Ok(());
+    };
+    if source == "registry+https://github.com/rust-lang/crates.io-index" {
+        bail!(
+            "{} takes {} from crates.io directly, which the curated registry cannot serve; every dependency comes from registry {CURATED_REGISTRY:?}",
             member.name,
             dependency.package
         );
-        ensure!(
-            dependency
-                .registry
-                .as_deref()
-                .is_some_and(|index| CURATED_SOURCES.contains(&index)),
-            "{} does not declare registry {CURATED_REGISTRY:?} for {}",
-            member.name,
-            dependency.package
-        );
-        Ok(())
     }
-
-    /// Classifies one dependency, refusing what crates.io cannot resolve.
-    ///
-    /// `dependent` is the member that names the dependency, absent for a
-    /// `[workspace.dependencies]` entry that no member inherits.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for a dependency between two released crates of one
-    /// tag, a released crate's dependency on a member the tag does not publish,
-    /// a fork, an abandoned version, a first-party version without an entry in
-    /// `crates-io.lock`, or a version the catalog does not hold.
-    pub(super) fn classify(
-        &self,
-        catalog: &CatalogSnapshot,
-        config: &CratesIoConfig,
-        earlier: &CratesIoLock,
-        dependent: Option<&str>,
-        package: &str,
-        requirement: &str,
-    ) -> Result<Classified> {
-        if self.members.contains_key(package) {
-            return self.classify_member(dependent, package);
-        }
-        let identity = resolve(catalog, package, requirement)?;
-        self.classify_identity(catalog, config, earlier, dependent, identity)
-    }
-
-    /// Classifies a dependency on a workspace member.
-    fn classify_member(&self, dependent: Option<&str>, package: &str) -> Result<Classified> {
-        let dependent_released = dependent.is_some_and(|name| self.is_released(name));
-        let dependency_released = self.is_released(package);
-        if dependent_released && dependency_released {
-            bail!(
-                "{package} is released from the same tag, and crates.io cannot resolve a dependency between two released crates of one tag"
-            );
-        }
-        if dependent_released && !dependency_released {
-            bail!(
-                "{package} is a workspace member that the tag does not publish, and crates.io cannot resolve a path to it"
-            );
-        }
-        Ok(Classified::Member {
-            crates_io_name: self.crates_io_name(package).map(str::to_owned),
-        })
-    }
-
-    /// Classifies one identity of `registry/main.lock`.
-    fn classify_identity(
-        &self,
-        catalog: &CatalogSnapshot,
-        config: &CratesIoConfig,
-        earlier: &CratesIoLock,
-        dependent: Option<&str>,
-        identity: &CatalogIdentity,
-    ) -> Result<Classified> {
-        let Some(release) = &identity.release else {
-            return Ok(Classified::Mirrored);
-        };
-        if catalog.is_mirror(&identity.name) {
-            bail!(
-                "registry/main mirrors {}, but the dependency is a Git publication of the same name, so the crates.io name belongs to someone else",
-                identity.name
-            );
-        }
-        if config.repository(&release.git).is_none() {
-            bail!(
-                "the dependency is a Git publication from {:?}, which does not self-publish, so crates.io does not have it",
-                release.git
-            );
-        }
-        if dependent.is_some_and(|name| self.is_released(name)) && self.is_released(&identity.name)
-        {
-            bail!(
-                "{} is released from the same tag, and crates.io cannot resolve a dependency between two released crates of one tag",
-                identity.name
-            );
-        }
-        if config
-            .abandoned_version(&identity.name, &identity.version)
-            .is_some()
-        {
-            bail!(
-                "{} {} is abandoned on crates.io, so nothing can depend on it",
-                identity.name,
-                identity.version
-            );
-        }
-        let Some(entry) = earlier.entry(&identity.name, &identity.version) else {
-            bail!(
-                "{} {} comes from tag {:?} of {:?}, which has no entry in crates-io.lock; crates.io does not have it yet",
-                identity.name,
-                identity.version,
-                release.tag,
-                release.git
-            );
-        };
-        ensure!(
-            entry.pkgre_crate_sha256 == identity.crate_sha256,
-            "entry {} {} records pkgre archive checksum {:?} but registry/main.lock records {:?}",
-            identity.name,
-            identity.version,
-            entry.pkgre_crate_sha256,
-            identity.crate_sha256
-        );
-        Ok(Classified::FirstParty {
-            crates_io_name: entry.crates_io_name.clone(),
-        })
-    }
+    ensure!(
+        CURATED_SOURCES.contains(&source.as_str()),
+        "{} takes {} from the unsupported source {source:?}; every dependency comes from registry {CURATED_REGISTRY:?}",
+        member.name,
+        dependency.package
+    );
+    ensure!(
+        dependency
+            .registry
+            .as_deref()
+            .is_some_and(|index| CURATED_SOURCES.contains(&index)),
+        "{} does not declare registry {CURATED_REGISTRY:?} for {}",
+        member.name,
+        dependency.package
+    );
+    Ok(())
 }
 
-/// What one dependency becomes on crates.io.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Classified {
-    /// A mirrored identity: the same name and version on crates.io.
-    Mirrored,
-    /// A workspace member.
-    Member {
-        /// Its crates.io name, absent when the release does not publish it.
-        crates_io_name: Option<String>,
-    },
-    /// A first-party identity of an earlier release.
-    FirstParty {
-        /// Its crates.io name.
-        crates_io_name: String,
-    },
+/// Returns the library names to pin for one release.
+fn library_pins(
+    workspace: &Workspace,
+    published: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut libraries = BTreeMap::new();
+    for member in &workspace.members {
+        if !published.contains_key(&member.name) {
+            continue;
+        }
+        if let Some(library) = &member.library
+            && *library == derived_library_name(&member.name)
+        {
+            // The installed library keeps the curated name, which Cargo would
+            // otherwise derive from the crates.io package name.
+            libraries.insert(member.name.clone(), library.clone());
+        }
+    }
+    libraries
 }
 
-/// Resolves the version of one dependency in the catalog.
-fn resolve<'a>(
-    catalog: &'a CatalogSnapshot,
-    package: &str,
-    requirement: &str,
-) -> Result<&'a CatalogIdentity> {
-    let requirement = VersionReq::parse(requirement)
-        .with_context(|| format!("parse the version requirement {requirement:?} of {package}"))?;
-    let matching = catalog
-        .versions_of(package)
-        .filter(|identity| requirement.matches(&identity.version))
-        .collect::<Vec<_>>();
-    match matching.as_slice() {
-        [] => bail!(
-            "registry/main.lock holds no version of {package} that {requirement} matches, so crates.io cannot resolve it"
-        ),
-        [identity] => Ok(identity),
-        identities => bail!(
-            "dependency {package} matches {} versions of registry/main.lock ({}); the derivation cannot choose one",
-            identities.len(),
-            identities
-                .iter()
-                .map(|identity| identity.version.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+/// Returns the binary names to pin for one release.
+fn binary_pins(workspace: &Workspace) -> BTreeMap<String, String> {
+    let mut binaries = BTreeMap::new();
+    for member in &workspace.members {
+        if let Some(binary) = &member.main_binary
+            && *binary == member.name
+        {
+            binaries.insert(member.name.clone(), binary.clone());
+        }
     }
+    binaries
 }
 
 /// Returns the library name that Cargo derives from a package name.
@@ -528,9 +360,7 @@ fn derived_library_name(package: &str) -> String {
 pub(super) fn rewrite_manifests(
     workspace: &Workspace,
     plan: &ReleasePlan,
-    catalog: &CatalogSnapshot,
-    config: &CratesIoConfig,
-    earlier: &CratesIoLock,
+    expectations: &Expectations,
 ) -> Result<()> {
     let inherited = inherited_packages(workspace)?;
     for path in workspace.manifest_paths() {
@@ -546,24 +376,18 @@ pub(super) fn rewrite_manifests(
             "workspace manifest {} declares [patch] or [replace], which a crates.io package cannot carry",
             path.display()
         );
-        if let Some(member) = workspace
+        let member = workspace
             .members
             .iter()
-            .find(|member| member.manifest_path == path)
+            .find(|member| member.manifest_path == path);
+        if let Some(member) = member
             && let Some(name) = plan.crates_io_name(&member.name)
         {
             rewrite_released_member(&mut document, member, name, plan)
                 .with_context(|| format!("rewrite manifest {}", path.display()))?;
         }
-        rewrite_dependency_tables(
-            document.as_table_mut(),
-            plan,
-            catalog,
-            config,
-            earlier,
-            &inherited,
-        )
-        .with_context(|| format!("rewrite manifest {}", path.display()))?;
+        rewrite_dependency_tables(&mut document, member, expectations, &inherited)
+            .with_context(|| format!("rewrite manifest {}", path.display()))?;
         fs::write(&path, document.to_string())
             .with_context(|| format!("rewrite manifest {}", path.display()))?;
     }
@@ -656,11 +480,19 @@ fn inherited_packages(workspace: &Workspace) -> Result<BTreeMap<String, String>>
 /// Rewrites every dependency table of one manifest, target-specific tables
 /// included.
 fn rewrite_dependency_tables(
+    document: &mut DocumentMut,
+    member: Option<&Member>,
+    expectations: &Expectations,
+    inherited: &BTreeMap<String, String>,
+) -> Result<()> {
+    rewrite_tables_in(document.as_table_mut(), member, expectations, inherited)
+}
+
+/// Rewrites the dependency tables below one table.
+fn rewrite_tables_in(
     table: &mut dyn TableLike,
-    plan: &ReleasePlan,
-    catalog: &CatalogSnapshot,
-    config: &CratesIoConfig,
-    earlier: &CratesIoLock,
+    member: Option<&Member>,
+    expectations: &Expectations,
     inherited: &BTreeMap<String, String>,
 ) -> Result<()> {
     let keys = table
@@ -670,22 +502,20 @@ fn rewrite_dependency_tables(
     for key in keys {
         if is_dependency_table_name(&key) {
             if let Some(dependencies) = table.get_mut(&key).and_then(Item::as_table_like_mut) {
-                rewrite_dependency_table(dependencies, plan, catalog, config, earlier, inherited)?;
+                rewrite_dependency_table(dependencies, member, expectations, inherited)?;
             }
             continue;
         }
-        if key == "target" {
-            if let Some(targets) = table.get_mut(&key).and_then(Item::as_table_like_mut) {
-                let names = targets
-                    .iter()
-                    .map(|(name, _)| name.to_owned())
-                    .collect::<Vec<_>>();
-                for name in names {
-                    if let Some(target) = targets.get_mut(&name).and_then(Item::as_table_like_mut) {
-                        rewrite_dependency_tables(
-                            target, plan, catalog, config, earlier, inherited,
-                        )?;
-                    }
+        if key == "target"
+            && let Some(targets) = table.get_mut(&key).and_then(Item::as_table_like_mut)
+        {
+            let names = targets
+                .iter()
+                .map(|(name, _)| name.to_owned())
+                .collect::<Vec<_>>();
+            for name in names {
+                if let Some(target) = targets.get_mut(&name).and_then(Item::as_table_like_mut) {
+                    rewrite_tables_in(target, member, expectations, inherited)?;
                 }
             }
             continue;
@@ -696,7 +526,7 @@ fn rewrite_dependency_tables(
                 .get_mut("dependencies")
                 .and_then(Item::as_table_like_mut)
         {
-            rewrite_dependency_table(dependencies, plan, catalog, config, earlier, inherited)?;
+            rewrite_dependency_table(dependencies, member, expectations, inherited)?;
         }
     }
     Ok(())
@@ -710,12 +540,13 @@ fn is_dependency_table_name(name: &str) -> bool {
 }
 
 /// Rewrites one dependency table.
+///
+/// The crates.io name of every dependency comes from the catalog and the entries
+/// of earlier releases, so the rewrite and the comparison read the same facts.
 fn rewrite_dependency_table(
     table: &mut dyn TableLike,
-    plan: &ReleasePlan,
-    catalog: &CatalogSnapshot,
-    config: &CratesIoConfig,
-    earlier: &CratesIoLock,
+    member: Option<&Member>,
+    expectations: &Expectations,
     inherited: &BTreeMap<String, String>,
 ) -> Result<()> {
     let keys = table
@@ -743,33 +574,34 @@ fn rewrite_dependency_table(
             .map(str::to_owned)
             .or_else(|| inherited.get(&key).cloned())
             .unwrap_or_else(|| key.clone());
-        let requirement = dependency_requirement(item).unwrap_or("*").to_owned();
-        let classified = plan
-            .classify(catalog, config, earlier, None, &package, &requirement)
-            .with_context(|| format!("rewrite dependency {key:?}"))?;
-        let rename = match classified {
-            Classified::Mirrored
-            | Classified::Member {
-                crates_io_name: None,
-            } => None,
-            Classified::Member {
-                crates_io_name: Some(name),
-            }
-            | Classified::FirstParty {
-                crates_io_name: name,
-            } => (name != key).then_some(name),
+        let rename = if expectations.contains(&package) {
+            let expected = expectations.crates_io_name(&package)?;
+            (expected != key).then(|| expected.to_owned())
+        } else if let Some(member) = member {
+            bail!(
+                "crate {} depends on {key:?}, which the lock does not resolve",
+                member.name
+            );
+        } else {
+            None
         };
+        // An unused `[workspace.dependencies]` entry keeps its name, but no
+        // dependency table names a registry after the rewrite.
         if let Some(entry) = item.as_table_like_mut() {
             entry.remove("registry");
             if let Some(rename) = rename {
                 entry.insert("package", value(rename));
+            } else if member.is_some() {
+                // The dependency keeps its own name on crates.io, and a stale
+                // `package` key would name another crate there.
+                entry.remove("package");
             }
             continue;
         }
         if let Some(rename) = rename {
             let mut entry = toml_edit::InlineTable::new();
-            if requirement != "*" {
-                entry.insert("version", requirement.as_str().into());
+            if let Some(version) = dependency_requirement(item) {
+                entry.insert("version", version.into());
             }
             entry.insert("package", rename.as_str().into());
             *item = Item::Value(Value::InlineTable(entry));

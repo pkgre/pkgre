@@ -1,13 +1,16 @@
 //! Deriving the crates.io packages of one release tag.
 //!
-//! The derivation fetches the tag into a fresh checkout, rewrites the workspace
-//! manifests for crates.io, translates the lock file, packages every released
-//! crate with the pinned Cargo in an isolated environment, and proves the result
-//! against the archive that the catalog retains.
+//! The derivation fetches the tag into a fresh checkout, resolves every package
+//! of the workspace through its own `Cargo.lock`, rewrites the manifests for
+//! crates.io, translates the lock file, packages every released crate with the
+//! pinned Cargo in an isolated environment, and proves the result against the
+//! archive that the catalog retains and the entries that `crates-io.lock`
+//! records.
 
 mod cargo;
 mod cargo_lock;
 mod compare;
+mod expectations;
 mod git;
 mod workspace;
 
@@ -25,19 +28,94 @@ use super::name;
 use crate::artifact::sha256_bytes;
 use crate::package::{TemporaryDirectory, pinned_cargo};
 use crate::policy::validate_tag_version;
+use cargo_lock::LockIndex;
+use expectations::Expectations;
 
-/// Where a derivation reads the release tag and its Cargo packages from, which
-/// differs from the network only in tests.
-pub(super) struct DerivationSources<'a> {
+/// Where a derivation reads the release tag and its Cargo packages from.
+///
+/// A production run reads the network and crates.io; only a test can point it at
+/// a local repository, a local directory source, and a working directory, which
+/// the compiler drops from every other build.
+#[derive(Clone, Copy)]
+pub(super) struct Sources<'a> {
     /// A local repository to fetch the release tag from, instead of the
     /// repository URL of the catalog.
-    pub(super) fetch_repository: &'a Path,
-    /// A local directory source that replaces crates.io, so that packaging needs
-    /// no network; absent when packaging resolves from crates.io.
-    pub(super) directory: Option<&'a Path>,
+    #[cfg(test)]
+    fetch_repository: Option<&'a Path>,
+    /// A local directory source that replaces crates.io.
+    #[cfg(test)]
+    directory: Option<&'a Path>,
     /// The directory to work in, instead of the temporary directory of the
-    /// caller's environment, which no Cargo configuration may cover.
-    pub(super) root: &'a Path,
+    /// caller's environment.
+    #[cfg(test)]
+    root: Option<&'a Path>,
+    /// The lifetime of a local source, which only a test names.
+    #[cfg_attr(not(test), allow(dead_code))]
+    marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> Sources<'a> {
+    /// The sources of a production run: the network and crates.io.
+    pub(super) const fn network() -> Self {
+        Self {
+            #[cfg(test)]
+            fetch_repository: None,
+            #[cfg(test)]
+            directory: None,
+            #[cfg(test)]
+            root: None,
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    /// The sources of a test run.
+    #[cfg(test)]
+    pub(super) const fn local(
+        fetch_repository: &'a Path,
+        directory: Option<&'a Path>,
+        root: &'a Path,
+    ) -> Self {
+        Self {
+            fetch_repository: Some(fetch_repository),
+            directory,
+            root: Some(root),
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Returns the local repository to fetch the release tag from, if any.
+    #[cfg(test)]
+    fn fetch_repository(&self) -> Option<&'a Path> {
+        self.fetch_repository
+    }
+
+    /// Returns the local repository to fetch the release tag from, if any.
+    #[cfg(not(test))]
+    #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
+    fn fetch_repository(&self) -> Option<&'a Path> {
+        None
+    }
+
+    #[allow(clippy::unused_self)]
+    /// Returns the local directory source that replaces crates.io, if any.
+    #[cfg(test)]
+    fn directory(&self) -> Option<&'a Path> {
+        self.directory
+    }
+
+    #[allow(clippy::unused_self)]
+    /// Returns the directory to work in, if the caller named one.
+    #[cfg(test)]
+    fn root(&self) -> Option<&'a Path> {
+        self.root
+    }
+
+    /// Returns the directory to work in, if the caller named one.
+    #[cfg(not(test))]
+    #[allow(clippy::unused_self, clippy::trivially_copy_pass_by_ref)]
+    fn root(&self) -> Option<&'a Path> {
+        None
+    }
 }
 
 /// One crate of one release, as the catalog records it.
@@ -61,7 +139,7 @@ pub(super) struct DerivedPackage {
     pub(super) archive: Vec<u8>,
 }
 
-/// Derives every crates.io package of one release.
+/// Derives every crates.io package of one release from the given sources.
 ///
 /// `released` are the catalog's identities of the release, with the archives
 /// that the catalog retains. The result holds one package per released crate,
@@ -75,13 +153,13 @@ pub(super) struct DerivedPackage {
 /// packages twice differently, or when a derived archive differs from the
 /// curated archive beyond the fields the derivation rewrites.
 #[allow(clippy::too_many_lines)]
-pub(super) fn derive_release(
+pub(super) fn derive_release_with(
     release: &GitRelease,
     released: &[ReleasedCrate],
     catalog: &CatalogSnapshot,
     config: &CratesIoConfig,
     earlier: &CratesIoLock,
-    sources: Option<&DerivationSources<'_>>,
+    sources: Sources<'_>,
 ) -> Result<Vec<DerivedPackage>> {
     ensure!(
         !released.is_empty(),
@@ -90,37 +168,24 @@ pub(super) fn derive_release(
         release.tag
     );
     let cargo = pinned_cargo(&release.cargo_version)?;
-    let temporary = match sources {
-        Some(sources) => TemporaryDirectory::new_in(sources.root, "pkgre-self-publish")?,
+    let temporary = match sources.root() {
+        Some(root) => TemporaryDirectory::new_in(root, "pkgre-self-publish")?,
         None => TemporaryDirectory::new("pkgre-self-publish")?,
     };
     let root = temporary.path();
     let cargo_home = cargo::cargo_home(root);
-    let registry_sources = match sources {
-        Some(DerivationSources {
-            directory: Some(directory),
-            ..
-        }) => cargo::RegistrySources::Local(directory),
-        _ => cargo::RegistrySources::CratesIo,
-    };
-    cargo::prepare_cargo_home(&cargo_home, registry_sources)?;
+    cargo::prepare_cargo_home(&cargo_home, cargo::registry_sources(sources))?;
     let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
     let work = root.join("work");
     std::fs::create_dir(&work)
         .with_context(|| format!("create derivation directory {}", work.display()))?;
     ensure_no_cargo_configuration(&work)?;
 
-    let (fetch_repository, allow_file) = match sources {
-        Some(sources) => (
-            sources
-                .fetch_repository
+    let (fetch_repository, allow_file) = match sources.fetch_repository() {
+        Some(repository) => (
+            repository
                 .to_str()
-                .with_context(|| {
-                    format!(
-                        "test repository {} is not UTF-8",
-                        sources.fetch_repository.display()
-                    )
-                })?
+                .with_context(|| format!("test repository {} is not UTF-8", repository.display()))?
                 .to_owned(),
             true,
         ),
@@ -152,11 +217,12 @@ pub(super) fn derive_release(
     );
 
     let workspace = workspace::Workspace::load(&cargo, &environment, &work, &checkout.root)?;
+    let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
     let published = published_crates(&workspace, released, config, &release.tag)?;
-    let plan = workspace::ReleasePlan::new(&workspace, catalog, config, earlier, &published)?;
-    workspace::rewrite_manifests(&workspace, &plan, catalog, config, earlier)?;
-    let lock_renames =
-        cargo_lock::translate_lock(&checkout.root, &workspace, &plan, catalog, config, earlier)?;
+    let expectations = Expectations::build(&lock, catalog, config, earlier, &published)?;
+    let plan = workspace::ReleasePlan::new(&workspace, &lock, &expectations, &published)?;
+    workspace::rewrite_manifests(&workspace, &plan, &expectations)?;
+    cargo_lock::translate_lock(&checkout.root, &expectations)?;
 
     let members = released
         .iter()
@@ -206,7 +272,7 @@ pub(super) fn derive_release(
                 name: crates_io_name.as_str(),
                 bytes: archive.as_slice(),
             },
-            &lock_renames,
+            &expectations,
         )
         .with_context(|| {
             format!(
@@ -214,13 +280,12 @@ pub(super) fn derive_release(
                 package.name, package.version
             )
         })?;
-        let crate_sha256 = sha256_bytes(archive);
         packages.push(DerivedPackage {
             entry: CratesIoPackage {
                 name: package.name.clone(),
                 version: package.version.clone(),
                 crates_io_name,
-                crate_sha256,
+                crate_sha256: sha256_bytes(archive),
                 pkgre_crate_sha256: package.crate_sha256.clone(),
                 git: release.git.clone(),
                 tag: release.tag.clone(),

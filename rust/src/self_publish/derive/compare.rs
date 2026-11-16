@@ -1,5 +1,10 @@
 //! Comparing a derived crates.io archive with the curated archive of the same
 //! release.
+//!
+//! Everything the comparison expects comes from [`Expectations`], which resolves
+//! the catalog, the mapping, and the entries of earlier releases directly. The
+//! comparison therefore proves the archives against those facts, not against the
+//! translation that produced them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -8,6 +13,8 @@ use semver::Version;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
+use super::cargo::{CRATES_IO_INDEX, CURATED_INDEX};
+use super::expectations::Expectations;
 use crate::update::{ComparedArchive, read_crate_archive};
 
 /// The files whose bytes a comparison reads.
@@ -19,8 +26,12 @@ const EXCEPTION_FILES: [&str; 4] = [
     "Cargo.lock",
     ".cargo_vcs_info.json",
 ];
-/// The dependency keys that the derivation rewrites.
-const REWRITTEN_DEPENDENCY_KEYS: [&str; 3] = ["registry", "registry-index", "package"];
+/// The dependency keys that the rewrite removes or replaces.
+const REWRITTEN_DEPENDENCY_KEYS: [&str; 2] = ["package", "registry"];
+/// The dependency key that Cargo writes for a dependency of a named registry.
+const REGISTRY_INDEX_KEY: &str = "registry-index";
+/// The curated registry alias, as a manifest may spell it.
+const CURATED_REGISTRY: &str = "pkgre";
 
 /// One crate of one release, as the comparison reads it.
 pub(super) struct ArchiveToCompare<'a> {
@@ -32,23 +43,23 @@ pub(super) struct ArchiveToCompare<'a> {
 
 /// Compares one derived crates.io archive with the curated archive.
 ///
-/// The archives must hold the same files below their root, with identical bytes
-/// except in `Cargo.toml`, `Cargo.toml.orig`, `Cargo.lock`, and
-/// `.cargo_vcs_info.json`. The VCS claim may differ only by `dirty`, the
-/// normalized manifest only in the fields the derivation rewrites, and the lock
-/// files must list the same packages at the same versions under the mapped
-/// names.
-///
 /// # Errors
 ///
 /// Returns an error naming the file and the difference for an archive that
-/// differs in any other way.
+/// differs from the curated one beyond the fields the derivation rewrites.
 pub(super) fn compare_archives(
     version: &Version,
     curated: &ArchiveToCompare<'_>,
     derived: &ArchiveToCompare<'_>,
-    lock_renames: &BTreeMap<String, String>,
+    expectations: &Expectations,
 ) -> Result<()> {
+    ensure!(
+        expectations.crates_io_name(curated.name)? == derived.name,
+        "the crates.io name of {} is {:?}, not {:?}",
+        curated.name,
+        expectations.crates_io_name(curated.name)?,
+        derived.name
+    );
     let curated_archive = read_crate_archive(curated.name, version, curated.bytes, &READ_FILES)
         .with_context(|| format!("read the curated archive of {}", curated.name))?;
     let derived_archive = read_crate_archive(derived.name, version, derived.bytes, &READ_FILES)
@@ -61,8 +72,9 @@ pub(super) fn compare_archives(
         derived.name,
         &curated_archive,
         &derived_archive,
+        expectations,
     )?;
-    compare_lock_files(&curated_archive, &derived_archive, lock_renames)?;
+    compare_lock_files(&curated_archive, &derived_archive, expectations)?;
     Ok(())
 }
 
@@ -79,7 +91,8 @@ fn compare_file_sets(curated: &ComparedArchive, derived: &ComparedArchive) -> Re
     Ok(())
 }
 
-/// Compares the bytes of every file that the derivation does not rewrite.
+/// Compares the bytes and the permissions of every file that the derivation does
+/// not rewrite.
 fn compare_file_bytes(curated: &ComparedArchive, derived: &ComparedArchive) -> Result<()> {
     for (path, curated_file) in &curated.files {
         if EXCEPTION_FILES.contains(&path.as_str()) {
@@ -96,6 +109,12 @@ fn compare_file_bytes(curated: &ComparedArchive, derived: &ComparedArchive) -> R
             curated_file.sha256,
             derived_file.size,
             derived_file.sha256
+        );
+        ensure!(
+            curated_file.mode == derived_file.mode,
+            "{path} differs in its permissions: the curated archive holds mode {:04o}, the crates.io archive {:04o}",
+            curated_file.mode,
+            derived_file.mode
         );
     }
     Ok(())
@@ -137,13 +156,13 @@ fn vcs_claim(archive: &ComparedArchive) -> Result<Option<JsonValue>> {
     Ok(Some(JsonValue::Object(object)))
 }
 
-/// Compares the two normalized manifests, which may differ only in the fields
-/// the derivation rewrites.
+/// Compares the two normalized manifests.
 fn compare_manifests(
     curated_name: &str,
     derived_name: &str,
     curated: &ComparedArchive,
     derived: &ComparedArchive,
+    expectations: &Expectations,
 ) -> Result<()> {
     let curated_manifest = manifest(curated)?;
     let derived_manifest = manifest(derived)?;
@@ -164,10 +183,122 @@ fn compare_manifests(
     );
     compare_library_names(&curated_manifest, &derived_manifest)?;
     compare_binary_names(&curated_manifest, &derived_manifest)?;
+    compare_dependencies(&curated_manifest, &derived_manifest, expectations)?;
     compare_values(
         "Cargo.toml",
         &strip_manifest(&curated_manifest),
         &strip_manifest(&derived_manifest),
+    )
+}
+
+/// Compares every dependency of the two manifests against the expected names.
+fn compare_dependencies(
+    curated: &TomlValue,
+    derived: &TomlValue,
+    expectations: &Expectations,
+) -> Result<()> {
+    for (path, key, entry) in dependency_entries(curated) {
+        let actual = entry
+            .get("package")
+            .and_then(TomlValue::as_str)
+            .unwrap_or(&key);
+        let expected = expectations.crates_io_name(actual).with_context(|| {
+            format!("the curated dependency {key:?} names a package that the lock does not hold")
+        })?;
+        if let Some(registry) = entry.get(REGISTRY_INDEX_KEY).and_then(TomlValue::as_str) {
+            ensure!(
+                registry == CURATED_INDEX,
+                "the curated dependency {key:?} names the registry {registry:?}, not the curated registry"
+            );
+        }
+        if let Some(registry) = entry.get("registry").and_then(TomlValue::as_str) {
+            ensure!(
+                registry == CURATED_REGISTRY,
+                "the curated dependency {key:?} names the registry {registry:?}, not the curated registry"
+            );
+        }
+        let derived_entry = lookup(derived, &path, &key).with_context(|| {
+            format!(
+                "the crates.io manifest holds no dependency {key:?} in {}",
+                path.join(".")
+            )
+        })?;
+        for name in [REGISTRY_INDEX_KEY, "registry"] {
+            ensure!(
+                derived_entry.get(name).is_none(),
+                "the crates.io dependency {key:?} in {} names another registry: {name} = {:?}",
+                path.join("."),
+                derived_entry.get(name)
+            );
+        }
+        let derived_package = derived_entry.get("package").and_then(TomlValue::as_str);
+        if expected == key {
+            ensure!(
+                derived_package.is_none(),
+                "the crates.io dependency {key:?} in {} is renamed to {derived_package:?}, but crates.io has the crate under its own name",
+                path.join(".")
+            );
+        } else {
+            ensure!(
+                derived_package == Some(expected),
+                "the crates.io dependency {key:?} in {} names the package {derived_package:?}, not {expected:?}",
+                path.join(".")
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Returns every dependency entry of one manifest, with its table path and key.
+fn dependency_entries(manifest: &TomlValue) -> Vec<(Vec<String>, String, &TomlValue)> {
+    let mut entries = Vec::new();
+    collect_dependency_entries(manifest, &mut Vec::new(), &mut entries);
+    entries
+}
+
+/// Collects the dependency entries below one value.
+fn collect_dependency_entries<'a>(
+    value: &'a TomlValue,
+    path: &mut Vec<String>,
+    entries: &mut Vec<(Vec<String>, String, &'a TomlValue)>,
+) {
+    let Some(table) = value.as_table() else {
+        return;
+    };
+    for (key, child) in table {
+        path.push(key.clone());
+        let is_dependency_table = path
+            .last()
+            .is_some_and(|last| is_dependency_table(last.as_str()));
+        if is_dependency_table && child.is_table() {
+            for (name, entry) in child.as_table().expect("the child is a table") {
+                entries.push((path.clone(), name.clone(), entry));
+            }
+        } else if child.is_table() {
+            collect_dependency_entries(child, path, entries);
+        }
+        path.pop();
+    }
+}
+
+/// Looks up one dependency entry of one manifest.
+fn lookup<'a>(manifest: &'a TomlValue, path: &[String], key: &str) -> Option<&'a TomlValue> {
+    let mut value = manifest;
+    for component in path {
+        value = value.get(component)?;
+    }
+    value.get(key)
+}
+
+/// Returns whether one table name is a Cargo dependency table.
+fn is_dependency_table(name: &str) -> bool {
+    matches!(
+        name,
+        "dependencies"
+            | "dev-dependencies"
+            | "dev_dependencies"
+            | "build-dependencies"
+            | "build_dependencies"
     )
 }
 
@@ -286,68 +417,52 @@ fn strip_manifest(manifest: &TomlValue) -> TomlValue {
 
 /// Removes the rewritten keys from every dependency table of one manifest.
 fn strip_dependency_tables(manifest: &mut TomlValue) {
-    let Some(table) = manifest.as_table_mut() else {
-        return;
-    };
-    let keys = table.keys().cloned().collect::<Vec<_>>();
-    for key in keys {
-        let Some(item) = table.get_mut(&key) else {
-            continue;
-        };
-        if is_dependency_table(&key) {
-            strip_dependency_table(item);
-            continue;
-        }
-        if key == "target"
-            && let Some(targets) = item.as_table_mut()
-        {
-            for (_, target) in targets.iter_mut() {
-                if let Some(target) = target.as_table_mut() {
-                    let names = target.keys().cloned().collect::<Vec<_>>();
-                    for name in names {
-                        if is_dependency_table(&name)
-                            && let Some(dependencies) = target.get_mut(&name)
-                        {
-                            strip_dependency_table(dependencies);
-                        }
-                    }
-                }
+    let mut path = Vec::new();
+    let keys = dependency_keys(manifest, &mut path);
+    for (path, key) in keys {
+        if let Some(entry) = lookup_mut(manifest, &path, &key).and_then(TomlValue::as_table_mut) {
+            for name in REWRITTEN_DEPENDENCY_KEYS {
+                entry.remove(name);
             }
-            continue;
-        }
-        if key == "workspace"
-            && let Some(workspace) = item.as_table_mut()
-            && let Some(dependencies) = workspace.get_mut("dependencies")
-        {
-            strip_dependency_table(dependencies);
+            entry.remove(REGISTRY_INDEX_KEY);
         }
     }
 }
 
-/// Returns whether one table name is a Cargo dependency table.
-fn is_dependency_table(name: &str) -> bool {
-    matches!(
-        name,
-        "dependencies"
-            | "dev-dependencies"
-            | "dev_dependencies"
-            | "build-dependencies"
-            | "build_dependencies"
-    )
+/// Returns the table path and key of every dependency entry of one manifest.
+fn dependency_keys(value: &TomlValue, path: &mut Vec<String>) -> Vec<(Vec<String>, String)> {
+    let mut keys = Vec::new();
+    let Some(table) = value.as_table() else {
+        return keys;
+    };
+    for (key, child) in table {
+        path.push(key.clone());
+        let is_dependency_table = path
+            .last()
+            .is_some_and(|last| is_dependency_table(last.as_str()));
+        if is_dependency_table && child.is_table() {
+            for (name, _) in child.as_table().expect("the child is a table") {
+                keys.push((path.clone(), name.clone()));
+            }
+        } else if child.is_table() {
+            keys.extend(dependency_keys(child, path));
+        }
+        path.pop();
+    }
+    keys
 }
 
-/// Removes the rewritten keys from one dependency table.
-fn strip_dependency_table(dependencies: &mut TomlValue) {
-    let Some(table) = dependencies.as_table_mut() else {
-        return;
-    };
-    for (_, dependency) in table.iter_mut() {
-        if let Some(dependency) = dependency.as_table_mut() {
-            for key in REWRITTEN_DEPENDENCY_KEYS {
-                dependency.remove(key);
-            }
-        }
+/// Looks up one mutable dependency entry of one manifest.
+fn lookup_mut<'a>(
+    manifest: &'a mut TomlValue,
+    path: &[String],
+    key: &str,
+) -> Option<&'a mut TomlValue> {
+    let mut value = manifest;
+    for component in path {
+        value = value.get_mut(component)?;
     }
+    value.get_mut(key)
 }
 
 /// Compares two parsed TOML documents, naming the first path that differs.
@@ -404,49 +519,122 @@ fn compact(value: &TomlValue) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 
-/// Compares the two packaged lock files, which must list the same packages at
-/// the same versions under the mapped names.
+/// The source that the curated lock records for an external package.
+///
+/// Cargo writes a sparse registry's index URL without the `registry+` prefix in
+/// a lock file.
+fn curated_lock_source() -> String {
+    CURATED_INDEX.to_owned()
+}
+
+/// The source that the derived lock records for an external package.
+fn crates_io_lock_source() -> String {
+    format!("registry+{CRATES_IO_INDEX}")
+}
+
+/// One package of an archived `Cargo.lock`.
+struct LockedPackage {
+    name: String,
+    version: Version,
+    source: Option<String>,
+    checksum: Option<String>,
+}
+
+/// Compares the two packaged lock files with the checksums that each side must
+/// serve.
 fn compare_lock_files(
     curated: &ComparedArchive,
     derived: &ComparedArchive,
-    renames: &BTreeMap<String, String>,
+    expectations: &Expectations,
 ) -> Result<()> {
-    let curated = lock_packages(curated, renames)?;
-    let derived = lock_packages(derived, &BTreeMap::new())?;
-    for (identity, checksum) in &curated {
-        let Some(derived_checksum) = derived.get(identity) else {
-            bail!(
-                "the curated Cargo.lock holds {} {}, which the crates.io lock does not",
-                identity.0,
-                identity.1
-            );
-        };
-        if let (Some(left), Some(right)) = (checksum, derived_checksum) {
-            ensure!(
-                left == right,
-                "the Cargo.lock checksum of {} {} differs: the curated archive holds {left}, the crates.io archive {right}",
-                identity.0,
-                identity.1
-            );
+    let curated_packages = lock_packages(curated)?;
+    let derived_packages = lock_packages(derived)?;
+    let mut matched = BTreeSet::new();
+    for package in &curated_packages {
+        let expected = expectations.package(&package.name, &package.version)?;
+        let counterpart = derived_packages
+            .iter()
+            .find(|candidate| {
+                candidate.name == expected.crates_io_name && candidate.version == package.version
+            })
+            .with_context(|| {
+                format!(
+                    "the crates.io Cargo.lock holds no {} {}",
+                    expected.crates_io_name, package.version
+                )
+            })?;
+        ensure!(
+            matched.insert((expected.crates_io_name.clone(), package.version.clone())),
+            "the crates.io Cargo.lock holds {} {} twice",
+            expected.crates_io_name,
+            package.version
+        );
+        match (&expected.curated_checksum, &expected.derived_checksum) {
+            (None, None) => {
+                ensure!(
+                    package.source.is_none() && package.checksum.is_none(),
+                    "{} {} is a workspace member, but the curated lock records source {:?} and checksum {:?}",
+                    package.name,
+                    package.version,
+                    package.source,
+                    package.checksum
+                );
+                ensure!(
+                    counterpart.source.is_none() && counterpart.checksum.is_none(),
+                    "{} {} is a workspace member, but the crates.io lock records source {:?} and checksum {:?}",
+                    expected.crates_io_name,
+                    package.version,
+                    counterpart.source,
+                    counterpart.checksum
+                );
+            }
+            (curated_checksum, derived_checksum) => {
+                ensure!(
+                    package.source.as_deref() == Some(curated_lock_source().as_str()),
+                    "{} {} comes from {:?} in the curated lock, not from the curated registry",
+                    package.name,
+                    package.version,
+                    package.source
+                );
+                ensure!(
+                    package.checksum.as_deref() == curated_checksum.as_deref(),
+                    "the curated Cargo.lock records checksum {:?} for {} {}, not {:?}",
+                    package.checksum,
+                    package.name,
+                    package.version,
+                    curated_checksum
+                );
+                ensure!(
+                    counterpart.source.as_deref() == Some(crates_io_lock_source().as_str()),
+                    "{} {} comes from {:?} in the crates.io lock, not from crates.io",
+                    expected.crates_io_name,
+                    package.version,
+                    counterpart.source
+                );
+                ensure!(
+                    counterpart.checksum.as_deref() == derived_checksum.as_deref(),
+                    "the crates.io Cargo.lock records checksum {:?} for {} {}, not {:?}",
+                    counterpart.checksum,
+                    expected.crates_io_name,
+                    package.version,
+                    derived_checksum
+                );
+            }
         }
     }
-    for identity in derived.keys() {
+    for package in &derived_packages {
         ensure!(
-            curated.contains_key(identity),
+            matched.contains(&(package.name.clone(), package.version.clone())),
             "the crates.io Cargo.lock holds {} {}, which the curated lock does not",
-            identity.0,
-            identity.1
+            package.name,
+            package.version
         );
     }
     Ok(())
 }
 
-/// Returns the packages of one archived `Cargo.lock`, mapped to crates.io names,
-/// with their checksums.
-fn lock_packages(
-    archive: &ComparedArchive,
-    renames: &BTreeMap<String, String>,
-) -> Result<BTreeMap<(String, String), Option<String>>> {
+/// Returns the packages of one archived `Cargo.lock`.
+fn lock_packages(archive: &ComparedArchive) -> Result<Vec<LockedPackage>> {
     let bytes = archive
         .contents
         .get("Cargo.lock")
@@ -456,24 +644,30 @@ fn lock_packages(
         .get("package")
         .and_then(TomlValue::as_array)
         .context("the archived Cargo.lock has no [[package]] array")?;
-    let mut names = BTreeMap::new();
-    for package in packages {
-        let name = package
-            .get("name")
-            .and_then(TomlValue::as_str)
-            .context("a Cargo.lock package has no name")?;
-        let version = package
-            .get("version")
-            .and_then(TomlValue::as_str)
-            .context("a Cargo.lock package has no version")?;
-        let name = renames.get(name).map_or(name, String::as_str);
-        names.insert(
-            (name.to_owned(), version.to_owned()),
-            package
-                .get("checksum")
+    packages
+        .iter()
+        .map(|package| {
+            let name = package
+                .get("name")
                 .and_then(TomlValue::as_str)
-                .map(str::to_owned),
-        );
-    }
-    Ok(names)
+                .context("a Cargo.lock package has no name")?;
+            let version = package
+                .get("version")
+                .and_then(TomlValue::as_str)
+                .with_context(|| format!("Cargo.lock package {name:?} has no version"))?;
+            Ok(LockedPackage {
+                name: name.to_owned(),
+                version: Version::parse(version)
+                    .with_context(|| format!("parse the version of Cargo.lock package {name:?}"))?,
+                source: package
+                    .get("source")
+                    .and_then(TomlValue::as_str)
+                    .map(str::to_owned),
+                checksum: package
+                    .get("checksum")
+                    .and_then(TomlValue::as_str)
+                    .map(str::to_owned),
+            })
+        })
+        .collect()
 }

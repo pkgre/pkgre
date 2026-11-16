@@ -48,25 +48,58 @@ pub(crate) fn ensure_no_cargo_configuration(directory: &Path) -> Result<()> {
             .context("resolve the current directory")?
             .join(directory)
     };
-    for ancestor in directory.ancestors() {
-        for name in CARGO_CONFIGURATION_FILES {
-            let path = ancestor.join(".cargo").join(name);
-            match fs::symlink_metadata(&path) {
-                Ok(_) => bail!(
-                    "Cargo configuration {} covers {} and could replace crates.io; run the command from a directory that no Cargo configuration covers",
-                    path.display(),
-                    directory.display()
-                ),
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("inspect Cargo configuration {}", path.display())
-                    });
+    let mut candidates = vec![directory.clone()];
+    let physical = physical_path(&directory);
+    if physical != directory {
+        candidates.push(physical);
+    }
+    for candidate in candidates {
+        for ancestor in candidate.ancestors() {
+            for name in CARGO_CONFIGURATION_FILES {
+                let path = ancestor.join(".cargo").join(name);
+                match fs::symlink_metadata(&path) {
+                    Ok(_) => bail!(
+                        "Cargo configuration {} covers {} and could replace crates.io; run the command from a directory that no Cargo configuration covers",
+                        path.display(),
+                        directory.display()
+                    ),
+                    Err(error) if error.kind() == ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("inspect Cargo configuration {}", path.display())
+                        });
+                    }
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Returns the physical path of one directory, with every symbolic link of the
+/// part that exists resolved.
+///
+/// Cargo finds its configuration from the working directory the operating
+/// system gives it, so the directories behind symbolic links are searched too.
+fn physical_path(directory: &Path) -> PathBuf {
+    let mut existing = directory.to_path_buf();
+    let mut suffix: Vec<OsString> = Vec::new();
+    loop {
+        if let Ok(canonical) = fs::canonicalize(&existing) {
+            let mut path = canonical;
+            for component in suffix.iter().rev() {
+                path.push(component);
+            }
+            return path;
+        }
+        let Some(name) = existing.file_name().map(OsStr::to_owned) else {
+            return directory.to_path_buf();
+        };
+        suffix.push(name);
+        if !existing.pop() {
+            return directory.to_path_buf();
+        }
+    }
 }
 
 /// The fixed environment of every Git and Cargo child process.

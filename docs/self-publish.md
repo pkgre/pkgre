@@ -197,9 +197,10 @@ is the curated package with a mechanically rewritten manifest.
 
 Every Git and Cargo process of the derivation starts from an empty environment and inherits
 only `PATH`, `TMPDIR`, the certificate variables, `CARGO_HOME`, and `RUSTC` pointing at the
-`rustc` beside the pinned `cargo`; no wrapper and no token variable reaches it. Run the
-command from a directory that no Cargo configuration covers, for example with `TMPDIR`
-below a directory that holds no `.cargo`.
+`rustc` beside the pinned `cargo`; no wrapper and no token variable reaches it. The
+derivation works in a temporary directory and refuses to run when that directory or any
+directory above it holds Cargo configuration, so set `TMPDIR` to a directory that no Cargo
+configuration covers; a symbolic link on the way is resolved too, since Cargo follows it.
 
 ## Recording entries
 

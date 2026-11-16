@@ -26,18 +26,29 @@ pub(super) const CARGO_HOME_DIRECTORY: &str = "cargo-home";
 const TARGET_DIRECTORIES: [&str; 2] = ["target-one", "target-two"];
 
 /// How the isolated Cargo home resolves the registries of one packaging run.
-#[derive(Clone, Copy, Debug)]
-pub(super) enum RegistrySources<'a> {
+#[derive(Clone, Debug)]
+pub(super) enum RegistrySources {
     /// Plain crates.io, as the derivation packages a release.
     CratesIo,
     /// A local directory source that replaces crates.io and the curated
     /// registry, so that a test needs no network.
-    Local(&'a Path),
+    #[cfg(test)]
+    Local(PathBuf),
     /// A local directory source that replaces both registries and makes the
     /// curated registry the default, as the reconciler's own packaging
     /// configures a checkout whose manifests declare `registry = "pkgre"`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    LocalCurated(&'a Path),
+    #[cfg(test)]
+    LocalCurated(PathBuf),
+}
+
+/// Returns the registries that one derivation resolves its packages from.
+#[cfg_attr(not(test), allow(unused_variables))]
+pub(super) fn registry_sources(sources: super::Sources<'_>) -> RegistrySources {
+    #[cfg(test)]
+    if let Some(directory) = sources.directory() {
+        return RegistrySources::Local(directory.to_path_buf());
+    }
+    RegistrySources::CratesIo
 }
 
 /// Writes the config of a fresh isolated Cargo home.
@@ -46,7 +57,8 @@ pub(super) enum RegistrySources<'a> {
 ///
 /// Returns an error for a home that already exists, or for a config that cannot
 /// be written.
-pub(super) fn prepare_cargo_home(cargo_home: &Path, sources: RegistrySources<'_>) -> Result<()> {
+#[allow(clippy::needless_pass_by_value)]
+pub(super) fn prepare_cargo_home(cargo_home: &Path, sources: RegistrySources) -> Result<()> {
     fs::create_dir(cargo_home)
         .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
     let mut text = String::new();
@@ -56,18 +68,21 @@ pub(super) fn prepare_cargo_home(cargo_home: &Path, sources: RegistrySources<'_>
         "{CURATED_REGISTRY} = {{ index = \"{CURATED_INDEX}\" }}"
     )
     .expect("writing to a string");
+    #[cfg(test)]
     if matches!(sources, RegistrySources::LocalCurated(_)) {
         writeln!(text, "\n[registry]\ndefault = {CURATED_REGISTRY:?}")
             .expect("writing to a string");
     }
-    match sources {
+    match &sources {
         RegistrySources::CratesIo => {}
+        #[cfg(test)]
         RegistrySources::Local(directory) | RegistrySources::LocalCurated(directory) => {
             let directory = directory.to_str().with_context(|| {
                 format!("local Cargo source {} is not UTF-8", directory.display())
             })?;
             writeln!(text, "\n[source.crates-io]\nreplace-with = \"local\"")
                 .expect("writing to a string");
+            #[cfg(test)]
             if matches!(sources, RegistrySources::LocalCurated(_)) {
                 writeln!(
                     text,

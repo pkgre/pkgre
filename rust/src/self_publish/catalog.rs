@@ -155,13 +155,6 @@ impl CatalogSnapshot {
             .find(|identity| identity.name == name && identity.version == *version)
     }
 
-    /// Returns the identities of every version of one package name.
-    pub(crate) fn versions_of(&self, name: &str) -> impl Iterator<Item = &CatalogIdentity> {
-        self.identities
-            .iter()
-            .filter(move |identity| identity.name == name)
-    }
-
     /// Returns whether `registry/main` mirrors the package name.
     pub(crate) fn is_mirror(&self, name: &str) -> bool {
         self.mirrors.iter().any(|mirror| mirror == name)

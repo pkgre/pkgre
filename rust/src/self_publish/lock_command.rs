@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
@@ -10,7 +10,7 @@ use tracing::info;
 
 use super::catalog::{CatalogIdentity, GitRelease, is_release_tag};
 use super::check::check_state;
-use super::derive::{DerivationSources, ReleasedCrate, derive_release};
+use super::derive::{ReleasedCrate, Sources, derive_release_with};
 use super::lock::{CratesIoLock, CratesIoPackage};
 use super::state::{LOCK_FILE, RepositoryState, STATE_DIRECTORY, SelfPublishState};
 use crate::artifact::sha256_bytes;
@@ -58,23 +58,43 @@ pub struct SelfPublishLockSummary {
 /// with the catalog, a derivation that fails, or a lock that the offline checks
 /// would refuse.
 pub fn self_publish_lock(repository: &Path) -> Result<SelfPublishLockSummary> {
-    self_publish_lock_in(repository, None)
+    run_lock(repository, |_| Ok(Sources::network()))
 }
 
-/// Local stand-ins for the network, which no public API can build.
+/// Local stand-ins for the network, which only a test can build.
+#[cfg(test)]
 pub(super) struct LocalNetwork<'a> {
     /// Repository URL, as the catalog spells it, to the local repository to
     /// fetch the release tag from.
-    pub(super) repositories: &'a BTreeMap<String, PathBuf>,
+    pub(super) repositories: &'a BTreeMap<String, std::path::PathBuf>,
     /// A directory source that replaces crates.io.
     pub(super) source: &'a Path,
     /// The directory to work in, which no Cargo configuration may cover.
     pub(super) root: &'a Path,
 }
 
-pub(super) fn self_publish_lock_in(
+/// Runs the command from local stand-ins for the network.
+#[cfg(test)]
+pub(super) fn self_publish_lock_in<'a>(
     repository: &Path,
-    local: Option<&LocalNetwork<'_>>,
+    local: &'a LocalNetwork<'a>,
+) -> Result<SelfPublishLockSummary> {
+    run_lock(repository, |git| {
+        Ok(Sources::local(
+            local
+                .repositories
+                .get(git)
+                .with_context(|| format!("no local test repository stands in for {git:?}"))?,
+            Some(local.source),
+            local.root,
+        ))
+    })
+}
+
+/// Runs the command, with one factory for the sources of each release.
+fn run_lock<'a>(
+    repository: &Path,
+    sources_of: impl Fn(&str) -> Result<Sources<'a>>,
 ) -> Result<SelfPublishLockSummary> {
     let state = RepositoryState::load(repository)?;
     let Some(self_publish) = state.self_publish.as_ref() else {
@@ -106,27 +126,14 @@ pub(super) fn self_publish_lock_in(
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let sources = match local {
-            Some(local) => {
-                let fetch_repository = local
-                    .repositories
-                    .get(git)
-                    .with_context(|| format!("no local test repository stands in for {git:?}"))?;
-                Some(DerivationSources {
-                    fetch_repository,
-                    directory: Some(local.source),
-                    root: local.root,
-                })
-            }
-            None => None,
-        };
-        let derived = derive_release(
+        let derivation_sources = sources_of(git)?;
+        let derived = derive_release_with(
             &release,
             &curated,
             &state.catalog,
             &self_publish.config,
             &self_publish.lock,
-            sources.as_ref(),
+            derivation_sources,
         )
         .with_context(|| format!("derive the crates.io packages of tag {tag:?} of {git:?}"))?;
         for package in derived {
