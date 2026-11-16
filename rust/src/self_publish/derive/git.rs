@@ -1,19 +1,15 @@
 //! Fetching one immutable release tag into a fresh checkout.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
-use anyhow::{Context, Result, bail, ensure};
-use tracing::debug;
+use anyhow::{Context, Result, ensure};
 
+use super::super::git;
 use super::super::isolation::ChildEnvironment;
 use crate::package::ensure_safe_checkout_tree;
 use crate::policy::{validate_git_object_id, validate_git_tag, validate_https_repository};
-
-/// Maximum number of bytes of a failed command's output that an error keeps.
-const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 
 /// A checkout of exactly one tag, as immutable release evidence.
 pub(super) struct TagCheckout {
@@ -46,7 +42,7 @@ pub(super) fn fetch_tag(
 ) -> Result<TagCheckout> {
     validate_https_repository(repository)?;
     validate_git_tag(tag)?;
-    run_git(
+    git::run(
         None,
         [
             OsString::from("init"),
@@ -56,7 +52,7 @@ pub(super) fn fetch_tag(
         environment,
         allow_file,
     )?;
-    run_git(
+    git::run(
         Some(checkout),
         [
             OsString::from("remote"),
@@ -68,7 +64,7 @@ pub(super) fn fetch_tag(
         allow_file,
     )?;
     let reference = format!("refs/tags/{tag}");
-    run_git(
+    git::run(
         Some(checkout),
         [
             OsString::from("fetch"),
@@ -81,7 +77,7 @@ pub(super) fn fetch_tag(
         environment,
         allow_file,
     )?;
-    let tag_oid = git_stdout(
+    let tag_oid = git::stdout(
         checkout,
         [
             OsString::from("rev-parse"),
@@ -91,7 +87,7 @@ pub(super) fn fetch_tag(
         environment,
         allow_file,
     )?;
-    let commit = git_stdout(
+    let commit = git::stdout(
         checkout,
         [
             OsString::from("rev-parse"),
@@ -103,7 +99,7 @@ pub(super) fn fetch_tag(
     )?;
     validate_git_object_id(&tag_oid).context("invalid fetched Git tag object ID")?;
     validate_git_object_id(&commit).context("invalid fetched Git commit ID")?;
-    run_git(
+    git::run(
         Some(checkout),
         [
             OsString::from("checkout"),
@@ -115,7 +111,7 @@ pub(super) fn fetch_tag(
         environment,
         allow_file,
     )?;
-    let gitlinks = git_stdout(
+    let gitlinks = git::stdout(
         checkout,
         [OsString::from("ls-files"), OsString::from("--stage")],
         environment,
@@ -153,7 +149,7 @@ pub(super) fn ensure_clean_checkout(
     environment: &ChildEnvironment,
     allow_file: bool,
 ) -> Result<()> {
-    let status = git_stdout(
+    let status = git::stdout(
         checkout,
         [
             OsString::from("status"),
@@ -165,99 +161,4 @@ pub(super) fn ensure_clean_checkout(
     )?;
     ensure!(status.is_empty(), "release tag checkout is dirty: {status}");
     Ok(())
-}
-
-fn run_git<I, S>(
-    current_dir: Option<&Path>,
-    arguments: I,
-    environment: &ChildEnvironment,
-    allow_file: bool,
-) -> Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    run_command(
-        git_command(current_dir, arguments, environment, allow_file),
-        "run Git command",
-    )?;
-    Ok(())
-}
-
-fn git_stdout<I, S>(
-    current_dir: &Path,
-    arguments: I,
-    environment: &ChildEnvironment,
-    allow_file: bool,
-) -> Result<String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let output = run_command(
-        git_command(Some(current_dir), arguments, environment, allow_file),
-        "run Git command",
-    )?;
-    let value = String::from_utf8(output.stdout).context("Git command wrote non-UTF-8 output")?;
-    Ok(value.trim().to_owned())
-}
-
-/// Builds one Git command with the safety policy of the tag fetch.
-fn git_command<I, S>(
-    current_dir: Option<&Path>,
-    arguments: I,
-    environment: &ChildEnvironment,
-    allow_file: bool,
-) -> Command
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let file_policy = if allow_file { "always" } else { "never" };
-    let mut command = Command::new("git");
-    command
-        .args([
-            OsStr::new("-c"),
-            OsStr::new("core.hooksPath=/dev/null"),
-            OsStr::new("-c"),
-            OsStr::new("protocol.allow=never"),
-            OsStr::new("-c"),
-            OsStr::new("protocol.https.allow=always"),
-            OsStr::new("-c"),
-            OsStr::new(&format!("protocol.file.allow={file_policy}")),
-        ])
-        .args(arguments);
-    environment.apply_with(
-        &mut command,
-        &[
-            ("GIT_TERMINAL_PROMPT", OsStr::new("0")),
-            ("GIT_CONFIG_NOSYSTEM", OsStr::new("1")),
-            ("GIT_CONFIG_GLOBAL", OsStr::new("/dev/null")),
-        ],
-    );
-    if let Some(directory) = current_dir {
-        command.current_dir(directory);
-    }
-    command
-}
-
-fn run_command(mut command: Command, action: &str) -> Result<Output> {
-    debug!(?command, %action, "running isolated self-publishing command");
-    let output = command
-        .output()
-        .with_context(|| format!("{action}: start command"))?;
-    if !output.status.success() {
-        let stdout = bounded_lossy(&output.stdout);
-        let stderr = bounded_lossy(&output.stderr);
-        bail!(
-            "{action}: command exited with {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
-            output.status
-        );
-    }
-    Ok(output)
-}
-
-fn bounded_lossy(bytes: &[u8]) -> String {
-    let start = bytes.len().saturating_sub(MAX_COMMAND_ERROR_BYTES);
-    String::from_utf8_lossy(&bytes[start..]).into_owned()
 }

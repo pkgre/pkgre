@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use semver::Version;
 
 use super::config::CratesIoConfig;
@@ -206,6 +206,36 @@ pub(crate) fn self_published_identities<'a>(
             is_release_tag(prefix, identity, release).then_some((identity, release))
         })
         .collect()
+}
+
+/// Returns the release that every identity of one tag agrees on.
+///
+/// # Errors
+///
+/// Returns an error when one identity has no Git publication, or when the
+/// identities of the tag disagree on their commit or on the Cargo version that
+/// packaged them.
+pub(crate) fn release_of_group(
+    git: &str,
+    tag: &str,
+    identities: &[CatalogIdentity],
+) -> Result<GitRelease> {
+    let mut releases = identities
+        .iter()
+        .filter_map(|identity| identity.release.clone());
+    let release = releases
+        .next()
+        .with_context(|| format!("the release tag {tag:?} of {git:?} has no Git publication"))?;
+    for other in releases {
+        ensure!(
+            other.git == release.git
+                && other.tag == release.tag
+                && other.commit == release.commit
+                && other.cargo_version == release.cargo_version,
+            "the identities of tag {tag:?} of {git:?} disagree on their commit or on the Cargo version that packaged them"
+        );
+    }
+    Ok(release)
 }
 
 /// Returns the package names that a self-publishing repository publishes.

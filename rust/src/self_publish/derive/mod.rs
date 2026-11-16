@@ -15,18 +15,18 @@ mod git;
 mod workspace;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
 
-use super::catalog::{CatalogSnapshot, GitRelease};
+use super::catalog::{CatalogIdentity, CatalogSnapshot, GitRelease};
 use super::config::CratesIoConfig;
 use super::isolation::{ChildEnvironment, ensure_no_cargo_configuration};
 use super::lock::{CratesIoLock, CratesIoPackage};
 use super::name;
 use crate::artifact::sha256_bytes;
-use crate::package::{TemporaryDirectory, pinned_cargo};
+use crate::package::{TemporaryDirectory, pinned_cargo, read_bounded_archive};
 use crate::policy::validate_tag_version;
 use cargo_lock::LockIndex;
 use expectations::Expectations;
@@ -130,6 +130,21 @@ pub(super) struct ReleasedCrate {
     pub(super) archive: Vec<u8>,
 }
 
+/// The manifest fields that crates.io's own rules read.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct MemberFacts {
+    /// The `description` field.
+    pub(super) description: Option<String>,
+    /// The `license` field.
+    pub(super) license: Option<String>,
+    /// The `license-file` field.
+    pub(super) license_file: Option<PathBuf>,
+    /// The `keywords` field.
+    pub(super) keywords: Vec<String>,
+    /// The `categories` field.
+    pub(super) categories: Vec<String>,
+}
+
 /// What the derivation writes for one crate.
 #[derive(Debug)]
 pub(super) struct DerivedPackage {
@@ -137,6 +152,8 @@ pub(super) struct DerivedPackage {
     pub(super) entry: CratesIoPackage,
     /// The derived crates.io archive's exact bytes.
     pub(super) archive: Vec<u8>,
+    /// The manifest fields of the crate, which crates.io's own rules read.
+    pub(super) facts: MemberFacts,
 }
 
 /// Derives every crates.io package of one release from the given sources.
@@ -294,6 +311,11 @@ pub(super) fn derive_release_with(
                 cargo_version: release.cargo_version.clone(),
             },
             archive: archive.clone(),
+            facts: workspace
+                .member(&package.name)
+                .expect("every released crate is a member of the tag's workspace")
+                .facts
+                .clone(),
         });
     }
     packages.sort_by(|left, right| {
@@ -387,6 +409,36 @@ fn published_crates(
     Ok(published)
 }
 
+/// Reads the curated archive that the catalog retains for one identity.
+///
+/// # Errors
+///
+/// Returns an error when the archive is missing or too large, or when its bytes
+/// do not match the identity's recorded `crate-sha256`.
+pub(super) fn retained_crate(
+    catalog_root: &Path,
+    identity: &CatalogIdentity,
+) -> Result<ReleasedCrate> {
+    let path = catalog_root
+        .join("objects")
+        .join("crates")
+        .join(format!("{}.crate", identity.crate_sha256));
+    let archive = read_bounded_archive(&path)?;
+    ensure!(
+        sha256_bytes(&archive) == identity.crate_sha256,
+        "the retained archive {} has SHA-256 {}, but registry/main.lock records {}",
+        path.display(),
+        sha256_bytes(&archive),
+        identity.crate_sha256
+    );
+    Ok(ReleasedCrate {
+        name: identity.name.clone(),
+        version: identity.version.clone(),
+        crate_sha256: identity.crate_sha256.clone(),
+        archive,
+    })
+}
+
 #[cfg(test)]
 #[path = "../../../tests/unit/self_publish/derive/mod.rs"]
-mod tests;
+pub(crate) mod tests;

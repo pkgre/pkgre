@@ -32,6 +32,8 @@ state is not allowed.
   only ever added.
 - The offline checks need no network:they compare the candidate state with
   `registry/main.lock` and with an accepted state, and never contact crates.io or GitHub.
+  Only the network checks of the releases a run adds read crates.io and the release
+  repositories, and they run only when an accepted repository is given.
 
 ## Managed layout
 
@@ -254,7 +256,7 @@ Checked offline, on every run:
   changes, and neither does its entry in `[names]`, unless every entry of that crate is
   abandoned.
 
-## Offline checks
+## Checks
 
 ```text
 pkgre-rust self-publish-check <repository> [<accepted-repository>]
@@ -295,3 +297,42 @@ records are still checked. A repository without `self-publish/` is accepted with
 that there is nothing to check, unless the accepted repository has one: removing the state is
 refused. A directory that does not hold `registry/` is refused, so a wrong path does not pass
 silently.
+
+## Network checks
+
+With an accepted repository, the command also checks the releases that the run adds: the
+self-published identities that the candidate has and the accepted repository does not. A run
+without an accepted repository, and a run that adds no release, makes no request at all, so
+an unavailable crates.io or release repository fails only a change that publishes something.
+For each added release, one repository and tag, and each of its crates:
+
+- The release repository's default branch, read with `git ls-remote --symref`. The branch and
+  the tag are fetched into a temporary repository with the workflow's Git safety settings,
+  and the tag must be annotated and its commit an ancestor of the default branch, so that a
+  release is a deliberate, reviewed commit of the branch that is published.
+- crates.io's sparse index, `https://index.crates.io/`, for the published versions of each
+  crates.io name, and crates.io's API, `https://crates.io/api/v1/crates/<name>/owners`, for
+  its owners. A name either does not exist, or is owned by exactly the users of `owners` and
+  by no team; a version either does not exist, or exists with the recorded `crate-sha256`. A
+  missing crate is a 404, not an error.
+- crates.io's category slugs, `https://crates.io/api/v1/category_slugs`. Every category a
+  crate declares is one of them, which is stricter than crates.io, which only drops an
+  unknown category with a warning.
+- crates.io's own rules for a package: a description, a license or a `license-file`, at most
+  5 keywords of at most 20 bytes each and of the characters crates.io accepts, a derived
+  archive of at most 10 MB, and the categories above.
+- The derivation of the release, exactly as `self-publish-lock` runs it: the catalog
+  publishes exactly the tag's publishable members, the manifests and the lock file are
+  rewritten, the crates are packaged twice with the pinned Cargo, every derived archive is
+  compared with the archive the catalog retains, and the derived `crate-sha256` is the one
+  `crates-io.lock` records.
+
+Every request is a read over HTTPS, bounded in size and time, with a fixed user agent that
+names this repository, no proxy or token variable, and the empty environment of the
+workflow's child processes. crates.io's API is read at most once a second, and each crate
+name is read once per run. The category slugs are read only when a crate declares a
+category.
+
+A failed check is a refusal that names the crate, the version, the check and what was found.
+An unavailable crates.io or release repository is an error that names the service and says
+that the check could not run.

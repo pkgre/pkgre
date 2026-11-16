@@ -125,6 +125,26 @@ impl ChildEnvironment {
     /// `cargo`.
     pub(crate) fn capture(cargo_home: &Path, cargo: &Path) -> Result<Self> {
         let rustc = rustc_beside(cargo)?;
+        let mut variables = Self::base();
+        variables.push((
+            OsString::from("CARGO_HOME"),
+            cargo_home.as_os_str().to_owned(),
+        ));
+        variables.push((OsString::from("RUSTC"), rustc.into_os_string()));
+        Ok(Self { variables })
+    }
+
+    /// Captures the allowlist for children that need no Cargo toolchain, such
+    /// as Git and `curl`: `PATH`, `TMPDIR`, and the certificate variables.
+    pub(crate) fn plain() -> Self {
+        Self {
+            variables: Self::base(),
+        }
+    }
+
+    /// Returns the variables that every child inherits, apart from the two that
+    /// point at an isolated Cargo home and its toolchain.
+    fn base() -> Vec<(OsString, OsString)> {
         let mut variables = Vec::new();
         for name in ["PATH", "TMPDIR"] {
             if let Some(value) = std::env::var_os(name) {
@@ -136,12 +156,7 @@ impl ChildEnvironment {
                 variables.push((OsString::from(name), value));
             }
         }
-        variables.push((
-            OsString::from("CARGO_HOME"),
-            cargo_home.as_os_str().to_owned(),
-        ));
-        variables.push((OsString::from("RUSTC"), rustc.into_os_string()));
-        Ok(Self { variables })
+        variables
     }
 
     /// Starts a command from an empty environment and applies the allowlist.
