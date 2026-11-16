@@ -945,11 +945,32 @@ fn validate_strict_objects_and_rows(catalog: &Catalog, policy: &Policy) -> Resul
     validate_routed_rows(catalog, policy, &artifacts)
 }
 
-fn validate_routed_rows(catalog: &Catalog, policy: &Policy, artifacts: &ArtifactMap) -> Result<()> {
+/// Verifies the routed row hash and dependency edges of every locked identity.
+///
+/// Re-derives each retained source row's canonical routed form from the catalog package homes and
+/// policy, refuses any dependency edge its source category does not permit, and requires the exact
+/// `index-row-sha256` recorded in the generated lock. The catalog must be strictly loaded and the
+/// artifact map strictly verified, as `check` and every staged catalog already are.
+///
+/// # Errors
+///
+/// Returns an error for a missing source row, a malformed row or a row whose identity or checksum
+/// differs from the lock, a dependency edge the source category does not permit, or a routed-row
+/// hash that differs from the generated lock.
+pub fn validate_routed_rows(
+    catalog: &Catalog,
+    policy: &Policy,
+    artifacts: &ArtifactMap,
+) -> Result<()> {
     for approval in &catalog.approvals {
         let artifact = artifacts
             .get(&approval.registry, &approval.name, &approval.version)
-            .expect("verified object map contains every approval");
+            .with_context(|| {
+                format!(
+                    "verified artifact map lost {} {} in {}",
+                    approval.name, approval.version, approval.registry
+                )
+            })?;
         let source_row = fs::read(&artifact.index_record).with_context(|| {
             format!(
                 "read existing source row for {} {}",
