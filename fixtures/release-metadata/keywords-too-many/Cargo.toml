@@ -1,0 +1,9 @@
+# Six keywords where crates.io accepts five: the check refuses this member.
+[package]
+name = "keywords-too-many"
+version.workspace = true
+description = "A member with too many keywords"
+license.workspace = true
+repository.workspace = true
+publish = ["pkgre"]
+keywords = ["one", "two", "three", "four", "five", "six"]

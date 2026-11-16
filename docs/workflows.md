@@ -123,6 +123,18 @@ Second `lock` must report `changed=false` + preserve exact diff. CI must run `ch
 5. Apply once; review one generated lock + shared binding + exact diff.
 6. Open one registry PR; leave unmerged for curator.
 
+## Release Rust crates
+
+One version releases every crate published to the `pkgre` registry. `[workspace.package] version` in the root `Cargo.toml` is that version; `pkgre` (`cli/`) and `pkgre-rust` (`rust/`) set `version.workspace = true` and inherit it. A member that is not published, now `pkgre-rust-serve`, keeps its own version.
+
+A release is one annotated Git tag `rust/vX.Y.Z` on a commit of `main`, created after the pull request that sets the version has merged with CI passing. Its final component is the version, so the tag rule below holds for every crate of the release.
+
+- Version is SemVer without build metadata, which Cargo ignores for identity; a prerelease such as `0.6.0-rc.1` is allowed and, once published, as permanent as a release.
+- Versions only increase: greater than every version the catalog holds of each released crate, and than the version of every earlier release tag.
+- A release tag never moves and is never deleted.
+
+The flake check `release-metadata`, run by CI on every pull request, refuses a published member that does not inherit the workspace version, that lacks `description`, `license` or `repository` (an inherited value counts when the root manifest sets it), or whose `keywords` crates.io would refuse: more than 5, longer than 20 characters, or not ASCII letters, digits, `_`, `-` and `+` starting with a letter or digit.
+
 ## Publish first-party/fork Git tag
 
 Preconditions:

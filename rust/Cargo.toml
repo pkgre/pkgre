@@ -1,6 +1,6 @@
 [package]
 name = "pkgre-rust"
-version = "0.5.0"
+version.workspace = true
 description = "Declarative reconciler and renderer for curated Cargo sparse registries"
 edition.workspace = true
 rust-version.workspace = true
