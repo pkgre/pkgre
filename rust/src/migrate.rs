@@ -291,7 +291,7 @@ fn derive_admitted_at(
             let key = format!("{}@{tag}", package.name);
             let raw = git_times.get(&key).with_context(|| {
                 format!(
-                    "missing --git-tag-time mapping for {registry}/{} tag {tag:?}; expected --git-tag-time {registry}/{}@{tag}=<canonical-timestamp>",
+                    "missing --git-tag-time mapping for {registry}/{} tag {tag:?}; expected --git-tag-time={registry}/{}@{tag}=<canonical-timestamp>",
                     package.name, package.name
                 )
             })?;

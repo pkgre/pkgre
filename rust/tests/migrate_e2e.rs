@@ -196,6 +196,100 @@ fn retained_delivery_migration_is_in_place_idempotent_and_strictly_gated() {
     );
 }
 
+#[test]
+fn missing_git_tag_time_error_shows_the_accepted_form() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-migrate-tag-time");
+    let extraction = temporary.path().join("extracted");
+    extract_fixture(FIXTURE, &extraction);
+    let input = extraction.join("registry");
+    let output = temporary.path().join("migrated");
+
+    let mut git_times = git_tag_times();
+    git_times.pop();
+    let error = migrate_v4_to_v5(&input, &output, &git_times).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("missing --git-tag-time mapping for main/pkgre-indexer"),
+        "{message}"
+    );
+    assert!(
+        message.contains("--git-tag-time=main/pkgre-indexer@indexer/v0.3.0=<canonical-timestamp>"),
+        "the error must name the accepted argument form: {message}"
+    );
+}
+
+#[test]
+fn migrate_cli_shows_the_accepted_git_tag_time_form() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-migrate-cli");
+    let input = temporary.path().join("input");
+    let output = temporary.path().join("output");
+    fs::create_dir(&input).unwrap();
+    let accepted = "--git-tag-time=<registry>/<name>@<tag>=<timestamp>";
+
+    let usage = run_cli(&["migrate-v4-to-v5"]);
+    assert!(
+        usage.contains(accepted),
+        "the usage text must show the accepted form: {usage}"
+    );
+    assert!(
+        !usage.contains("--git-tag-time <registry>"),
+        "the usage text must not show the separate form: {usage}"
+    );
+
+    let separate = run_cli(&[
+        "migrate-v4-to-v5",
+        path_text(&input),
+        path_text(&output),
+        "--git-tag-time",
+        "main/example@v1.0.0=2026-08-22T17:57:02Z",
+    ]);
+    assert!(
+        separate.contains("unknown argument"),
+        "the separate form must be rejected: {separate}"
+    );
+    assert!(
+        separate.contains(accepted),
+        "the rejection must repeat the accepted form: {separate}"
+    );
+
+    let malformed = run_cli(&[
+        "migrate-v4-to-v5",
+        path_text(&input),
+        path_text(&output),
+        "--git-tag-time=main/example",
+    ]);
+    assert!(
+        malformed.contains("<registry>/<name>@<tag>=<canonical-timestamp>"),
+        "the value error must show the accepted form: {malformed}"
+    );
+    assert!(
+        !output.exists(),
+        "a rejected argument must leave no destination"
+    );
+}
+
+/// Runs `pkgre-rust` with `arguments` and returns its combined output.
+fn run_cli(arguments: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_pkgre-rust"))
+        .args(arguments)
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "the command must fail: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn path_text(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
 fn extract_fixture(fixture: &[u8], destination: &Path) {
     let temporary = TemporaryDirectory::new("pkgre-rust-migrate-extract");
     let archive = temporary.path().join("catalog.tar.gz");
