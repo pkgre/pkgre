@@ -29,7 +29,7 @@ Planning/inspection never mutates catalog; output must be absent + outside `regi
 - Implicit lanes:`update-plan` scans active mirror names + selects at most latest eligible stable per compatibility lane:major for `major≥1`; minor for stable `0.minor.patch` where `minor>0`.
 - Exact mode:`update-plan-exact` supports reserved new/inactive names, prereleases, `0.0.x`; locked/yanked/young/history-inconsistent identity rejected.
 - Dormancy:≥365-day adjacent publication gap after locked base requires review; yanked/prerelease activity counts; gate persists until one post-gap identity admitted.
-- Evidence:complete sparse history; exact base/candidate rows + checksum-verified archives; bounded path/type/size/mode/hash/build analysis; dependency/category delta; version-scoped publisher/repository/API facts; promoted source correspondence.
+- Evidence:complete sparse history; exact base/candidate rows + checksum-verified archives; bounded path/type/size/mode/hash/build analysis; dependency/category delta; version-scoped publisher/repository/API facts; promoted source correspondence,which compares every archive member except Cargo's packaging-generated `.cargo_vcs_info.json`,`.cargo-ok`,normalized `Cargo.toml` + package root `Cargo.lock`.
 - Promotion triggers:new/inactive package, dormant wake-up, new dependency package, build-surface change, publisher/repository discontinuity.
 
 | Decision | Meaning | Manifest/apply |
