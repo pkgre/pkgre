@@ -221,9 +221,11 @@ pub enum DecisionReason {
     SourceUnavailable,
     /// Mechanical source correspondence disagrees.
     SourceMismatch,
-    /// Promoted source correspondence differs only in line endings.
+    /// Promoted source correspondence differs only in line endings; rustc reads CRLF in Rust
+    /// source as LF, but a member read as bytes keeps them.
     SourceLineEndings,
-    /// Promoted source correspondence differs only in the executable bit.
+    /// Promoted source correspondence differs only in the executable bit; Cargo ignores it, but a
+    /// build step can run a file only when it is set.
     SourceFileMode,
     /// Exact non-implicit identity was explicitly requested.
     ExplicitCandidate,

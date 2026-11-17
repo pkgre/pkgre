@@ -935,6 +935,12 @@ mod tests {
         );
         assert_eq!(inspection.line_endings.digest("lone.rs", "own"), "own");
         assert_eq!(inspection.line_endings.digest("lf.rs", "own"), "own");
+        // Only the pair is rewritten, so a lone CR beside a CRLF stays a CR.
+        assert_eq!(
+            line_endings_sha256(b"a\r\nb\r"),
+            Some(sha256_bytes(b"a\nb\r"))
+        );
+        assert_eq!(line_endings_sha256(b"a\rb\nc"), None);
     }
 
     #[test]

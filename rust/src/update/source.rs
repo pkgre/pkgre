@@ -1217,8 +1217,11 @@ fn build_comparison_report(
 ///
 /// A member that matches the file it was compared with in neither bytes nor mode is `different`,
 /// unless that file is the same source up to the member's line endings or its executable bit: those
-/// two differences change nothing Cargo or rustc do with the file, so they are recorded as the
-/// findings `line-endings` and `file-mode` and the decision hands them to review.
+/// two are recorded as the findings `line-endings` and `file-mode`, and the decision hands them to
+/// review. Neither finding is inert. rustc reads CRLF in Rust source as LF, and Cargo ignores the
+/// executable bit, but a file read as bytes, through `include_str!` or `include_bytes!`, by a build
+/// script, a proc macro or the crate's own code, keeps them, and a build step can run a file only
+/// when its executable bit is set. The review checks how each named member is read or run.
 fn compare_member(
     resolver: &TreeResolver<'_>,
     file: &ArchiveFile,
@@ -2839,6 +2842,18 @@ mod tests {
     fn lone_carriage_return_is_a_difference_in_bytes() {
         let correspondence =
             compare_single_source(b"fn main() {}\r", 0o644, b"fn main() {}", false);
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "different"
+        );
+        assert!(correspondence.finding_reasons().is_empty());
+    }
+
+    #[test]
+    fn only_the_carriage_return_line_feed_pair_is_normalized() {
+        // The member holds a CRLF as well, so this reaches the rewrite rather than the pre-check:
+        // a normalizer that turns every CR into LF would call these bytes a finding.
+        let correspondence = compare_single_source(b"a\r\nb\rc", 0o644, b"a\nb\nc", false);
         assert_eq!(
             comparison(report(&correspondence), "src/lib.rs").disposition,
             "different"
@@ -4566,6 +4581,47 @@ build.rs (copied, copy-ambiguous; match; compared with tools/build.rs)"
     fn exhausted_budget_before_a_difference_is_unavailable() {
         let correspondence = slow_comparison("Cargo.toml");
         assert_eq!(unavailable_reason(&correspondence), DEADLINE_REASON);
+    }
+
+    /// One archive whose second member differs only in its line endings, compared against a tree
+    /// that is slow on that member's path, so the budget runs out on the member after it.
+    fn slow_comparison_after_a_finding() -> SourceCorrespondence {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("crlf.rs", b"first\r\n"),
+                file("later.rs", b"later"),
+            ],
+            Some(""),
+        );
+        let tree = SlowTree {
+            tree: FakeTree::new([
+                ("Cargo.toml", text("manifest")),
+                ("crlf.rs", text("first\n")),
+                ("later.rs", text("later")),
+            ]),
+            slow_path: "crlf.rs".to_owned(),
+        };
+        let mut line_endings = ArchiveLineEndings::default();
+        line_endings.record("crlf.rs", b"first\r\n");
+        promote_source(
+            &anchor(Some("")),
+            &archive,
+            &line_endings,
+            Some(b"manifest"),
+            &tree,
+            &Deadline::new(SHORT_BUDGET),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn exhausted_budget_after_only_a_finding_is_unavailable() {
+        // A finding is not a mismatch, so the members after it were never compared: the result is
+        // unavailable, not a match that hides a member the comparison did not read.
+        let correspondence = slow_comparison_after_a_finding();
+        assert_eq!(unavailable_reason(&correspondence), DEADLINE_REASON);
+        assert!(correspondence.comparison.is_none());
     }
 
     #[test]
