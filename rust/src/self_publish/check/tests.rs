@@ -161,6 +161,7 @@ impl State {
 
     fn snapshot(&self) -> CatalogSnapshot {
         CatalogSnapshot {
+            registry_index: "sparse+https://rust.pkg.re/".to_owned(),
             identities: self.identities.clone(),
             mirrors: self.mirrors.clone(),
             publish_names: self.publish_names.clone(),
@@ -795,12 +796,14 @@ fn refuses_removing_the_self_publishing_state_of_the_accepted_repository() {
 #[test]
 fn an_accepted_catalog_without_self_publishing_state_still_bounds_versions() {
     let accepted = CatalogSnapshot {
+        registry_index: String::new(),
         identities: vec![mirror_identity("example-lib", "1.0.0")],
         mirrors: Vec::new(),
         publish_names: Vec::new(),
         publish_declarations: Vec::new(),
     };
     let candidate_catalog = CatalogSnapshot {
+        registry_index: String::new(),
         identities: vec![
             mirror_identity("example-lib", "1.0.0"),
             identity("example-lib", "0.9.0", "rust/v0.9.0", '5'),

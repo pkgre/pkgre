@@ -352,3 +352,116 @@ category slugs only when a crate declares a category.
 A failed check is a refusal that names the crate, the version, the check and what was found.
 An unavailable crates.io or release repository is an error that names the service and says
 that the check could not run.
+
+## The upload routine
+
+```text
+pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]
+```
+
+`<repository>` is a checkout of the catalog repository, the directory that holds `registry/`
+and `self-publish/`, and `<tag>` is a release tag of a self-publishing repository, such as
+`rust/v0.5.0`. Without `--upload` the command is a dry run: it runs every check an upload
+needs and reports what the upload would do, and it uploads nothing. The dry run builds the
+crates with Cargo's verification, so it runs their build scripts and proc macros, as the same
+user, as step 5 of an upload does.
+
+For one release, a run:
+
+1. requires a clean checkout, with no staged, unstaged or untracked change, whose `HEAD` is
+   contained in the remote-tracking `origin/main`, so that only a merged release is published.
+   The routine never fetches: when the containment check fails, it says to run
+   `git fetch origin main` first.
+2. runs the offline checks of this document, and the network checks above for this release:
+   the annotated tag on the repository's default branch, the tag's crates, the crates.io owners
+   and versions, crates.io's own package rules, and the derivation that reproduces the recorded
+   `crate-sha256` and compares the result with the retained archive.
+3. requires the `pkgre` registry, at the catalog's own `[registry] index`, to serve every crate
+   version of the release, unyanked, with the checksum that `registry/main.lock` records. The
+   index is read with the same rules as crates.io's: bounded documents, no token, no fallback.
+4. reads each crate version from crates.io's sparse index: published with the recorded checksum,
+   so there is nothing to do; published and yanked, which the run reports and never un-yanks;
+   missing, which it would upload; or different, which it refuses and never forces. A version
+   recorded in `[[abandoned]]` is skipped and reported. It also requires crates.io to serve every
+   package outside the release that the release depends on: a mirrored identity under its name,
+   version and checksum, and a crate of an earlier release under its crates.io name and the
+   `crate-sha256` of its `crates-io.lock` entry. The derivation refuses a dependency on an
+   abandoned version, on a fork, or on a version without an entry, so this check sees only
+   identities that crates.io is expected to have. A yanked dependency is reported rather than
+   refused, since Cargo accepts a yanked version that a lock file pins.
+5. builds the missing crates with Cargo's verification, `cargo package --locked --allow-dirty`
+   in the derived, rewritten workspace, against plain crates.io, in an isolated Cargo home, from
+   a working directory that no Cargo configuration covers, and requires each archive's SHA-256
+   to equal its `crates-io.lock` entry. This is the only step in which package code, such as a
+   build script or a proc macro, runs, and it happens while no token is in reach. The step runs
+   Cargo in a process group of its own, with a null standard input, so that a token piped to the
+   routine never reaches Cargo or the packages, and ends that group once Cargo returns, so that
+   no process the package code started outlives it.
+6. with `--upload`, and only after steps 1 to 5 passed, packages each missing crate the way
+   `cargo publish` packages it, `cargo package --no-verify --locked --allow-dirty`, in the same
+   derived workspace and in the upload's own isolated Cargo home, which configures plain
+   crates.io with the `cargo:token` credential provider and no other registry; it requires each
+   of those archives to equal its `crates-io.lock` entry, and only then reads the token and
+   runs `cargo publish --no-verify --locked --allow-dirty` for each missing crate, with the
+   token in the environment of that one process alone. `--no-verify` keeps package code from
+   running while the token is present, and no package code runs between the comparison and the
+   upload, so the bytes that reach crates.io are the ones the run compared.
+7. waits, with a bound, until crates.io's index shows each uploaded crate with the recorded
+   checksum, and reports every crate version of the release.
+
+A run after a partial failure uploads only what crates.io still lacks, so running the same
+command again finishes the release; a run whose crates are all published reads no token and
+uploads nothing. The routine never yanks, deletes, or changes owners.
+
+`--git=<url>` chooses between several self-publishing repositories that use the same release
+tag; without it such a tag is refused, and the refusal names the repositories.
+
+### Reports
+
+Each crate version of the release is reported in one state:
+
+| State | Meaning |
+|---|---|
+| `published` | crates.io has the version with the recorded checksum |
+| `published-yanked` | crates.io has the version with the recorded checksum, and yanked it |
+| `missing` | crates.io does not have the version; a dry run would upload it |
+| `uploaded` | the run uploaded the version, and crates.io's index shows it |
+| `abandoned` | `[[abandoned]]` records the version; the run skipped it |
+| `different` | crates.io holds the version with another archive; the run refused |
+
+The summary counts the release's crate versions per state, the packages outside the release
+whose crates.io state the run checked, and the yanked dependencies among them. An error names
+the crate, the version, the step, and what was found; an unavailable crates.io, release
+repository or registry is an error that names the service and says that the step could not run,
+never a pass.
+
+### The token
+
+The token is created by the person who uploads, as described in
+[`security.md`](security.md): the endpoint scopes `publish-new` and `publish-update` only,
+limited to the crate names this workflow publishes, with a short expiry. The routine reads it
+only with `--upload`, and only after every check passed: from a prompt that does not echo when
+standard input is a terminal, otherwise from one line of standard input. The prompt is the
+recommended way to give it, since a token piped on standard input waits there while the
+crates' build scripts and proc macros run. It is never read from the routine's environment, its
+command line, or a file, and an empty token is refused.
+
+The routine refuses to start, before any other work and for a dry run too, while
+`CARGO_REGISTRY_TOKEN` or any `CARGO_REGISTRIES_<NAME>_TOKEN` is set in its own environment: it
+names the variable and never its value, since a child process could otherwise inherit it.
+With `--upload`, the routine makes its own process non-dumpable before it starts any child, so
+that no other process of the same user can open its `/proc` files, its standard input among
+them, while a token could be in reach. Every child process starts from an empty environment
+with the allowlist of the derivation (`PATH`, `TMPDIR`, the certificate variables, an isolated
+`CARGO_HOME`, and the `rustc` beside the pinned `cargo`), and only the upload process also gets
+the token. The token is never printed, logged, written to a file, or placed in an error, and
+any output of the upload process that the routine relays has every occurrence of it replaced;
+it is dropped once the uploads finish.
+
+The residual risk is package code: the dry run and step 5 run the crates' build scripts and proc
+macros as the same user, and a process that such code detaches from its process group can still
+read the environment of the upload process, which holds the token. The prompt keeps the token
+out of that reach until the uploads begin. An interrupt during step 5 ends the routine without
+unwinding, so Cargo and the package code it started keep running until they finish, in the
+derivation's temporary directory, which stays behind; the next run compares the packages again
+before it uploads anything.

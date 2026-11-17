@@ -16,8 +16,9 @@ use super::super::lock_command::{LocalNetwork, self_publish_lock_in};
 use super::super::state::LOCK_FILE;
 use super::live;
 use super::{
-    CratesIo, CratesIoVersion, DerivationSources, LiveCratesIo, LiveReleaseRepository,
-    LocalSources, Owner, OwnerKind, ReleaseRepository, ReleaseTag, Services, check_crates_io_rules,
+    CratesIo, CratesIoVersion, DerivationSources, LiveCratesIo, LiveRegistryIndex,
+    LiveReleaseRepository, LocalSources, Owner, OwnerKind, RegistryIndex, ReleaseRepository,
+    ReleaseTag, Services, check_crates_io_rules,
 };
 use crate::artifact::sha256_bytes;
 
@@ -1278,6 +1279,18 @@ fn inspects_a_local_repository_whose_default_branch_is_not_main() {
     let error = live::inspect_tag(&url, "missing/v1", &environment, true).unwrap_err();
     let error = format!("{error:#}");
     assert!(error.contains("missing/v1"), "{error}");
+}
+
+#[test]
+fn an_unavailable_registry_names_the_registry() {
+    // Nothing listens on that address, so the read fails before any document
+    // arrives; the error has to name the registry and not crates.io.
+    let error = LiveRegistryIndex
+        .versions("sparse+https://127.0.0.1:9/", LIB)
+        .expect_err("no registry listens at that address");
+    let error = format!("{error:#}");
+    assert!(error.contains("the pkgre registry"), "{error}");
+    assert!(!error.contains("crates.io"), "{error}");
 }
 
 #[test]

@@ -162,11 +162,196 @@ pub(super) struct DerivedPackage {
     pub(super) facts: MemberFacts,
 }
 
+/// One package outside the release's workspace that the release depends on.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DerivedDependency {
+    /// crates.io name.
+    pub(super) crates_io_name: String,
+    /// Exact version.
+    pub(super) version: Version,
+    /// SHA-256 that crates.io must serve for the package.
+    pub(super) crate_sha256: String,
+}
+
+/// The derived crates.io packages of one release, with the workspace that
+/// packaged them.
+pub(super) struct Derivation {
+    /// One package per released crate, in name order.
+    pub(super) packages: Vec<DerivedPackage>,
+    /// Every package outside the release's workspace that crates.io must serve
+    /// for the release, in name and version order.
+    pub(super) dependencies: Vec<DerivedDependency>,
+    /// The rewritten workspace, which the verified packaging and the upload
+    /// keep using.
+    pub(super) workspace: DerivedWorkspace,
+}
+
+/// The rewritten workspace of one derivation, kept while it is used.
+///
+/// It holds the derivation's temporary directory, so the checkout, the isolated
+/// Cargo home and the working directory stay on disk until it is dropped.
+pub(super) struct DerivedWorkspace {
+    /// The derivation's temporary root.
+    temporary: TemporaryDirectory,
+    /// The pinned Cargo that packaged the release.
+    cargo: PathBuf,
+    /// The environment that every child process inherits.
+    environment: ChildEnvironment,
+    /// The working directory outside the checkout.
+    work: PathBuf,
+    /// The rewritten checkout.
+    workspace: PathBuf,
+    /// The target directory of the verified packaging.
+    targets: PathBuf,
+    /// The registries that the checkout resolves from, which the upload's Cargo
+    /// home mirrors.
+    sources: cargo::RegistrySources,
+}
+
+impl DerivedWorkspace {
+    /// Returns the derivation's temporary root.
+    pub(super) fn root(&self) -> &Path {
+        self.temporary.path()
+    }
+
+    /// Returns the pinned Cargo.
+    pub(super) fn cargo(&self) -> &Path {
+        &self.cargo
+    }
+
+    /// Returns the working directory outside the checkout.
+    pub(super) fn work(&self) -> &Path {
+        &self.work
+    }
+
+    /// Returns the workspace manifest of the rewritten checkout.
+    pub(super) fn manifest(&self) -> PathBuf {
+        self.workspace.join("Cargo.toml")
+    }
+
+    /// Prepares the isolated Cargo home of an upload, and returns it with the
+    /// environment of its child processes.
+    ///
+    /// The home configures plain crates.io and the `cargo:token` credential
+    /// provider, and no other registry, so that `cargo publish` reaches
+    /// crates.io with the token of its own environment alone. The derivation's
+    /// own home keeps the `pkgre` registry its `cargo metadata` needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the home cannot be written, when Cargo
+    /// configuration covers the working directory, or when the pinned toolchain
+    /// has no `rustc`.
+    pub(super) fn upload_environment(&self) -> Result<ChildEnvironment> {
+        ensure_no_cargo_configuration(&self.work)?;
+        let cargo_home = self.root().join(cargo::UPLOAD_CARGO_HOME_DIRECTORY);
+        cargo::prepare_upload_cargo_home(&cargo_home, &self.sources)?;
+        ChildEnvironment::capture(&cargo_home, &self.cargo)
+    }
+
+    /// Returns the target directory of an upload.
+    pub(super) fn upload_target(&self) -> PathBuf {
+        self.root().join("upload-targets")
+    }
+
+    /// Packages the named crates the way `cargo publish` packages them, in the
+    /// upload's own Cargo home and environment, and returns their archives by
+    /// crates.io name.
+    ///
+    /// The command packages without verifying, so it runs no package code: the
+    /// upload routine calls it after the verified packaging and before it reads
+    /// the token, so that the bytes it uploads are the bytes it compared with
+    /// `crates-io.lock`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Cargo configuration covers the working directory,
+    /// when Cargo fails, or when an archive is missing or too large.
+    pub(super) fn publish_archives(
+        &self,
+        environment: &ChildEnvironment,
+        packages: &[(String, Version)],
+    ) -> Result<BTreeMap<String, Vec<u8>>> {
+        ensure_no_cargo_configuration(&self.work)?;
+        let manifest = self.manifest();
+        let target = self.upload_target();
+        let mut archives = BTreeMap::new();
+        for (name, version) in packages {
+            let archive = cargo::package_for_upload(
+                &self.cargo,
+                environment,
+                &self.work,
+                &target,
+                &manifest,
+                name,
+                version,
+            )
+            .with_context(|| format!("package crate {name} {version} as cargo publish would"))?;
+            archives.insert(name.clone(), archive);
+        }
+        Ok(archives)
+    }
+
+    /// Packages the named crates with Cargo's verification, in the rewritten
+    /// workspace, and returns their archives by crates.io name.
+    ///
+    /// The packages are built after packaging, so package code such as a build
+    /// script or a proc macro runs; the caller must hold no token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Cargo configuration covers the working directory,
+    /// when Cargo fails, or when an archive is missing or too large.
+    pub(super) fn verified_archives(
+        &self,
+        packages: &[(String, Version)],
+    ) -> Result<BTreeMap<String, Vec<u8>>> {
+        ensure_no_cargo_configuration(&self.work)?;
+        let manifest = self.manifest();
+        let mut archives = BTreeMap::new();
+        for (name, version) in packages {
+            let archive = cargo::package_verified(
+                &self.cargo,
+                &self.environment,
+                &self.work,
+                &self.targets,
+                &manifest,
+                name,
+                version,
+            )
+            .with_context(|| format!("verify the crates.io package of {name} {version}"))?;
+            archives.insert(name.clone(), archive);
+        }
+        Ok(archives)
+    }
+}
+
 /// Derives every crates.io package of one release from the given sources.
 ///
 /// `released` are the catalog's identities of the release, with the archives
 /// that the catalog retains. The result holds one package per released crate,
-/// in name order.
+/// in name order. The derived workspace is dropped when this returns; use
+/// [`derive_release_in`] to keep it.
+///
+/// # Errors
+///
+/// Returns an error when the tag cannot be fetched or does not match the
+/// catalog's commit, when the workspace and the catalog disagree, when a
+/// manifest or lock file cannot be translated, when the pinned Cargo fails or
+/// packages twice differently, or when a derived archive differs from the
+/// curated archive beyond the fields the derivation rewrites.
+pub(super) fn derive_release_with(
+    release: &GitRelease,
+    released: &[ReleasedCrate],
+    catalog: &CatalogSnapshot,
+    config: &CratesIoConfig,
+    earlier: &CratesIoLock,
+    sources: Sources<'_>,
+) -> Result<Vec<DerivedPackage>> {
+    Ok(derive_release_in(release, released, catalog, config, earlier, sources)?.packages)
+}
+
+/// Derives one release and keeps the workspace that packaged it.
 ///
 /// # Errors
 ///
@@ -176,14 +361,14 @@ pub(super) struct DerivedPackage {
 /// packages twice differently, or when a derived archive differs from the
 /// curated archive beyond the fields the derivation rewrites.
 #[allow(clippy::too_many_lines)]
-pub(super) fn derive_release_with(
+pub(super) fn derive_release_in(
     release: &GitRelease,
     released: &[ReleasedCrate],
     catalog: &CatalogSnapshot,
     config: &CratesIoConfig,
     earlier: &CratesIoLock,
     sources: Sources<'_>,
-) -> Result<Vec<DerivedPackage>> {
+) -> Result<Derivation> {
     ensure!(
         !released.is_empty(),
         "a release holds at least one crate, but {} {} has none",
@@ -197,7 +382,8 @@ pub(super) fn derive_release_with(
     };
     let root = temporary.path();
     let cargo_home = cargo::cargo_home(root);
-    cargo::prepare_cargo_home(&cargo_home, cargo::registry_sources(sources))?;
+    let registry_sources = cargo::registry_sources(sources);
+    cargo::prepare_cargo_home(&cargo_home, registry_sources.clone())?;
     let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
     let work = root.join("work");
     std::fs::create_dir(&work)
@@ -336,7 +522,21 @@ pub(super) fn derive_release_with(
                 &right.entry.version,
             ))
     });
-    Ok(packages)
+    let dependencies = expectations.dependencies();
+    let targets = root.join("targets");
+    Ok(Derivation {
+        packages,
+        dependencies,
+        workspace: DerivedWorkspace {
+            temporary,
+            cargo,
+            environment,
+            work,
+            workspace: checkout.root,
+            targets,
+            sources: registry_sources,
+        },
+    })
 }
 
 /// Requires the crates that the catalog publishes from the tag to be exactly

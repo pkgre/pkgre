@@ -108,6 +108,25 @@ impl Expectations {
     pub(super) fn contains(&self, name: &str) -> bool {
         self.names.contains_key(name)
     }
+
+    /// Returns every package outside the release's workspace that crates.io
+    /// must serve for the release, in name and version order.
+    ///
+    /// A workspace member that the release does not publish stays a path
+    /// package and is not one of them.
+    pub(super) fn dependencies(&self) -> Vec<super::DerivedDependency> {
+        self.packages
+            .iter()
+            .filter_map(|((_, version), expected)| {
+                let crate_sha256 = expected.derived_checksum.clone()?;
+                Some(super::DerivedDependency {
+                    crates_io_name: expected.crates_io_name.clone(),
+                    version: version.clone(),
+                    crate_sha256,
+                })
+            })
+            .collect()
+    }
 }
 
 /// Resolves one package of the lock.

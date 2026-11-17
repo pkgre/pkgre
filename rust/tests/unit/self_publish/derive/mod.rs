@@ -18,7 +18,7 @@ use super::super::state::RepositoryState;
 use super::cargo_lock::LockIndex;
 use super::compare::{ArchiveToCompare, compare_archives};
 use super::expectations::Expectations;
-use super::{ReleasedCrate, Sources, derive_release_with};
+use super::{ReleasedCrate, Sources, derive_release_in, derive_release_with};
 use crate::artifact::sha256_bytes;
 use crate::update::read_crate_archive;
 use fixtures::{LocalSource, Release, Variant};
@@ -186,6 +186,7 @@ fn memory_state(release: &Release, variant: Variant) -> MemoryState {
         .collect::<Vec<_>>();
     let publish_names = RELEASED.iter().map(|name| (*name).to_owned()).collect();
     let catalog = CatalogSnapshot {
+        registry_index: String::new(),
         identities,
         mirrors,
         publish_names,
@@ -883,6 +884,7 @@ fn distinguishes_a_member_from_a_registry_package_of_its_name() {
     )
     .expect("parse a lock with a member and a registry package of one name");
     let catalog = CatalogSnapshot {
+        registry_index: String::new(),
         identities: vec![CatalogIdentity {
             name: "example-bin".to_owned(),
             version: Version::parse("0.9.0").expect("parse the fixture version"),
@@ -1008,6 +1010,7 @@ fn refuses_to_derive_a_removed_identity() {
     let config = config_for(fixtures::REPOSITORY);
     let state = RepositoryState {
         catalog: CatalogSnapshot {
+            registry_index: String::new(),
             identities: vec![CatalogIdentity {
                 name: "example-lib".to_owned(),
                 version: Version::parse(fixtures::VERSION).expect("parse the fixture version"),
@@ -1128,7 +1131,7 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
             packages: Vec::new(),
         },
     };
-    let packages = derive_release_with(
+    let derived = derive_release_in(
         &facts.expect("the release has facts"),
         &released,
         &snapshot,
@@ -1137,10 +1140,61 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
         Sources::local(&clone, None, temporary.path()),
     )
     .expect("derive the release against live crates.io");
-    assert_eq!(packages.len(), 2);
-    for package in &packages {
+    assert_eq!(derived.packages.len(), 2);
+    // Step 5 of the upload routine: package the missing crates with Cargo's
+    // verification, against live crates.io, and require the archives that the
+    // derivation recorded. No token is read and nothing is uploaded.
+    let packages = derived
+        .packages
+        .iter()
+        .map(|package| {
+            (
+                package.entry.crates_io_name.clone(),
+                package.entry.version.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let verified = derived
+        .workspace
+        .verified_archives(&packages)
+        .expect("verify the release against live crates.io");
+    for package in &derived.packages {
+        let archive = verified
+            .get(&package.entry.crates_io_name)
+            .expect("the verified packaging produced the archive");
+        assert_eq!(
+            sha256_bytes(archive),
+            package.entry.crate_sha256,
+            "the verified package of {} {} differs from the derived archive",
+            package.entry.name,
+            package.entry.version
+        );
+    }
+    // Step 6's packaging, in the upload's own Cargo home and without a token:
+    // the archive that `cargo publish` would upload must be the recorded one.
+    let upload_environment = derived
+        .workspace
+        .upload_environment()
+        .expect("prepare the upload Cargo home");
+    let published = derived
+        .workspace
+        .publish_archives(&upload_environment, &packages)
+        .expect("package the release as cargo publish would");
+    for package in &derived.packages {
+        let archive = published
+            .get(&package.entry.crates_io_name)
+            .expect("the packaging produced the archive");
+        assert_eq!(
+            sha256_bytes(archive),
+            package.entry.crate_sha256,
+            "the package that cargo publish would upload for {} {} differs from the recorded archive",
+            package.entry.name,
+            package.entry.version
+        );
+    }
+    for package in &derived.packages {
         println!(
-            "rehearsal: {} {} -> {} crate-sha256={} pkgre-crate-sha256={} comparison=identical",
+            "rehearsal: {} {} -> {} crate-sha256={} pkgre-crate-sha256={} comparison=identical verified=identical upload=identical",
             package.entry.name,
             package.entry.version,
             package.entry.crates_io_name,
@@ -1185,4 +1239,244 @@ fn repository_root() -> PathBuf {
         .parent()
         .expect("the manifest directory has a parent")
         .to_path_buf()
+}
+
+#[test]
+fn the_upload_cargo_home_configures_only_crates_io_and_the_token_provider() {
+    let temporary = fixtures::Temp::new("pkgre-derive-upload-home");
+    let home = temporary.path().join("upload-cargo-home");
+    super::cargo::prepare_upload_cargo_home(&home, &super::cargo::RegistrySources::CratesIo)
+        .expect("write the upload Cargo home");
+    let text = fs::read_to_string(home.join("config.toml")).expect("read the upload config");
+    assert_eq!(
+        text,
+        "[registry]\ncredential-provider = [\"cargo:token\"]\n"
+    );
+}
+
+#[test]
+fn the_packager_gets_only_the_environment_allowlist() {
+    let temporary = fixtures::Temp::new("pkgre-derive-allowlist");
+    let (cargo, record) = fake_cargo(temporary.path());
+    let home = temporary.path().join("cargo-home");
+    fs::create_dir(&home).expect("create the Cargo home");
+    let environment =
+        crate::isolation::ChildEnvironment::capture(&home, &cargo).expect("capture the allowlist");
+    let work = temporary.path().join("work");
+    fs::create_dir(&work).expect("create the working directory");
+    super::cargo::run_cargo(
+        &cargo,
+        &environment,
+        &work,
+        [std::ffi::OsString::from("--version")],
+    )
+    .expect("run the fake cargo");
+    let text = fs::read_to_string(&record).expect("read the recorded environment");
+    let recorded = text
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+    // The shell that runs the fake adds `PWD`, `SHLVL` and `_` itself; every
+    // other variable has to come from the allowlist.
+    let allowed = [
+        "PATH",
+        "TMPDIR",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "CURL_CA_BUNDLE",
+        "CARGO_HTTP_CAINFO",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_CAPATH",
+        "NIX_SSL_CERT_FILE",
+        "CARGO_HOME",
+        "RUSTC",
+        "CARGO_TERM_COLOR",
+        "CARGO_NET_GIT_FETCH_WITH_CLI",
+        "PWD",
+        "SHLVL",
+        "_",
+    ];
+    for name in recorded.keys() {
+        assert!(
+            allowed.contains(&name.as_str()),
+            "the packager inherited {name}: {recorded:?}"
+        );
+    }
+    assert!(recorded.contains_key("CARGO_HOME"), "{recorded:?}");
+    assert!(recorded.contains_key("RUSTC"), "{recorded:?}");
+    assert!(!recorded.contains_key("HOME"), "{recorded:?}");
+    assert!(
+        !recorded.keys().any(|name| name.contains("TOKEN")),
+        "{recorded:?}"
+    );
+}
+
+/// Writes a fake `cargo` that records its environment, with a `rustc` beside it.
+fn fake_cargo(root: &Path) -> (PathBuf, PathBuf) {
+    let toolchain = root.join("toolchain");
+    fs::create_dir_all(&toolchain).expect("create the fake toolchain");
+    let record = root.join("recorded-environment");
+    let cargo = toolchain.join("cargo");
+    fixtures::write_executable(
+        &cargo,
+        &format!("#!/bin/sh\nenv > '{}'\n", record.display()),
+    );
+    fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
+    (cargo, record)
+}
+
+#[test]
+fn the_verified_packaging_ends_the_process_group_it_started() {
+    let temporary = fixtures::Temp::new("pkgre-derive-group");
+    let (grouped, grouped_survived) = fake_background_cargo(temporary.path(), "grouped");
+    let (plain, plain_survived) = fake_background_cargo(temporary.path(), "plain");
+    let home = temporary.path().join("cargo-home");
+    fs::create_dir(&home).expect("create the Cargo home");
+    let work = temporary.path().join("work");
+    fs::create_dir(&work).expect("create the working directory");
+    let arguments = [std::ffi::OsString::from("--version")];
+    super::cargo::run_cargo_grouped(
+        &grouped,
+        &crate::isolation::ChildEnvironment::capture(&home, &grouped)
+            .expect("capture the allowlist"),
+        &work,
+        arguments.clone(),
+    )
+    .expect("run the grouped fake cargo");
+    // The same fake without a process group of its own, as a control.
+    super::cargo::run_cargo(
+        &plain,
+        &crate::isolation::ChildEnvironment::capture(&home, &plain).expect("capture the allowlist"),
+        &work,
+        arguments,
+    )
+    .expect("run the plain fake cargo");
+    // The control writes its file a moment after its fake Cargo returned; the
+    // grouped one never does, because its process group ended.
+    for _ in 0..100 {
+        if plain_survived.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        plain_survived.exists(),
+        "the fake without a process group leaves its process running"
+    );
+    assert!(
+        !grouped_survived.exists(),
+        "a process started by the package code outlived its process group"
+    );
+}
+
+/// Writes a fake `cargo` that starts a process which writes a file a moment
+/// later, and returns the fake with that file's path.
+fn fake_background_cargo(root: &Path, label: &str) -> (PathBuf, PathBuf) {
+    let toolchain = root.join(format!("toolchain-{label}"));
+    fs::create_dir_all(&toolchain).expect("create the fake toolchain");
+    let survived = root.join(format!("survived-{label}"));
+    let cargo = toolchain.join("cargo");
+    fixtures::write_executable(
+        &cargo,
+        &format!(
+            "#!/bin/sh\n( sleep 0.3; touch '{}' ) &\nexit 0\n",
+            survived.display()
+        ),
+    );
+    fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
+    (cargo, survived)
+}
+
+/// The environment variable that makes the standard-input helper run.
+const PACKAGING_STANDARD_INPUT: &str = "PKGRE_PACKAGING_STANDARD_INPUT";
+
+#[test]
+fn the_verified_packaging_gets_no_standard_input() {
+    let temporary = fixtures::Temp::new("pkgre-derive-standard-input");
+    let file = temporary.path().join("standard-input");
+    fs::write(&file, "a-token-on-standard-input").expect("write the standard input");
+    let executable = std::env::current_exe().expect("the test binary");
+    let output = std::process::Command::new(executable)
+        .args([
+            "--exact",
+            "self_publish::derive::tests::the_packaging_standard_input_helper",
+            "--nocapture",
+        ])
+        .env(PACKAGING_STANDARD_INPUT, "1")
+        .stdin(std::process::Stdio::from(
+            fs::File::open(&file).expect("open the standard input"),
+        ))
+        .output()
+        .expect("run this test binary with a token on its standard input");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("the packaging helper ran"),
+        "the helper did not run: {stdout}{stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "the helper failed: {stdout}{stderr}"
+    );
+}
+
+#[test]
+fn the_packaging_standard_input_helper() {
+    if std::env::var_os(PACKAGING_STANDARD_INPUT).is_none() {
+        // The helper runs only when the test above re-runs this binary with a
+        // token on its standard input.
+        return;
+    }
+    println!("the packaging helper ran");
+    let temporary = fixtures::Temp::new("pkgre-derive-standard-input-helper");
+    let (cargo, seen) = fake_standard_input_cargo(temporary.path());
+    let home = temporary.path().join("cargo-home");
+    fs::create_dir(&home).expect("create the Cargo home");
+    let work = temporary.path().join("work");
+    fs::create_dir(&work).expect("create the working directory");
+    let environment =
+        crate::isolation::ChildEnvironment::capture(&home, &cargo).expect("capture the allowlist");
+    let stdout = super::cargo::run_cargo_grouped(
+        &cargo,
+        &environment,
+        &work,
+        [std::ffi::OsString::from("--version")],
+    )
+    .expect("run the fake cargo");
+    assert_eq!(stdout, b"to-stdout\n");
+    assert!(
+        fs::read(&seen)
+            .expect("read what the fake cargo read")
+            .is_empty(),
+        "the packaging inherited the standard input"
+    );
+    // The same fake started with an inherited standard input reads the token,
+    // which makes the assertion above meaningful.
+    std::process::Command::new(&cargo)
+        .arg("--version")
+        .status()
+        .expect("run the fake cargo directly");
+    assert_eq!(
+        fs::read(&seen).expect("read what the fake cargo read"),
+        b"a-token-on-standard-input"
+    );
+}
+
+/// Writes a fake `cargo` that copies its standard input to a file and prints to
+/// both streams, and returns it with that file's path.
+fn fake_standard_input_cargo(root: &Path) -> (PathBuf, PathBuf) {
+    let toolchain = root.join("toolchain");
+    fs::create_dir_all(&toolchain).expect("create the fake toolchain");
+    let seen = root.join("standard-input");
+    let cargo = toolchain.join("cargo");
+    fixtures::write_executable(
+        &cargo,
+        &format!(
+            "#!/bin/sh\ncat > '{}'\necho to-stdout\necho to-stderr >&2\nexit 0\n",
+            seen.display()
+        ),
+    );
+    fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
+    (cargo, seen)
 }
