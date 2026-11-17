@@ -486,19 +486,24 @@ pub enum RedirectDestination {
     FirstParty { sha256: String },
 }
 
+/// The `https` default port, which is never part of a canonical origin.
+const DEFAULT_HTTPS_PORT: u16 = 443;
+
 /// Exact configured origin of the serving origin's first-party archive redirects.
 ///
 /// The origin is operator configuration, never catalog data: a first-party
 /// [`RedirectDestination`] resolves its `Location` against this value alone. The stored value is
-/// canonical: an accepted trailing `/` is dropped, so the origin never ends in `/`.
+/// canonical: a trailing `/` and the default port `443` are dropped.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FirstPartyOrigin(String);
 
 impl FirstPartyOrigin {
     /// Validates one exact `https` origin.
     ///
-    /// Accepted: the `https` scheme, a lowercase DNS name or IPv4 literal, an optional port, and
-    /// no user information, path other than empty or `/`, query, or fragment.
+    /// Accepted: the `https` scheme, a lowercase DNS name or a canonical decimal IPv4 literal, an
+    /// optional port, and no user information, path other than empty or `/`, query, or fragment.
+    /// An IPv6 literal, an `xn--` label, and any numeric host form that URL parsers read as a
+    /// different address are refused.
     ///
     /// # Errors
     ///
@@ -531,6 +536,10 @@ impl FirstPartyOrigin {
             path.is_empty() || path == "/",
             "first-party origin must not have a path: {value:?}"
         );
+        ensure!(
+            !authority.starts_with('['),
+            "first-party origin must not be an IPv6 literal, which is not supported: {value:?}"
+        );
         let (host, port) = match authority.rsplit_once(':') {
             Some((host, port)) => (host, Some(port)),
             None => (authority, None),
@@ -549,7 +558,8 @@ impl FirstPartyOrigin {
                     number != 0 && number.to_string() == port,
                     "first-party origin port must be 1-65535 in canonical decimal: {value:?}"
                 );
-                Some(number)
+                // `https` defaults to 443, so the default port is not part of the origin.
+                (number != DEFAULT_HTTPS_PORT).then_some(number)
             }
             None => None,
         };
@@ -560,14 +570,20 @@ impl FirstPartyOrigin {
         Ok(Self(origin))
     }
 
-    /// Returns the canonical origin, which never ends in `/`.
+    /// Returns the canonical origin, which never ends in `/` or in the default port.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// Rejects a host that is not a lowercase DNS name or an IPv4 literal.
+/// Rejects a host that is not a lowercase DNS name or a canonical decimal IPv4 literal.
+///
+/// A last label that is numeric or begins with `0x` must make the host exactly four decimal
+/// octets from 0 to 255 without leading zeros, because URL parsers read every other numeric form
+/// as a different IPv4 address. Every other host must carry a letter in its last label, so no
+/// numeric form survives as a name. `xn--` labels are refused: this origin is not an
+/// internationalized domain name, and an unchecked one would need a punycode decoder.
 fn validate_first_party_host(host: &str) -> Result<()> {
     ensure!(!host.is_empty(), "first-party origin must have a host");
     ensure!(
@@ -584,6 +600,10 @@ fn validate_first_party_host(host: &str) -> Result<()> {
             "first-party origin host label exceeds 63 bytes: {host:?}"
         );
         ensure!(
+            !label.starts_with("xn--"),
+            "first-party origin host must not use an internationalized `xn--` label: {host:?}"
+        );
+        ensure!(
             !label.starts_with('-') && !label.ends_with('-'),
             "first-party origin host label must not begin or end with `-`: {host:?}"
         );
@@ -592,6 +612,46 @@ fn validate_first_party_host(host: &str) -> Result<()> {
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
             "first-party origin host must be a lowercase DNS name or IPv4 literal: {host:?}"
+        );
+    }
+    let last = host
+        .rsplit('.')
+        .next()
+        .expect("a nonempty host has a last label");
+    if last.bytes().all(|byte| byte.is_ascii_digit()) || last.starts_with("0x") {
+        validate_first_party_ipv4(host)
+    } else {
+        ensure!(
+            last.bytes().any(|byte| byte.is_ascii_lowercase()),
+            "first-party origin host last label must contain a letter: {host:?}"
+        );
+        Ok(())
+    }
+}
+
+/// Requires exactly four decimal IPv4 octets from 0 to 255 with no leading zeros.
+fn validate_first_party_ipv4(host: &str) -> Result<()> {
+    let octets = host.split('.').collect::<Vec<_>>();
+    ensure!(
+        octets.len() == 4,
+        "first-party origin host must be four decimal IPv4 octets: {host:?}"
+    );
+    for octet in octets {
+        ensure!(
+            !octet.is_empty()
+                && octet.len() <= 3
+                && octet.bytes().all(|byte| byte.is_ascii_digit()),
+            "first-party origin host must be decimal IPv4 octets: {host:?}"
+        );
+        ensure!(
+            octet == "0" || !octet.starts_with('0'),
+            "first-party origin host IPv4 octets must not have leading zeros: {host:?}"
+        );
+        ensure!(
+            octet
+                .parse::<u16>()
+                .is_ok_and(|value| u8::try_from(value).is_ok()),
+            "first-party origin host IPv4 octets must be 0 to 255: {host:?}"
         );
     }
     Ok(())
@@ -1299,6 +1359,12 @@ mod tests {
             first_party.location(Some(&alternative)).unwrap(),
             format!("https://registry.example:8443/crates/{sha256}.crate")
         );
+        let default_port = FirstPartyOrigin::parse("https://rust.pkg.re:443").unwrap();
+        assert_eq!(
+            first_party.location(Some(&default_port)).unwrap(),
+            first_party.location(Some(&origin)).unwrap(),
+            "the default https port is not part of the origin"
+        );
         let error = first_party.location(None).unwrap_err();
         assert!(
             format!("{error:#}").contains("requires a configured first-party origin"),
@@ -1311,11 +1377,17 @@ mod tests {
         for accepted in [
             ("https://rust.pkg.re", "https://rust.pkg.re"),
             ("https://rust.pkg.re/", "https://rust.pkg.re"),
+            ("https://rust.pkg.re:443", "https://rust.pkg.re"),
+            ("https://rust.pkg.re:443/", "https://rust.pkg.re"),
             (
                 "https://registry.example:8443",
                 "https://registry.example:8443",
             ),
+            ("https://registry.example", "https://registry.example"),
+            ("https://127.0.0.1", "https://127.0.0.1"),
             ("https://127.0.0.1:8443", "https://127.0.0.1:8443"),
+            ("https://0.0.0.0", "https://0.0.0.0"),
+            ("https://255.255.255.255", "https://255.255.255.255"),
             ("https://localhost", "https://localhost"),
         ] {
             let origin = FirstPartyOrigin::parse(accepted.0).unwrap();
@@ -1344,8 +1416,23 @@ mod tests {
             "https://rust..pkg.re",
             "https://-rust.pkg.re",
             "https://rust.pkg.re-",
-            "https://[::1]:8443",
             "https://rust.pkg.re/.",
+            // IPv6 literals are not accepted at all.
+            "https://[::1]",
+            "https://[::1]:8443",
+            // Numeric host forms that URL parsers read as another IPv4 address.
+            "https://010.0.0.1",
+            "https://0x7f.0.0.1",
+            "https://2130706433",
+            "https://12345",
+            "https://1.2.3",
+            "https://1.2.3.4.5",
+            "https://999.999.999.999",
+            "https://256.0.0.1",
+            "https://example.123",
+            // An unchecked internationalized label.
+            "https://xn--a.example",
+            "https://rust.xn--pkg",
         ] {
             assert!(
                 FirstPartyOrigin::parse(refused).is_err(),

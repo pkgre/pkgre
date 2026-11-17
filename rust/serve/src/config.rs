@@ -392,7 +392,7 @@ poll-interval-secs = 30
 
     #[test]
     fn malformed_first_party_origins_fail_closed() {
-        let cases: [(&str, &str); 12] = [
+        let cases: [(&str, &str); 16] = [
             ("empty", ""),
             ("no-scheme", "rust.pkg.re"),
             ("plain-http", "http://rust.pkg.re"),
@@ -405,6 +405,10 @@ poll-interval-secs = 30
             ("port-empty", "https://rust.pkg.re:"),
             ("port-zero", "https://rust.pkg.re:0"),
             ("upper-host", "https://Rust.pkg.re"),
+            ("ipv6", "https://[::1]"),
+            ("ipv6-with-port", "https://[::1]:8443"),
+            ("numeric-host", "https://010.0.0.1"),
+            ("internationalized-label", "https://xn--a.example"),
         ];
         for (label, origin) in cases {
             let text = REDIRECT_TEXT.replace(
@@ -414,15 +418,25 @@ poll-interval-secs = 30
             assert!(parse_text(&text).is_err(), "{label} must fail");
         }
 
-        let with_port = REDIRECT_TEXT.replace(
-            "first-party-origin = \"https://rust.pkg.re\"",
-            "first-party-origin = \"https://registry.example:8443/\"",
-        );
-        let config = parse_text(&with_port).unwrap();
-        assert_eq!(
-            config.first_party_origin.as_ref().unwrap().as_str(),
-            "https://registry.example:8443"
-        );
+        for (configured, canonical) in [
+            (
+                "https://registry.example:8443/",
+                "https://registry.example:8443",
+            ),
+            ("https://rust.pkg.re:443", "https://rust.pkg.re"),
+            ("https://127.0.0.1:443", "https://127.0.0.1"),
+        ] {
+            let text = REDIRECT_TEXT.replace(
+                "first-party-origin = \"https://rust.pkg.re\"",
+                &format!("first-party-origin = \"{configured}\""),
+            );
+            let config = parse_text(&text).unwrap();
+            assert_eq!(
+                config.first_party_origin.as_ref().unwrap().as_str(),
+                canonical,
+                "{configured}"
+            );
+        }
     }
 
     #[test]
