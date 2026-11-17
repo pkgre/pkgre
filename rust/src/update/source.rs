@@ -210,6 +210,21 @@ fn compare_archive_to_tree(
     path_in_vcs: &str,
     tree: &impl GitTree,
 ) -> Result<ComparisonResult> {
+    let (report, matches) = build_comparison_report(archive, path_in_vcs, tree)?;
+    let canonical = serde_json::to_vec(&report).context("serialize source comparison report")?;
+    Ok(ComparisonResult {
+        matches,
+        sha256: sha256_bytes(&canonical),
+    })
+}
+
+/// Compares every archive member with the exact public tree, returning the report and whether
+/// every compared member matched.
+fn build_comparison_report(
+    archive: &ArchiveAnalysis,
+    path_in_vcs: &str,
+    tree: &impl GitTree,
+) -> Result<(ComparisonReport, bool)> {
     validate_vcs_path(path_in_vcs)?;
     let archive_paths = archive
         .files
@@ -219,11 +234,7 @@ fn compare_archive_to_tree(
     let mut files = Vec::with_capacity(archive.files.len());
     let mut matches = true;
     for file in &archive.files {
-        if matches!(file.path.as_str(), ".cargo_vcs_info.json" | ".cargo-ok") {
-            files.push(ignored_comparison(file));
-            continue;
-        }
-        if is_generated_manifest(&file.path, &archive_paths) {
+        if is_cargo_generated(&file.path, &archive_paths) {
             files.push(ignored_comparison(file));
             continue;
         }
@@ -258,11 +269,7 @@ fn compare_archive_to_tree(
         path_in_vcs: path_in_vcs.to_owned(),
         files,
     };
-    let canonical = serde_json::to_vec(&report).context("serialize source comparison report")?;
-    Ok(ComparisonResult {
-        matches,
-        sha256: sha256_bytes(&canonical),
-    })
+    Ok((report, matches))
 }
 
 fn ignored_comparison(file: &ArchiveFile) -> FileComparison {
@@ -275,6 +282,24 @@ fn ignored_comparison(file: &ArchiveFile) -> FileComparison {
         repository_executable: None,
         disposition: "cargo-generated",
     }
+}
+
+/// Returns whether Cargo wrote one archive member while packaging it.
+///
+/// `cargo package` writes `.cargo_vcs_info.json`, `.cargo-ok`, a normalized `Cargo.toml` beside
+/// the `Cargo.toml.orig` it packaged, and a `Cargo.lock` at the package root. Cargo generates
+/// that root lock file at packaging time whether or not the repository tracks one, and rewrites
+/// it when it does, so its bytes are not source. Cargo never reads the lock file of a dependency,
+/// so it carries no code into a consumer's build either; the archive's bytes, the lock file
+/// included, remain checksum-verified and retained, and its other analyses are unchanged.
+///
+/// Archive paths are relative to the archive's `<name>-<version>/` root, so only the lock file
+/// directly beside the package's root `Cargo.toml` is generated. A `Cargo.lock` anywhere else in
+/// the archive, such as in a subdirectory or a test fixture, is source and is compared like any
+/// other file.
+fn is_cargo_generated(path: &str, archive_paths: &BTreeSet<&str>) -> bool {
+    matches!(path, ".cargo_vcs_info.json" | ".cargo-ok" | "Cargo.lock")
+        || is_generated_manifest(path, archive_paths)
 }
 
 fn is_generated_manifest(path: &str, archive_paths: &BTreeSet<&str>) -> bool {
@@ -807,6 +832,113 @@ mod tests {
             !compare_archive_to_tree(&archive, "crates/demo", &mismatching)
                 .unwrap()
                 .matches
+        );
+    }
+
+    /// One packaged archive whose repository tracks no lock file, as `cargo package` writes it.
+    fn packaged_archive(source: &[u8]) -> ArchiveAnalysis {
+        ArchiveAnalysis {
+            compressed_bytes: 1,
+            unpacked_bytes: 1,
+            files: vec![
+                file(".cargo_vcs_info.json", b"generated"),
+                file("Cargo.lock", b"packaged lock"),
+                file("Cargo.toml", b"normalized"),
+                file("Cargo.toml.orig", b"source manifest"),
+                file("src/lib.rs", source),
+            ],
+            build_surface: BTreeMap::new(),
+            vcs: Some(EmbeddedVcsInfo {
+                commit: "01".repeat(20),
+                path_in_vcs: None,
+                file_sha256: sha256_bytes(b"generated"),
+            }),
+        }
+    }
+
+    /// The tracked files of [`packaged_archive`]'s repository, which holds no `Cargo.lock`.
+    fn packaged_tree(source: &[u8]) -> FakeTree {
+        FakeTree {
+            files: BTreeMap::from([
+                (
+                    "Cargo.toml".to_owned(),
+                    GitBlob {
+                        sha256: sha256_bytes(b"source manifest"),
+                        executable: false,
+                    },
+                ),
+                (
+                    "src/lib.rs".to_owned(),
+                    GitBlob {
+                        sha256: sha256_bytes(source),
+                        executable: false,
+                    },
+                ),
+            ]),
+        }
+    }
+
+    #[test]
+    fn source_comparison_ignores_the_packaged_root_lock_file() {
+        let archive = packaged_archive(b"source");
+        let (report, matches) =
+            build_comparison_report(&archive, "", &packaged_tree(b"source")).unwrap();
+        assert!(matches, "the packaged root lock file must not mismatch");
+        let lock = report
+            .files
+            .iter()
+            .find(|file| file.archive_path == "Cargo.lock")
+            .expect("the report covers the packaged lock file");
+        assert_eq!(lock.disposition, "cargo-generated");
+        assert!(
+            lock.repository_path.is_none(),
+            "the lock file is not looked up"
+        );
+        assert!(lock.repository_sha256.is_none());
+        assert_eq!(lock.archive_sha256, sha256_bytes(b"packaged lock"));
+    }
+
+    #[test]
+    fn source_comparison_still_detects_a_changed_source_file_beside_the_lock_file() {
+        let archive = packaged_archive(b"changed source");
+        let (report, matches) =
+            build_comparison_report(&archive, "", &packaged_tree(b"source")).unwrap();
+        assert!(!matches, "a changed source file must still mismatch");
+        let source = report
+            .files
+            .iter()
+            .find(|file| file.archive_path == "src/lib.rs")
+            .expect("the report covers the source file");
+        assert_eq!(source.disposition, "different");
+        assert_eq!(
+            report
+                .files
+                .iter()
+                .find(|file| file.archive_path == "Cargo.lock")
+                .expect("the report covers the packaged lock file")
+                .disposition,
+            "cargo-generated"
+        );
+    }
+
+    #[test]
+    fn source_comparison_still_compares_a_lock_file_below_the_package_root() {
+        let mut archive = packaged_archive(b"source");
+        archive
+            .files
+            .push(file("tests/fixtures/Cargo.lock", b"fixture lock"));
+        let (report, matches) =
+            build_comparison_report(&archive, "", &packaged_tree(b"source")).unwrap();
+        assert!(!matches, "a nested lock file must still mismatch");
+        let nested = report
+            .files
+            .iter()
+            .find(|file| file.archive_path == "tests/fixtures/Cargo.lock")
+            .expect("the report covers the nested lock file");
+        assert_eq!(nested.disposition, "missing");
+        assert_eq!(
+            nested.repository_path.as_deref(),
+            Some("tests/fixtures/Cargo.lock")
         );
     }
 
