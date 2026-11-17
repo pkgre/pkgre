@@ -285,7 +285,8 @@ For each new publish tag, package version/path/tag object/peeled commit are disc
 - Tag final component = package version or `v<version>`; e.g. `rust/v0.5.0`.
 - Every selected package name occurs exactly once in the tagged workspace; each manifest declares exactly `publish = ["pkgre"]`.
 - Every dependency, including optional/dev/build/target-specific, explicitly names `registry = "pkgre"`; Git/crates.io/unknown sources fail.
-- A `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, required as exactly `=X.Y.Z` of that tag's version, and judged by the package it points at when it is renamed; every other path dependency fails.
+- A `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, required as exactly `=X.Y.Z` of that tag's version, pointing at that package's own directory, and judged by the package it points at when it is renamed; every other path dependency fails.
+- The packaged `Cargo.lock` of a dependent must name the archive this tag publishes for each sibling it depends on: the archive of the same run, or, for a sibling the catalog locked already, its locked `crate-sha256`. Cargo takes a locked sibling from the registry index, so that index must serve the identity while the dependent is locked, and a lock naming another archive is refused.
 - Checkout has no submodules, symlinks, special files, unsafe paths, manifest mismatch, or dirty generated changes.
 - Pinned Cargo:absolute `PKGRE_CARGO` when set, otherwise `rustup which --toolchain <cargo-version> cargo`; reported version must match.
 - `cargo metadata --no-deps --locked` runs in isolated Cargo home with crates.io replaced by empty directory.

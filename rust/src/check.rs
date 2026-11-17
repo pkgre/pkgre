@@ -321,45 +321,50 @@ mod tests {
             bail!("fixture resolves no crates.io identities")
         }
 
-        fn resolve_git_tag(
+        fn resolve_git_tag_group(
             &self,
             repository: &str,
             tag: &str,
-            package_name: &str,
+            packages: &[&str],
+            _published: &[crate::package::PublishedPackage<'_>],
             cargo_version: &Version,
-        ) -> Result<ResolvedPackage> {
+        ) -> Result<Vec<ResolvedPackage>> {
             let version = Version::parse(
                 tag.rsplit('/')
                     .next()
                     .expect("validated tag is nonempty")
                     .trim_start_matches('v'),
             )?;
-            let archive_bytes = fixture_archive(package_name, &version.to_string());
-            let mut source_row_bytes = serde_json::to_vec(&json!({
-                "name": package_name,
-                "vers": version.to_string(),
-                "deps": fixture_dependencies(package_name),
-                "cksum": sha256_bytes(&archive_bytes),
-                "features": {},
-                "yanked": false,
-            }))?;
-            source_row_bytes.push(b'\n');
-            Ok(ResolvedPackage {
-                name: package_name.to_owned(),
-                version,
-                archive_bytes,
-                source_row_bytes,
-                published_at: Some(UtcTimestamp::parse("2026-01-01T00:00:00Z")?),
-                source: LockedSource::GitTag {
-                    git: repository.to_owned(),
-                    tag: tag.to_owned(),
-                    tag_oid: "0".repeat(40),
-                    commit: "1".repeat(40),
-                    package: package_name.to_owned(),
-                    path: PathBuf::from("."),
-                    cargo_version: cargo_version.clone(),
-                },
-            })
+            let mut resolved = Vec::with_capacity(packages.len());
+            for package_name in packages {
+                let archive_bytes = fixture_archive(package_name, &version.to_string());
+                let mut source_row_bytes = serde_json::to_vec(&json!({
+                    "name": package_name,
+                    "vers": version.to_string(),
+                    "deps": fixture_dependencies(package_name),
+                    "cksum": sha256_bytes(&archive_bytes),
+                    "features": {},
+                    "yanked": false,
+                }))?;
+                source_row_bytes.push(b'\n');
+                resolved.push(ResolvedPackage {
+                    name: (*package_name).to_owned(),
+                    version: version.clone(),
+                    archive_bytes,
+                    source_row_bytes,
+                    published_at: Some(UtcTimestamp::parse("2026-01-01T00:00:00Z")?),
+                    source: LockedSource::GitTag {
+                        git: repository.to_owned(),
+                        tag: tag.to_owned(),
+                        tag_oid: "0".repeat(40),
+                        commit: "1".repeat(40),
+                        package: (*package_name).to_owned(),
+                        path: PathBuf::from("."),
+                        cargo_version: cargo_version.clone(),
+                    },
+                });
+            }
+            Ok(resolved)
         }
     }
 

@@ -154,37 +154,27 @@ fn transact_catalog_with<T, N: Renamer>(
 pub(crate) trait Resolver {
     fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage>;
 
-    fn resolve_git_tag(
-        &self,
-        repository: &str,
-        tag: &str,
-        package_name: &str,
-        cargo_version: &Version,
-    ) -> Result<ResolvedPackage>;
-
-    /// Resolves every package of one repository and tag, which a resolver that
-    /// packages the whole group resolves with one run.
+    /// Resolves every package of one repository and tag together.
     ///
-    /// `published` names every package the catalog publishes from the same
-    /// repository and tag, including the ones it already locked; a resolver
-    /// that packages each package on its own ignores it.
+    /// `packages` names the packages to resolve. `published` names every
+    /// package the catalog publishes from the same repository and tag, with the
+    /// archive it locked for the ones it locked already: a resolver must bind a
+    /// dependency on such a package to exactly that archive and refuse another,
+    /// and a resolver that packages each package on its own cannot do so.
     ///
     /// # Errors
     ///
-    /// Returns an error for any package the resolver cannot resolve.
+    /// Returns an error for any package the resolver cannot resolve, or for a
+    /// dependency on a package whose archive differs from the one the catalog
+    /// locked.
     fn resolve_git_tag_group(
         &self,
         repository: &str,
         tag: &str,
         packages: &[&str],
-        _published: &[&str],
+        published: &[package::PublishedPackage<'_>],
         cargo_version: &Version,
-    ) -> Result<Vec<ResolvedPackage>> {
-        packages
-            .iter()
-            .map(|package| self.resolve_git_tag(repository, tag, package, cargo_version))
-            .collect()
-    }
+    ) -> Result<Vec<ResolvedPackage>>;
 }
 
 pub(crate) struct LiveResolver;
@@ -210,24 +200,12 @@ impl Resolver for LiveResolver {
         })
     }
 
-    fn resolve_git_tag(
-        &self,
-        repository: &str,
-        tag: &str,
-        package_name: &str,
-        cargo_version: &Version,
-    ) -> Result<ResolvedPackage> {
-        let materialization =
-            package::resolve_git_tag(repository, tag, package_name, cargo_version)?;
-        resolved_git_package(repository, tag, cargo_version, materialization)
-    }
-
     fn resolve_git_tag_group(
         &self,
         repository: &str,
         tag: &str,
         packages: &[&str],
-        published: &[&str],
+        published: &[package::PublishedPackage<'_>],
         cargo_version: &Version,
     ) -> Result<Vec<ResolvedPackage>> {
         package::resolve_git_tag_group(repository, tag, packages, published, cargo_version)?
@@ -475,6 +453,8 @@ fn resolve_new_packages<R: Resolver>(
             .push(locked);
         summary.packages_added += 1;
     }
+    // The Cargo version of a declaration comes from its registry, so one
+    // registry, repository and tag name exactly one group.
     let mut groups = BTreeMap::new();
     for (git_identity, package) in &desired.git_tags {
         if old
@@ -488,20 +468,25 @@ fn resolve_new_packages<R: Resolver>(
                 package.registry.clone(),
                 package.repository.clone(),
                 package.tag.clone(),
-                package.cargo_version.clone(),
             ))
             .or_insert_with(Vec::new)
             .push(package);
     }
-    for ((registry, repository, tag, cargo_version), group) in groups {
+    let locked_archives = old
+        .values()
+        .filter_map(|(registry, _, package)| {
+            git_key(registry, package).map(|key| (key, package.crate_sha256.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for ((registry, repository, tag), group) in groups {
         resolve_new_git_tag(
             source_resolver,
             desired,
             &registry,
             &repository,
             &tag,
-            &cargo_version,
             &group,
+            &locked_archives,
             catalog,
             policy,
             next_locks,
@@ -516,6 +501,10 @@ fn resolve_new_packages<R: Resolver>(
 /// Resolves the absent declarations of one repository and tag with one call and
 /// locks every package it returns.
 ///
+/// Every package the catalog publishes from that repository and tag is passed
+/// with the archive the catalog locked for it, so that the packaging binds a
+/// dependency on a package it does not package again.
+///
 /// # Errors
 ///
 /// Returns an error for a resolution failure, a package the resolution did not
@@ -527,8 +516,8 @@ fn resolve_new_git_tag<R: Resolver>(
     registry: &str,
     repository: &str,
     tag: &str,
-    cargo_version: &Version,
     group: &[&DesiredGitTag],
+    locked_archives: &BTreeMap<GitIdentity, String>,
     catalog: &Catalog,
     policy: &Policy,
     next_locks: &mut BTreeMap<String, RegistryLock>,
@@ -542,16 +531,28 @@ fn resolve_new_git_tag<R: Resolver>(
         .collect::<Vec<_>>();
     // Every package the catalog publishes from this repository and tag may be a
     // dependency of the group, including the ones it already locked.
-    let published = desired
-        .git_tags
-        .values()
-        .filter(|package| {
-            package.registry == registry && package.repository == repository && package.tag == tag
-        })
-        .map(|package| package.name.as_str())
-        .collect::<Vec<_>>();
+    let mut published = Vec::new();
+    for package in desired.git_tags.values().filter(|package| {
+        package.registry == registry && package.repository == repository && package.tag == tag
+    }) {
+        let key = (
+            registry.to_owned(),
+            package.name.clone(),
+            repository.to_owned(),
+            tag.to_owned(),
+        );
+        published.push(package::PublishedPackage {
+            name: &package.name,
+            locked_sha256: locked_archives.get(&key).map(String::as_str),
+        });
+    }
+    let cargo_version = group
+        .first()
+        .context("a Git-tag group holds no declaration")?
+        .cargo_version
+        .clone();
     let resolved = source_resolver
-        .resolve_git_tag_group(repository, tag, &packages, &published, cargo_version)
+        .resolve_git_tag_group(repository, tag, &packages, &published, &cargo_version)
         .with_context(|| {
             format!(
                 "resolve new Git tag {tag:?} for {} in {registry}",
@@ -1665,12 +1666,15 @@ mod tests {
         let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
 
         assert_eq!(summary.packages_added, 2);
-        assert_eq!(resolver.calls(), 2);
+        assert_eq!(resolver.calls(), 1, "one tag resolves with one call");
         let groups = resolver.groups();
-        assert_eq!(groups.len(), 1, "one tag resolves with one call");
+        assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].tag, "release/v1.0.0");
         assert_eq!(groups[0].packages, ["sibling-app", "sibling-tool"]);
-        assert_eq!(groups[0].published, ["sibling-app", "sibling-tool"]);
+        assert_eq!(
+            groups[0].published_archives(),
+            [("sibling-app", None), ("sibling-tool", None)]
+        );
         let catalog = Catalog::load(&root).unwrap();
         let home = catalog
             .homes
@@ -1700,7 +1704,17 @@ mod tests {
         let groups = resolver.groups();
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[1].packages, ["sibling-app"]);
-        assert_eq!(groups[1].published, ["sibling-app", "sibling-tool"]);
+        let tool_archive = sha256_bytes(&fake_archive(
+            "sibling-tool",
+            &Version::parse("1.0.0").unwrap(),
+        ));
+        assert_eq!(
+            groups[1].published_archives(),
+            [
+                ("sibling-app", None),
+                ("sibling-tool", Some(tool_archive.as_str()))
+            ]
+        );
         assert_eq!(
             reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap(),
             ReconcileSummary::default()
@@ -1724,6 +1738,99 @@ mod tests {
             "{message}"
         );
     }
+
+    #[test]
+    fn one_tag_publishes_only_its_own_repository_and_tag() {
+        let temporary = TemporaryDirectory::new("pkgre-lock-git-group-tags");
+        let root = temporary.path().join("catalog");
+        write_catalog(
+            &root,
+            "",
+            "",
+            concat!(
+                "[publish.sibling-tool]\n",
+                "git = \"https://github.com/pkgre/pkgre\"\n",
+                "tags = [\"release/v1.0.0\"]\n\n",
+                "[publish.sibling-app]\n",
+                "git = \"https://github.com/pkgre/pkgre\"\n",
+                "tags = [\"release/v1.0.0\"]\n\n",
+                "[publish.other-tool]\n",
+                "git = \"https://github.com/pkgre/pkgre\"\n",
+                "tags = [\"other/v1.0.0\"]\n\n",
+                "[publish.foreign-tool]\n",
+                "git = \"https://github.com/pkgre/other\"\n",
+                "tags = [\"release/v1.0.0\"]\n",
+            ),
+        );
+        let resolver = FakeResolver::default();
+
+        let summary = reconcile_with(&root, &resolver, &FilesystemRenamer).unwrap();
+
+        assert_eq!(summary.packages_added, 4);
+        let groups = resolver.groups();
+        assert_eq!(groups.len(), 3, "one call per repository and tag");
+        let release = groups
+            .iter()
+            .find(|group| {
+                group.repository == "https://github.com/pkgre/pkgre"
+                    && group.tag == "release/v1.0.0"
+            })
+            .expect("the release tag was resolved");
+        assert_eq!(release.packages, ["sibling-app", "sibling-tool"]);
+        assert_eq!(
+            release.published_archives(),
+            [("sibling-app", None), ("sibling-tool", None)]
+        );
+        let other = groups
+            .iter()
+            .find(|group| group.tag == "other/v1.0.0")
+            .expect("the other tag was resolved");
+        assert_eq!(other.published_archives(), [("other-tool", None)]);
+        let foreign = groups
+            .iter()
+            .find(|group| group.repository == "https://github.com/pkgre/other")
+            .expect("the other repository was resolved");
+        assert_eq!(foreign.published_archives(), [("foreign-tool", None)]);
+    }
+
+    #[test]
+    fn a_group_resolution_must_match_its_declarations() {
+        let version = Version::parse("1.0.0").unwrap();
+        let declaration = DesiredGitTag {
+            registry: "main".to_owned(),
+            category: CategoryId::new("main", "pkgre").unwrap(),
+            name: "sibling-tool".to_owned(),
+            repository: "https://github.com/pkgre/pkgre".to_owned(),
+            tag: "release/v1.0.0".to_owned(),
+            cargo_version: version.clone(),
+        };
+        let resolved = |name: &str| fake_resolved(name, version.clone(), LockedSource::CratesIo {});
+        let declarations = [&declaration];
+
+        let error = group_resolved_packages(
+            vec![resolved("sibling-tool"), resolved("sibling-tool")],
+            &declarations,
+            "release/v1.0.0",
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("resolved package \"sibling-tool\" more than once"));
+
+        let error =
+            group_resolved_packages(Vec::new(), &declarations, "release/v1.0.0").unwrap_err();
+        assert!(format!("{error:#}").contains("resolved no package \"sibling-tool\""));
+
+        let error = group_resolved_packages(
+            vec![resolved("sibling-tool"), resolved("sibling-app")],
+            &declarations,
+            "release/v1.0.0",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("resolved 2 packages; the declarations name 1"),
+            "{error:#}"
+        );
+    }
+
     #[test]
     fn one_name_can_transition_from_mirror_to_git_in_later_version() {
         let temporary = TemporaryDirectory::new("pkgre-lock-source-transition");
@@ -2870,12 +2977,31 @@ mod tests {
         );
     }
 
+    /// One package a group resolution was told the catalog publishes from its tag.
+    #[derive(Clone, Debug, PartialEq)]
+    struct PublishedCall {
+        name: String,
+        locked_sha256: Option<String>,
+    }
+
     /// One Git-tag group that a resolver was asked to resolve.
     #[derive(Clone, Debug)]
     struct GroupCall {
+        repository: String,
         tag: String,
         packages: Vec<String>,
-        published: Vec<String>,
+        published: Vec<PublishedCall>,
+    }
+
+    impl GroupCall {
+        /// Returns each published package with the archive the catalog locked
+        /// for it, when it locked one.
+        fn published_archives(&self) -> Vec<(&str, Option<&str>)> {
+            self.published
+                .iter()
+                .map(|package| (package.name.as_str(), package.locked_sha256.as_deref()))
+                .collect()
+        }
     }
 
     #[derive(Default)]
@@ -2925,46 +3051,44 @@ mod tests {
             repository: &str,
             tag: &str,
             packages: &[&str],
-            published: &[&str],
+            published: &[package::PublishedPackage<'_>],
             cargo_version: &Version,
         ) -> Result<Vec<ResolvedPackage>> {
             self.groups.borrow_mut().push(GroupCall {
+                repository: repository.to_owned(),
                 tag: tag.to_owned(),
                 packages: packages.iter().map(|name| (*name).to_owned()).collect(),
-                published: published.iter().map(|name| (*name).to_owned()).collect(),
+                published: published
+                    .iter()
+                    .map(|package| PublishedCall {
+                        name: package.name.to_owned(),
+                        locked_sha256: package.locked_sha256.map(str::to_owned),
+                    })
+                    .collect(),
             });
-            packages
-                .iter()
-                .map(|package| self.resolve_git_tag(repository, tag, package, cargo_version))
-                .collect()
-        }
-
-        fn resolve_git_tag(
-            &self,
-            repository: &str,
-            tag: &str,
-            package_name: &str,
-            cargo_version: &Version,
-        ) -> Result<ResolvedPackage> {
             self.begin_resolution()?;
             let component = tag
                 .rsplit('/')
                 .next()
                 .context("test tag has no component")?;
             let version = Version::parse(component.strip_prefix('v').unwrap_or(component))?;
-            Ok(fake_resolved(
-                package_name,
-                version,
-                LockedSource::GitTag {
-                    git: repository.to_owned(),
-                    tag: tag.to_owned(),
-                    tag_oid: "11".repeat(20),
-                    commit: "22".repeat(20),
-                    package: package_name.to_owned(),
-                    path: PathBuf::from("."),
-                    cargo_version: cargo_version.clone(),
-                },
-            ))
+            let mut resolved = Vec::with_capacity(packages.len());
+            for package_name in packages {
+                resolved.push(fake_resolved(
+                    package_name,
+                    version.clone(),
+                    LockedSource::GitTag {
+                        git: repository.to_owned(),
+                        tag: tag.to_owned(),
+                        tag_oid: "11".repeat(20),
+                        commit: "22".repeat(20),
+                        package: (*package_name).to_owned(),
+                        path: PathBuf::from("."),
+                        cargo_version: cargo_version.clone(),
+                    },
+                ));
+            }
+            Ok(resolved)
         }
     }
 
