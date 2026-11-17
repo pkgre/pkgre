@@ -47,12 +47,16 @@ pub struct ProjectionLimits {
 
 impl ProjectionLimits {
     /// Production defaults; operators may lower these but should review increases.
+    ///
+    /// The archive count matches the approval count: the byte limits, not the
+    /// number of archives, bound the memory a snapshot retains, since a download
+    /// does not copy its archive.
     pub const PRODUCTION: Self = Self {
         max_approvals: 10_000,
         max_routes: 20_000,
         max_inline_body_bytes: 16 * 1024 * 1024,
         max_inline_bytes: 128 * 1024 * 1024,
-        max_archives: 1_000,
+        max_archives: 10_000,
         max_archive_body_bytes: 100 * 1024 * 1024,
         max_archive_bytes: 512 * 1024 * 1024,
         max_snapshot_body_bytes: 512 * 1024 * 1024,
