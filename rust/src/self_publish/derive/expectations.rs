@@ -15,7 +15,6 @@ use semver::Version;
 use super::super::catalog::CatalogSnapshot;
 use super::super::config::CratesIoConfig;
 use super::super::lock::CratesIoLock;
-use super::cargo::CURATED_INDEX;
 use super::cargo_lock::LockIndex;
 
 /// What one package of the lock must be on each side.
@@ -23,9 +22,12 @@ use super::cargo_lock::LockIndex;
 pub(super) struct ExpectedPackage {
     /// crates.io name.
     pub(super) crates_io_name: String,
-    /// SHA-256 that the curated lock must record, absent for a workspace member.
+    /// SHA-256 that the curated archive's lock must record, absent for a
+    /// workspace member that the release does not publish.
     pub(super) curated_checksum: Option<String>,
-    /// SHA-256 that the derived lock must record, absent for a workspace member.
+    /// SHA-256 that the derived archive's lock must record, absent for a
+    /// workspace member that the release does not publish, and for a released
+    /// crate until the derivation packaged it.
     pub(super) derived_checksum: Option<String>,
     /// Whether the package is a workspace member of the tag.
     pub(super) member: bool,
@@ -37,6 +39,9 @@ pub(super) struct Expectations {
     /// The crates.io name of every curated package name, when all its versions
     /// agree.
     names: BTreeMap<String, String>,
+    /// The index that the run's Cargo home configures for the curated registry,
+    /// which every package of the curated registry names as its source.
+    curated_index: String,
 }
 
 impl Expectations {
@@ -60,11 +65,13 @@ impl Expectations {
         config: &CratesIoConfig,
         earlier: &CratesIoLock,
         published: &BTreeMap<String, String>,
+        curated_index: &str,
     ) -> Result<Self> {
         let mut packages = BTreeMap::new();
         let mut names: BTreeMap<String, String> = BTreeMap::new();
         for package in lock.packages() {
-            let expected = resolve_package(catalog, config, earlier, published, package)?;
+            let expected =
+                resolve_package(catalog, config, earlier, published, package, curated_index)?;
             match names.get(&package.name) {
                 Some(previous) => ensure!(
                     previous == &expected.crates_io_name,
@@ -78,7 +85,17 @@ impl Expectations {
             }
             packages.insert((package.name.clone(), package.version.clone()), expected);
         }
-        Ok(Self { packages, names })
+        Ok(Self {
+            packages,
+            names,
+            curated_index: curated_index.to_owned(),
+        })
+    }
+
+    /// Returns the index that the curated lock names for a package of the
+    /// curated registry.
+    pub(super) fn curated_index(&self) -> &str {
+        &self.curated_index
     }
 
     /// Returns what one exact package of the lock must be.
@@ -109,14 +126,59 @@ impl Expectations {
         self.names.contains_key(name)
     }
 
+    /// Binds the archives of the crates that the release publishes.
+    ///
+    /// A crate of the release that another crate of the release depends on is a
+    /// package of the curated registry in the curated archive, with the archive
+    /// `registry/main.lock` records, and a crates.io package in the derived
+    /// archive, with the archive this run packaged; the comparison needs both
+    /// before it reads the first archive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a released crate without a derived archive, or for a
+    /// package that the release does not publish.
+    pub(super) fn bind_release(
+        &mut self,
+        released: &[super::ReleasedCrate],
+        derived: &BTreeMap<(String, Version), String>,
+    ) -> Result<()> {
+        for package in released {
+            let key = (package.name.clone(), package.version.clone());
+            let archive_sha256 = derived.get(&key).with_context(|| {
+                format!(
+                    "the release packaged no archive for {} {}",
+                    package.name, package.version
+                )
+            })?;
+            let expected = self.packages.get_mut(&key).with_context(|| {
+                format!(
+                    "the lock holds no package {} {}, which the release publishes",
+                    package.name, package.version
+                )
+            })?;
+            ensure!(
+                expected.member,
+                "package {} {} is not a workspace member of the tag, so the release does not publish it",
+                package.name,
+                package.version
+            );
+            expected.curated_checksum = Some(package.crate_sha256.clone());
+            expected.derived_checksum = Some(archive_sha256.clone());
+        }
+        Ok(())
+    }
+
     /// Returns every package outside the release's workspace that crates.io
     /// must serve for the release, in name and version order.
     ///
     /// A workspace member that the release does not publish stays a path
-    /// package and is not one of them.
+    /// package, and a crate of the release is served by the release itself, so
+    /// neither is one of them.
     pub(super) fn dependencies(&self) -> Vec<super::DerivedDependency> {
         self.packages
             .iter()
+            .filter(|(_, expected)| !expected.member)
             .filter_map(|((_, version), expected)| {
                 let crate_sha256 = expected.derived_checksum.clone()?;
                 Some(super::DerivedDependency {
@@ -136,6 +198,7 @@ fn resolve_package(
     earlier: &CratesIoLock,
     published: &BTreeMap<String, String>,
     package: &super::cargo_lock::LockedPackage,
+    curated_index: &str,
 ) -> Result<ExpectedPackage> {
     if package.source.is_none()
         && let Some(crates_io_name) = published.get(&package.name)
@@ -152,12 +215,13 @@ fn resolve_package(
         // and stays a path package.
         return Ok(ExpectedPackage {
             crates_io_name: package.name.clone(),
+            member: true,
             ..ExpectedPackage::default()
         });
     }
     let source = package.source.as_deref().unwrap_or_default();
     ensure!(
-        source == CURATED_INDEX || source == format!("registry+{CURATED_INDEX}"),
+        super::cargo::names_index(source, curated_index),
         "package {} {} comes from the unsupported source {source:?}; every package of the release comes from the curated registry",
         package.name,
         package.version

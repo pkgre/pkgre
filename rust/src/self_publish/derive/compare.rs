@@ -13,7 +13,7 @@ use semver::Version;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
-use super::cargo::{CRATES_IO_INDEX, CURATED_INDEX};
+use super::cargo::{CRATES_IO_INDEX, names_index};
 use super::expectations::Expectations;
 use crate::update::{ComparedArchive, read_crate_archive};
 
@@ -74,7 +74,12 @@ pub(super) fn compare_archives(
         &derived_archive,
         expectations,
     )?;
-    compare_lock_files(&curated_archive, &derived_archive, expectations)?;
+    compare_lock_files(
+        curated.name,
+        &curated_archive,
+        &derived_archive,
+        expectations,
+    )?;
     Ok(())
 }
 
@@ -207,7 +212,7 @@ fn compare_dependencies(
         })?;
         if let Some(registry) = entry.get(REGISTRY_INDEX_KEY).and_then(TomlValue::as_str) {
             ensure!(
-                registry == CURATED_INDEX,
+                registry == expectations.curated_index(),
                 "the curated dependency {key:?} names the registry {registry:?}, not the curated registry"
             );
         }
@@ -519,17 +524,9 @@ fn compact(value: &TomlValue) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 
-/// The source that the curated lock records for an external package.
-///
-/// Cargo writes a sparse registry's index URL without the `registry+` prefix in
-/// a lock file.
-fn curated_lock_source() -> String {
-    CURATED_INDEX.to_owned()
-}
-
-/// The source that the derived lock records for an external package.
-fn crates_io_lock_source() -> String {
-    format!("registry+{CRATES_IO_INDEX}")
+/// Returns whether a lock file names one registry index as a package's source.
+fn is_index_source(source: Option<&str>, index: &str) -> bool {
+    source.is_some_and(|source| names_index(source, index))
 }
 
 /// One package of an archived `Cargo.lock`.
@@ -542,7 +539,13 @@ struct LockedPackage {
 
 /// Compares the two packaged lock files with the checksums that each side must
 /// serve.
+///
+/// `root` is the curated name of the crate whose archive this is: its own entry
+/// is a workspace member on both sides, while a crate of the same release that
+/// it depends on is a package of the curated registry in the curated archive and
+/// a crates.io package in the derived one.
 fn compare_lock_files(
+    root: &str,
     curated: &ComparedArchive,
     derived: &ComparedArchive,
     expectations: &Expectations,
@@ -569,6 +572,10 @@ fn compare_lock_files(
             expected.crates_io_name,
             package.version
         );
+        if package.name == root {
+            compare_own_entry(package, counterpart)?;
+            continue;
+        }
         match (&expected.curated_checksum, &expected.derived_checksum) {
             (None, None) => {
                 ensure!(
@@ -590,7 +597,7 @@ fn compare_lock_files(
             }
             (curated_checksum, derived_checksum) => {
                 ensure!(
-                    package.source.as_deref() == Some(curated_lock_source().as_str()),
+                    is_index_source(package.source.as_deref(), expectations.curated_index()),
                     "{} {} comes from {:?} in the curated lock, not from the curated registry",
                     package.name,
                     package.version,
@@ -605,7 +612,7 @@ fn compare_lock_files(
                     curated_checksum
                 );
                 ensure!(
-                    counterpart.source.as_deref() == Some(crates_io_lock_source().as_str()),
+                    is_index_source(counterpart.source.as_deref(), CRATES_IO_INDEX),
                     "{} {} comes from {:?} in the crates.io lock, not from crates.io",
                     expected.crates_io_name,
                     package.version,
@@ -630,6 +637,32 @@ fn compare_lock_files(
             package.version
         );
     }
+    Ok(())
+}
+
+/// Compares the entry of the crate whose archive this is, which is a workspace
+/// member on both sides.
+///
+/// # Errors
+///
+/// Returns an error for an entry that names a source or a checksum.
+fn compare_own_entry(curated: &LockedPackage, derived: &LockedPackage) -> Result<()> {
+    ensure!(
+        curated.source.is_none() && curated.checksum.is_none(),
+        "{} {} is the crate of this archive, but the curated lock records source {:?} and checksum {:?}",
+        curated.name,
+        curated.version,
+        curated.source,
+        curated.checksum
+    );
+    ensure!(
+        derived.source.is_none() && derived.checksum.is_none(),
+        "{} {} is the crate of this archive, but the crates.io lock records source {:?} and checksum {:?}",
+        derived.name,
+        derived.version,
+        derived.source,
+        derived.checksum
+    );
     Ok(())
 }
 

@@ -10,7 +10,7 @@ use semver::Version;
 
 use super::super::check::{AcceptedState, SelfPublishCheckSummary, check_repository_with};
 use super::super::derive::MemberFacts;
-use super::super::derive::tests::fixtures::{self, LocalSource, Release, Variant};
+use super::super::derive::tests::fixtures::{self, LocalSource, Release, Sibling, Variant};
 use super::super::lock::{CratesIoLock, CratesIoPackage};
 use super::super::lock_command::{LocalNetwork, self_publish_lock_in};
 use super::super::state::LOCK_FILE;
@@ -785,6 +785,28 @@ fn refuses_entries_of_a_repository_that_the_accepted_state_did_not_declare() {
 }
 
 #[test]
+fn checks_a_release_whose_crates_depend_on_each_other() {
+    let temporary = fixtures::Temp::new("pkgre-network-sibling");
+    let fixture = fixture_with_derivation(
+        temporary.path(),
+        Variant {
+            sibling: Sibling::Accepted,
+            ..Variant::default()
+        },
+    );
+    // crates.io has neither crate of the release, which a sibling dependency
+    // must not turn into a refusal: the release itself serves the sibling.
+    let crates_io =
+        FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
+
+    let summary = check(&fixture, &crates_io, &repositories)
+        .expect("a release whose binary depends on its library passes the network checks");
+
+    assert_eq!(summary.network_releases, 1);
+}
+
+#[test]
 fn makes_no_request_when_the_run_adds_no_release() {
     let temporary = fixtures::Temp::new("pkgre-network-nothing-added");
     let fixture = fixture_with_derivation(temporary.path(), Variant::default());
@@ -1094,6 +1116,7 @@ fn fixture_identity(
             cargo_version: Version::parse(fixtures::CARGO_VERSION)
                 .expect("parse the pinned version"),
         }),
+        dependencies: Vec::new(),
     }
 }
 

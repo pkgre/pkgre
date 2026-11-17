@@ -226,14 +226,20 @@ struct Translated {
 
 impl Translated {
     /// Returns the translation of one package of the lock.
+    ///
+    /// A workspace member of the tag stays a path package, even when the release
+    /// publishes it: the rewritten manifest keeps the path, and Cargo packages
+    /// the release's crates together.
     fn of(expectations: &Expectations, package: &LockedPackage) -> Result<Self> {
         let expected = expectations.package(&package.name, &package.version)?;
-        match (&expected.curated_checksum, &expected.derived_checksum) {
-            (None, None) => Ok(Self {
+        if expected.member {
+            return Ok(Self {
                 name: expected.crates_io_name.clone(),
                 source: None,
                 checksum: None,
-            }),
+            });
+        }
+        match (&expected.curated_checksum, &expected.derived_checksum) {
             (Some(_), Some(checksum)) => Ok(Self {
                 name: expected.crates_io_name.clone(),
                 source: Some(crates_io_source()),

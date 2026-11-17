@@ -68,6 +68,7 @@ fn identity(name: &str, version: &str, tag: &str, commit: char) -> CatalogIdenti
             commit: commit.to_string().repeat(40),
             cargo_version: Version::parse("1.95.0").unwrap(),
         }),
+        dependencies: Vec::new(),
     }
 }
 
@@ -88,6 +89,7 @@ fn mirror_identity(name: &str, version: &str) -> CatalogIdentity {
         crate_sha256: checksum(&format!("crates.io {name} {version}")),
         removed: false,
         release: None,
+        dependencies: Vec::new(),
     }
 }
 
@@ -591,6 +593,7 @@ fn refuses_a_catalog_repository_spelled_differently_from_its_declaration() {
             commit: "5".repeat(40),
             cargo_version: Version::parse("1.95.0").unwrap(),
         }),
+        dependencies: Vec::new(),
     };
     state
         .lock

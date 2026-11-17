@@ -1,0 +1,1 @@
+{"name":"example-bin","vers":"1.0.0","deps":[{"name":"example-lib","req":"=1.0.0","features":[],"optional":false,"default_features":true,"target":null,"kind":"normal","registry":null,"package":null}],"cksum":"085d7b2f6dec58a0003851fb7d2fe5e3ab4a709da372c85694bdc8a9c444549c","features":{},"yanked":false}

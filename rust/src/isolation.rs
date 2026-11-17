@@ -167,6 +167,14 @@ impl ChildEnvironment {
         }
     }
 
+    /// Returns the allowlist with one more variable, which only a test adds.
+    #[cfg(test)]
+    pub(crate) fn with_variable(mut self, name: &str, value: &str) -> Self {
+        self.variables
+            .push((OsString::from(name), OsString::from(value)));
+        self
+    }
+
     /// Starts a command from the allowlist and adds the variables of one tool.
     pub(crate) fn apply_with(&self, command: &mut Command, extra: &[(&str, &OsStr)]) {
         self.apply(command);

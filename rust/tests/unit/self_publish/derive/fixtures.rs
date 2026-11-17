@@ -117,11 +117,35 @@ impl Release {
 }
 
 /// The changes that one fixture makes to the base workspace.
+/// The dependency that one released crate declares on another crate of the tag.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum Sibling {
+    /// No dependency between two crates of the release.
+    #[default]
+    None,
+    /// The path dependency that the derivation accepts.
+    Accepted,
+    /// The accepted dependency, requiring another version.
+    Requirement(&'static str),
+    /// The accepted dependency, without the curated registry.
+    WithoutRegistry,
+    /// A path dependency on a member that the tag does not release.
+    Unreleased,
+    /// The accepted dependency under another key, which the rewrite keeps.
+    Renamed,
+    /// The accepted dependency, declared once in `[workspace.dependencies]` and
+    /// inherited by the dependent.
+    Inherited,
+    /// A path dependency on a member that the tag does not release, which the
+    /// catalog publishes from another tag.
+    OtherTag,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Variant {
-    /// Let the released binary depend on the released library by path.
-    pub(crate) sibling_dependency: bool,
+    /// The dependency that the released binary declares on the released library.
+    pub(crate) sibling: Sibling,
     /// Declare a `[patch.crates-io]` table in the root manifest.
     pub(crate) patch: bool,
     /// Declare a `[replace]` table in the root manifest.
@@ -137,13 +161,13 @@ pub(crate) struct Variant {
     pub(crate) library_categories: Option<&'static str>,
 }
 
-/// A local directory source that stands in for crates.io and the curated
-/// registry, so that the tests need no network.
+/// A local registry that stands in for crates.io and the curated registry, so
+/// that the tests need no network.
 pub(crate) struct LocalSource {
-    /// Directory of the source.
+    /// Directory that holds the registry index and the archives it serves.
     pub(crate) root: PathBuf,
     /// Package checksums, by name and version.
-    checksums: BTreeMap<(String, String), String>,
+    checksums: std::cell::RefCell<BTreeMap<(String, String), String>>,
 }
 
 /// The crates that the local source offers, and that the fixture workspace
@@ -158,12 +182,19 @@ pub(crate) const LOCAL_CRATES: [(&str, &str); 6] = [
 ];
 
 impl LocalSource {
-    /// Builds the local source below `root`.
+    /// Builds the local registry below `root`: one Git index, and the archives
+    /// it serves.
+    ///
+    /// One index serves both the curated registry and crates.io, which a test
+    /// points at it through Cargo's own testing hook, so that neither registry is
+    /// replaced and Cargo's temporary registry still serves a crate of one
+    /// release to the crates that depend on it.
     pub(crate) fn build(root: &Path) -> Self {
-        fs::create_dir_all(root).expect("create the local source");
+        fs::create_dir_all(root.join("index")).expect("create the index");
+        fs::create_dir_all(root.join("crates")).expect("create the archive directory");
         let mut source = Self {
             root: root.to_path_buf(),
-            checksums: BTreeMap::new(),
+            checksums: std::cell::RefCell::new(BTreeMap::new()),
         };
         for (name, version) in LOCAL_CRATES {
             source.add(name, version);
@@ -172,61 +203,198 @@ impl LocalSource {
         // its crates.io name. Its manifest is rewritten, so its checksum differs
         // from the curated archive's, as it does in reality.
         source.add_alias(EARLIER_CRATES_IO_NAME, "0.9.0");
+        source.write_index();
+        source.commit_index();
         source
     }
 
-    /// Adds one crate to the source.
+    /// Adds one crate to the registry.
     fn add(&mut self, name: &str, version: &str) {
-        let checksum = crate_checksum(name, version);
-        self.add_with_checksum(name, version, checksum);
+        self.add_with_checksum(name, version);
     }
 
     /// Adds one crate under another package name, with another checksum.
     fn add_alias(&mut self, alias: &str, version: &str) {
-        let checksum = crate_checksum(alias, version);
-        self.add_with_checksum(alias, version, checksum);
+        self.add_with_checksum(alias, version);
     }
 
-    /// Writes one crate of the source with an exact package checksum.
-    fn add_with_checksum(&mut self, name: &str, version: &str, checksum: String) {
-        let directory = self.root.join(format!("{name}-{version}"));
-        fs::create_dir_all(directory.join("src")).expect("create the crate directory");
-        // The library target is named after its own package, as a real crate's
-        // is, so that a dependent resolves each dependency by its own name.
-        let library = name.replace('-', "_");
+    /// Writes one crate of the registry: its archive, its index row, and the
+    /// checksum the index reports for it.
+    ///
+    /// The archive's SHA-256 is the checksum, since a registry serves exactly the
+    /// bytes its index names.
+    fn add_with_checksum(&mut self, name: &str, version: &str) {
+        let archive = crate_archive(name, version, &fixture_files(name, version));
+        let checksum = sha256_bytes(&archive);
         fs::write(
-            directory.join("Cargo.toml"),
+            self.root
+                .join("crates")
+                .join(format!("{name}-{version}.crate")),
+            &archive,
+        )
+        .expect("write the crate archive");
+        self.checksums
+            .borrow_mut()
+            .insert((name.to_owned(), version.to_owned()), checksum);
+    }
+
+    /// Writes the index: its rows and its configuration.
+    fn write_index(&self) {
+        let index = self.root.join("index");
+        for ((name, version), checksum) in self.checksums.borrow().iter() {
+            let path = index.join(crate::index::index_path(name));
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create the index directory");
+            }
+            let mut row = serde_json::to_vec(&serde_json::json!({
+                "name": name,
+                "vers": version,
+                "deps": [],
+                "cksum": checksum,
+                "features": {},
+                "yanked": false,
+            }))
+            .expect("serialize a fixture index row");
+            row.push(b'\n');
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .expect("open the index row");
+            file.write_all(&row).expect("write the index row");
+        }
+        fs::write(
+            index.join("config.json"),
             format!(
-                "[package]\nname = {name:?}\nversion = {version:?}\nedition = \"2021\"\nlicense = \"MIT\"\ndescription = \"A fixture crate\"\n\n[lib]\nname = {library:?}\n"
+                "{{\"dl\":\"file://{}/crates/{{crate}}-{{version}}.crate\",\"api\":null}}\n",
+                self.root.display()
             ),
         )
-        .expect("write the crate manifest");
-        fs::write(
-            directory.join("src/lib.rs"),
-            "pub fn value() -> u32 { 7 }\n",
-        )
-        .expect("write the crate source");
-        fs::write(
-            directory.join(".cargo-checksum.json"),
-            format!("{{\"files\":{{}},\"package\":\"{checksum}\"}}"),
-        )
-        .expect("write the crate checksum");
-        self.checksums
-            .insert((name.to_owned(), version.to_owned()), checksum);
+        .expect("write the index configuration");
+    }
+
+    /// Commits the index, which Cargo reads as a Git registry.
+    fn commit_index(&self) {
+        let index = self.root.join("index");
+        git(&index, &["init", "--quiet"]);
+        git(&index, &["add", "."]);
+        git(&index, &["commit", "--quiet", "-m", "index"]);
     }
 
     /// Returns the package checksum of one crate of the source.
     pub(crate) fn checksum(&self, name: &str, version: &str) -> String {
         self.checksums
+            .borrow()
             .get(&(name.to_owned(), version.to_owned()))
             .cloned()
             .unwrap_or_else(|| panic!("the local source holds {name} {version}"))
     }
+
+    /// Adds one crate of the registry after the index was committed, as a
+    /// registry that gains a version does, with the dependencies its index row
+    /// names.
+    pub(crate) fn publish_archive(
+        &self,
+        name: &str,
+        version: &str,
+        archive: &[u8],
+        dependencies: &[(&str, &str)],
+    ) {
+        let checksum = sha256_bytes(archive);
+        self.checksums
+            .borrow_mut()
+            .insert((name.to_owned(), version.to_owned()), checksum.clone());
+        publish_archive(&self.root, name, version, archive, &checksum, dependencies);
+        self.write_index();
+        let path = self.root.join("index").join(crate::index::index_path(name));
+        let mut row = serde_json::to_vec(&serde_json::json!({
+            "name": name,
+            "vers": version,
+            "deps": dependencies
+                .iter()
+                .map(|(name, req)| serde_json::json!({
+                    "name": name,
+                    "req": req,
+                    "features": [],
+                    "optional": false,
+                    "default_features": true,
+                    "target": null,
+                    "kind": "normal",
+                    "registry": null,
+                    "package": null,
+                }))
+                .collect::<Vec<_>>(),
+            "cksum": self.checksum(name, version),
+            "features": {},
+            "yanked": false,
+        }))
+        .expect("serialize a published index row");
+        row.push(b'\n');
+        fs::write(&path, row).expect("write the published index row");
+        self.commit_index();
+    }
 }
 
-/// Returns the checksum that the local source reports for one curated crate.
+/// Returns the dependencies that one released crate of the fixture declares, as
+/// its crates.io index row names them.
+pub(crate) fn derived_dependencies(name: &str) -> Vec<(&'static str, &'static str)> {
+    match name {
+        "example-lib" => vec![("mirrored-dep", "0.3"), ("other-mirror", "0.2")],
+        "example-bin" => vec![("mirrored-dep", "0.3"), (EARLIER_CRATES_IO_NAME, "0.9")],
+        _ => Vec::new(),
+    }
+}
+
+/// Returns the checksum that the local source reports for one crate.
 pub(crate) fn crate_checksum(name: &str, version: &str) -> String {
-    sha256_bytes(format!("{name} {version}").as_bytes())
+    sha256_bytes(&crate_archive(name, version, &fixture_files(name, version)))
+}
+
+/// Returns the files of one crate of the local source.
+fn fixture_files(name: &str, version: &str) -> Vec<(&'static str, String)> {
+    // The library target is named after its own package, as a real crate's is, so
+    // that a dependent resolves each dependency by its own name.
+    let library = name.replace('-', "_");
+    vec![
+        (
+            "Cargo.toml",
+            format!(
+                "[package]\nname = {name:?}\nversion = {version:?}\nedition = \"2021\"\nlicense = \"MIT\"\ndescription = \"A fixture crate\"\n\n[lib]\nname = {library:?}\n"
+            ),
+        ),
+        ("src/lib.rs", "pub fn value() -> u32 { 7 }\n".to_owned()),
+    ]
+}
+
+/// Builds one `.crate` archive from the files below its root, `name-version`.
+fn crate_archive(name: &str, version: &str, files: &[(&str, String)]) -> Vec<u8> {
+    const BLOCK: usize = 512;
+    let mut tar = Vec::new();
+    for (path, contents) in files {
+        let path = format!("{name}-{version}/{path}");
+        let mut header = [0_u8; BLOCK];
+        let name = path.as_bytes();
+        assert!(name.len() < 100, "the fixture path {path:?} fits a header");
+        header[..name.len()].copy_from_slice(name);
+        set_octal(&mut header[100..108], 0o644);
+        set_octal(&mut header[108..116], 0);
+        set_octal(&mut header[116..124], 0);
+        set_octal(&mut header[124..136], contents.len() as u64);
+        set_octal(&mut header[136..148], 0);
+        header[148..156].fill(b' ');
+        header[156] = b'0';
+        header[257..263].copy_from_slice(b"ustar\0");
+        header[263..265].copy_from_slice(b"00");
+        let checksum = header.iter().map(|byte| u64::from(*byte)).sum();
+        set_octal(&mut header[148..156], checksum);
+        tar.extend_from_slice(&header);
+        tar.extend_from_slice(contents.as_bytes());
+        tar.resize(tar.len() + (BLOCK - contents.len() % BLOCK) % BLOCK, 0);
+    }
+    tar.resize(tar.len() + BLOCK * 2, 0);
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&tar).expect("compress the archive");
+    encoder.finish().expect("finish the archive")
 }
 
 /// Builds one fixture release repository below `parent`.
@@ -291,6 +459,11 @@ fn write_manifests(root: &Path, variant: Variant) {
     } else {
         workspace.push_str("earlier-lib = { version = \"0.9\", registry = \"pkgre\" }\n");
     }
+    if variant.sibling == Sibling::Inherited {
+        workspace.push_str(
+            "example-lib = { path = \"lib\", version = \"=1.0.0\", registry = \"pkgre\" }\n",
+        );
+    }
     if variant.patch || variant.replace {
         let vendor = root.join("vendor/mirrored-dep/src");
         fs::create_dir_all(&vendor).expect("create the vendor directory");
@@ -325,15 +498,42 @@ fn write_manifests(root: &Path, variant: Variant) {
     let mut binary = String::from(
         "[package]\nname = \"example-bin\"\ndescription = \"An example binary\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n\n[dependencies]\nmirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\nearlier-lib.workspace = true\n",
     );
-    if variant.sibling_dependency {
-        binary.push_str("example-lib = { path = \"../lib\" }\n");
+    match variant.sibling {
+        Sibling::None => {}
+        Sibling::Accepted => binary.push_str(
+            "example-lib = { path = \"../lib\", version = \"=1.0.0\", registry = \"pkgre\" }\n",
+        ),
+        Sibling::Requirement(requirement) => {
+            writeln!(
+                binary,
+                "example-lib = {{ path = \"../lib\", version = {requirement:?}, registry = \"pkgre\" }}"
+            )
+            .expect("writing to a string");
+        }
+        Sibling::WithoutRegistry => {
+            binary.push_str("example-lib = { path = \"../lib\", version = \"=1.0.0\" }\n");
+        }
+        Sibling::Unreleased | Sibling::OtherTag => binary.push_str(
+            "example-serve = { path = \"../serve\", version = \"=0.2.0\", registry = \"pkgre\" }\n",
+        ),
+        Sibling::Renamed => binary.push_str(
+            "lib-alias = { package = \"example-lib\", path = \"../lib\", version = \"=1.0.0\", registry = \"pkgre\" }\n",
+        ),
+        Sibling::Inherited => binary.push_str("example-lib.workspace = true\n"),
     }
     if variant.fork_dependency {
         binary.push_str("forked-dep = { version = \"1.0\", registry = \"pkgre\" }\n");
     }
     fs::write(root.join("bin/Cargo.toml"), binary).expect("write the binary manifest");
-    let mut server = String::from(
-        "[package]\nname = \"example-serve\"\ndescription = \"An example server\"\nversion = \"0.2.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\npublish = false\n\n[dependencies]\nexample-lib = { path = \"../lib\" }\nother-mirror = { version = \"0.2\", registry = \"pkgre\" }\n\n[build-dependencies]\nearlier-lib = { version = \"0.9\", registry = \"pkgre\" }\n",
+    // The tag publishes the server in the variant whose sibling the catalog
+    // publishes from another tag.
+    let publish = if variant.sibling == Sibling::OtherTag {
+        "publish = [\"pkgre\"]"
+    } else {
+        "publish = false"
+    };
+    let mut server = format!(
+        "[package]\nname = \"example-serve\"\ndescription = \"An example server\"\nversion = \"0.2.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n{publish}\n\n[dependencies]\nexample-lib = {{ path = \"../lib\" }}\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n\n[build-dependencies]\nearlier-lib = {{ version = \"0.9\", registry = \"pkgre\" }}\n"
     );
     if variant.server_needs_first_party {
         server.push_str("unknown-lib = { version = \"1.0\", registry = \"pkgre\" }\n");
@@ -350,6 +550,11 @@ fn generate_lockfile(root: &Path, source: &Path) {
     let cargo = pinned_cargo(&Version::parse(CARGO_VERSION).expect("parse the pinned version"))
         .expect("locate the pinned Cargo");
     let environment = ChildEnvironment::capture(&home, &cargo).expect("capture the environment");
+    let environment = super::super::cargo::with_test_crates_io(
+        environment,
+        &RegistrySources::LocalCurated(source.to_path_buf()),
+    )
+    .expect("point crates.io at the local index");
     let mut command = Command::new(&cargo);
     command
         .current_dir(temporary.path())
@@ -378,6 +583,11 @@ pub(crate) fn curated_archives(
     let cargo = pinned_cargo(&Version::parse(CARGO_VERSION).expect("parse the pinned version"))
         .expect("locate the pinned Cargo");
     let environment = ChildEnvironment::capture(&home, &cargo).expect("capture the environment");
+    let environment = super::super::cargo::with_test_crates_io(
+        environment,
+        &RegistrySources::LocalCurated(source.to_path_buf()),
+    )
+    .expect("point crates.io at the local index");
     let work = temporary.path().join("work");
     fs::create_dir(&work).expect("create the working directory");
     let members = members
@@ -507,6 +717,28 @@ pub(crate) fn catalog_at(
     )
     .expect("write the fixture lock");
     write_downloads(&registry, &lock);
+    for package in &lock.packages {
+        if mirrors
+            .iter()
+            .any(|(name, version)| *name == package.name && *version == package.version.to_string())
+        {
+            continue;
+        }
+        let dependencies = released_dependencies(&package.name, variant);
+        let row = package_row(
+            &package.name,
+            &package.version.to_string(),
+            &package.crate_sha256,
+            &dependencies,
+        );
+        fs::write(
+            registry
+                .join("objects/rows")
+                .join(format!("{}.json", sha256_bytes(&row))),
+            row,
+        )
+        .expect("write the identity's source row");
+    }
     for archive in curated.values() {
         fs::write(
             registry
@@ -582,12 +814,20 @@ pub(crate) fn add_non_release_identity(catalog: &Catalog, name: &str, version: &
         name: name.to_owned(),
         category: "pkgre".to_owned(),
     });
+    let row = package_row(name, version, &crate_checksum(name, version), &[]);
+    fs::write(
+        registry
+            .join("objects/rows")
+            .join(format!("{}.json", sha256_bytes(&row))),
+        &row,
+    )
+    .expect("write the identity's source row");
     lock.packages.push(LockedPackage {
         name: name.to_owned(),
         version: Version::parse(version).expect("parse a fixture version"),
         state: PackageState::Active,
         crate_sha256: crate_checksum(name, version),
-        source_row_sha256: checksum("row", name, version),
+        source_row_sha256: sha256_bytes(&row),
         index_row_sha256: checksum("index", name, version),
         admission_sha256: None,
         admitted_at: admitted_at(),
@@ -646,6 +886,13 @@ fn write_registry_file(path: &Path, variant: Variant, mirrors: &[(&str, &str)], 
             )
             .expect("writing to a string");
         }
+    }
+    if variant.sibling == Sibling::OtherTag {
+        write!(
+            text,
+            "\n[categories.pkgre.publish.example-serve]\ngit = \"{REPOSITORY}\"\ntags = [\"rust/v0.2.0\"]\n"
+        )
+        .expect("writing to a string");
     }
     if variant.fork_dependency {
         write!(
@@ -706,7 +953,12 @@ fn registry_lock(
         version: Version::parse("0.9.0").expect("parse a fixture version"),
         state: PackageState::Active,
         crate_sha256: source.checksum("earlier-lib", "0.9.0"),
-        source_row_sha256: checksum("row", "earlier-lib", "0.9.0"),
+        source_row_sha256: sha256_bytes(&package_row(
+            "earlier-lib",
+            "0.9.0",
+            &crate_checksum("earlier-lib", "0.9.0"),
+            &[],
+        )),
         index_row_sha256: checksum("index", "earlier-lib", "0.9.0"),
         admission_sha256: None,
         admitted_at: admitted_at(),
@@ -730,7 +982,12 @@ fn registry_lock(
             version: Version::parse("1.0.0").expect("parse a fixture version"),
             state: PackageState::Active,
             crate_sha256: source.checksum("forked-dep", "1.0.0"),
-            source_row_sha256: checksum("row", "forked-dep", "1.0.0"),
+            source_row_sha256: sha256_bytes(&package_row(
+                "forked-dep",
+                "1.0.0",
+                &crate_checksum("forked-dep", "1.0.0"),
+                &[],
+            )),
             index_row_sha256: checksum("index", "forked-dep", "1.0.0"),
             admission_sha256: None,
             admitted_at: admitted_at(),
@@ -755,7 +1012,12 @@ fn registry_lock(
             version: Version::parse("1.0.0").expect("parse a fixture version"),
             state: PackageState::Active,
             crate_sha256: source.checksum("unknown-lib", "1.0.0"),
-            source_row_sha256: checksum("row", "unknown-lib", "1.0.0"),
+            source_row_sha256: sha256_bytes(&package_row(
+                "unknown-lib",
+                "1.0.0",
+                &crate_checksum("unknown-lib", "1.0.0"),
+                &[],
+            )),
             index_row_sha256: checksum("index", "unknown-lib", "1.0.0"),
             admission_sha256: None,
             admitted_at: admitted_at(),
@@ -781,12 +1043,14 @@ fn registry_lock(
             name: name.to_owned(),
             category: "pkgre".to_owned(),
         });
+        let dependencies = released_dependencies(name, variant);
+        let row = package_row(name, VERSION, &sha256_bytes(archive), &dependencies);
         packages.push(LockedPackage {
             name: name.to_owned(),
             version: release.version(name),
             state: PackageState::Active,
             crate_sha256: sha256_bytes(archive),
-            source_row_sha256: checksum("row", name, VERSION),
+            source_row_sha256: sha256_bytes(&row),
             index_row_sha256: checksum("index", name, VERSION),
             admission_sha256: None,
             admitted_at: admitted_at(),
@@ -841,6 +1105,99 @@ fn mirror_row(name: &str, version: &str, checksum: &str) -> Vec<u8> {
         "pubtime": ADMITTED_AT,
     }))
     .expect("serialize a fixture row");
+    row.push(b'\n');
+    row
+}
+
+/// Publishes one crate on a local registry after its index was committed, as an
+/// upload does.
+pub(crate) fn publish_archive(
+    root: &Path,
+    name: &str,
+    version: &str,
+    archive: &[u8],
+    checksum: &str,
+    dependencies: &[(&str, &str)],
+) {
+    fs::write(
+        root.join("crates").join(format!("{name}-{version}.crate")),
+        archive,
+    )
+    .expect("write the crate archive");
+    let mut row = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "vers": version,
+        "deps": dependencies
+            .iter()
+            .map(|(name, req)| serde_json::json!({
+                "name": name,
+                "req": req,
+                "features": [],
+                "optional": false,
+                "default_features": true,
+                "target": null,
+                "kind": "normal",
+                "registry": null,
+                "package": null,
+            }))
+            .collect::<Vec<_>>(),
+        "cksum": checksum,
+        "features": {},
+        "yanked": false,
+    }))
+    .expect("serialize a published index row");
+    row.push(b'\n');
+    let path = root.join("index").join(crate::index::index_path(name));
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("create the index directory");
+    }
+    fs::write(&path, row).expect("write the published index row");
+    let index = root.join("index");
+    git(&index, &["add", "."]);
+    git(&index, &["commit", "--quiet", "-m", name]);
+}
+
+/// Returns the dependencies that one first-party crate of the fixture declares,
+/// as its source row names them.
+pub(crate) fn released_dependencies(name: &str, variant: Variant) -> Vec<&'static str> {
+    match name {
+        "example-bin" => {
+            let mut dependencies = vec!["mirrored-dep", "earlier-lib"];
+            match variant.sibling {
+                Sibling::None | Sibling::Unreleased | Sibling::OtherTag => {}
+                _ => dependencies.push("example-lib"),
+            }
+            dependencies
+        }
+        "example-lib" => vec!["mirrored-dep", "other-mirror"],
+        _ => Vec::new(),
+    }
+}
+
+/// Returns the source row of one first-party crate of the fixture.
+fn package_row(name: &str, version: &str, checksum: &str, dependencies: &[&str]) -> Vec<u8> {
+    let mut row = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "vers": version,
+        "deps": dependencies
+            .iter()
+            .map(|dependency| serde_json::json!({
+                "name": dependency,
+                "req": format!("={VERSION}"),
+                "features": [],
+                "optional": false,
+                "default_features": true,
+                "target": null,
+                "kind": "normal",
+                "registry": null,
+                "package": null,
+            }))
+            .collect::<Vec<_>>(),
+        "cksum": checksum,
+        "features": {},
+        "yanked": false,
+    }))
+    .expect("serialize a first-party row");
     row.push(b'\n');
     row
 }

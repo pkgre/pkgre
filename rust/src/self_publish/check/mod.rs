@@ -138,6 +138,7 @@ pub(crate) fn check_state(
     check_accepted_repositories(candidate, accepted)?;
     check_accepted_entries(candidate, accepted)?;
     check_abandoned(candidate, accepted)?;
+    check_abandoned_dependents(config, catalog)?;
     check_names(config, catalog, &published)?;
     check_entries(candidate, catalog, accepted)?;
     check_gained_release_tags(config, catalog, accepted)?;
@@ -151,6 +152,57 @@ pub(crate) fn check_state(
         accepted: accepted.is_some(),
         network_releases: 0,
     })
+}
+
+/// Refuses a crate of a release that is not abandoned while a crate of the same
+/// release that it depends on is.
+///
+/// crates.io resolves a dependency when the dependent arrives, and a release's
+/// crates are published in dependency order, so a release whose crate is
+/// abandoned can never publish the crates that depend on it. The remedy is to
+/// abandon those too, which the message says.
+///
+/// The dependencies come from the retained source rows of `registry/main`, so
+/// this check needs no network.
+///
+/// # Errors
+///
+/// Returns an error naming the dependent and the abandoned crate it depends on.
+fn check_abandoned_dependents(config: &CratesIoConfig, catalog: &CatalogSnapshot) -> Result<()> {
+    for identity in &catalog.identities {
+        let Some(release) = &identity.release else {
+            continue;
+        };
+        if config
+            .abandoned_version(&identity.name, &identity.version)
+            .is_some()
+        {
+            continue;
+        }
+        for dependency in &identity.dependencies {
+            let Some(other) = catalog.identities.iter().find(|candidate| {
+                candidate.name == *dependency
+                    && candidate.release.as_ref().is_some_and(|other_release| {
+                        other_release.git == release.git && other_release.tag == release.tag
+                    })
+            }) else {
+                continue;
+            };
+            ensure!(
+                config
+                    .abandoned_version(&other.name, &other.version)
+                    .is_none(),
+                "crate {} {} of release tag {:?} depends on {}, which crates-io.toml records as abandoned; crates.io never takes the abandoned crate, so the dependent cannot reach it either: abandon {} {} too",
+                identity.name,
+                identity.version,
+                release.tag,
+                other.name,
+                identity.name,
+                identity.version
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Refuses a repository URL that names a self-publishing repository in another spelling.

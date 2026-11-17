@@ -6,11 +6,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
-use semver::Version;
+use semver::{Version, VersionReq};
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value, value};
 
 use super::super::isolation::ChildEnvironment;
-use super::cargo::{CURATED_INDEX, run_cargo};
+use super::cargo::{names_index, run_cargo};
 use super::cargo_lock::LockIndex;
 use super::expectations::Expectations;
 
@@ -18,8 +18,6 @@ use super::expectations::Expectations;
 pub(super) const CURATED_REGISTRY: &str = "pkgre";
 /// The registry a released crate publishes to on crates.io.
 pub(super) const CRATES_IO_REGISTRY: &str = "crates-io";
-/// The curated registry's sources, as `cargo metadata` reports them.
-const CURATED_SOURCES: [&str; 2] = [CURATED_INDEX, "registry+sparse+https://rust.pkg.re/"];
 /// The alternative spellings Cargo accepts for the development dependency table.
 const DEV_DEPENDENCY_SPELLINGS: [&str; 2] = ["dev-dependencies", "dev_dependencies"];
 /// The alternative spellings Cargo accepts for the build dependency table.
@@ -64,6 +62,19 @@ pub(super) struct MemberDependency {
     pub(super) source: Option<String>,
     /// Cargo registry alias the dependency declares, if any.
     pub(super) registry: Option<String>,
+    /// The version requirement the manifest declares.
+    pub(super) req: String,
+    /// Directory of a path dependency, which Cargo reports instead of a source.
+    pub(super) path: Option<PathBuf>,
+    /// The dependency key, when the manifest renames the package.
+    pub(super) rename: Option<String>,
+}
+
+impl MemberDependency {
+    /// Returns the dependency key that the manifest wrote.
+    pub(super) fn key(&self) -> &str {
+        self.rename.as_deref().unwrap_or(&self.package)
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -95,6 +106,9 @@ struct MetadataDependency {
     name: String,
     source: Option<String>,
     registry: Option<String>,
+    req: String,
+    path: Option<PathBuf>,
+    rename: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -158,6 +172,9 @@ impl Workspace {
                         package: dependency.name,
                         source: dependency.source,
                         registry: dependency.registry,
+                        req: dependency.req,
+                        path: dependency.path,
+                        rename: dependency.rename,
                     })
                     .collect(),
                 released: package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]),
@@ -248,13 +265,14 @@ impl ReleasePlan {
         lock: &LockIndex,
         expectations: &Expectations,
         published: &BTreeMap<String, String>,
+        curated_index: &str,
     ) -> Result<Self> {
         let plan = Self {
             published: published.clone(),
             libraries: library_pins(workspace, published),
             binaries: binary_pins(workspace),
         };
-        plan.validate_dependencies(workspace, lock, expectations)?;
+        plan.validate_dependencies(workspace, lock, expectations, curated_index)?;
         Ok(plan)
     }
 
@@ -268,16 +286,27 @@ impl ReleasePlan {
         self.published.contains_key(member)
     }
 
-    /// Refuses a dependency of a released crate on another member of the tag.
+    /// Validates every dependency of the release's workspace.
+    ///
+    /// A released crate depends on the curated registry, or on another crate of
+    /// the same tag, which it must declare as a path dependency of that crate's
+    /// own directory, requiring exactly the tag's version from the curated
+    /// registry: crates.io resolves the packaged form of such a dependency from
+    /// the sibling's crates.io package, so the release cannot reach anything
+    /// else.
     fn validate_dependencies(
         &self,
         workspace: &Workspace,
         lock: &LockIndex,
         expectations: &Expectations,
+        curated_index: &str,
     ) -> Result<()> {
         for member in &workspace.members {
             for dependency in &member.dependencies {
-                check_dependency_source(member, dependency)?;
+                check_dependency_source(member, dependency, curated_index)?;
+                if member.released {
+                    validate_released_dependency(member, dependency, workspace, curated_index)?;
+                }
             }
             let locked = lock
                 .package(&member.name, &member.version)
@@ -293,11 +322,8 @@ impl ReleasePlan {
                 }
                 let context = || format!("crate {} depends on {package}", member.name);
                 if self.is_released(&member.name) && self.is_released(package) {
-                    return Err(anyhow::anyhow!(
-                        "crate {} depends on {package}, and both are released from the same tag; crates.io cannot resolve a dependency between two released crates of one tag",
-                        member.name
-                    ))
-                    .with_context(context);
+                    // `validate_released_dependency` accepted this dependency.
+                    continue;
                 }
                 if self.is_released(&member.name) {
                     return Err(anyhow::anyhow!(
@@ -315,13 +341,107 @@ impl ReleasePlan {
     }
 }
 
+/// Validates one dependency of a released crate on a crate of the same tag.
+///
+/// The dependency must be the path form that the reconciler accepts, so that
+/// the packaged manifest carries no path and Cargo resolves the sibling from its
+/// crates.io package.
+///
+/// # Errors
+///
+/// Returns an error for a released crate that depends on a member the tag does
+/// not publish, on a path outside the workspace, on a sibling through the
+/// curated registry instead of a path, on a sibling without the curated
+/// registry, on a sibling whose requirement is not exactly the tag's version, or
+/// on a path that is not the sibling's own directory.
+pub(super) fn validate_released_dependency(
+    member: &Member,
+    dependency: &MemberDependency,
+    workspace: &Workspace,
+    curated_index: &str,
+) -> Result<()> {
+    let key = dependency.key();
+    let Some(target) = workspace.member(&dependency.package) else {
+        ensure!(
+            dependency.source.is_some(),
+            "crate {} depends on {key} by path, which is not a member of the tag's workspace; the tag cannot publish it",
+            member.name
+        );
+        return Ok(());
+    };
+    ensure!(
+        target.released,
+        "crate {} depends on {key}, which the tag does not publish; crates.io cannot resolve a path to it",
+        member.name
+    );
+    ensure!(
+        dependency.source.is_none(),
+        "crate {} depends on {key}, a crate of the same tag, through the source {:?}; a crate of the same tag is a path dependency",
+        member.name,
+        dependency.source
+    );
+    ensure!(
+        dependency
+            .registry
+            .as_deref()
+            .is_some_and(|index| names_index(index, curated_index)),
+        "crate {} depends on {key}, a crate of the same tag, which does not declare registry = {CURATED_REGISTRY:?}",
+        member.name
+    );
+    let exact = format!("={}", target.version);
+    let expected = VersionReq::parse(&exact).context("build the exact requirement of the tag")?;
+    ensure!(
+        VersionReq::parse(&dependency.req).is_ok_and(|requirement| requirement == expected),
+        "crate {} depends on {key} requiring {:?}; a dependency on a crate of the same tag must require exactly {exact:?}",
+        member.name,
+        dependency.req
+    );
+    let directory = dependency.path.as_deref().with_context(|| {
+        format!(
+            "crate {} depends on {key}, a crate of the same tag, without a directory",
+            member.name
+        )
+    })?;
+    let target_directory = target
+        .manifest_path
+        .parent()
+        .with_context(|| format!("the manifest of {} has no parent directory", target.name))?;
+    ensure!(
+        same_directory(directory, target_directory)?,
+        "crate {} depends on {key} at {}, but the crate {} of the tag is at {}",
+        member.name,
+        directory.display(),
+        target.name,
+        target_directory.display()
+    );
+    Ok(())
+}
+
+/// Returns whether two directories are the same directory, resolving symbolic
+/// links in both.
+///
+/// # Errors
+///
+/// Returns an error for a directory that cannot be resolved.
+fn same_directory(left: &Path, right: &Path) -> Result<bool> {
+    let left = fs::canonicalize(left)
+        .with_context(|| format!("resolve path dependency directory {}", left.display()))?;
+    let right = fs::canonicalize(right)
+        .with_context(|| format!("resolve crate directory {}", right.display()))?;
+    Ok(left == right)
+}
+
 /// Refuses a dependency whose Cargo source is not the curated registry or a
 /// workspace member.
-fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Result<()> {
+fn check_dependency_source(
+    member: &Member,
+    dependency: &MemberDependency,
+    curated_index: &str,
+) -> Result<()> {
     let Some(source) = &dependency.source else {
         return Ok(());
     };
-    if source == "registry+https://github.com/rust-lang/crates.io-index" {
+    if names_index(source, "https://github.com/rust-lang/crates.io-index") {
         bail!(
             "{} takes {} from crates.io directly, which the curated registry cannot serve; every dependency comes from registry {CURATED_REGISTRY:?}",
             member.name,
@@ -329,7 +449,7 @@ fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Re
         );
     }
     ensure!(
-        CURATED_SOURCES.contains(&source.as_str()),
+        names_index(source, curated_index),
         "{} takes {} from the unsupported source {source:?}; every dependency comes from registry {CURATED_REGISTRY:?}",
         member.name,
         dependency.package
@@ -338,7 +458,7 @@ fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Re
         dependency
             .registry
             .as_deref()
-            .is_some_and(|index| CURATED_SOURCES.contains(&index)),
+            .is_some_and(|index| names_index(index, curated_index)),
         "{} does not declare registry {CURATED_REGISTRY:?} for {}",
         member.name,
         dependency.package
