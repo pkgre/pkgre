@@ -227,7 +227,9 @@ that `self-publish-check` refuses, and it writes the file atomically.
   active.
 - A crate added to a tag that `crates-io.lock` already records is refused:a release tag
   publishes the crates of its commit, so only a new version can add one.
-- An identity from a tag that is not a release tag is refused, as in the offline checks.
+- An identity from a tag that is not a release tag is skipped, because it predates the
+  repository's self-publishing and has no entry of its own; the offline checks refuse one
+  that a change adds.
 
 ## Name rules
 

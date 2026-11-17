@@ -182,6 +182,13 @@ fn entry(package: &CratesIoPackage) -> SelfPublishLockEntry {
 }
 
 /// Returns the release tags whose crates have no `crates-io.lock` entry yet.
+///
+/// An identity whose tag is outside the release convention is no self-published
+/// identity, as in [`super::catalog::self_published_identities`]: it predates
+/// the repository's self-publishing, so it has no entry of its own and this run
+/// derives nothing for it. Only a change that adds such an identity can be
+/// refused, and only against an accepted state, which is a comparison that
+/// [`super::check_repository`] makes; a run of this command has none.
 pub(super) fn unrecorded_releases(
     state: &RepositoryState,
     self_publish: &SelfPublishState,
@@ -195,18 +202,9 @@ pub(super) fn unrecorded_releases(
         let Some(prefix) = config.prefix_for(&release.git) else {
             continue;
         };
-        let recorded = self_publish
-            .lock
-            .entry(&identity.name, &identity.version)
-            .is_some();
-        ensure!(
-            recorded || is_release_tag(prefix, identity, release),
-            "Git identity {} {} was added from tag {:?} of {:?}, which is not a release tag of the repository: {prefix:?} followed by the version",
-            identity.name,
-            identity.version,
-            release.tag,
-            release.git
-        );
+        if !is_release_tag(prefix, identity, release) {
+            continue;
+        }
         groups
             .entry((release.git.clone(), release.tag.clone()))
             .or_default()

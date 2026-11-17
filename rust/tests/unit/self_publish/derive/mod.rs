@@ -1006,6 +1006,83 @@ fn self_publish_lock_records_the_entries_and_changes_nothing_twice() {
 }
 
 #[test]
+fn self_publish_lock_skips_an_identity_from_a_tag_outside_the_release_convention() {
+    let temporary = fixtures::Temp::new("pkgre-lock-historical");
+    let (source, release) = release_only(temporary.path(), Variant::default());
+    let catalog = fixtures::catalog_at(
+        temporary.path(),
+        "catalog",
+        &source,
+        &release,
+        Variant::default(),
+        false,
+    );
+    // A catalog before its repository adopted self-publishing: one identity from
+    // a tag outside the release convention, and no release.
+    fixtures::add_non_release_identity(&catalog, "example-indexer", "0.3.0", "indexer/v0.3.0");
+    let repositories = BTreeMap::from([(fixtures::REPOSITORY.to_owned(), release.root.clone())]);
+    let local = super::super::lock_command::LocalNetwork {
+        repositories: &repositories,
+        source: &source.root,
+        root: temporary.path(),
+    };
+    let path = catalog.root.join("self-publish/crates-io.lock");
+    let before = fs::read(&path).expect("read the fixture lock");
+    let summary = super::super::lock_command::self_publish_lock_in(&catalog.root, &local)
+        .expect("an identity that predates self-publishing is no self-published identity");
+    assert!(!summary.changed);
+    assert!(summary.entries.is_empty());
+    assert_eq!(summary.releases, 0);
+    assert_eq!(
+        fs::read(&path).expect("read the fixture lock"),
+        before,
+        "a run with nothing to derive writes nothing"
+    );
+}
+
+#[test]
+fn self_publish_lock_records_only_the_release_beside_a_historical_identity() {
+    let temporary = fixtures::Temp::new("pkgre-lock-historical-release");
+    let (source, release, catalog) = fixture(temporary.path(), Variant::default());
+    fixtures::add_non_release_identity(&catalog, "example-indexer", "0.3.0", "indexer/v0.3.0");
+    let repositories = BTreeMap::from([(fixtures::REPOSITORY.to_owned(), release.root.clone())]);
+    let local = super::super::lock_command::LocalNetwork {
+        repositories: &repositories,
+        source: &source.root,
+        root: temporary.path(),
+    };
+    let summary = super::super::lock_command::self_publish_lock_in(&catalog.root, &local)
+        .expect("the release is recorded beside an identity that predates self-publishing");
+    assert!(summary.changed);
+    assert_eq!(summary.releases, 1);
+    assert_eq!(summary.entries.len(), 2);
+    assert!(
+        summary
+            .entries
+            .iter()
+            .all(|entry| entry.name != "example-indexer"),
+        "the run derives nothing for the historical identity"
+    );
+    let lock = CratesIoLock::load(&catalog.root.join("self-publish/crates-io.lock"))
+        .expect("load the written lock");
+    assert_eq!(
+        lock.packages.len(),
+        3,
+        "the earlier release and the release are recorded, and the historical identity is not"
+    );
+    assert!(
+        lock.entry(
+            "example-indexer",
+            &Version::parse("0.3.0").expect("parse the fixture version")
+        )
+        .is_none(),
+        "the historical identity has no entry"
+    );
+    crate::self_publish::check_repository(&catalog.root, None)
+        .expect("the offline checks accept the written lock");
+}
+
+#[test]
 fn refuses_to_derive_a_removed_identity() {
     let config = config_for(fixtures::REPOSITORY);
     let state = RepositoryState {

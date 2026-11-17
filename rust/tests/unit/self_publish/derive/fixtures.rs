@@ -506,27 +506,7 @@ pub(crate) fn catalog_at(
         serialize_lock(&lock).expect("serialize the fixture lock"),
     )
     .expect("write the fixture lock");
-    let routes = crate::download::DownloadCatalog::from_routes(
-        lock.packages
-            .iter()
-            .map(|package| crate::download::DownloadRoute {
-                registry: "main".to_owned(),
-                name: package.name.clone(),
-                version: package.version.clone(),
-                sha256: package.crate_sha256.clone(),
-                delivery: crate::download::Delivery::Retained {
-                    path: crate::download::retained_object_path("main", &package.crate_sha256),
-                },
-            })
-            .collect(),
-    );
-    fs::write(
-        registry.join("downloads.json"),
-        routes
-            .canonical_bytes()
-            .expect("serialize the fixture routes"),
-    )
-    .expect("write the fixture routes");
+    write_downloads(&registry, &lock);
     for archive in curated.values() {
         fs::write(
             registry
@@ -554,6 +534,79 @@ pub(crate) fn catalog_at(
     )
     .expect("write the fixture lock");
     Catalog { root, curated }
+}
+
+/// Writes the canonical download route table of one fixture registry lock.
+fn write_downloads(registry: &Path, lock: &RegistryLock) {
+    let routes = crate::download::DownloadCatalog::from_routes(
+        lock.packages
+            .iter()
+            .map(|package| crate::download::DownloadRoute {
+                registry: "main".to_owned(),
+                name: package.name.clone(),
+                version: package.version.clone(),
+                sha256: package.crate_sha256.clone(),
+                delivery: crate::download::Delivery::Retained {
+                    path: crate::download::retained_object_path("main", &package.crate_sha256),
+                },
+            })
+            .collect(),
+    );
+    fs::write(
+        registry.join("downloads.json"),
+        routes
+            .canonical_bytes()
+            .expect("serialize the fixture routes"),
+    )
+    .expect("write the fixture routes");
+}
+
+/// Adds one identity from a tag outside the release convention to one catalog
+/// repository, as a catalog holds a crate that its repository published before
+/// it adopted self-publishing: the identity has no `crates-io.lock` entry of
+/// its own.
+pub(crate) fn add_non_release_identity(catalog: &Catalog, name: &str, version: &str, tag: &str) {
+    let registry = catalog.root.join("registry");
+    let mut declaration =
+        fs::read_to_string(registry.join("main.toml")).expect("read the fixture registry file");
+    write!(
+        declaration,
+        "\n[categories.pkgre.publish.{name}]\ngit = \"{REPOSITORY}\"\ntags = [\"{tag}\"]\n"
+    )
+    .expect("writing to a string");
+    fs::write(registry.join("main.toml"), declaration).expect("write the fixture registry file");
+    let mut lock: RegistryLock =
+        toml::from_slice(&fs::read(registry.join("main.lock")).expect("read the fixture lock"))
+            .expect("parse the fixture lock");
+    lock.names.push(LockedName {
+        name: name.to_owned(),
+        category: "pkgre".to_owned(),
+    });
+    lock.packages.push(LockedPackage {
+        name: name.to_owned(),
+        version: Version::parse(version).expect("parse a fixture version"),
+        state: PackageState::Active,
+        crate_sha256: crate_checksum(name, version),
+        source_row_sha256: checksum("row", name, version),
+        index_row_sha256: checksum("index", name, version),
+        admission_sha256: None,
+        admitted_at: admitted_at(),
+        source: LockedSource::GitTag {
+            git: REPOSITORY.to_owned(),
+            tag: tag.to_owned(),
+            tag_oid: "b".repeat(40),
+            commit: "c".repeat(40),
+            package: name.to_owned(),
+            path: PathBuf::from("indexer"),
+            cargo_version: Version::parse(CARGO_VERSION).expect("parse the pinned version"),
+        },
+    });
+    fs::write(
+        registry.join("main.lock"),
+        serialize_lock(&lock).expect("serialize the fixture lock"),
+    )
+    .expect("write the fixture lock");
+    write_downloads(&registry, &lock);
 }
 
 /// Returns the `crates-io.lock` entry of the fixture's earlier release.
