@@ -21,6 +21,7 @@ pub(crate) use admission::{prepare_admission_lock, write_admission_pair};
 pub(crate) use admission::{validate_admission_inventory, validate_admission_tree_structure};
 pub use api::parse_crates_io_api_evidence;
 pub use apply::apply_admission_manifest;
+pub(crate) use archive::inspect_crate_archive_capturing;
 pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};
 pub(crate) use archive::{ComparedArchive, read_crate_archive};
 pub use inspect::inspect_update_candidate;
@@ -39,6 +40,9 @@ pub use policy::{
     PackageActivity, PolicyRelease, PublicationGap, SelectedCandidate, SelectedExactCandidate,
     classify_package, implicit_lane, select_exact_candidate, select_implicit_candidates,
 };
+#[cfg(test)]
+pub(crate) use source::FileComparison;
 pub use source::verify_source_correspondence;
+pub(crate) use source::{ComparisonReport, SourceCorrespondence};
 pub use time::UtcTimestamp;
 pub use workflow::{plan_exact_update, plan_updates};

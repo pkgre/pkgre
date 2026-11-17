@@ -140,6 +140,31 @@ pub(crate) fn read_crate_archive(
     })
 }
 
+/// Inspects one `.crate` archive and captures the contents of the named files.
+///
+/// The archive is validated exactly as [`inspect_crate_archive`] validates it;
+/// `wanted` names the files whose bytes the caller needs, since the analysis
+/// keeps only their digests.
+///
+/// # Errors
+///
+/// Returns an error for an invalid expected identity, a malformed or
+/// unsupported archive, or any resource or safety limit violation.
+pub(crate) fn inspect_crate_archive_capturing(
+    expected_name: &str,
+    expected_version: &Version,
+    archive: &[u8],
+    wanted: &[&str],
+) -> Result<(ArchiveAnalysis, BTreeMap<String, Vec<u8>>)> {
+    inspect_with_limits(
+        expected_name,
+        expected_version,
+        archive,
+        ArchiveLimits::production(),
+        wanted,
+    )
+}
+
 #[derive(Clone, Copy)]
 struct ArchiveLimits {
     compressed: usize,

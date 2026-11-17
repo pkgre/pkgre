@@ -806,7 +806,7 @@ fn validate_source_evidence(source: &SourceEvidence, candidate: &UpdateCandidate
                 .and_then(|api| api.candidate.trusted_publishing.as_ref())
                 .context("attested source evidence has no Trusted Publishing context")?;
             ensure!(
-                trusted.repository == *repository
+                super::source::public_repositories_agree(&trusted.repository, repository)
                     && trusted.commit == *commit
                     && trusted.evidence_sha256 == *attestation_sha256,
                 "source evidence disagrees with Trusted Publishing context"
