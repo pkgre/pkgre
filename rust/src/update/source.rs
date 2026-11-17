@@ -43,6 +43,8 @@ const MAX_REPOSITORY_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_REPOSITORY_ENTRIES: usize = 100_000;
 /// Wall-clock budget of one archive-to-tree comparison.
 const MAX_COMPARISON_DURATION: Duration = Duration::from_secs(900);
+/// The unavailable reason of a comparison that ran out of its budget.
+const DEADLINE_REASON: &str = "source-comparison-exceeded-its-deadline";
 /// Archive names Cargo generates in the package root, which no copied file may take.
 const RESERVED_PACKAGE_NAMES: [&str; 5] = [
     "Cargo.toml.orig",
@@ -257,6 +259,13 @@ fn unavailable_error(reason: &'static str) -> anyhow::Error {
     anyhow::Error::new(Unavailable { reason })
 }
 
+/// Whether one comparison error is an exhausted budget.
+fn is_deadline_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Unavailable>()
+        .is_some_and(|unavailable| unavailable.reason == DEADLINE_REASON)
+}
+
 /// Maps one unavailable-evidence error to `Unavailable` evidence, and propagates any other error.
 fn unavailable_correspondence(error: anyhow::Error) -> Result<SourceCorrespondence> {
     match error.downcast::<Unavailable>() {
@@ -407,8 +416,12 @@ struct ComparisonResult {
 /// One Git tree entry, as the tree stores it and without following any symbolic link.
 #[derive(Clone, Debug)]
 enum TreeEntry {
-    /// A regular file, with the SHA-256 of its bytes and its executable bit.
-    File { sha256: String, executable: bool },
+    /// A regular file, with its Git object, executable bit and size.
+    File {
+        object: String,
+        executable: bool,
+        size: u64,
+    },
     /// A symbolic link, with its target text.
     Symlink { target: String },
     /// A directory.
@@ -424,6 +437,9 @@ trait GitTree {
 
     /// The bytes of the regular file at exactly `path`.
     fn file_content(&self, path: &str) -> Result<Option<Vec<u8>>>;
+
+    /// The bytes of one blob object of this tree.
+    fn blob(&self, object: &str) -> Result<Vec<u8>>;
 
     /// Every `Cargo.toml` path in the tree.
     fn manifests(&self) -> Result<Vec<String>>;
@@ -453,7 +469,7 @@ impl Deadline {
 
     fn check(&self) -> Result<()> {
         if self.started.elapsed() > self.limit {
-            return Err(unavailable_error("source-comparison-exceeded-its-deadline"));
+            return Err(unavailable_error(DEADLINE_REASON));
         }
         Ok(())
     }
@@ -474,7 +490,14 @@ struct Resolution {
     /// The submodule repository and commit the path was read from.
     submodule: Option<SubmoduleMount>,
     /// The regular file found, absent when the path does not exist.
-    file: Option<GitBlob>,
+    file: Option<ResolvedFile>,
+}
+
+/// The regular file one resolution reached, before its bytes are read.
+struct ResolvedFile {
+    object: String,
+    executable: bool,
+    size: u64,
 }
 
 /// Resolves archive-member paths against one tree, following links and submodules.
@@ -548,10 +571,18 @@ impl<'a> TreeResolver<'a> {
                     });
                 };
                 return match entry {
-                    TreeEntry::File { sha256, executable } => Ok(Resolution {
+                    TreeEntry::File {
+                        object,
+                        executable,
+                        size,
+                    } => Ok(Resolution {
                         path: candidate,
                         submodule: tree,
-                        file: Some(GitBlob { sha256, executable }),
+                        file: Some(ResolvedFile {
+                            object,
+                            executable,
+                            size,
+                        }),
                     }),
                     TreeEntry::Symlink { target } => {
                         let redirects = redirects + 1;
@@ -605,6 +636,39 @@ impl<'a> TreeResolver<'a> {
             submodule: None,
             file: None,
         })
+    }
+
+    /// The bytes of the file one resolution reached, bounded by `limit`.
+    fn file_bytes(&self, resolution: &Resolution, limit: usize) -> Result<Option<Vec<u8>>> {
+        let Some(file) = &resolution.file else {
+            return Ok(None);
+        };
+        self.tree_blob(resolution.submodule.as_ref(), &file.object, limit)
+            .map(Some)
+    }
+
+    /// The bytes of one blob object of the root tree or of one loaded submodule tree.
+    fn tree_blob(
+        &self,
+        tree: Option<&SubmoduleMount>,
+        object: &str,
+        limit: usize,
+    ) -> Result<Vec<u8>> {
+        let bytes = match tree {
+            None => self.root.blob(object)?,
+            Some(mount) => {
+                let submodules = self.submodules.borrow();
+                let submodule = submodules.get(mount).with_context(|| {
+                    format!(
+                        "submodule tree {} at {} is not loaded",
+                        mount.repository, mount.commit
+                    )
+                })?;
+                submodule.blob(object)?
+            }
+        };
+        ensure!(bytes.len() <= limit, "Git blob exceeds {limit} bytes");
+        Ok(bytes)
     }
 
     /// The entry at `path` in the root tree or in one loaded submodule tree.
@@ -767,9 +831,25 @@ fn build_comparison_report(
             Some(source) => (source.clone(), true),
             None => (expected_path.clone(), false),
         };
-        let resolution = resolver.resolve(&compared_path)?;
+        let resolution = match resolver.resolve(&compared_path) {
+            Ok(value) => value,
+            Err(error) => {
+                // A difference is already established, so the archive is blocked whatever the
+                // remaining members hold; an exhausted budget cannot excuse it.
+                if !matches && is_deadline_error(&error) {
+                    break;
+                }
+                return Err(error);
+            }
+        };
+        let blob = resolver
+            .file_bytes(&resolution, MAX_GIT_BLOB_BYTES)?
+            .map(|bytes| GitBlob {
+                sha256: sha256_bytes(&bytes),
+                executable: resolution.file.as_ref().is_some_and(|file| file.executable),
+            });
         let archive_executable = file.mode & 0o111 != 0;
-        let disposition = match &resolution.file {
+        let disposition = match &blob {
             Some(blob) if blob.sha256 == file.sha256 && blob.executable == archive_executable => {
                 "match"
             }
@@ -798,9 +878,9 @@ fn build_comparison_report(
                 .map(|mount| mount.commit.clone()),
             copied,
             archive_sha256: file.sha256.clone(),
-            repository_sha256: resolution.file.as_ref().map(|value| value.sha256.clone()),
+            repository_sha256: blob.as_ref().map(|value| value.sha256.clone()),
             archive_executable,
-            repository_executable: resolution.file.as_ref().map(|value| value.executable),
+            repository_executable: blob.as_ref().map(|value| value.executable),
             disposition,
         });
     }
@@ -846,8 +926,16 @@ fn resolve_package_path(
         if resolution
             .file
             .as_ref()
-            .is_some_and(|file| file.sha256 == manifest.sha256)
+            .is_some_and(|file| file.size > MAX_MANIFEST_BYTES as u64)
         {
+            return Err(unavailable_error(
+                "repository-package-manifest-exceeds-its-bound",
+            ));
+        }
+        let Some(bytes) = resolver.file_bytes(&resolution, MAX_MANIFEST_BYTES)? else {
+            continue;
+        };
+        if sha256_bytes(&bytes) == manifest.sha256 {
             located.push(directory_of(manifest_path).to_owned());
         }
     }
@@ -1230,8 +1318,27 @@ impl GitRepository {
         })
     }
 
-    /// The bytes this repository occupies on disk, counted up to the bound.
-    fn repository_bytes(&self) -> Result<u64> {
+    /// Refuses a fetched repository that exceeds the on-disk bounds.
+    fn check_size(&self) -> Result<()> {
+        self.check_size_with(MAX_REPOSITORY_BYTES, MAX_REPOSITORY_ENTRIES)
+    }
+
+    /// Refuses a fetched repository larger than `max_bytes` or holding more than `max_entries`.
+    fn check_size_with(&self, max_bytes: u64, max_entries: usize) -> Result<()> {
+        let (bytes, entries) = self.repository_bytes()?;
+        ensure!(
+            bytes <= max_bytes,
+            "fetched Git repository exceeds {max_bytes} bytes"
+        );
+        ensure!(
+            entries <= max_entries,
+            "fetched Git repository holds more than {max_entries} files"
+        );
+        Ok(())
+    }
+
+    /// The bytes and file count of this repository on disk.
+    fn repository_bytes(&self) -> Result<(u64, usize)> {
         let mut total = 0_u64;
         let mut entries = 0_usize;
         let mut pending = vec![self.path().to_path_buf()];
@@ -1241,10 +1348,9 @@ impl GitRepository {
             {
                 let entry = entry.context("read fetched repository entry")?;
                 entries += 1;
-                ensure!(
-                    entries <= MAX_REPOSITORY_ENTRIES,
-                    "fetched Git repository holds more than {MAX_REPOSITORY_ENTRIES} files"
-                );
+                if entries > MAX_REPOSITORY_ENTRIES {
+                    return Ok((total, entries));
+                }
                 let file_type = entry
                     .file_type()
                     .context("read fetched repository entry type")?;
@@ -1259,11 +1365,11 @@ impl GitRepository {
                         .len(),
                 );
                 if total > MAX_REPOSITORY_BYTES {
-                    return Ok(total);
+                    return Ok((total, entries));
                 }
             }
         }
-        Ok(total)
+        Ok((total, entries))
     }
 
     fn run_fetch(&self, repository: &str, commit: &str) -> Result<()> {
@@ -1295,20 +1401,18 @@ impl GitRepository {
             resolved == commit,
             "fetched Git commit differs from exact anchor"
         );
-        ensure!(
-            self.repository_bytes()? <= MAX_REPOSITORY_BYTES,
-            "fetched Git repository exceeds {MAX_REPOSITORY_BYTES} bytes"
-        );
+        self.check_size()?;
         Ok(())
     }
 
-    /// One `git ls-tree` record: its mode and object ID.
+    /// One `git ls-tree` record: its mode, object ID and size.
     fn tree_record(&self, path: &str) -> Result<Option<TreeRecord>> {
         let pathspec = format!(":(literal){path}");
         let output = run_git_output_allow_failure_with_limit(
             Some(self.path()),
             [
                 OsStr::new("ls-tree"),
+                OsStr::new("-l"),
                 OsStr::new("-z"),
                 OsStr::new("--full-tree"),
                 OsStr::new(&self.commit),
@@ -1337,10 +1441,18 @@ impl GitRepository {
             "Git tree returned another path"
         );
         let metadata = std::str::from_utf8(metadata).context("Git tree metadata is not UTF-8")?;
-        let mut fields = metadata.split(' ');
+        let mut fields = metadata.split_whitespace();
         let mode = fields.next().context("Git tree record has no mode")?;
         let kind = fields.next().context("Git tree record has no type")?;
         let object = fields.next().context("Git tree record has no object ID")?;
+        let size = match fields.next().context("Git tree record has no size")? {
+            "-" => None,
+            value => Some(
+                value
+                    .parse::<u64>()
+                    .context("Git tree record size is not a number")?,
+            ),
+        };
         ensure!(
             fields.next().is_none(),
             "Git tree record has extra metadata"
@@ -1355,6 +1467,7 @@ impl GitRepository {
         Ok(Some(TreeRecord {
             mode: mode.to_owned(),
             object: object.to_owned(),
+            size,
         }))
     }
 
@@ -1386,6 +1499,7 @@ impl GitRepository {
 struct TreeRecord {
     mode: String,
     object: String,
+    size: Option<u64>,
 }
 
 fn validate_commit(commit: &str) -> Result<()> {
@@ -1406,10 +1520,17 @@ impl GitTree for GitRepository {
         };
         match record.mode.as_str() {
             "100644" | "100755" => {
-                let bytes = self.blob(&record.object)?;
+                let size = record
+                    .size
+                    .context("Git tree record of a file has no size")?;
+                ensure!(
+                    size <= MAX_GIT_BLOB_BYTES as u64,
+                    "Git blob exceeds {MAX_GIT_BLOB_BYTES} bytes"
+                );
                 Ok(Some(TreeEntry::File {
-                    sha256: sha256_bytes(&bytes),
+                    object: record.object,
                     executable: record.mode == "100755",
+                    size,
                 }))
             }
             "120000" => {
@@ -1435,6 +1556,10 @@ impl GitTree for GitRepository {
         }
         self.blob_with_limit(&record.object, MAX_MANIFEST_BYTES)
             .map(Some)
+    }
+
+    fn blob(&self, object: &str) -> Result<Vec<u8>> {
+        Self::blob(self, object)
     }
 
     fn manifests(&self) -> Result<Vec<String>> {
@@ -1809,8 +1934,9 @@ mod tests {
                     contents,
                     executable,
                 }) => Ok(Some(TreeEntry::File {
-                    sha256: sha256_bytes(contents),
+                    object: sha256_bytes(contents),
                     executable: *executable,
+                    size: contents.len() as u64,
                 })),
                 Some(FakeNode::Symlink { target }) => Ok(Some(TreeEntry::Symlink {
                     target: target.clone(),
@@ -1834,6 +1960,18 @@ mod tests {
                 Some(FakeNode::File { contents, .. }) => Ok(Some(contents.clone())),
                 _ => Ok(None),
             }
+        }
+
+        fn blob(&self, object: &str) -> Result<Vec<u8>> {
+            self.files
+                .values()
+                .find_map(|node| match node {
+                    FakeNode::File { contents, .. } if sha256_bytes(contents) == object => {
+                        Some(contents.clone())
+                    }
+                    _ => None,
+                })
+                .with_context(|| format!("synthetic tree has no blob {object}"))
         }
 
         fn manifests(&self) -> Result<Vec<String>> {
@@ -3020,6 +3158,135 @@ mod tests {
         );
     }
 
+    #[test]
+    fn package_path_search_refuses_a_manifest_beyond_its_bound() {
+        let mut tree = FakeTree::default();
+        let oversized = vec![b'a'; MAX_MANIFEST_BYTES + 1];
+        tree = tree.with(
+            "Cargo.toml",
+            FakeNode::File {
+                contents: oversized,
+                executable: false,
+            },
+        );
+        tree = tree.with("member/Cargo.toml", text("manifest"));
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("src/lib.rs", b"source"),
+            ],
+            None,
+        );
+        let correspondence = promoted(&archive, Some(b"manifest"), None, &tree);
+        assert_eq!(
+            unavailable_reason(&correspondence),
+            "repository-package-manifest-exceeds-its-bound"
+        );
+    }
+
+    /// One synthetic tree that spends time on one lookup, to exhaust a comparison's budget.
+    struct SlowTree {
+        tree: FakeTree,
+        slow_path: String,
+    }
+
+    const SLOW_LOOKUP: Duration = Duration::from_millis(200);
+    const SHORT_BUDGET: Duration = Duration::from_millis(50);
+
+    impl GitTree for SlowTree {
+        fn entry(&self, path: &str) -> Result<Option<TreeEntry>> {
+            if path == self.slow_path {
+                thread::sleep(SLOW_LOOKUP);
+            }
+            self.tree.entry(path)
+        }
+
+        fn blob(&self, object: &str) -> Result<Vec<u8>> {
+            self.tree.blob(object)
+        }
+
+        fn file_content(&self, path: &str) -> Result<Option<Vec<u8>>> {
+            self.tree.file_content(path)
+        }
+
+        fn manifests(&self) -> Result<Vec<String>> {
+            self.tree.manifests()
+        }
+
+        fn submodule(&self, repository: &str, commit: &str) -> Result<Option<Box<dyn GitTree>>> {
+            self.tree.submodule(repository, commit)
+        }
+    }
+
+    /// One archive whose second member differs, compared against a tree that is slow on one path.
+    fn slow_comparison(slow_path: &str) -> SourceCorrespondence {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("a.rs", b"archived"),
+                file("b.rs", b"archived"),
+            ],
+            Some(""),
+        );
+        let tree = SlowTree {
+            tree: FakeTree::new([("Cargo.toml", text("manifest"))]),
+            slow_path: slow_path.to_owned(),
+        };
+        promote_source(
+            &anchor(Some("")),
+            &archive,
+            Some(b"manifest"),
+            &tree,
+            &Deadline::new(SHORT_BUDGET),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn exhausted_budget_after_a_difference_is_a_mismatch() {
+        let correspondence = slow_comparison("a.rs");
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "a difference outranks an exhausted budget: {:?}",
+            correspondence.evidence
+        );
+        assert_eq!(
+            comparison(report(&correspondence), "a.rs").disposition,
+            "missing"
+        );
+    }
+
+    #[test]
+    fn exhausted_budget_before_a_difference_is_unavailable() {
+        let correspondence = slow_comparison("Cargo.toml");
+        assert_eq!(unavailable_reason(&correspondence), DEADLINE_REASON);
+    }
+
+    #[test]
+    fn fetched_repository_size_bound_is_enforced() {
+        let temporary = TemporaryDirectory::new("pkgre-source-size").unwrap();
+        let root = temporary.path().to_owned();
+        fs::create_dir_all(root.join("objects/pack")).unwrap();
+        fs::write(root.join("objects/pack/pack.idx"), vec![0_u8; 1024]).unwrap();
+        fs::write(root.join("objects/pack/pack.pack"), vec![0_u8; 2048]).unwrap();
+        let repository = GitRepository {
+            temporary: Arc::new(temporary),
+            commit: COMMIT.to_owned(),
+        };
+
+        assert_eq!(repository.repository_bytes().unwrap(), (3072, 4));
+        assert!(repository.check_size().is_ok());
+        assert!(repository.check_size_with(4096, 4).is_ok());
+        assert!(
+            repository.check_size_with(3071, 4).is_err(),
+            "an oversized repository must be refused"
+        );
+        assert!(
+            repository.check_size_with(4096, 3).is_err(),
+            "a repository with too many files must be refused"
+        );
+    }
+
     /// Runs one isolated Git command in a synthetic repository.
     fn test_git(directory: &Path, arguments: &[&str]) -> String {
         let mut command = git_command(
@@ -3091,13 +3358,17 @@ mod tests {
         };
 
         let manifest = repository.entry("Cargo.toml").unwrap().unwrap();
-        assert!(
-            matches!(
-                &manifest,
-                TreeEntry::File { sha256, executable } if sha256 == &sha256_bytes(b"manifest\n") && !executable
-            ),
-            "unexpected manifest entry {manifest:?}"
-        );
+        let TreeEntry::File {
+            object,
+            executable,
+            size,
+        } = &manifest
+        else {
+            panic!("unexpected manifest entry {manifest:?}");
+        };
+        assert!(!executable);
+        assert_eq!(*size, b"manifest\n".len() as u64);
+        assert_eq!(GitTree::blob(&repository, object).unwrap(), b"manifest\n");
         assert_eq!(
             repository
                 .file_content("sub/Cargo.toml")
