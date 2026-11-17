@@ -459,11 +459,17 @@ fn resolve_tag(
     );
     let metadata = cargo_metadata(&cargo, &cargo_home, &environment, &root_manifest)?;
     let packages = select_packages(&metadata, request.packages)?;
+    let tag_version = packages
+        .first()
+        .with_context(|| format!("tag {:?} names no package", request.tag))?
+        .version
+        .clone();
     let siblings = sibling_packages(request.published, &metadata, &packages)?;
     let paths = validated_packages(
         &metadata,
         &packages,
         request,
+        &tag_version,
         &checkout,
         source.registry_index,
         &siblings,
@@ -491,7 +497,7 @@ fn resolve_tag(
 
     let mut materializations = Vec::with_capacity(packages.len());
     for ((package, path), archive_bytes) in packages.iter().zip(paths).zip(archives) {
-        verify_sibling_archives(package, &archive_bytes, &expected)?;
+        verify_sibling_archives(package, &archive_bytes, &expected, &tag_version)?;
         let archive_sha256 = sha256_bytes(&archive_bytes);
         let source_row_bytes = generated_index_record(package, &archive_sha256)?;
         let source_row_sha256 = sha256_bytes(&source_row_bytes);
@@ -896,6 +902,7 @@ fn validated_packages(
     metadata: &[MetadataPackage],
     packages: &[&MetadataPackage],
     request: &TagRequest<'_>,
+    tag_version: &Version,
     checkout: &Path,
     registry_index: &str,
     siblings: &Siblings,
@@ -909,13 +916,8 @@ fn validated_packages(
         );
         paths.push(package_path(checkout, &package.manifest_path)?);
     }
-    let tag_version = packages
-        .first()
-        .with_context(|| format!("tag {:?} names no package", request.tag))?
-        .version
-        .clone();
     for package in packages {
-        validate_dependencies(package, metadata, siblings, &tag_version, registry_index)?;
+        validate_dependencies(package, metadata, siblings, tag_version, registry_index)?;
     }
     Ok(paths)
 }
@@ -1100,6 +1102,12 @@ fn validate_path_dependency(
         "first-party package dependency {described} is a path dependency on {}, which the catalog does not publish from this tag",
         target.name
     );
+    ensure!(
+        target.version == *tag_version,
+        "first-party package dependency {described} is a path dependency on {} {}, whose version is not the tag's version {tag_version}",
+        target.name,
+        target.version
+    );
     let directory = dependency.path.as_deref().with_context(|| {
         format!(
             "first-party package dependency {described} is a path dependency without a directory"
@@ -1269,19 +1277,20 @@ fn package_group(
 /// dependencies must name.
 ///
 /// A path dependency is packaged as a registry dependency, so Cargo records the
-/// archive of the package it points at in the packaged lock. The archive this
-/// tag publishes for that package is the only one the lock may name, so a lock
-/// that names another one is refused.
+/// archive of the package it points at in the packaged lock, under the tag's
+/// version of that package. The archive this tag publishes for it is the only
+/// one that entry may name, so a lock that names another one is refused.
 ///
 /// # Errors
 ///
-/// Returns an error for an unreadable or malformed packaged lock, a lock
-/// without an entry for a sibling, or an entry whose checksum is not the
-/// expected archive.
+/// Returns an error for an unreadable or malformed packaged lock, a lock without
+/// exactly one entry for a sibling at the tag's version, or an entry whose
+/// checksum is not the expected archive.
 fn verify_sibling_archives(
     package: &MetadataPackage,
     archive_bytes: &[u8],
     archives: &BTreeMap<String, String>,
+    tag_version: &Version,
 ) -> Result<()> {
     let mut siblings = Vec::new();
     for dependency in &package.dependencies {
@@ -1321,19 +1330,27 @@ fn verify_sibling_archives(
         )
     })?;
     for (name, archive_sha256) in siblings {
-        let entry = lock
+        // The lock may hold another version of the same name, so the entry this
+        // tag publishes is the one of the tag's version.
+        let mut entries = lock
             .packages
             .iter()
-            .find(|entry| entry.name == name)
-            .with_context(|| {
-                format!(
-                    "the packaged lock of {} {} records no {name}",
-                    package.name, package.version
-                )
-            })?;
+            .filter(|entry| entry.name == name && entry.version == *tag_version);
+        let entry = entries.next().with_context(|| {
+            format!(
+                "the packaged lock of {} {} records no {name} {tag_version}",
+                package.name, package.version
+            )
+        })?;
+        ensure!(
+            entries.next().is_none(),
+            "the packaged lock of {} {} records {name} {tag_version} more than once",
+            package.name,
+            package.version
+        );
         ensure!(
             entry.checksum.as_deref() == Some(archive_sha256),
-            "the packaged lock of {} {} records checksum {} for {name}; this tag publishes {name} as {archive_sha256}, so a dependency on another archive is refused",
+            "the packaged lock of {} {} records checksum {} for {name} {tag_version}; this tag publishes {name} as {archive_sha256}, so a dependency on another archive is refused",
             package.name,
             package.version,
             entry.checksum.as_deref().unwrap_or("none")
@@ -1370,6 +1387,7 @@ struct PackagedLock {
 #[derive(Debug, Deserialize)]
 struct PackagedLockPackage {
     name: String,
+    version: Version,
     checksum: Option<String>,
 }
 
@@ -2137,6 +2155,55 @@ mod tests {
         assert!(
             message.contains(&group[1].archive_sha256),
             "the error names the locked archive: {message}"
+        );
+    }
+
+    #[test]
+    fn a_dependent_may_depend_on_another_version_of_its_sibling_name() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-sibling-versions").unwrap();
+        let index = create_test_index(&temporary);
+        // An older, semver-incompatible version of the sibling's name, which the
+        // dependent also depends on through a renamed registry dependency.
+        let older = Version::parse("0.9.0").unwrap();
+        let older_archive = "ab".repeat(32);
+        publish_test_index_entry(&index, "pkgre-base", &older, &older_archive);
+        let mut files = sibling_members();
+        files.push((
+            "crates/demo/Cargo.toml",
+            member_manifest(
+                "pkgre-demo",
+                "publish = [\"pkgre\"]",
+                "\n[dependencies]\npkgre-base = { path = \"../base\", version = \"=1.2.3\", registry = \"pkgre\" }\nold-base = { package = \"pkgre-base\", version = \"=0.9.0\", registry = \"pkgre\" }\n",
+            ),
+        ));
+        let source = create_test_workspace(&temporary, &index, &files, true);
+        let published = ["pkgre-demo", "pkgre-base"];
+
+        let materializations =
+            resolve_test_group(&root, &source, &index, &published, &published).unwrap();
+
+        let demo = &materializations[0];
+        let packaged = crate::update::read_crate_archive(
+            "pkgre-demo",
+            &demo.version,
+            &demo.archive_bytes,
+            &["Cargo.lock"],
+        )
+        .unwrap();
+        let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).unwrap();
+        assert!(
+            lock.contains(&format!(
+                "version = \"{older}\"\nsource = \"registry+{index}\"\nchecksum = \"{older_archive}\""
+            )),
+            "the lock keeps the other version of the name: {lock}"
+        );
+        assert!(
+            lock.contains(&format!(
+                "version = \"1.2.3\"\nsource = \"registry+{index}\"\nchecksum = \"{}\"",
+                materializations[1].archive_sha256
+            )),
+            "the lock keeps the sibling's own archive: {lock}"
         );
     }
 
