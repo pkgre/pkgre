@@ -842,12 +842,14 @@ fn collect_source_evidence<R: PlannerResolver>(
 /// Records why a source comparison produced the evidence it did.
 fn log_source_correspondence(name: &str, version: &Version, correspondence: &SourceCorrespondence) {
     if let SourceEvidence::Unavailable { reason } = &correspondence.evidence {
-        info!(
-            package = name,
-            version = %version,
-            reason,
-            "source correspondence is unavailable"
-        );
+        if reason != "not-promoted" {
+            info!(
+                package = name,
+                version = %version,
+                reason,
+                "source correspondence is unavailable"
+            );
+        }
     }
     if let Some(comparison) = &correspondence.comparison {
         if comparison.located_path {

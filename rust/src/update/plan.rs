@@ -1150,6 +1150,52 @@ mod tests {
     }
 
     #[test]
+    fn attested_source_repository_compares_without_regard_to_case() {
+        let mut plan = sample_plan();
+        let candidate = &mut plan.candidates[0];
+        let trusted = TrustedPublishingEvidence {
+            provider: "github".to_owned(),
+            repository: "https://github.com/Example/Demo".to_owned(),
+            commit: "11".repeat(20),
+            evidence_sha256: "12".repeat(32),
+        };
+        candidate.api = Some(ApiEvidence {
+            response_sha256: "13".repeat(32),
+            base: None,
+            candidate: ApiVersionEvidence {
+                publisher_id: Some(1),
+                publisher_login: Some("publisher".to_owned()),
+                repository: Some(trusted.repository.clone()),
+                trusted_publishing: Some(trusted.clone()),
+            },
+        });
+        candidate.source = SourceEvidence::RegistryContextAttested {
+            repository: "https://github.com/example/demo".to_owned(),
+            commit: trusted.commit,
+            path: String::new(),
+            comparison_sha256: "14".repeat(32),
+            attestation_sha256: trusted.evidence_sha256,
+        };
+        candidate
+            .reasons
+            .retain(|reason| *reason != DecisionReason::SourceUnavailable);
+
+        serialize_update_plan(&plan).expect("a GitHub owner and repository compare without case");
+
+        let SourceEvidence::RegistryContextAttested { repository, .. } =
+            &mut plan.candidates[0].source
+        else {
+            unreachable!();
+        };
+        *repository = "https://github.com/example/other".to_owned();
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("disagrees with Trusted Publishing context"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
     fn candidate_cargo_identity_is_scoped_by_registry() {
         let mut plan = sample_plan();
         plan.candidates[0].registry = "main".to_owned();

@@ -512,6 +512,7 @@ mod tests {
                             compared_path: Some("lib.rs".to_owned()),
                             resolved_path: None,
                             submodule: None,
+                            submodule_commit: None,
                             copied: false,
                             archive_sha256: sha256_bytes(b"source\n"),
                             repository_sha256: Some(sha256_bytes(b"source\n")),

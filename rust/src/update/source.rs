@@ -1,7 +1,7 @@
 //! Credential-free, inert archive-to-Git source correspondence.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque, btree_map};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read};
@@ -27,6 +27,7 @@ use super::{ApiVersionEvidence, ArchiveAnalysis, ArchiveFile, SourceEvidence};
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 const MAX_GIT_METADATA_BYTES: usize = 64 * 1024;
 const MAX_GIT_BLOB_BYTES: usize = 64 * 1024 * 1024;
+const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_GIT_TREE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_GIT_FETCH_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
@@ -34,8 +35,22 @@ const COMMAND_CLEANUP_GRACE: Duration = Duration::from_secs(5);
 const GITHUB_PREFIX: &str = "https://github.com/";
 /// Symbolic links and submodules one path may be redirected through.
 const MAX_PATH_REDIRECTS: usize = 16;
-/// Submodule repositories one comparison may fetch.
+/// Submodule commits one comparison may fetch.
 const MAX_SUBMODULES: usize = 8;
+/// Bytes one fetched repository may occupy on disk.
+const MAX_REPOSITORY_BYTES: u64 = 256 * 1024 * 1024;
+/// Files one fetched repository may hold.
+const MAX_REPOSITORY_ENTRIES: usize = 100_000;
+/// Wall-clock budget of one archive-to-tree comparison.
+const MAX_COMPARISON_DURATION: Duration = Duration::from_secs(900);
+/// Archive names Cargo generates in the package root, which no copied file may take.
+const RESERVED_PACKAGE_NAMES: [&str; 5] = [
+    "Cargo.toml.orig",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".cargo_vcs_info.json",
+    ".cargo-ok",
+];
 /// `Cargo.toml` files one package-directory search may read.
 const MAX_TREE_MANIFESTS: usize = 512;
 /// Ancestor directories one `workspace = true` package field may be resolved through.
@@ -158,7 +173,13 @@ pub fn verify_source_correspondence(
         path_in_vcs,
         attestation_sha256: attestation,
     };
-    promote_source(&anchor, archive, original_manifest, &checkout)
+    promote_source(
+        &anchor,
+        archive,
+        original_manifest,
+        &checkout,
+        &Deadline::new(MAX_COMPARISON_DURATION),
+    )
 }
 
 /// One resolved source anchor for a package archive.
@@ -179,12 +200,18 @@ fn promote_source(
     archive: &ArchiveAnalysis,
     original_manifest: Option<&[u8]>,
     tree: &dyn GitTree,
+    deadline: &Deadline,
 ) -> Result<SourceCorrespondence> {
-    let comparison =
-        match compare_archive_to_tree(archive, original_manifest, anchor.path_in_vcs, tree) {
-            Ok(comparison) => comparison,
-            Err(error) => return unavailable_correspondence(error),
-        };
+    let comparison = match compare_archive_to_tree(
+        archive,
+        original_manifest,
+        anchor.path_in_vcs,
+        tree,
+        deadline,
+    ) {
+        Ok(comparison) => comparison,
+        Err(error) => return unavailable_correspondence(error),
+    };
     let evidence = if comparison.matches {
         match anchor.attestation_sha256 {
             Some(attestation_sha256) => SourceEvidence::RegistryContextAttested {
@@ -360,6 +387,8 @@ pub(crate) struct FileComparison {
     pub(crate) resolved_path: Option<String>,
     /// The submodule repository the member was read from.
     pub(crate) submodule: Option<String>,
+    /// The exact commit of that submodule tree.
+    pub(crate) submodule_commit: Option<String>,
     /// Whether Cargo copied the member into the package root from outside it.
     pub(crate) copied: bool,
     pub(crate) archive_sha256: String,
@@ -408,13 +437,42 @@ struct GitBlob {
     executable: bool,
 }
 
+/// The wall-clock budget of one archive-to-tree comparison.
+struct Deadline {
+    started: Instant,
+    limit: Duration,
+}
+
+impl Deadline {
+    fn new(limit: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            limit,
+        }
+    }
+
+    fn check(&self) -> Result<()> {
+        if self.started.elapsed() > self.limit {
+            return Err(unavailable_error("source-comparison-exceeded-its-deadline"));
+        }
+        Ok(())
+    }
+}
+
+/// One submodule tree: the public repository and the exact commit read from it.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SubmoduleMount {
+    repository: String,
+    commit: String,
+}
+
 /// Where one archive member was read, after following symbolic links and submodules.
 struct Resolution {
     /// The path reached inside its tree, which differs from the requested path when a link or a
     /// submodule redirected it; it is relative to `submodule` when that is present.
     path: String,
-    /// The submodule repository the path was read from.
-    submodule: Option<String>,
+    /// The submodule repository and commit the path was read from.
+    submodule: Option<SubmoduleMount>,
     /// The regular file found, absent when the path does not exist.
     file: Option<GitBlob>,
 }
@@ -422,14 +480,16 @@ struct Resolution {
 /// Resolves archive-member paths against one tree, following links and submodules.
 struct TreeResolver<'a> {
     root: &'a dyn GitTree,
-    /// Submodule trees, by repository URL.
-    submodules: RefCell<BTreeMap<String, Box<dyn GitTree>>>,
+    /// Submodule trees, by repository and exact commit.
+    submodules: RefCell<BTreeMap<SubmoduleMount, Box<dyn GitTree>>>,
     /// Resolved directory prefixes, by tree and logical path.
-    prefixes: RefCell<BTreeMap<(Option<String>, String), DirectoryState>>,
+    prefixes: RefCell<BTreeMap<(Option<SubmoduleMount>, String), DirectoryState>>,
     /// The root `.gitmodules`, submodule path to URL.
     gitmodules: RefCell<Option<BTreeMap<String, String>>>,
-    /// Submodule repositories fetched so far.
+    /// Submodule commits fetched so far.
     fetched: Cell<usize>,
+    /// The budget of the whole comparison.
+    deadline: &'a Deadline,
 }
 
 #[derive(Clone)]
@@ -442,13 +502,14 @@ enum DirectoryState {
 }
 
 impl<'a> TreeResolver<'a> {
-    fn new(root: &'a dyn GitTree) -> Self {
+    fn new(root: &'a dyn GitTree, deadline: &'a Deadline) -> Self {
         Self {
             root,
             submodules: RefCell::new(BTreeMap::new()),
             prefixes: RefCell::new(BTreeMap::new()),
             gitmodules: RefCell::new(None),
             fetched: Cell::new(0),
+            deadline,
         }
     }
 
@@ -458,12 +519,13 @@ impl<'a> TreeResolver<'a> {
 
     /// Resolves one repository-relative path through symbolic links and submodules.
     fn resolve(&self, path: &str) -> Result<Resolution> {
+        self.deadline.check()?;
         self.resolve_from(None, path, 0)
     }
 
     fn resolve_from(
         &self,
-        tree: Option<String>,
+        tree: Option<SubmoduleMount>,
         path: &str,
         redirects: usize,
     ) -> Result<Resolution> {
@@ -471,13 +533,14 @@ impl<'a> TreeResolver<'a> {
         let mut resolved = String::new();
         let mut pending = path
             .split('/')
+            .filter(|component| !component.is_empty())
             .map(str::to_owned)
             .collect::<VecDeque<String>>();
         let mut redirects = redirects;
         while let Some(component) = pending.pop_front() {
             let candidate = join_vcs_path(&resolved, &component);
             if pending.is_empty() {
-                let Some(entry) = self.tree_entry(tree.as_deref(), &candidate)? else {
+                let Some(entry) = self.tree_entry(tree.as_ref(), &candidate)? else {
                     return Ok(Resolution {
                         path: path.to_owned(),
                         submodule: None,
@@ -503,7 +566,7 @@ impl<'a> TreeResolver<'a> {
                     }),
                 };
             }
-            match self.directory_state(tree.as_deref(), &candidate)? {
+            match self.directory_state(tree.as_ref(), &candidate)? {
                 DirectoryState::Absent | DirectoryState::File => {
                     return Ok(Resolution {
                         path: path.to_owned(),
@@ -518,16 +581,21 @@ impl<'a> TreeResolver<'a> {
                     let target = resolve_link_target(&candidate, &target)?;
                     resolved.clear();
                     for component in target.split('/').rev() {
-                        pending.push_front(component.to_owned());
+                        if !component.is_empty() {
+                            pending.push_front(component.to_owned());
+                        }
                     }
                 }
                 DirectoryState::Gitlink { commit } => {
                     if tree.is_some() {
                         return Err(unavailable_error("repository-submodule-is-nested"));
                     }
-                    let repository = self.submodule_repository(&candidate)?;
-                    self.load_submodule(&repository, &commit)?;
-                    tree = Some(repository);
+                    let mount = SubmoduleMount {
+                        repository: self.submodule_repository(&candidate)?,
+                        commit,
+                    };
+                    self.load_submodule(&mount)?;
+                    tree = Some(mount);
                     resolved.clear();
                 }
             }
@@ -540,20 +608,23 @@ impl<'a> TreeResolver<'a> {
     }
 
     /// The entry at `path` in the root tree or in one loaded submodule tree.
-    fn tree_entry(&self, tree: Option<&str>, path: &str) -> Result<Option<TreeEntry>> {
-        let Some(repository) = tree else {
+    fn tree_entry(&self, tree: Option<&SubmoduleMount>, path: &str) -> Result<Option<TreeEntry>> {
+        let Some(mount) = tree else {
             return self.root.entry(path);
         };
         let submodules = self.submodules.borrow();
-        let submodule = submodules
-            .get(repository)
-            .with_context(|| format!("submodule tree {repository} is not loaded"))?;
+        let submodule = submodules.get(mount).with_context(|| {
+            format!(
+                "submodule tree {} at {} is not loaded",
+                mount.repository, mount.commit
+            )
+        })?;
         submodule.entry(path)
     }
 
     /// The kind of one directory prefix, cached for the files that share it.
-    fn directory_state(&self, tree: Option<&str>, path: &str) -> Result<DirectoryState> {
-        let key = (tree.map(str::to_owned), path.to_owned());
+    fn directory_state(&self, tree: Option<&SubmoduleMount>, path: &str) -> Result<DirectoryState> {
+        let key = (tree.cloned(), path.to_owned());
         if let Some(state) = self.prefixes.borrow().get(&key) {
             return Ok(state.clone());
         }
@@ -591,21 +662,20 @@ impl<'a> TreeResolver<'a> {
         Ok(modules)
     }
 
-    /// Fetches one submodule tree, once per repository and commit.
-    fn load_submodule(&self, repository: &str, commit: &str) -> Result<()> {
-        if self.submodules.borrow().contains_key(repository) {
+    /// Fetches one submodule tree, once per repository and exact commit.
+    fn load_submodule(&self, mount: &SubmoduleMount) -> Result<()> {
+        if self.submodules.borrow().contains_key(mount) {
             return Ok(());
         }
+        self.deadline.check()?;
         if self.fetched.get() >= MAX_SUBMODULES {
             return Err(unavailable_error("repository-submodule-limit-exceeded"));
         }
-        let Some(tree) = self.root.submodule(repository, commit)? else {
+        let Some(tree) = self.root.submodule(&mount.repository, &mount.commit)? else {
             return Err(unavailable_error("repository-submodule-fetch-failed"));
         };
         self.fetched.set(self.fetched.get() + 1);
-        self.submodules
-            .borrow_mut()
-            .insert(repository.to_owned(), tree);
+        self.submodules.borrow_mut().insert(mount.clone(), tree);
         Ok(())
     }
 }
@@ -656,8 +726,10 @@ fn compare_archive_to_tree(
     original_manifest: Option<&[u8]>,
     path_in_vcs: Option<&str>,
     tree: &dyn GitTree,
+    deadline: &Deadline,
 ) -> Result<ComparisonResult> {
-    let (report, matches) = build_comparison_report(archive, original_manifest, path_in_vcs, tree)?;
+    let (report, matches) =
+        build_comparison_report(archive, original_manifest, path_in_vcs, tree, deadline)?;
     let canonical = serde_json::to_vec(&report).context("serialize source comparison report")?;
     Ok(ComparisonResult {
         matches,
@@ -673,8 +745,9 @@ fn build_comparison_report(
     original_manifest: Option<&[u8]>,
     path_in_vcs: Option<&str>,
     tree: &dyn GitTree,
+    deadline: &Deadline,
 ) -> Result<(ComparisonReport, bool)> {
-    let resolver = TreeResolver::new(tree);
+    let resolver = TreeResolver::new(tree, deadline);
     let (path_in_vcs, located_path) = resolve_package_path(archive, path_in_vcs, &resolver)?;
     let copied_files = cargo_copied_files(original_manifest, &path_in_vcs, tree)?;
     let archive_paths = archive
@@ -715,7 +788,14 @@ fn build_comparison_report(
             expected_path: Some(expected_path),
             compared_path: Some(compared_path),
             resolved_path,
-            submodule: resolution.submodule,
+            submodule: resolution
+                .submodule
+                .as_ref()
+                .map(|mount| mount.repository.clone()),
+            submodule_commit: resolution
+                .submodule
+                .as_ref()
+                .map(|mount| mount.commit.clone()),
             copied,
             archive_sha256: file.sha256.clone(),
             repository_sha256: resolution.file.as_ref().map(|value| value.sha256.clone()),
@@ -792,16 +872,16 @@ fn cargo_copied_files(
     package_path: &str,
     tree: &dyn GitTree,
 ) -> Result<BTreeMap<String, String>> {
-    let mut copies = BTreeMap::new();
+    let mut copies = BTreeMap::<String, Option<String>>::new();
     let Some(text) = original_manifest.and_then(|bytes| std::str::from_utf8(bytes).ok()) else {
-        return Ok(copies);
+        return Ok(BTreeMap::new());
     };
     let Ok(manifest) = toml::from_str::<OriginalManifest>(text) else {
         debug!("archive Cargo.toml.orig is not a package manifest");
-        return Ok(copies);
+        return Ok(BTreeMap::new());
     };
     let Some(package) = manifest.package else {
-        return Ok(copies);
+        return Ok(BTreeMap::new());
     };
     for (field, value) in [
         ("readme", package.readme),
@@ -823,9 +903,24 @@ fn cargo_copied_files(
         let Some(name) = source.rsplit('/').next() else {
             continue;
         };
-        copies.insert(name.to_owned(), source);
+        if RESERVED_PACKAGE_NAMES.contains(&name) {
+            continue;
+        }
+        match copies.entry(name.to_owned()) {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(Some(source));
+            }
+            btree_map::Entry::Occupied(mut entry) => {
+                if entry.get().as_deref() != Some(source.as_str()) {
+                    entry.insert(None);
+                }
+            }
+        }
     }
-    Ok(copies)
+    Ok(copies
+        .into_iter()
+        .filter_map(|(name, source)| Some((name, source?)))
+        .collect())
 }
 
 /// The repository path a `workspace = true` package field resolves to.
@@ -1023,6 +1118,7 @@ fn ignored_comparison(file: &ArchiveFile) -> FileComparison {
         compared_path: None,
         resolved_path: None,
         submodule: None,
+        submodule_commit: None,
         copied: false,
         archive_sha256: file.sha256.clone(),
         repository_sha256: None,
@@ -1134,6 +1230,42 @@ impl GitRepository {
         })
     }
 
+    /// The bytes this repository occupies on disk, counted up to the bound.
+    fn repository_bytes(&self) -> Result<u64> {
+        let mut total = 0_u64;
+        let mut entries = 0_usize;
+        let mut pending = vec![self.path().to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(&directory)
+                .with_context(|| format!("read fetched repository {}", directory.display()))?
+            {
+                let entry = entry.context("read fetched repository entry")?;
+                entries += 1;
+                ensure!(
+                    entries <= MAX_REPOSITORY_ENTRIES,
+                    "fetched Git repository holds more than {MAX_REPOSITORY_ENTRIES} files"
+                );
+                let file_type = entry
+                    .file_type()
+                    .context("read fetched repository entry type")?;
+                if file_type.is_dir() {
+                    pending.push(entry.path());
+                    continue;
+                }
+                total = total.saturating_add(
+                    entry
+                        .metadata()
+                        .context("read fetched repository entry size")?
+                        .len(),
+                );
+                if total > MAX_REPOSITORY_BYTES {
+                    return Ok(total);
+                }
+            }
+        }
+        Ok(total)
+    }
+
     fn run_fetch(&self, repository: &str, commit: &str) -> Result<()> {
         run_git(
             Some(self.path()),
@@ -1162,6 +1294,10 @@ impl GitRepository {
         ensure!(
             resolved == commit,
             "fetched Git commit differs from exact anchor"
+        );
+        ensure!(
+            self.repository_bytes()? <= MAX_REPOSITORY_BYTES,
+            "fetched Git repository exceeds {MAX_REPOSITORY_BYTES} bytes"
         );
         Ok(())
     }
@@ -1224,6 +1360,11 @@ impl GitRepository {
 
     /// The bytes of one blob object.
     fn blob(&self, object: &str) -> Result<Vec<u8>> {
+        self.blob_with_limit(object, MAX_GIT_BLOB_BYTES)
+    }
+
+    /// The bytes of one blob object, read within `limit` bytes.
+    fn blob_with_limit(&self, object: &str, limit: usize) -> Result<Vec<u8>> {
         let output = run_git_output_with_limit(
             Some(self.path()),
             [
@@ -1232,11 +1373,11 @@ impl GitRepository {
                 OsStr::new(object),
             ],
             "read exact Git blob",
-            MAX_GIT_BLOB_BYTES,
+            limit,
         )?;
         ensure!(
-            output.stdout.len() <= MAX_GIT_BLOB_BYTES,
-            "Git blob exceeds {MAX_GIT_BLOB_BYTES} bytes"
+            output.stdout.len() <= limit,
+            "Git blob exceeds {limit} bytes"
         );
         Ok(output.stdout)
     }
@@ -1292,7 +1433,8 @@ impl GitTree for GitRepository {
         if !matches!(record.mode.as_str(), "100644" | "100755") {
             return Ok(None);
         }
-        self.blob(&record.object).map(Some)
+        self.blob_with_limit(&record.object, MAX_MANIFEST_BYTES)
+            .map(Some)
     }
 
     fn manifests(&self) -> Result<Vec<String>> {
@@ -1644,11 +1786,18 @@ mod tests {
             }
         }
 
-        fn with_submodule(mut self, tree: FakeTree) -> Self {
-            self.submodules.insert(
-                (SUBMODULE_REPOSITORY.to_owned(), SUBMODULE_COMMIT.to_owned()),
-                tree,
-            );
+        fn with(mut self, path: &str, node: FakeNode) -> Self {
+            self.files.insert(path.to_owned(), node);
+            self
+        }
+
+        fn with_submodule(self, tree: FakeTree) -> Self {
+            self.with_submodule_at(SUBMODULE_REPOSITORY, SUBMODULE_COMMIT, tree)
+        }
+
+        fn with_submodule_at(mut self, repository: &str, commit: &str, tree: FakeTree) -> Self {
+            self.submodules
+                .insert((repository.to_owned(), commit.to_owned()), tree);
             self
         }
     }
@@ -1714,6 +1863,16 @@ mod tests {
         }
     }
 
+    fn executable(path: &str, contents: &[u8]) -> ArchiveFile {
+        ArchiveFile {
+            path: path.to_owned(),
+            size: contents.len() as u64,
+            mode: 0o755,
+            sha256: sha256_bytes(contents),
+            binary: false,
+        }
+    }
+
     fn archive(files: Vec<ArchiveFile>, path_in_vcs: Option<&str>) -> ArchiveAnalysis {
         ArchiveAnalysis {
             compressed_bytes: 1,
@@ -1743,7 +1902,14 @@ mod tests {
         path_in_vcs: Option<&str>,
         tree: &FakeTree,
     ) -> SourceCorrespondence {
-        promote_source(&anchor(path_in_vcs), archive, original_manifest, tree).unwrap()
+        promote_source(
+            &anchor(path_in_vcs),
+            archive,
+            original_manifest,
+            tree,
+            &Deadline::new(MAX_COMPARISON_DURATION),
+        )
+        .unwrap()
     }
 
     fn unavailable_reason(correspondence: &SourceCorrespondence) -> &str {
@@ -2435,6 +2601,423 @@ mod tests {
         assert_eq!(described.matches(" (missing)").count(), 20);
         assert!(described.ends_with(", and 5 more"), "{described}");
         assert!(described.starts_with("src/file0.rs (missing)"));
+    }
+
+    #[test]
+    fn two_gitlinks_to_one_repository_are_read_at_their_own_commits() {
+        const OTHER_COMMIT: &str = "0303030303030303030303030303030303030303";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("a/lib.rs", b"old release"),
+                file("b/lib.rs", b"new release"),
+            ],
+            Some(""),
+        );
+        let tree = FakeTree::new([
+            ("Cargo.toml", text("manifest")),
+            (
+                ".gitmodules",
+                text(&format!(
+                    "[submodule \"a\"]\n\tpath = a\n\turl = {SUBMODULE_REPOSITORY}\n[submodule \"b\"]\n\tpath = b\n\turl = {SUBMODULE_REPOSITORY}\n"
+                )),
+            ),
+            (
+                "a",
+                FakeNode::Gitlink {
+                    commit: SUBMODULE_COMMIT.to_owned(),
+                },
+            ),
+            (
+                "b",
+                FakeNode::Gitlink {
+                    commit: OTHER_COMMIT.to_owned(),
+                },
+            ),
+        ])
+        .with_submodule_at(
+            SUBMODULE_REPOSITORY,
+            SUBMODULE_COMMIT,
+            FakeTree::new([("lib.rs", text("old release"))]),
+        )
+        .with_submodule_at(
+            SUBMODULE_REPOSITORY,
+            OTHER_COMMIT,
+            FakeTree::new([("lib.rs", text("new release"))]),
+        );
+
+        let correspondence = promoted(&archive, Some(b"manifest"), Some(""), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let second = comparison(report(&correspondence), "b/lib.rs");
+        assert_eq!(second.disposition, "match");
+        assert_eq!(second.submodule_commit.as_deref(), Some(OTHER_COMMIT));
+
+        let stale = super::tests::archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("a/lib.rs", b"old release"),
+                file("b/lib.rs", b"old release"),
+            ],
+            Some(""),
+        );
+        let correspondence = promoted(&stale, Some(b"manifest"), Some(""), &tree);
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "a member from the first commit's tree must not match the second commit"
+        );
+        assert_eq!(
+            comparison(report(&correspondence), "b/lib.rs").disposition,
+            "different"
+        );
+    }
+
+    #[test]
+    fn copied_file_cannot_take_a_generated_archive_name() {
+        let manifest = "[package]\nname = \"demo\"\nreadme = \"../other/Cargo.toml.orig\"\n";
+        let archive = archive(
+            vec![
+                file("Cargo.toml", b"normalized"),
+                file("Cargo.toml.orig", manifest.as_bytes()),
+                file("src/lib.rs", b"member source"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("[package]\nname = \"demo\"\n")),
+            ("member/src/lib.rs", text("member source")),
+            ("other/Cargo.toml.orig", text(manifest)),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "a copy may not redirect the package manifest"
+        );
+        let original = comparison(report(&correspondence), "Cargo.toml.orig");
+        assert!(!original.copied);
+        assert_eq!(original.disposition, "different");
+        assert_eq!(original.compared_path.as_deref(), Some("member/Cargo.toml"));
+    }
+
+    #[test]
+    fn copies_that_claim_one_name_from_two_sources_are_not_copied() {
+        let manifest = "[package]\nname = \"demo\"\nreadme = \"../a/NOTICE\"\nlicense-file = \"../b/NOTICE\"\n";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", manifest.as_bytes()),
+                file("NOTICE", b"from a"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text(manifest)),
+            ("a/NOTICE", text("from a")),
+            ("b/NOTICE", text("from b")),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        let notice = comparison(report(&correspondence), "NOTICE");
+        assert!(!notice.copied);
+        assert_eq!(notice.disposition, "missing");
+    }
+
+    #[test]
+    fn license_file_copied_from_the_parent_directory_is_compared_with_its_source() {
+        let manifest = "[package]\nname = \"demo\"\nlicense-file = \"../LICENSE\"\n";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", manifest.as_bytes()),
+                file("LICENSE", b"license text"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text(manifest)),
+            ("LICENSE", text("license text")),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let license = comparison(report(&correspondence), "LICENSE");
+        assert_eq!(license.disposition, "match");
+        assert!(license.copied);
+        assert_eq!(license.compared_path.as_deref(), Some("LICENSE"));
+    }
+
+    #[test]
+    fn license_file_copied_through_the_workspace_package_table_is_compared_with_its_source() {
+        let manifest = "[package]\nname = \"demo\"\nlicense-file.workspace = true\n";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", manifest.as_bytes()),
+                file("LICENSE", b"license text"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            (
+                "Cargo.toml",
+                text(
+                    "[workspace]\nmembers = [\"member\"]\n\n[workspace.package]\nlicense-file = \"LICENSE\"\n",
+                ),
+            ),
+            ("LICENSE", text("license text")),
+            ("member/Cargo.toml", text(manifest)),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let license = comparison(report(&correspondence), "LICENSE");
+        assert_eq!(license.disposition, "match");
+        assert!(license.copied);
+    }
+
+    #[test]
+    fn workspace_members_match_the_package_directory() {
+        let manifest = "[package]\nname = \"demo\"\nreadme.workspace = true\n";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", manifest.as_bytes()),
+                file("README.md", b"workspace readme"),
+            ],
+            Some("crates/member"),
+        );
+        for workspace in [
+            "members = [\"crates/member\"]",
+            "members = [\"crates/*\"]",
+            "members = [\"crates/*\"]\nexclude = [\"crates/other\"]",
+        ] {
+            let tree = FakeTree::new([
+                (
+                    "Cargo.toml",
+                    text(&format!(
+                        "[workspace]\n{workspace}\n\n[workspace.package]\nreadme = \"README.md\"\n"
+                    )),
+                ),
+                ("README.md", text("workspace readme")),
+                ("crates/member/Cargo.toml", text(manifest)),
+            ]);
+            let correspondence = promoted(
+                &archive,
+                Some(manifest.as_bytes()),
+                Some("crates/member"),
+                &tree,
+            );
+            assert!(
+                matches!(
+                    correspondence.evidence,
+                    SourceEvidence::PublisherAsserted { .. }
+                ),
+                "workspace {workspace:?} should include the package: {:?}",
+                correspondence.evidence
+            );
+        }
+
+        for workspace in [
+            "members = [\"crates/other\"]",
+            "members = [\"crates/*\"]\nexclude = [\"crates/member\"]",
+        ] {
+            let tree = FakeTree::new([
+                (
+                    "Cargo.toml",
+                    text(&format!(
+                        "[workspace]\n{workspace}\n\n[workspace.package]\nreadme = \"README.md\"\n"
+                    )),
+                ),
+                ("README.md", text("workspace readme")),
+                ("crates/member/Cargo.toml", text(manifest)),
+            ]);
+            let correspondence = promoted(
+                &archive,
+                Some(manifest.as_bytes()),
+                Some("crates/member"),
+                &tree,
+            );
+            assert!(
+                matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+                "workspace {workspace:?} must not resolve the readme: {:?}",
+                correspondence.evidence
+            );
+            assert!(!comparison(report(&correspondence), "README.md").copied);
+        }
+    }
+
+    #[test]
+    fn symbolic_link_is_compared_with_its_target_mode() {
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            (
+                "member/tool",
+                FakeNode::File {
+                    contents: b"tool".to_vec(),
+                    executable: true,
+                },
+            ),
+            ("member/run", link("tool")),
+        ]);
+
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                executable("run", b"tool"),
+            ],
+            Some("member"),
+        );
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let run = comparison(report(&correspondence), "run");
+        assert_eq!(run.disposition, "match");
+        assert_eq!(run.repository_executable, Some(true));
+
+        let plain = super::tests::archive(
+            vec![file("Cargo.toml.orig", b"manifest"), file("run", b"tool")],
+            Some("member"),
+        );
+        let correspondence = promoted(&plain, Some(b"manifest"), Some("member"), &tree);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        assert_eq!(
+            comparison(report(&correspondence), "run").disposition,
+            "different"
+        );
+    }
+
+    #[test]
+    fn link_to_the_repository_root_is_resolved() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("up/member/Cargo.toml.orig", b"manifest"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/Cargo.toml.orig", text("manifest")),
+            ("member/up", link("..")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let member = comparison(report(&correspondence), "up/member/Cargo.toml.orig");
+        assert_eq!(member.disposition, "match");
+        assert_eq!(
+            member.resolved_path.as_deref(),
+            Some("member/Cargo.toml.orig")
+        );
+    }
+
+    #[test]
+    fn directory_link_loop_is_unavailable() {
+        let archive = archive(
+            vec![file("Cargo.toml.orig", b"manifest"), file("d/x.rs", b"x")],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/d", link("e")),
+            ("member/e", link("d")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert_eq!(
+            unavailable_reason(&correspondence),
+            "repository-path-redirect-loop"
+        );
+    }
+
+    #[test]
+    fn submodule_fetch_limit_is_enforced() {
+        let mut tree = FakeTree::new([("Cargo.toml", text("manifest"))]);
+        let mut modules = String::new();
+        let mut files = vec![file("Cargo.toml.orig", b"manifest")];
+        for index in 0..=MAX_SUBMODULES {
+            let commit = format!("{:040x}", index + 1);
+            let name = format!("s{index}");
+            modules.push_str("[submodule \"");
+            modules.push_str(&name);
+            modules.push_str("\"]\n\tpath = ");
+            modules.push_str(&name);
+            modules.push_str("\n\turl = ");
+            modules.push_str(SUBMODULE_REPOSITORY);
+            modules.push('\n');
+            tree = tree
+                .with(
+                    &name,
+                    FakeNode::Gitlink {
+                        commit: commit.clone(),
+                    },
+                )
+                .with_submodule_at(
+                    SUBMODULE_REPOSITORY,
+                    &commit,
+                    FakeTree::new([("x.rs", text("source"))]),
+                );
+            files.push(file(&format!("{name}/x.rs"), b"source"));
+        }
+        tree = tree.with(".gitmodules", text(&modules));
+
+        let archive = archive(files, Some(""));
+        let correspondence = promoted(&archive, Some(b"manifest"), Some(""), &tree);
+        assert_eq!(
+            unavailable_reason(&correspondence),
+            "repository-submodule-limit-exceeded"
+        );
+    }
+
+    #[test]
+    fn package_path_search_limit_is_enforced() {
+        let mut tree = FakeTree::default();
+        for index in 0..=MAX_TREE_MANIFESTS {
+            tree = tree.with(&format!("member{index}/Cargo.toml"), text("other manifest"));
+        }
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("src/lib.rs", b"source"),
+            ],
+            None,
+        );
+        let correspondence = promoted(&archive, Some(b"manifest"), None, &tree);
+        assert_eq!(
+            unavailable_reason(&correspondence),
+            "repository-package-path-search-exceeded"
+        );
     }
 
     /// Runs one isolated Git command in a synthetic repository.
