@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, ensure};
 use semver::Version;
 use sha2::{Digest, Sha256};
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::import::{self, CratesIoHistory, SparseIndexRow};
@@ -18,10 +18,11 @@ use crate::schema::{Catalog, PackageKey, PackageState, Source, version_identity}
 use super::{
     ApiEvidence, ArchiveAnalysis, ArchiveSummary, CompatibilityLane, DecisionReason,
     DependencyDelta, LockedRelease, MIN_RELEASE_AGE_DAYS, PackageActivity, PlannedIdentity,
-    PolicyRelease, PublicationGap, SourceEvidence, UPDATE_PLAN_SCHEMA, UpdateCandidate,
-    UpdateDecision, UpdatePlan, UtcTimestamp, catalog_fingerprint, classify_package,
-    compare_archive_analyses, inspect_crate_archive, parse_crates_io_api_evidence,
-    select_exact_candidate, select_implicit_candidates, verify_source_correspondence,
+    PolicyRelease, PublicationGap, SourceCorrespondence, SourceEvidence, UPDATE_PLAN_SCHEMA,
+    UpdateCandidate, UpdateDecision, UpdatePlan, UtcTimestamp, catalog_fingerprint,
+    classify_package, compare_archive_analyses, inspect_crate_archive_capturing,
+    parse_crates_io_api_evidence, select_exact_candidate, select_implicit_candidates,
+    verify_source_correspondence,
 };
 
 /// Creates a canonical read-only plan for every eligible implicit compatibility-lane update.
@@ -103,8 +104,9 @@ pub(crate) trait PlannerResolver {
     fn source(
         &self,
         archive: &ArchiveAnalysis,
+        original_manifest: Option<&[u8]>,
         api: Option<&super::ApiVersionEvidence>,
-    ) -> Result<SourceEvidence>;
+    ) -> Result<SourceCorrespondence>;
 }
 
 pub(crate) struct LivePlannerResolver;
@@ -130,9 +132,10 @@ impl PlannerResolver for LivePlannerResolver {
     fn source(
         &self,
         archive: &ArchiveAnalysis,
+        original_manifest: Option<&[u8]>,
         api: Option<&super::ApiVersionEvidence>,
-    ) -> Result<SourceEvidence> {
-        verify_source_correspondence(archive, api)
+    ) -> Result<SourceCorrespondence> {
+        verify_source_correspondence(archive, original_manifest, api)
     }
 }
 
@@ -606,6 +609,7 @@ fn build_candidate<R: PlannerResolver>(
         name,
         &selection.candidate.version,
         &archives.candidate,
+        archives.candidate_manifest.as_deref(),
         api.as_ref(),
         &mut reasons,
     );
@@ -643,6 +647,7 @@ fn build_candidate<R: PlannerResolver>(
 
 struct ArchiveEvidence {
     candidate: ArchiveAnalysis,
+    candidate_manifest: Option<Vec<u8>>,
     base_summary: Option<ArchiveSummary>,
     delta: Option<super::ArchiveDelta>,
 }
@@ -664,18 +669,25 @@ fn collect_archive_evidence<R: PlannerResolver>(
     let (base_summary, delta) = match (selection.base.as_ref(), base_row) {
         (Some(base), Some(row)) => {
             let analysis = fetch_and_inspect_archive(resolver, name, &base.version, row, "base")?;
-            let summary = ArchiveSummary::from_analysis(&analysis)?;
-            let delta = compare_archive_analyses(&analysis, &candidate)?;
+            let summary = ArchiveSummary::from_analysis(&analysis.analysis)?;
+            let delta = compare_archive_analyses(&analysis.analysis, &candidate.analysis)?;
             (Some(summary), Some(delta))
         }
         (None, None) => (None, None),
         _ => anyhow::bail!("selected base and sparse row disagree"),
     };
     Ok(ArchiveEvidence {
-        candidate,
+        candidate: candidate.analysis,
+        candidate_manifest: candidate.original_manifest,
         base_summary,
         delta,
     })
+}
+
+/// One inspected archive, with the source manifest the comparison reads.
+struct InspectedArchive {
+    analysis: ArchiveAnalysis,
+    original_manifest: Option<Vec<u8>>,
 }
 
 fn fetch_and_inspect_archive<R: PlannerResolver>(
@@ -684,7 +696,7 @@ fn fetch_and_inspect_archive<R: PlannerResolver>(
     version: &Version,
     row: &SparseIndexRow,
     role: &str,
-) -> Result<ArchiveAnalysis> {
+) -> Result<InspectedArchive> {
     let checksum = row.record.checksum()?.to_owned();
     let bytes = resolver
         .archive(name, version, &checksum)
@@ -693,8 +705,13 @@ fn fetch_and_inspect_archive<R: PlannerResolver>(
         sha256_bytes(&bytes) == checksum,
         "{role} archive checksum differs from sparse row for {name} {version}"
     );
-    inspect_crate_archive(name, version, &bytes)
-        .with_context(|| format!("inspect {role} archive {name} {version}"))
+    let (analysis, mut contents) =
+        inspect_crate_archive_capturing(name, version, &bytes, &["Cargo.toml.orig"])
+            .with_context(|| format!("inspect {role} archive {name} {version}"))?;
+    Ok(InspectedArchive {
+        analysis,
+        original_manifest: contents.remove("Cargo.toml.orig"),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -776,15 +793,20 @@ fn collect_source_evidence<R: PlannerResolver>(
     name: &str,
     version: &Version,
     candidate: &ArchiveAnalysis,
+    original_manifest: Option<&[u8]>,
     api: Option<&ApiEvidence>,
     reasons: &mut BTreeSet<DecisionReason>,
 ) -> SourceEvidence {
     let promoted = reasons
         .iter()
         .any(|reason| is_source_promotion_reason(*reason));
-    let source = if promoted {
+    let correspondence = if promoted {
         resolver
-            .source(candidate, api.map(|value| &value.candidate))
+            .source(
+                candidate,
+                original_manifest,
+                api.map(|value| &value.candidate),
+            )
             .unwrap_or_else(|error| {
                 warn!(
                     package = name,
@@ -792,22 +814,65 @@ fn collect_source_evidence<R: PlannerResolver>(
                     error = %format_args!("{error:#}"),
                     "source verification could not produce evidence"
                 );
-                SourceEvidence::Unavailable {
-                    reason: "source-verification-error".to_owned(),
+                SourceCorrespondence {
+                    evidence: SourceEvidence::Unavailable {
+                        reason: "source-verification-error".to_owned(),
+                    },
+                    comparison: None,
                 }
             })
     } else {
-        SourceEvidence::Unavailable {
-            reason: "not-promoted".to_owned(),
+        SourceCorrespondence {
+            evidence: SourceEvidence::Unavailable {
+                reason: "not-promoted".to_owned(),
+            },
+            comparison: None,
         }
     };
-    if promoted && matches!(source, SourceEvidence::Unavailable { .. }) {
+    log_source_correspondence(name, version, &correspondence);
+    if promoted && matches!(correspondence.evidence, SourceEvidence::Unavailable { .. }) {
         reasons.insert(DecisionReason::SourceUnavailable);
     }
-    if matches!(source, SourceEvidence::Mismatch { .. }) {
+    if matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }) {
         reasons.insert(DecisionReason::SourceMismatch);
     }
-    source
+    correspondence.evidence
+}
+
+/// Records why a source comparison produced the evidence it did.
+fn log_source_correspondence(name: &str, version: &Version, correspondence: &SourceCorrespondence) {
+    if let SourceEvidence::Unavailable { reason } = &correspondence.evidence {
+        if reason != "not-promoted" {
+            info!(
+                package = name,
+                version = %version,
+                reason,
+                "source correspondence is unavailable"
+            );
+        }
+    }
+    if let Some(comparison) = &correspondence.comparison {
+        if comparison.located_path {
+            info!(
+                package = name,
+                version = %version,
+                path_in_vcs = %comparison.path_in_vcs,
+                "source correspondence located the package directory"
+            );
+        }
+        let differences = comparison.describe_differences();
+        if differences.is_empty() {
+            return;
+        }
+        warn!(
+            package = name,
+            version = %version,
+            path_in_vcs = %comparison.path_in_vcs,
+            located_path = comparison.located_path,
+            differences = %differences,
+            "source correspondence found archive members that differ or are missing"
+        );
+    }
 }
 
 fn planned_base_identity(

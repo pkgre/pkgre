@@ -16,7 +16,7 @@ use serde_json::json;
 use super::inspect::InspectionResolver;
 use super::workflow::PlannerResolver;
 use super::{
-    AdmissionEvidence, AdmissionManifest, SourceEvidence, UtcTimestamp,
+    AdmissionEvidence, AdmissionManifest, SourceCorrespondence, SourceEvidence, UtcTimestamp,
     apply::apply_admission_manifest_with, inspect::inspect_update_candidate_with,
     load_admission_manifest, serialize_admission_manifest, validate_admission_inventory,
     workflow::plan_exact_update_with,
@@ -677,11 +677,15 @@ impl PlannerResolver for FixtureResolver {
     fn source(
         &self,
         _: &super::ArchiveAnalysis,
+        _: Option<&[u8]>,
         _: Option<&super::ApiVersionEvidence>,
-    ) -> Result<SourceEvidence> {
+    ) -> Result<SourceCorrespondence> {
         self.source_calls.set(self.source_calls.get() + 1);
-        Ok(SourceEvidence::Unavailable {
-            reason: "fixture-no-public-source".to_owned(),
+        Ok(SourceCorrespondence {
+            evidence: SourceEvidence::Unavailable {
+                reason: "fixture-no-public-source".to_owned(),
+            },
+            comparison: None,
         })
     }
 }

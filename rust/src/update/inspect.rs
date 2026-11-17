@@ -12,12 +12,12 @@ use crate::import;
 
 use super::workflow::{LivePlannerResolver, PlannerResolver, recompute_admission_plan_with};
 use super::{
-    AdmissionManifest, ArchiveAnalysis, ArchiveDelta, SourceEvidence, UpdateCandidate, UpdatePlan,
-    UtcTimestamp, candidate_facts_sha256, compare_archive_analyses, inspect_crate_archive,
-    load_admission_manifest,
+    AdmissionManifest, ArchiveAnalysis, ArchiveDelta, ComparisonReport, SourceEvidence,
+    UpdateCandidate, UpdatePlan, UtcTimestamp, candidate_facts_sha256, compare_archive_analyses,
+    inspect_crate_archive, inspect_crate_archive_capturing, load_admission_manifest,
 };
 
-const INSPECTION_SCHEMA: u32 = 1;
+const INSPECTION_SCHEMA: u32 = 2;
 const README: &str = "pkgre inert admission inspection\n\nThe .crate files are untrusted upstream input retained for human review.\nDo not execute package files, build scripts, examples, binaries, or repository hooks.\ninspection.toml contains bounded parser results from a fresh recomputation of the admission request.\n";
 
 /// Canonical bounded evidence emitted beside exact untrusted `.crate` archives.
@@ -34,6 +34,7 @@ struct InspectionReport<'a> {
     base_analysis: Option<&'a ArchiveAnalysis>,
     archive_delta: Option<&'a ArchiveDelta>,
     source_evidence: &'a SourceEvidence,
+    source_comparison: Option<&'a ComparisonReport>,
 }
 
 pub(crate) trait InspectionResolver {
@@ -111,7 +112,7 @@ pub(crate) fn inspect_update_candidate_with<R: PlannerResolver + InspectionResol
     materialize_recomputed_candidate(&plan, &plan.candidates[0], output, resolver)
 }
 
-fn materialize_recomputed_candidate<R: InspectionResolver>(
+fn materialize_recomputed_candidate<R: InspectionResolver + PlannerResolver>(
     plan: &UpdatePlan,
     candidate: &UpdateCandidate,
     output: &Path,
@@ -120,11 +121,13 @@ fn materialize_recomputed_candidate<R: InspectionResolver>(
     validate_output_destination(output)?;
     let name = &candidate.name;
     let version = &candidate.candidate.version;
-    let candidate_archive = resolver
-        .archive(name, version, &candidate.candidate.crate_sha256)
-        .with_context(|| format!("fetch inspection candidate {name} {version}"))?;
-    let candidate_analysis = inspect_crate_archive(name, version, &candidate_archive)
-        .with_context(|| format!("inertly inspect candidate {name} {version}"))?;
+    let candidate_archive =
+        InspectionResolver::archive(resolver, name, version, &candidate.candidate.crate_sha256)
+            .with_context(|| format!("fetch inspection candidate {name} {version}"))?;
+    let (candidate_analysis, mut contents) =
+        inspect_crate_archive_capturing(name, version, &candidate_archive, &["Cargo.toml.orig"])
+            .with_context(|| format!("inertly inspect candidate {name} {version}"))?;
+    let original_manifest = contents.remove("Cargo.toml.orig");
     ensure!(
         super::ArchiveSummary::from_analysis(&candidate_analysis)? == candidate.candidate_archive,
         "candidate archive analysis differs from recomputed admission evidence"
@@ -132,9 +135,9 @@ fn materialize_recomputed_candidate<R: InspectionResolver>(
 
     let (base_archive, base_analysis, delta) = match (&candidate.base, &candidate.base_archive) {
         (Some(base), Some(expected_analysis)) => {
-            let archive = resolver
-                .archive(name, &base.version, &base.crate_sha256)
-                .with_context(|| format!("fetch inspection base {name} {}", base.version))?;
+            let archive =
+                InspectionResolver::archive(resolver, name, &base.version, &base.crate_sha256)
+                    .with_context(|| format!("fetch inspection base {name} {}", base.version))?;
             let analysis = inspect_crate_archive(name, &base.version, &archive)
                 .with_context(|| format!("inertly inspect base {name} {}", base.version))?;
             ensure!(
@@ -158,6 +161,12 @@ fn materialize_recomputed_candidate<R: InspectionResolver>(
         _ => anyhow::bail!("candidate base identity and archive analysis disagree"),
     };
 
+    let source_comparison = recomputed_comparison(
+        candidate,
+        &candidate_analysis,
+        original_manifest.as_deref(),
+        resolver,
+    )?;
     let report = InspectionReport {
         schema: INSPECTION_SCHEMA,
         indexer_version: &plan.indexer_version,
@@ -169,11 +178,39 @@ fn materialize_recomputed_candidate<R: InspectionResolver>(
         base_analysis: base_analysis.as_ref(),
         archive_delta: delta.as_ref(),
         source_evidence: &candidate.source,
+        source_comparison: source_comparison.as_ref(),
     };
     let report = toml::to_string_pretty(&report)
         .context("serialize canonical update inspection report")?
         .into_bytes();
     write_inspection_directory(output, &report, &candidate_archive, base_archive.as_deref())
+}
+
+/// Recomputes the per-file source comparison behind one candidate's promoted evidence.
+///
+/// The comparison is deterministic, so inspection can show the archive paths and dispositions that
+/// the plan hashed into `comparison-sha256`; a candidate whose evidence was not promoted has none.
+fn recomputed_comparison<R: PlannerResolver>(
+    candidate: &UpdateCandidate,
+    analysis: &ArchiveAnalysis,
+    original_manifest: Option<&[u8]>,
+    resolver: &R,
+) -> Result<Option<ComparisonReport>> {
+    if matches!(candidate.source, SourceEvidence::Unavailable { .. }) {
+        return Ok(None);
+    }
+    let correspondence = resolver
+        .source(
+            analysis,
+            original_manifest,
+            candidate.api.as_ref().map(|api| &api.candidate),
+        )
+        .context("recompute source correspondence for inspection")?;
+    ensure!(
+        correspondence.evidence == candidate.source,
+        "recomputed source correspondence differs from recomputed admission evidence"
+    );
+    Ok(correspondence.comparison)
 }
 
 fn validate_output_destination(output: &Path) -> Result<()> {
@@ -245,11 +282,14 @@ mod tests {
 
     use flate2::{Compression, write::GzEncoder};
 
+    use anyhow::bail;
+
     use super::*;
     use crate::artifact::sha256_bytes;
     use crate::update::{
-        ArchiveSummary, DecisionReason, DependencyDelta, PackageActivity, PlannedIdentity,
-        UpdateDecision, UpdatePlan,
+        ApiVersionEvidence, ArchiveSummary, ComparisonReport, DecisionReason, DependencyDelta,
+        FileComparison, PackageActivity, PlannedIdentity, SourceCorrespondence, UpdateDecision,
+        UpdatePlan,
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -266,10 +306,56 @@ mod tests {
         }
     }
 
+    impl PlannerResolver for FakeResolver {
+        fn history(&self, name: &str) -> Result<crate::import::CratesIoHistory> {
+            bail!("fixture has no crates.io history for {name}")
+        }
+
+        fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>> {
+            InspectionResolver::archive(self, name, version, checksum)
+        }
+
+        fn api(&self, name: &str) -> Result<Vec<u8>> {
+            bail!("fixture has no crates.io API evidence for {name}")
+        }
+
+        fn source(
+            &self,
+            _: &ArchiveAnalysis,
+            _: Option<&[u8]>,
+            _: Option<&ApiVersionEvidence>,
+        ) -> Result<SourceCorrespondence> {
+            bail!("fixture has no public source")
+        }
+    }
+
     struct PanicResolver;
 
     impl InspectionResolver for PanicResolver {
         fn archive(&self, _: &str, _: &Version, _: &str) -> Result<Vec<u8>> {
+            panic!("unsafe output must be rejected before network resolution")
+        }
+    }
+
+    impl PlannerResolver for PanicResolver {
+        fn history(&self, _: &str) -> Result<crate::import::CratesIoHistory> {
+            panic!("unsafe output must be rejected before network resolution")
+        }
+
+        fn archive(&self, _: &str, _: &Version, _: &str) -> Result<Vec<u8>> {
+            panic!("unsafe output must be rejected before network resolution")
+        }
+
+        fn api(&self, _: &str) -> Result<Vec<u8>> {
+            panic!("unsafe output must be rejected before network resolution")
+        }
+
+        fn source(
+            &self,
+            _: &ArchiveAnalysis,
+            _: Option<&[u8]>,
+            _: Option<&ApiVersionEvidence>,
+        ) -> Result<SourceCorrespondence> {
             panic!("unsafe output must be rejected before network resolution")
         }
     }
@@ -297,7 +383,7 @@ mod tests {
         assert_eq!(fs::read(output.join("candidate.crate")).unwrap(), archive);
         assert!(!output.join("base.crate").exists());
         let report = fs::read_to_string(output.join("inspection.toml")).unwrap();
-        assert!(report.contains("schema = 1"));
+        assert!(report.contains("schema = 2"));
         assert!(report.contains("candidate-facts-sha256"));
         assert!(report.contains("build.rs"));
         assert!(
@@ -352,6 +438,98 @@ mod tests {
                 .is_err()
         );
         assert!(!real.join("review").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// One resolver that reports a promoted comparison for the fixture archive.
+    struct ComparedResolver {
+        archive: Vec<u8>,
+        correspondence: SourceCorrespondence,
+    }
+
+    impl InspectionResolver for ComparedResolver {
+        fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>> {
+            ensure!(name == "demo" && version == &Version::parse("1.0.0")?);
+            ensure!(checksum == sha256_bytes(&self.archive));
+            Ok(self.archive.clone())
+        }
+    }
+
+    impl PlannerResolver for ComparedResolver {
+        fn history(&self, name: &str) -> Result<crate::import::CratesIoHistory> {
+            bail!("fixture has no crates.io history for {name}")
+        }
+
+        fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>> {
+            InspectionResolver::archive(self, name, version, checksum)
+        }
+
+        fn api(&self, name: &str) -> Result<Vec<u8>> {
+            bail!("fixture has no crates.io API evidence for {name}")
+        }
+
+        fn source(
+            &self,
+            _: &ArchiveAnalysis,
+            _: Option<&[u8]>,
+            _: Option<&ApiVersionEvidence>,
+        ) -> Result<SourceCorrespondence> {
+            Ok(self.correspondence.clone())
+        }
+    }
+
+    #[test]
+    fn inspection_records_the_per_file_source_comparison() {
+        let root = temporary_directory("source-comparison");
+        let archive = crate_archive("demo-1.0.0/lib.rs", b"source\n", 0o644);
+        let mut plan = make_plan(&archive);
+        let evidence = SourceEvidence::PublisherAsserted {
+            repository: "https://github.com/example/demo".to_owned(),
+            commit: "01".repeat(20),
+            path: String::new(),
+            comparison_sha256: "44".repeat(32),
+        };
+        plan.candidates[0].source = evidence.clone();
+        plan.candidates[0].reasons = vec![
+            DecisionReason::NewPackage,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let output = root.join("review");
+        materialize_recomputed_candidate(
+            &plan,
+            &plan.candidates[0],
+            &output,
+            &ComparedResolver {
+                archive: archive.clone(),
+                correspondence: SourceCorrespondence {
+                    evidence,
+                    comparison: Some(ComparisonReport {
+                        path_in_vcs: String::new(),
+                        located_path: false,
+                        files: vec![FileComparison {
+                            archive_path: "lib.rs".to_owned(),
+                            expected_path: Some("lib.rs".to_owned()),
+                            compared_path: Some("lib.rs".to_owned()),
+                            resolved_path: None,
+                            submodule: None,
+                            submodule_commit: None,
+                            copied: false,
+                            archive_sha256: sha256_bytes(b"source\n"),
+                            repository_sha256: Some(sha256_bytes(b"source\n")),
+                            archive_executable: false,
+                            repository_executable: Some(false),
+                            disposition: "match",
+                        }],
+                    }),
+                },
+            },
+        )
+        .unwrap();
+
+        let report = fs::read_to_string(output.join("inspection.toml")).unwrap();
+        assert!(report.contains("[source-comparison]"), "{report}");
+        assert!(report.contains("archive-path = \"lib.rs\""), "{report}");
+        assert!(report.contains("disposition = \"match\""), "{report}");
         fs::remove_dir_all(root).unwrap();
     }
 

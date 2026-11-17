@@ -74,7 +74,7 @@ name = "example"
 version = "1.2.3"
 ```
 
-Template includes automatic + review-required, omits blocked, refuses existing output, and proves catalog fingerprint stable.
+Template includes automatic + review-required, omits blocked, refuses existing output, and proves catalog fingerprint stable. Each candidate's log line names its decision and reasons; a promoted source comparison also logs why its evidence is `Unavailable` (for example `repository-package-path-ambiguous`, `repository-symlink-escapes-repository`, `repository-submodule-fetch-failed`) or the first 20 archive paths that differ from the public tree or are missing from it, and the package directory it located when the archive carried no `path_in_vcs`.
 
 3. Review scope/logs; remove unwanted complete request blocks; keep canonical order. Inspect selected exact request:
 
@@ -82,7 +82,7 @@ Template includes automatic + review-required, omits blocked, refuses existing o
 $ pkgre-rust update-inspect registry 2026-08-24-routine.toml example 1.2.3 review-example-1.2.3
 ```
 
-Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted.
+Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted. `inspection.toml` carries the complete source comparison report beside its digest: every archive member's expected path, compared path, resolved path after a symbolic link or submodule, the submodule it was read from, whether Cargo copied it into the package root, both digests and modes, and its disposition (`match`, `different`, `missing`, `cargo-generated`).
 
 4. Optionally add typed evidence beneath request:
 
