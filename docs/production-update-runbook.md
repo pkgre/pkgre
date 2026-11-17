@@ -138,7 +138,7 @@ Selection/guardrails:
 - dormant wake-up = first ≥365-day adjacent publication gap after locked base; all upstream rows, including yanked/prerelease, count as activity;
 - evidence = complete sparse history, exact base/candidate rows + checksum-verified archives, bounded archive/build/dependency delta, version-scoped crates.io API facts, and promoted public-source correspondence;
 - `automatic`:no escalation reason; included;
-- `review-required`:new/inactive/dormant/new-dependency/build-surface/publisher/repository/source-unavailable escalation; included and directly applyable;
+- `review-required`:new/inactive/dormant/new-dependency/build-surface/line-endings/file-mode/publisher/repository/source-unavailable escalation; included and directly applyable;
 - `blocked`:unknown dependency home, forbidden category edge, or source mismatch; logged but omitted; never add it manually.
 
 `EXPECTED_CANDIDATES=0` → stop without branch/catalog PR. `BLOCKED>0` → preserve log, verify every blocked identity is absent from the manifest, report/fix separately; the nonblocked batch may proceed only if its scope remains intended. Count mismatch/catalog mutation → abort.

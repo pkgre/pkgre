@@ -12,9 +12,10 @@ use crate::import;
 
 use super::workflow::{LivePlannerResolver, PlannerResolver, recompute_admission_plan_with};
 use super::{
-    AdmissionManifest, ArchiveAnalysis, ArchiveDelta, ComparisonReport, SourceEvidence,
-    UpdateCandidate, UpdatePlan, UtcTimestamp, candidate_facts_sha256, compare_archive_analyses,
-    inspect_crate_archive, inspect_crate_archive_capturing, load_admission_manifest,
+    AdmissionManifest, ArchiveAnalysis, ArchiveDelta, ArchiveLineEndings, ComparisonReport,
+    SourceEvidence, UpdateCandidate, UpdatePlan, UtcTimestamp, candidate_facts_sha256,
+    compare_archive_analyses, inspect_crate_archive, inspect_crate_archive_capturing,
+    load_admission_manifest,
 };
 
 const INSPECTION_SCHEMA: u32 = 2;
@@ -124,10 +125,12 @@ fn materialize_recomputed_candidate<R: InspectionResolver + PlannerResolver>(
     let candidate_archive =
         InspectionResolver::archive(resolver, name, version, &candidate.candidate.crate_sha256)
             .with_context(|| format!("fetch inspection candidate {name} {version}"))?;
-    let (candidate_analysis, mut contents) =
+    let mut inspection =
         inspect_crate_archive_capturing(name, version, &candidate_archive, &["Cargo.toml.orig"])
             .with_context(|| format!("inertly inspect candidate {name} {version}"))?;
-    let original_manifest = contents.remove("Cargo.toml.orig");
+    let original_manifest = inspection.captured.remove("Cargo.toml.orig");
+    let candidate_analysis = inspection.analysis;
+    let line_endings = inspection.line_endings;
     ensure!(
         super::ArchiveSummary::from_analysis(&candidate_analysis)? == candidate.candidate_archive,
         "candidate archive analysis differs from recomputed admission evidence"
@@ -164,6 +167,7 @@ fn materialize_recomputed_candidate<R: InspectionResolver + PlannerResolver>(
     let source_comparison = recomputed_comparison(
         candidate,
         &candidate_analysis,
+        &line_endings,
         original_manifest.as_deref(),
         resolver,
     )?;
@@ -193,6 +197,7 @@ fn materialize_recomputed_candidate<R: InspectionResolver + PlannerResolver>(
 fn recomputed_comparison<R: PlannerResolver>(
     candidate: &UpdateCandidate,
     analysis: &ArchiveAnalysis,
+    line_endings: &ArchiveLineEndings,
     original_manifest: Option<&[u8]>,
     resolver: &R,
 ) -> Result<Option<ComparisonReport>> {
@@ -202,6 +207,7 @@ fn recomputed_comparison<R: PlannerResolver>(
     let correspondence = resolver
         .source(
             analysis,
+            line_endings,
             original_manifest,
             candidate.api.as_ref().map(|api| &api.candidate),
         )
@@ -322,6 +328,7 @@ mod tests {
         fn source(
             &self,
             _: &ArchiveAnalysis,
+            _: &ArchiveLineEndings,
             _: Option<&[u8]>,
             _: Option<&ApiVersionEvidence>,
         ) -> Result<SourceCorrespondence> {
@@ -353,6 +360,7 @@ mod tests {
         fn source(
             &self,
             _: &ArchiveAnalysis,
+            _: &ArchiveLineEndings,
             _: Option<&[u8]>,
             _: Option<&ApiVersionEvidence>,
         ) -> Result<SourceCorrespondence> {
@@ -471,6 +479,7 @@ mod tests {
         fn source(
             &self,
             _: &ArchiveAnalysis,
+            _: &ArchiveLineEndings,
             _: Option<&[u8]>,
             _: Option<&ApiVersionEvidence>,
         ) -> Result<SourceCorrespondence> {

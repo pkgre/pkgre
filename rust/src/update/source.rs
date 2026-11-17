@@ -22,7 +22,10 @@ use tracing::debug;
 
 use crate::artifact::sha256_bytes;
 
-use super::{ApiVersionEvidence, ArchiveAnalysis, ArchiveFile, SourceEvidence};
+use super::{
+    ApiVersionEvidence, ArchiveAnalysis, ArchiveFile, ArchiveLineEndings, DecisionReason,
+    SourceEvidence,
+};
 
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 const MAX_GIT_METADATA_BYTES: usize = 64 * 1024;
@@ -95,17 +98,46 @@ impl SourceCorrespondence {
             comparison: None,
         }
     }
+
+    /// The review reasons the promoted comparison's own findings call for: the members that differ
+    /// from the tree only in their line endings, and those that differ only in their executable bit.
+    ///
+    /// A comparison that also found an unexplained difference is a mismatch, so its findings are
+    /// evidence for the reviewer rather than reasons of their own.
+    pub(crate) fn finding_reasons(&self) -> Vec<DecisionReason> {
+        let Some(comparison) = self
+            .comparison
+            .as_ref()
+            .filter(|comparison| comparison.matched())
+        else {
+            return Vec::new();
+        };
+        let mut reasons = Vec::new();
+        if comparison.has_line_endings() {
+            reasons.push(DecisionReason::SourceLineEndings);
+        }
+        if comparison.has_file_mode() {
+            reasons.push(DecisionReason::SourceFileMode);
+        }
+        reasons
+    }
 }
 
 /// Attempts promoted mechanical correspondence between one inert crate analysis and an exact public Git commit.
 ///
-/// Missing/unsupported anchors and public fetch failures produce `Unavailable`; an anchor disagreement or unexplained archive-to-tree difference produces `Mismatch`. Candidate code, hooks, checkouts, submodules, and build tools are never executed.
+/// `line_endings` holds each archive member's digest once every CRLF becomes LF: the analysis keeps
+/// only the members' own digests, so without it the comparison cannot tell a member that differs
+/// only in its line endings from one that differs in bytes. Missing/unsupported anchors and public
+/// fetch failures produce `Unavailable`; an anchor disagreement or unexplained archive-to-tree
+/// difference produces `Mismatch`. Candidate code, hooks, checkouts, submodules, and build tools are
+/// never executed.
 ///
 /// # Errors
 ///
 /// Returns an error only when deterministic local evidence construction fails.
 pub fn verify_source_correspondence(
     archive: &ArchiveAnalysis,
+    line_endings: &ArchiveLineEndings,
     original_manifest: Option<&[u8]>,
     api: Option<&ApiVersionEvidence>,
 ) -> Result<SourceCorrespondence> {
@@ -184,6 +216,7 @@ pub fn verify_source_correspondence(
     promote_source(
         &anchor,
         archive,
+        line_endings,
         original_manifest,
         &checkout,
         &Deadline::new(MAX_COMPARISON_DURATION),
@@ -206,12 +239,14 @@ struct SourceAnchor<'a> {
 fn promote_source(
     anchor: &SourceAnchor<'_>,
     archive: &ArchiveAnalysis,
+    line_endings: &ArchiveLineEndings,
     original_manifest: Option<&[u8]>,
     tree: &dyn GitTree,
     deadline: &Deadline,
 ) -> Result<SourceCorrespondence> {
     let comparison = match compare_archive_to_tree(
         archive,
+        line_endings,
         original_manifest,
         anchor.path_in_vcs,
         tree,
@@ -360,6 +395,32 @@ pub(crate) struct ComparisonReport {
 }
 
 impl ComparisonReport {
+    /// Whether every member agrees with the tree, up to a line-ending or file-mode finding.
+    ///
+    /// A member that is `different` or `missing` is the only thing that makes a comparison a
+    /// mismatch: a member that differs only in its line endings or in its executable bit is a
+    /// finding the decision hands to review.
+    pub(crate) fn matched(&self) -> bool {
+        !self
+            .files
+            .iter()
+            .any(|file| matches!(file.disposition, "different" | "missing"))
+    }
+
+    /// Whether any member differs from the tree only in its line endings.
+    fn has_line_endings(&self) -> bool {
+        self.files
+            .iter()
+            .any(|file| file.disposition == "line-endings")
+    }
+
+    /// Whether any member differs from the tree only in its executable bit.
+    fn has_file_mode(&self) -> bool {
+        self.files
+            .iter()
+            .any(|file| file.disposition == "file-mode")
+    }
+
     /// The archive members that differ from the tree or are missing from it.
     fn differences(&self) -> Vec<(&str, &str)> {
         self.files
@@ -369,11 +430,31 @@ impl ComparisonReport {
             .collect()
     }
 
+    /// The archive members whose only difference from the tree is a line-ending or file-mode one.
+    fn findings(&self) -> Vec<(&str, &str)> {
+        self.files
+            .iter()
+            .filter(|file| matches!(file.disposition, "line-endings" | "file-mode"))
+            .map(|file| (file.archive_path.as_str(), file.disposition))
+            .collect()
+    }
+
     /// Names the first differences for the planning log.
     pub(crate) fn describe_differences(&self) -> String {
         describe_members(
             &self
                 .differences()
+                .into_iter()
+                .map(|(path, disposition)| format!("{path} ({disposition})"))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Names the first findings for the planning log, with the kind of each.
+    pub(crate) fn describe_findings(&self) -> String {
+        describe_members(
+            &self
+                .findings()
                 .into_iter()
                 .map(|(path, disposition)| format!("{path} ({disposition})"))
                 .collect::<Vec<_>>(),
@@ -476,6 +557,10 @@ pub(crate) struct FileComparison {
     pub(crate) package_file_sha256: Option<String>,
     /// The executable bit of that file.
     pub(crate) package_file_executable: Option<bool>,
+    /// `match` when the member equals the tree, and `different` or `missing` when it does not;
+    /// `cargo-generated` for a file Cargo wrote while packaging. The two review findings are
+    /// `line-endings` and `file-mode`, for a member that differs only in its line endings or only
+    /// in its executable bit.
     pub(crate) disposition: &'static str,
 }
 
@@ -522,6 +607,8 @@ trait GitTree {
 
 struct GitBlob {
     sha256: String,
+    /// The digest of the bytes once every CRLF becomes LF; the file's own digest when it holds none.
+    line_endings_sha256: String,
     executable: bool,
 }
 
@@ -549,6 +636,15 @@ enum FileMatch {
     LinkText,
 }
 
+/// The kind of difference one archive member has that the comparison explains and hands to review.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileFinding {
+    /// The member's bytes equal the tree file's once every CRLF in both becomes LF.
+    LineEndings,
+    /// The member's bytes equal the tree file's, and its executable bit differs.
+    FileMode,
+}
+
 impl MemberSource {
     /// How the member corresponds to this source, if it does.
     fn matched(&self, file: &ArchiveFile) -> Option<FileMatch> {
@@ -562,6 +658,27 @@ impl MemberSource {
             .as_ref()
             .filter(|blob| equals(blob))
             .map(|_| FileMatch::LinkText)
+    }
+
+    /// The finding that explains a member this source does not match, when the difference is only
+    /// in the member's line endings or only in its executable bit.
+    ///
+    /// Both findings are about the regular file the path reaches. A symbolic link's own text is
+    /// offered as a plain file holding a path, so it has no executable bit in the tree to differ
+    /// from and no source whose line endings a difference could explain.
+    fn finding(
+        &self,
+        file: &ArchiveFile,
+        line_endings: &ArchiveLineEndings,
+    ) -> Option<FileFinding> {
+        let blob = self.file.as_ref()?;
+        let archive_executable = file.mode & 0o111 != 0;
+        if blob.sha256 == file.sha256 {
+            return (blob.executable != archive_executable).then_some(FileFinding::FileMode);
+        }
+        (blob.executable == archive_executable
+            && blob.line_endings_sha256 == line_endings.digest(&file.path, &file.sha256))
+        .then_some(FileFinding::LineEndings)
     }
 
     /// The bytes the member matched.
@@ -791,13 +908,22 @@ impl<'a> TreeResolver<'a> {
         let resolution = self.resolve(path)?;
         let file = self
             .file_bytes(&resolution, MAX_GIT_BLOB_BYTES)?
-            .map(|bytes| GitBlob {
-                sha256: sha256_bytes(&bytes),
-                executable: resolution.file.as_ref().is_some_and(|file| file.executable),
+            .map(|bytes| {
+                let sha256 = sha256_bytes(&bytes);
+                GitBlob {
+                    line_endings_sha256: ArchiveLineEndings::digest_of(&bytes, &sha256),
+                    sha256,
+                    executable: resolution.file.as_ref().is_some_and(|file| file.executable),
+                }
             });
-        let link = resolution.link_text.as_deref().map(|target| GitBlob {
-            sha256: sha256_bytes(target.as_bytes()),
-            executable: false,
+        let link = resolution.link_text.as_deref().map(|target| {
+            let sha256 = sha256_bytes(target.as_bytes());
+            GitBlob {
+                // A link's own text is rejected when it holds a newline, so it holds no CRLF.
+                line_endings_sha256: sha256.clone(),
+                sha256,
+                executable: false,
+            }
         });
         Ok(MemberSource {
             resolved_path: (resolution.path != path).then_some(resolution.path),
@@ -999,13 +1125,20 @@ fn resolve_repository_path(base: &str, relative: &str) -> Option<String> {
 
 fn compare_archive_to_tree(
     archive: &ArchiveAnalysis,
+    line_endings: &ArchiveLineEndings,
     original_manifest: Option<&[u8]>,
     path_in_vcs: Option<&str>,
     tree: &dyn GitTree,
     deadline: &Deadline,
 ) -> Result<ComparisonResult> {
-    let (report, matches) =
-        build_comparison_report(archive, original_manifest, path_in_vcs, tree, deadline)?;
+    let (report, matches) = build_comparison_report(
+        archive,
+        line_endings,
+        original_manifest,
+        path_in_vcs,
+        tree,
+        deadline,
+    )?;
     let canonical = serde_json::to_vec(&report).context("serialize source comparison report")?;
     Ok(ComparisonResult {
         matches,
@@ -1014,10 +1147,11 @@ fn compare_archive_to_tree(
     })
 }
 
-/// Compares every archive member with the exact public tree, returning the report and whether
-/// every compared member matched.
+/// Compares every archive member with the exact public tree, returning the report and whether every
+/// compared member matched or differed only in its line endings or its executable bit.
 fn build_comparison_report(
     archive: &ArchiveAnalysis,
+    line_endings: &ArchiveLineEndings,
     original_manifest: Option<&[u8]>,
     path_in_vcs: Option<&str>,
     tree: &dyn GitTree,
@@ -1032,25 +1166,26 @@ fn build_comparison_report(
         .map(|file| file.path.as_str())
         .collect::<BTreeSet<_>>();
     let mut files = Vec::with_capacity(archive.files.len());
-    let mut matches = true;
+    let mut mismatched = false;
     for file in &archive.files {
         if is_cargo_generated(&file.path, &archive_paths) {
             files.push(ignored_comparison(file));
             continue;
         }
-        let member = match compare_member(&resolver, file, &path_in_vcs, &copied_files) {
-            Ok(member) => member,
-            Err(error) => {
-                // A difference is already established, so the archive is blocked whatever the
-                // remaining members hold; an exhausted budget cannot excuse it.
-                if !matches && is_deadline_error(&error) {
-                    break;
+        let member =
+            match compare_member(&resolver, file, &path_in_vcs, &copied_files, line_endings) {
+                Ok(member) => member,
+                Err(error) => {
+                    // A mismatch is already established, so the archive is blocked whatever the
+                    // remaining members hold; an exhausted budget cannot excuse it.
+                    if mismatched && is_deadline_error(&error) {
+                        break;
+                    }
+                    return Err(error);
                 }
-                return Err(error);
-            }
-        };
-        if member.disposition != "match" {
-            matches = false;
+            };
+        if matches!(member.disposition, "different" | "missing") {
+            mismatched = true;
         }
         files.push(member);
     }
@@ -1059,7 +1194,7 @@ fn build_comparison_report(
         located_path,
         files,
     };
-    Ok((report, matches))
+    Ok((report, !mismatched))
 }
 
 /// Compares one archive member with the repository file Cargo packaged it from.
@@ -1079,11 +1214,20 @@ fn build_comparison_report(
 /// the checkout it packaged from had the link as one, which a checkout without symbolic links
 /// writes as a file holding the target's text. Only a link that names an entry in the tree offers
 /// its text, and only when that text is a plausible path.
+///
+/// A member that matches the file it was compared with in neither bytes nor mode is `different`,
+/// unless that file is the same source up to the member's line endings or its executable bit: those
+/// two are recorded as the findings `line-endings` and `file-mode`, and the decision hands them to
+/// review. Neither finding is inert. rustc reads CRLF in Rust source as LF, and Cargo ignores the
+/// executable bit, but a file read as bytes, through `include_str!` or `include_bytes!`, by a build
+/// script, a proc macro or the crate's own code, keeps them, and a build step can run a file only
+/// when its executable bit is set. The review checks how each named member is read or run.
 fn compare_member(
     resolver: &TreeResolver<'_>,
     file: &ArchiveFile,
     path_in_vcs: &str,
     copied_files: &BTreeMap<String, String>,
+    line_endings: &ArchiveLineEndings,
 ) -> Result<FileComparison> {
     let expected_path = join_vcs_path(path_in_vcs, &source_path_for_archive_file(&file.path));
     let copy_source = copied_files.get(&file.path);
@@ -1137,10 +1281,16 @@ fn compare_member(
         Some(matched) => source.matched_blob(matched),
         None => source.held(),
     };
-    let disposition = match matched {
-        Some(_) => "match",
-        None if held.is_some() => "different",
-        None => "missing",
+    let finding = match matched {
+        Some(_) => None,
+        None => source.finding(file, line_endings),
+    };
+    let disposition = match (matched, finding) {
+        (Some(_), _) => "match",
+        (None, Some(FileFinding::LineEndings)) => "line-endings",
+        (None, Some(FileFinding::FileMode)) => "file-mode",
+        (None, None) if held.is_some() => "different",
+        (None, None) => "missing",
     };
     let repository_sha256 = held.map(|blob| blob.sha256.clone());
     let repository_executable = held.map(|blob| blob.executable);
@@ -2326,9 +2476,26 @@ mod tests {
         path_in_vcs: Option<&str>,
         tree: &FakeTree,
     ) -> SourceCorrespondence {
+        promoted_with_line_endings(archive, original_manifest, path_in_vcs, tree, &[])
+    }
+
+    /// Promotes one comparison whose archive holds the given members, so the archive's line-ending
+    /// digests are the ones an inspection of those bytes records.
+    fn promoted_with_line_endings(
+        archive: &ArchiveAnalysis,
+        original_manifest: Option<&[u8]>,
+        path_in_vcs: Option<&str>,
+        tree: &FakeTree,
+        members: &[(&str, &[u8])],
+    ) -> SourceCorrespondence {
+        let mut line_endings = ArchiveLineEndings::default();
+        for (path, contents) in members {
+            line_endings.record(path, contents);
+        }
         promote_source(
             &anchor(path_in_vcs),
             archive,
+            &line_endings,
             original_manifest,
             tree,
             &Deadline::new(MAX_COMPARISON_DURATION),
@@ -2582,6 +2749,271 @@ mod tests {
             nested.expected_path.as_deref(),
             Some("tests/fixtures/Cargo.lock")
         );
+    }
+
+    /// One archive member with the given mode, which [`file`] and [`executable`] do not take.
+    fn with_mode(mut member: ArchiveFile, mode: u32) -> ArchiveFile {
+        member.mode = mode;
+        member
+    }
+
+    /// Compares one package whose single source file is `src/lib.rs`, the archive holding `packaged`
+    /// bytes at `archive_mode` and the tree holding `tracked` bytes at `tracked_executable`.
+    fn compare_single_source(
+        packaged: &[u8],
+        archive_mode: u32,
+        tracked: &[u8],
+        tracked_executable: bool,
+    ) -> SourceCorrespondence {
+        let archive = archive(
+            vec![with_mode(file("src/lib.rs", packaged), archive_mode)],
+            Some(""),
+        );
+        let tree = FakeTree::new([(
+            "src/lib.rs",
+            FakeNode::File {
+                contents: tracked.to_vec(),
+                executable: tracked_executable,
+            },
+        )]);
+        promoted_with_line_endings(&archive, None, Some(""), &tree, &[("src/lib.rs", packaged)])
+    }
+
+    #[test]
+    fn line_ending_only_member_is_a_review_finding() {
+        let correspondence =
+            compare_single_source(b"fn main() {}\r\n", 0o644, b"fn main() {}\n", false);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "a line-ending-only difference is a match, got {:?}",
+            correspondence.evidence
+        );
+        let member = comparison(report(&correspondence), "src/lib.rs");
+        assert_eq!(member.disposition, "line-endings");
+        assert_eq!(member.archive_sha256, sha256_bytes(b"fn main() {}\r\n"));
+        assert_eq!(
+            member.repository_sha256.as_deref(),
+            Some(sha256_bytes(b"fn main() {}\n").as_str())
+        );
+        assert!(report(&correspondence).describe_differences().is_empty());
+        assert_eq!(
+            report(&correspondence).describe_findings(),
+            "src/lib.rs (line-endings)"
+        );
+        assert_eq!(
+            correspondence.finding_reasons(),
+            [DecisionReason::SourceLineEndings]
+        );
+    }
+
+    #[test]
+    fn line_ending_difference_is_symmetric_between_archive_and_tree() {
+        let correspondence =
+            compare_single_source(b"fn main() {}\n", 0o644, b"fn main() {}\r\n", false);
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "line-endings"
+        );
+        assert_eq!(
+            correspondence.finding_reasons(),
+            [DecisionReason::SourceLineEndings]
+        );
+    }
+
+    #[test]
+    fn line_ending_member_with_one_more_changed_byte_is_different() {
+        let correspondence =
+            compare_single_source(b"fn main() {}\r\n", 0o644, b"fn other() {}\n", false);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "different"
+        );
+        assert!(correspondence.finding_reasons().is_empty());
+    }
+
+    #[test]
+    fn lone_carriage_return_is_a_difference_in_bytes() {
+        let correspondence =
+            compare_single_source(b"fn main() {}\r", 0o644, b"fn main() {}", false);
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "different"
+        );
+        assert!(correspondence.finding_reasons().is_empty());
+    }
+
+    #[test]
+    fn only_the_carriage_return_line_feed_pair_is_normalized() {
+        // The member holds a CRLF as well, so this reaches the rewrite rather than the pre-check:
+        // a normalizer that turns every CR into LF would call these bytes a finding.
+        let correspondence = compare_single_source(b"a\r\nb\rc", 0o644, b"a\nb\nc", false);
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "different"
+        );
+        assert!(correspondence.finding_reasons().is_empty());
+    }
+
+    #[test]
+    fn a_trailing_newline_added_or_removed_is_a_difference_in_bytes() {
+        for (packaged, tracked) in [
+            (&b"fn main() {}\r\n"[..], &b"fn main() {}"[..]),
+            (&b"fn main() {}"[..], &b"fn main() {}\n"[..]),
+        ] {
+            let correspondence = compare_single_source(packaged, 0o644, tracked, false);
+            assert_eq!(
+                comparison(report(&correspondence), "src/lib.rs").disposition,
+                "different",
+                "for packaged {packaged:?} and tracked {tracked:?}"
+            );
+            assert!(correspondence.finding_reasons().is_empty());
+        }
+    }
+
+    #[test]
+    fn file_mode_only_member_is_a_review_finding_in_either_direction() {
+        for (archive_mode, tracked_executable) in [(0o755, false), (0o644, true)] {
+            let correspondence = compare_single_source(
+                b"fn main() {}\n",
+                archive_mode,
+                b"fn main() {}\n",
+                tracked_executable,
+            );
+            assert!(
+                matches!(
+                    correspondence.evidence,
+                    SourceEvidence::PublisherAsserted { .. }
+                ),
+                "a file-mode-only difference is a match, got {:?}",
+                correspondence.evidence
+            );
+            let member = comparison(report(&correspondence), "src/lib.rs");
+            assert_eq!(member.disposition, "file-mode");
+            assert_eq!(member.archive_executable, archive_mode & 0o111 != 0);
+            assert_eq!(member.repository_executable, Some(tracked_executable));
+            assert_eq!(
+                correspondence.finding_reasons(),
+                [DecisionReason::SourceFileMode]
+            );
+        }
+    }
+
+    #[test]
+    fn file_mode_with_a_difference_in_bytes_is_different() {
+        let correspondence =
+            compare_single_source(b"fn main() {}\n", 0o755, b"fn other() {}\n", false);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "different"
+        );
+    }
+
+    #[test]
+    fn line_endings_with_a_different_executable_bit_are_different() {
+        let correspondence =
+            compare_single_source(b"fn main() {}\r\n", 0o755, b"fn main() {}\n", false);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        assert_eq!(
+            comparison(report(&correspondence), "src/lib.rs").disposition,
+            "different"
+        );
+        assert!(correspondence.finding_reasons().is_empty());
+    }
+
+    #[test]
+    fn a_comparison_carries_the_reason_of_each_finding_it_holds() {
+        let archive = archive(
+            vec![
+                file("src/crlf.rs", b"first\r\n"),
+                with_mode(file("src/tool.rs", b"second\n"), 0o755),
+            ],
+            Some(""),
+        );
+        let tree = FakeTree::new([
+            ("src/crlf.rs", text("first\n")),
+            (
+                "src/tool.rs",
+                FakeNode::File {
+                    contents: b"second\n".to_vec(),
+                    executable: false,
+                },
+            ),
+        ]);
+        let correspondence = promoted_with_line_endings(
+            &archive,
+            None,
+            Some(""),
+            &tree,
+            &[("src/crlf.rs", b"first\r\n")],
+        );
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        assert_eq!(
+            report(&correspondence).describe_findings(),
+            "src/crlf.rs (line-endings), src/tool.rs (file-mode)"
+        );
+        assert_eq!(
+            correspondence.finding_reasons(),
+            [
+                DecisionReason::SourceLineEndings,
+                DecisionReason::SourceFileMode
+            ]
+        );
+    }
+
+    #[test]
+    fn a_finding_beside_an_unexplained_difference_is_still_a_mismatch() {
+        let archive = archive(
+            vec![
+                file("src/crlf.rs", b"first\r\n"),
+                file("src/other.rs", b"changed\n"),
+            ],
+            Some(""),
+        );
+        let tree = FakeTree::new([
+            ("src/crlf.rs", text("first\n")),
+            ("src/other.rs", text("source\n")),
+        ]);
+        let correspondence = promoted_with_line_endings(
+            &archive,
+            None,
+            Some(""),
+            &tree,
+            &[("src/crlf.rs", b"first\r\n")],
+        );
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        assert_eq!(
+            comparison(report(&correspondence), "src/crlf.rs").disposition,
+            "line-endings"
+        );
+        assert_eq!(
+            report(&correspondence).describe_differences(),
+            "src/other.rs (different)"
+        );
+        assert!(correspondence.finding_reasons().is_empty());
     }
 
     #[test]
@@ -3921,13 +4353,20 @@ build.rs (copied, copy-ambiguous; match; compared with tools/build.rs)"
             Some("member"),
         );
         let correspondence = promoted(&plain, Some(b"manifest"), Some("member"), &tree);
-        assert!(matches!(
-            correspondence.evidence,
-            SourceEvidence::Mismatch { .. }
-        ));
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "only the executable bit differs: {:?}",
+            correspondence.evidence
+        );
+        let run = comparison(report(&correspondence), "run");
+        assert_eq!(run.disposition, "file-mode");
+        assert_eq!(run.repository_executable, Some(true));
         assert_eq!(
-            comparison(report(&correspondence), "run").disposition,
-            "different"
+            correspondence.finding_reasons(),
+            [DecisionReason::SourceFileMode]
         );
     }
 
@@ -4116,6 +4555,7 @@ build.rs (copied, copy-ambiguous; match; compared with tools/build.rs)"
         promote_source(
             &anchor(Some("")),
             &archive,
+            &ArchiveLineEndings::default(),
             Some(b"manifest"),
             &tree,
             &Deadline::new(SHORT_BUDGET),
@@ -4141,6 +4581,47 @@ build.rs (copied, copy-ambiguous; match; compared with tools/build.rs)"
     fn exhausted_budget_before_a_difference_is_unavailable() {
         let correspondence = slow_comparison("Cargo.toml");
         assert_eq!(unavailable_reason(&correspondence), DEADLINE_REASON);
+    }
+
+    /// One archive whose second member differs only in its line endings, compared against a tree
+    /// that is slow on that member's path, so the budget runs out on the member after it.
+    fn slow_comparison_after_a_finding() -> SourceCorrespondence {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("crlf.rs", b"first\r\n"),
+                file("later.rs", b"later"),
+            ],
+            Some(""),
+        );
+        let tree = SlowTree {
+            tree: FakeTree::new([
+                ("Cargo.toml", text("manifest")),
+                ("crlf.rs", text("first\n")),
+                ("later.rs", text("later")),
+            ]),
+            slow_path: "crlf.rs".to_owned(),
+        };
+        let mut line_endings = ArchiveLineEndings::default();
+        line_endings.record("crlf.rs", b"first\r\n");
+        promote_source(
+            &anchor(Some("")),
+            &archive,
+            &line_endings,
+            Some(b"manifest"),
+            &tree,
+            &Deadline::new(SHORT_BUDGET),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn exhausted_budget_after_only_a_finding_is_unavailable() {
+        // A finding is not a mismatch, so the members after it were never compared: the result is
+        // unavailable, not a match that hides a member the comparison did not read.
+        let correspondence = slow_comparison_after_a_finding();
+        assert_eq!(unavailable_reason(&correspondence), DEADLINE_REASON);
+        assert!(correspondence.comparison.is_none());
     }
 
     #[test]

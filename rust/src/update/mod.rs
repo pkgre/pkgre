@@ -22,7 +22,9 @@ pub(crate) use admission::{validate_admission_inventory, validate_admission_tree
 pub use api::parse_crates_io_api_evidence;
 pub use apply::apply_admission_manifest;
 pub(crate) use archive::inspect_crate_archive_capturing;
-pub use archive::{ArchiveAnalysis, ArchiveFile, EmbeddedVcsInfo, inspect_crate_archive};
+pub use archive::{
+    ArchiveAnalysis, ArchiveFile, ArchiveLineEndings, EmbeddedVcsInfo, inspect_crate_archive,
+};
 pub(crate) use archive::{ComparedArchive, read_crate_archive};
 pub use inspect::inspect_update_candidate;
 pub use manifest::{

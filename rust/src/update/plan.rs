@@ -221,6 +221,12 @@ pub enum DecisionReason {
     SourceUnavailable,
     /// Mechanical source correspondence disagrees.
     SourceMismatch,
+    /// Promoted source correspondence differs only in line endings; rustc reads CRLF in Rust
+    /// source as LF, but a member read as bytes keeps them.
+    SourceLineEndings,
+    /// Promoted source correspondence differs only in the executable bit; Cargo ignores it, but a
+    /// build step can run a file only when it is set.
+    SourceFileMode,
     /// Exact non-implicit identity was explicitly requested.
     ExplicitCandidate,
 }
@@ -816,6 +822,21 @@ fn validate_source_evidence(source: &SourceEvidence, candidate: &UpdateCandidate
             validate_hash(comparison_sha256, "source mismatch hash")?;
         }
     }
+    let findings = candidate.reasons.iter().any(|reason| {
+        matches!(
+            reason,
+            DecisionReason::SourceLineEndings | DecisionReason::SourceFileMode
+        )
+    });
+    ensure!(
+        !findings
+            || matches!(
+                source,
+                SourceEvidence::PublisherAsserted { .. }
+                    | SourceEvidence::RegistryContextAttested { .. }
+            ),
+        "source line-ending or file-mode reason disagrees with source evidence"
+    );
     Ok(())
 }
 
@@ -932,6 +953,8 @@ fn validate_decision(candidate: &UpdateCandidate) -> Result<()> {
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
                 | DecisionReason::SourceUnavailable
+                | DecisionReason::SourceLineEndings
+                | DecisionReason::SourceFileMode
         )
     });
     let expected = if blocked {
@@ -1106,6 +1129,45 @@ mod tests {
         assert!(!text.contains("binding-sha256"));
         plan.candidates[0].candidate.crate_sha256 = "22".repeat(32);
         assert_ne!(hash, candidate_facts_sha256(&plan.candidates[0]).unwrap());
+    }
+
+    #[test]
+    fn source_findings_are_review_reasons_only_with_promoted_evidence() {
+        let mut plan = sample_plan();
+        let commit = "11".repeat(20);
+        plan.candidates[0].candidate_archive.vcs_commit = Some(commit.clone());
+        plan.candidates[0].source = SourceEvidence::PublisherAsserted {
+            repository: "https://github.com/example/demo".to_owned(),
+            commit,
+            path: String::new(),
+            comparison_sha256: "14".repeat(32),
+        };
+        plan.candidates[0].reasons = vec![
+            DecisionReason::NewPackage,
+            DecisionReason::SourceLineEndings,
+            DecisionReason::SourceFileMode,
+            DecisionReason::ExplicitCandidate,
+        ];
+        plan.candidates[0].decision = UpdateDecision::ReviewRequired;
+        serialize_update_plan(&plan).expect(
+            "line-ending and file-mode findings beside promoted evidence are review reasons",
+        );
+
+        plan.candidates[0].source = SourceEvidence::Mismatch {
+            comparison_sha256: "15".repeat(32),
+        };
+        plan.candidates[0].reasons = vec![
+            DecisionReason::NewPackage,
+            DecisionReason::SourceMismatch,
+            DecisionReason::SourceFileMode,
+            DecisionReason::ExplicitCandidate,
+        ];
+        plan.candidates[0].decision = UpdateDecision::Blocked;
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("source line-ending or file-mode reason"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[test]
