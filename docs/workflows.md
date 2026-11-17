@@ -187,7 +187,7 @@ Preconditions:
 - credential-free HTTPS repository + immutable reviewed tag;
 - selected package version = tag final component, optional `v` prefix;
 - source manifest exactly `publish = ["pkgre"]`;
-- every dependency explicitly `registry = "pkgre"`; path/Git/crates.io/unknown sources fail, including optional/dev/build/target-specific;
+- every dependency explicitly `registry = "pkgre"`, including optional/dev/build/target-specific; Git/crates.io/unknown sources fail; a `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, required as exactly `=X.Y.Z` of that tag's version, and every other path dependency fails;
 - catalog home:use `main/pkgre` for a new first-party/standalone-fork name; an existing mirrored-name fork stays in that name's original category, retains its `[mirror]` declaration, and adds a same-name `[publish]` declaration there;
 - fork Cargo version must be unique across every locked mirror/publish identity for that name; never reuse `name + version` for different bytes/source;
 - after the first published identity, retain the `[publish]` key + exact Git URL forever; removal empties `tags` rather than deleting/changing the declaration;
@@ -206,7 +206,7 @@ tags = ["rust/v0.5.0"]
 ```
 
 3. Set absolute `PKGRE_CARGO` or provide rustup toolchain `1.95.0`; reported version must match.
-4. Run `lock`:fetch tag; lock tag object/commit; discover package/path/version; run isolated locked metadata; package twice; require byte identity; generate source row; route dependencies; lock hashes.
+4. Run `lock`:fetch tag once; lock tag object/commit; discover package/path/version of every absent package of the tag; run isolated locked metadata; package the whole group twice; require byte identity for each archive; generate source rows; route dependencies; lock hashes.
 5. Verify URL/tag/object/commit/package/path/Cargo + archive/row against reviewed tag.
 6. Run `check`, no-op `lock`, verify exact Git route in downloads, render/verify/monotonicity; commit declaration/lock/catalog/objects together.
 
