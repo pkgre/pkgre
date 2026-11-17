@@ -89,7 +89,7 @@ Planning is discovery, not authority. `update-plan` performs current evaluation 
 - Current first-party manifest sets exactly `publish = ["pkgre"]`; every dependency explicitly names `registry = "pkgre"`; Git/crates.io/unknown sources fail; a `path` dependency is accepted only on a package the catalog publishes from the same repository and tag at that tag's version, required as exactly `=X.Y.Z`, so a `path` dependency cannot reach outside its own tag.
 - Archive/source-row/routed-active-row SHA-256 binds every package; only active retained-delivery archives are stored locally: Git tags always, crates.io archives when the registry declares `retained`.
 - `downloads.json` equals exact locked-identity projection `(registry, case-sensitive name, version, archive hash, closed redirect|retained delivery)` + is reauthenticated by release verification.
-- Lifecycle append-only:additions + `active→removed`; removal retains source row + yanked history, removes unshared retained archive, cannot reverse.
+- Lifecycle append-only:additions + `active→removed`; removal retains source row + yanked history, removes unshared retained archive, cannot reverse. The serving gate `check_transition` accepts exactly this one state change, so a merged removal is served without a fresh baseline, and refuses reactivation and every other identity change.
 - Existing locks/objects/rows/admissions/homes pass local preflight before public fetch.
 - Complete replacement staged, strict-loaded, object-verified, test-rendered, then same-parent installed with rollback.
 - Catalog/category/admission/object boundaries reject unrelated paths, traversal, symlinks, nonregular inputs, missing/extra objects, orphan/noncanonical files; downloads are size-bounded + exact.

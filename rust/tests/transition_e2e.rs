@@ -230,6 +230,133 @@ fn check_transition_accepts_identity_and_rejects_mutations() {
     );
 }
 
+#[test]
+fn check_transition_accepts_a_locked_removal_and_rejects_later_mutation() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-transition-removal");
+    let accepted = migrated_catalog(temporary.path(), "accepted");
+    let candidate = copy_tree(&accepted, &temporary.path().join("candidate"));
+
+    // Remove one Git publication the way the catalog's removal workflow does: only the desired
+    // declaration loses the tag, and the real `lock` records the tombstone it produces.
+    let human = candidate.join("main.toml");
+    let declared = fs::read_to_string(&human).unwrap();
+    let removed_tag = "\"indexer/v0.3.0\"";
+    assert!(
+        declared.contains(removed_tag),
+        "fixture must declare {removed_tag}"
+    );
+    let edited = declared.replace(&format!(", {removed_tag}"), "");
+    assert_ne!(
+        edited, declared,
+        "fixture removal must edit the declaration"
+    );
+    fs::write(&human, edited).unwrap();
+    let archive = locked_field(
+        &fs::read_to_string(accepted.join("main.lock")).unwrap(),
+        "pkgre-indexer",
+        "0.3.0",
+        "crate-sha256",
+    );
+    run_lock(&candidate);
+
+    let tombstone =
+        "[[packages]]\nname = \"pkgre-indexer\"\nversion = \"0.3.0\"\nstate = \"removed\"";
+    let lock = fs::read_to_string(candidate.join("main.lock")).unwrap();
+    assert!(
+        lock.contains(tombstone),
+        "lock must record the removed identity"
+    );
+    assert!(
+        !candidate
+            .join("objects/crates")
+            .join(format!("{archive}.crate"))
+            .exists(),
+        "lock must drop the unshared retained archive"
+    );
+    check_transition(&accepted, &candidate).expect("a locked removal must be a valid successor");
+
+    // Reactivating the tombstone is refused even when the declaration lists the tag again.
+    let reactivated = copy_tree(&candidate, &temporary.path().join("reactivated"));
+    fs::copy(accepted.join("main.toml"), reactivated.join("main.toml")).unwrap();
+    let lock = reactivated.join("main.lock");
+    let text = fs::read_to_string(&lock).unwrap();
+    assert!(text.contains(tombstone));
+    fs::write(
+        &lock,
+        text.replacen(tombstone, &tombstone.replace("removed", "active"), 1),
+    )
+    .unwrap();
+    assert_eq!(
+        check_transition(&candidate, &reactivated),
+        Err(RejectReason::MutatedIdentity(
+            "main/pkgre-indexer/0.3.0".to_owned()
+        ))
+    );
+
+    // A removal that also changes the archived checksum is refused. Regenerating the generated
+    // download catalog keeps the tree loadable, so the refusal is the transition check's.
+    let tampered = copy_tree(&candidate, &temporary.path().join("tampered"));
+    let replacement = "11".repeat(32);
+    let lock = tampered.join("main.lock");
+    let text = fs::read_to_string(&lock).unwrap();
+    let start = text.find(tombstone).expect("lock records the tombstone");
+    let checksum = format!("crate-sha256 = \"{archive}\"");
+    let at = text[start..]
+        .find(&checksum)
+        .map(|offset| offset + start)
+        .expect("tombstone keeps its archive checksum");
+    let mut edited = text.clone();
+    edited.replace_range(
+        at..at + checksum.len(),
+        &format!("crate-sha256 = \"{replacement}\""),
+    );
+    fs::write(&lock, edited).unwrap();
+    let downloads = tampered.join("downloads.json");
+    let routes = fs::read_to_string(&downloads).unwrap();
+    assert!(
+        routes.contains(&archive),
+        "routes carry the removed checksum"
+    );
+    fs::write(&downloads, routes.replace(&archive, &replacement)).unwrap();
+    assert_eq!(
+        check_transition(&accepted, &tampered),
+        Err(RejectReason::MutatedIdentity(
+            "main/pkgre-indexer/0.3.0".to_owned()
+        ))
+    );
+}
+
+/// Returns one field's unquoted value from a locked package block.
+fn locked_field(lock: &str, name: &str, version: &str, field: &str) -> String {
+    let header = format!("[[packages]]\nname = {name:?}\nversion = {version:?}\n");
+    let start = lock
+        .find(&header)
+        .unwrap_or_else(|| panic!("locked package {name} {version} not found"));
+    let block = &lock[start + header.len()..];
+    let end = block.find("\n[[packages]]").unwrap_or(block.len());
+    let block = &block[..end];
+    let prefix = format!("{field} = \"");
+    let at = block
+        .find(&prefix)
+        .unwrap_or_else(|| panic!("locked package {name} {version} has no {field}"));
+    let value = &block[at + prefix.len()..];
+    value[..value.find('"').expect("locked field terminates")].to_owned()
+}
+
+/// Runs the real `lock` command on one catalog, requiring success.
+fn run_lock(catalog: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_pkgre-rust"))
+        .arg("lock")
+        .arg(catalog)
+        .output()
+        .expect("the pkgre-rust binary runs");
+    assert!(
+        output.status.success(),
+        "lock failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn extract_fixture(fixture: &[u8], destination: &Path) {
     let temporary = TemporaryDirectory::new("pkgre-rust-archive-extract");
     let archive = temporary.path().join("catalog.tar.gz");
