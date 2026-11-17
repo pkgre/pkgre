@@ -2,6 +2,24 @@
 
 The `pkgre` command-line tool for the [pkgre](https://github.com/pkgre/pkgre) curated Cargo registries.
 
+## Installing
+
+From crates.io:
+
+```sh
+cargo install --locked pkgre
+```
+
+Or from the `pkgre` registry itself, before it is configured:
+
+```sh
+cargo install --locked --index sparse+https://rust.pkg.re/ pkgre
+```
+
+Both build the same release with the dependency versions of its lock file, which the `pkgre` registry curates. Without `--locked`, Cargo resolves the dependencies afresh, and on crates.io gets their newest compatible versions instead.
+
+Then run `pkgre install` to add the registry to your Cargo configuration.
+
 ## `pkgre install`
 
 ```text
