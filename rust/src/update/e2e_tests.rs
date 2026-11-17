@@ -677,6 +677,7 @@ impl PlannerResolver for FixtureResolver {
     fn source(
         &self,
         _: &super::ArchiveAnalysis,
+        _: &super::ArchiveLineEndings,
         _: Option<&[u8]>,
         _: Option<&super::ApiVersionEvidence>,
     ) -> Result<SourceCorrespondence> {

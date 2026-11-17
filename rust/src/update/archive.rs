@@ -89,14 +89,14 @@ pub fn inspect_crate_archive(
     expected_version: &Version,
     archive: &[u8],
 ) -> Result<ArchiveAnalysis> {
-    let (analysis, _) = inspect_with_limits(
+    let inspection = inspect_with_limits(
         expected_name,
         expected_version,
         archive,
         ArchiveLimits::production(),
         &[],
     )?;
-    Ok(analysis)
+    Ok(inspection.analysis)
 }
 
 /// One `.crate` archive as a content comparison reads it.
@@ -123,7 +123,7 @@ pub(crate) fn read_crate_archive(
     archive: &[u8],
     wanted: &[&str],
 ) -> Result<ComparedArchive> {
-    let (analysis, contents) = inspect_with_limits(
+    let inspection = inspect_with_limits(
         expected_name,
         expected_version,
         archive,
@@ -131,20 +131,33 @@ pub(crate) fn read_crate_archive(
         wanted,
     )?;
     Ok(ComparedArchive {
-        files: analysis
+        files: inspection
+            .analysis
             .files
             .into_iter()
             .map(|file| (file.path.clone(), file))
             .collect(),
-        contents,
+        contents: inspection.captured,
     })
+}
+
+/// One inert inspection of one archive, before it is reduced to the evidence a plan keeps.
+pub(crate) struct ArchiveInspection {
+    /// The stable content-only analysis.
+    pub(crate) analysis: ArchiveAnalysis,
+    /// The contents of the files the caller asked for, by path.
+    pub(crate) captured: BTreeMap<String, Vec<u8>>,
+    /// The line-ending digest of every member whose bytes hold a CRLF.
+    pub(crate) line_endings: ArchiveLineEndings,
 }
 
 /// Inspects one `.crate` archive and captures the contents of the named files.
 ///
 /// The archive is validated exactly as [`inspect_crate_archive`] validates it;
 /// `wanted` names the files whose bytes the caller needs, since the analysis
-/// keeps only their digests.
+/// keeps only their digests. The result also carries every member's line-ending
+/// digest, which costs one scan per member and is used only where a comparison
+/// has to tell a line-ending-only difference from difference in bytes.
 ///
 /// # Errors
 ///
@@ -155,7 +168,7 @@ pub(crate) fn inspect_crate_archive_capturing(
     expected_version: &Version,
     archive: &[u8],
     wanted: &[&str],
-) -> Result<(ArchiveAnalysis, BTreeMap<String, Vec<u8>>)> {
+) -> Result<ArchiveInspection> {
     inspect_with_limits(
         expected_name,
         expected_version,
@@ -192,7 +205,7 @@ fn inspect_with_limits(
     archive: &[u8],
     limits: ArchiveLimits,
     wanted: &[&str],
-) -> Result<(ArchiveAnalysis, BTreeMap<String, Vec<u8>>)> {
+) -> Result<ArchiveInspection> {
     ensure!(!expected_name.is_empty(), "expected package name is empty");
     ensure!(!archive.is_empty(), "crate archive is empty");
     ensure!(
@@ -227,7 +240,63 @@ fn inspect_with_limits(
         build_surface: contents.build_surface,
         vcs: contents.vcs,
     };
-    Ok((analysis, contents.captured))
+    Ok(ArchiveInspection {
+        analysis,
+        captured: contents.captured,
+        line_endings: contents.line_endings,
+    })
+}
+
+/// The digest each regular file of one archive has once every CRLF becomes LF, by archive path.
+///
+/// The source comparison reads the members' own digests from the archive analysis, which keeps only
+/// those, so it cannot tell a member that differs from the tree only in its line endings from one
+/// that differs in bytes without this. A file that holds no CRLF is absent, because its own digest
+/// is already that value.
+#[derive(Clone, Debug, Default)]
+pub struct ArchiveLineEndings {
+    by_path: BTreeMap<String, String>,
+}
+
+impl ArchiveLineEndings {
+    /// Records the bytes of one archive member, by its path relative to the package root.
+    pub fn record(&mut self, path: &str, bytes: &[u8]) {
+        if let Some(digest) = line_endings_sha256(bytes) {
+            self.by_path.insert(path.to_owned(), digest);
+        }
+    }
+
+    /// The digest one file's bytes have once every CRLF becomes LF, given its own digest.
+    pub(crate) fn digest_of(bytes: &[u8], sha256: &str) -> String {
+        line_endings_sha256(bytes).unwrap_or_else(|| sha256.to_owned())
+    }
+
+    /// The digest the member at `path` has once every CRLF becomes LF, given its own digest.
+    pub(crate) fn digest<'a>(&'a self, path: &str, sha256: &'a str) -> &'a str {
+        self.by_path.get(path).map_or(sha256, String::as_str)
+    }
+}
+
+/// The digest one file's bytes have once every CRLF becomes LF, absent when they hold none.
+///
+/// Only that pair counts: a lone CR, other whitespace, an added or removed trailing newline and an
+/// encoding change all stay a difference in bytes.
+fn line_endings_sha256(bytes: &[u8]) -> Option<String> {
+    if !bytes.windows(2).any(|pair| pair == b"\r\n") {
+        return None;
+    }
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            normalized.push(b'\n');
+            index += 2;
+        } else {
+            normalized.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Some(sha256_bytes(&normalized))
 }
 
 #[derive(Default)]
@@ -238,6 +307,7 @@ struct ArchiveContents {
     manifests: Vec<(String, Vec<u8>)>,
     vcs: Option<EmbeddedVcsInfo>,
     captured: BTreeMap<String, Vec<u8>>,
+    line_endings: ArchiveLineEndings,
 }
 
 fn read_tar_entries<R: Read>(
@@ -474,6 +544,7 @@ impl ArchiveContents {
         if wanted.contains(&relative.as_str()) {
             self.captured.insert(relative.clone(), bytes.clone());
         }
+        self.line_endings.record(&relative, &bytes);
         self.files.insert(relative, file);
         Ok(())
     }
@@ -842,6 +913,28 @@ mod tests {
                 .keys()
                 .any(|key| key.contains("file:tool"))
         );
+    }
+
+    #[test]
+    fn inspection_records_line_endings_only_for_members_that_hold_a_carriage_return() {
+        let archive = archive(&[
+            Entry::file("demo-1.0.0/crlf.rs", b"fn main() {}\r\n", 0o644),
+            Entry::file("demo-1.0.0/lone.rs", b"fn main() {}\r", 0o644),
+            Entry::file("demo-1.0.0/lf.rs", b"fn main() {}\n", 0o644),
+        ]);
+        let inspection = inspect_crate_archive_capturing(
+            "demo",
+            &Version::parse("1.0.0").unwrap(),
+            &archive,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            inspection.line_endings.digest("crlf.rs", "own"),
+            sha256_bytes(b"fn main() {}\n").as_str()
+        );
+        assert_eq!(inspection.line_endings.digest("lone.rs", "own"), "own");
+        assert_eq!(inspection.line_endings.digest("lf.rs", "own"), "own");
     }
 
     #[test]

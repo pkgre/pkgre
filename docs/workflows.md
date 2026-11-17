@@ -82,7 +82,7 @@ Template includes automatic + review-required, omits blocked, refuses existing o
 $ pkgre-rust update-inspect registry 2026-08-24-routine.toml example 1.2.3 review-example-1.2.3
 ```
 
-Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted. `inspection.toml` carries the complete source comparison report beside its digest: every archive member's expected path, compared path, resolved path after a symbolic link or submodule, the submodule it was read from, whether Cargo copies it into the package root, whether the package's own file of that name was kept instead (`copy-skipped`), whether that file could equally have been packaged (`copy-ambiguous`), whether it holds a symbolic link's own text (`link-text`), both digests and modes, and its disposition (`match`, `different`, `missing`, `cargo-generated`). The planning log names the members read through a copy or a link's own text, with their flags, disposition and the file each was compared with, so the review sees them without the report.
+Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted. `inspection.toml` carries the complete source comparison report beside its digest: every archive member's expected path, compared path, resolved path after a symbolic link or submodule, the submodule it was read from, whether Cargo copies it into the package root, whether the package's own file of that name was kept instead (`copy-skipped`), whether that file could equally have been packaged (`copy-ambiguous`), whether it holds a symbolic link's own text (`link-text`), both digests and modes, and its disposition (`match`, `different`, `missing`, `cargo-generated`, `line-endings`, `file-mode`); the last two are the members that differ from the tree only in their line endings or only in their executable bit, which make the admission `review-required` rather than blocked. The planning log names the members read through a copy or a link's own text, with their flags, disposition and the file each was compared with, and the members that differ only in line endings or the executable bit with their kind, so the review sees them without the report.
 
 4. Optionally add typed evidence beneath request:
 
@@ -124,7 +124,7 @@ Second `lock` must report `changed=false` + preserve exact diff. CI must run `ch
 
 1. Generate one broad manifest; count automatic/review-required/blocked logs.
 2. Require manifest entries=`automatic + review-required`; blocked absent.
-3. Prioritize source-unavailable, dormancy, publisher/repository discontinuity, build/proc-macro/native changes, new dependencies, large deltas.
+3. Prioritize source-unavailable, dormancy, publisher/repository discontinuity, build/proc-macro/native changes, new dependencies, large deltas, and last the differences only in line endings or the executable bit.
 4. Keep evidence only where useful; no boilerplate notes.
 5. Apply once; review one generated lock + shared binding + exact diff.
 6. Open one registry PR; leave unmerged for curator.

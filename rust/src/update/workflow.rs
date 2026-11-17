@@ -16,13 +16,13 @@ use crate::policy::{Policy, validate_catalog};
 use crate::schema::{Catalog, PackageKey, PackageState, Source, version_identity};
 
 use super::{
-    ApiEvidence, ArchiveAnalysis, ArchiveSummary, CompatibilityLane, DecisionReason,
-    DependencyDelta, LockedRelease, MIN_RELEASE_AGE_DAYS, PackageActivity, PlannedIdentity,
-    PolicyRelease, PublicationGap, SourceCorrespondence, SourceEvidence, UPDATE_PLAN_SCHEMA,
-    UpdateCandidate, UpdateDecision, UpdatePlan, UtcTimestamp, catalog_fingerprint,
-    classify_package, compare_archive_analyses, inspect_crate_archive_capturing,
-    parse_crates_io_api_evidence, select_exact_candidate, select_implicit_candidates,
-    verify_source_correspondence,
+    ApiEvidence, ArchiveAnalysis, ArchiveLineEndings, ArchiveSummary, CompatibilityLane,
+    DecisionReason, DependencyDelta, LockedRelease, MIN_RELEASE_AGE_DAYS, PackageActivity,
+    PlannedIdentity, PolicyRelease, PublicationGap, SourceCorrespondence, SourceEvidence,
+    UPDATE_PLAN_SCHEMA, UpdateCandidate, UpdateDecision, UpdatePlan, UtcTimestamp,
+    catalog_fingerprint, classify_package, compare_archive_analyses,
+    inspect_crate_archive_capturing, parse_crates_io_api_evidence, select_exact_candidate,
+    select_implicit_candidates, verify_source_correspondence,
 };
 
 /// Creates a canonical read-only plan for every eligible implicit compatibility-lane update.
@@ -104,6 +104,7 @@ pub(crate) trait PlannerResolver {
     fn source(
         &self,
         archive: &ArchiveAnalysis,
+        line_endings: &ArchiveLineEndings,
         original_manifest: Option<&[u8]>,
         api: Option<&super::ApiVersionEvidence>,
     ) -> Result<SourceCorrespondence>;
@@ -132,10 +133,11 @@ impl PlannerResolver for LivePlannerResolver {
     fn source(
         &self,
         archive: &ArchiveAnalysis,
+        line_endings: &ArchiveLineEndings,
         original_manifest: Option<&[u8]>,
         api: Option<&super::ApiVersionEvidence>,
     ) -> Result<SourceCorrespondence> {
-        verify_source_correspondence(archive, original_manifest, api)
+        verify_source_correspondence(archive, line_endings, original_manifest, api)
     }
 }
 
@@ -608,8 +610,7 @@ fn build_candidate<R: PlannerResolver>(
         resolver,
         name,
         &selection.candidate.version,
-        &archives.candidate,
-        archives.candidate_manifest.as_deref(),
+        &archives,
         api.as_ref(),
         &mut reasons,
     );
@@ -648,6 +649,7 @@ fn build_candidate<R: PlannerResolver>(
 struct ArchiveEvidence {
     candidate: ArchiveAnalysis,
     candidate_manifest: Option<Vec<u8>>,
+    candidate_line_endings: ArchiveLineEndings,
     base_summary: Option<ArchiveSummary>,
     delta: Option<super::ArchiveDelta>,
 }
@@ -679,15 +681,17 @@ fn collect_archive_evidence<R: PlannerResolver>(
     Ok(ArchiveEvidence {
         candidate: candidate.analysis,
         candidate_manifest: candidate.original_manifest,
+        candidate_line_endings: candidate.line_endings,
         base_summary,
         delta,
     })
 }
 
-/// One inspected archive, with the source manifest the comparison reads.
+/// One inspected archive, with the source manifest and line-ending digests the comparison reads.
 struct InspectedArchive {
     analysis: ArchiveAnalysis,
     original_manifest: Option<Vec<u8>>,
+    line_endings: ArchiveLineEndings,
 }
 
 fn fetch_and_inspect_archive<R: PlannerResolver>(
@@ -705,12 +709,13 @@ fn fetch_and_inspect_archive<R: PlannerResolver>(
         sha256_bytes(&bytes) == checksum,
         "{role} archive checksum differs from sparse row for {name} {version}"
     );
-    let (analysis, mut contents) =
+    let mut inspection =
         inspect_crate_archive_capturing(name, version, &bytes, &["Cargo.toml.orig"])
             .with_context(|| format!("inspect {role} archive {name} {version}"))?;
     Ok(InspectedArchive {
-        analysis,
-        original_manifest: contents.remove("Cargo.toml.orig"),
+        analysis: inspection.analysis,
+        original_manifest: inspection.captured.remove("Cargo.toml.orig"),
+        line_endings: inspection.line_endings,
     })
 }
 
@@ -792,8 +797,7 @@ fn collect_source_evidence<R: PlannerResolver>(
     resolver: &R,
     name: &str,
     version: &Version,
-    candidate: &ArchiveAnalysis,
-    original_manifest: Option<&[u8]>,
+    archives: &ArchiveEvidence,
     api: Option<&ApiEvidence>,
     reasons: &mut BTreeSet<DecisionReason>,
 ) -> SourceEvidence {
@@ -803,8 +807,9 @@ fn collect_source_evidence<R: PlannerResolver>(
     let correspondence = if promoted {
         resolver
             .source(
-                candidate,
-                original_manifest,
+                &archives.candidate,
+                &archives.candidate_line_endings,
+                archives.candidate_manifest.as_deref(),
                 api.map(|value| &value.candidate),
             )
             .unwrap_or_else(|error| {
@@ -836,6 +841,7 @@ fn collect_source_evidence<R: PlannerResolver>(
     if matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }) {
         reasons.insert(DecisionReason::SourceMismatch);
     }
+    reasons.extend(correspondence.finding_reasons());
     correspondence.evidence
 }
 
@@ -872,17 +878,27 @@ fn log_source_correspondence(name: &str, version: &Version, correspondence: &Sou
             );
         }
         let differences = comparison.describe_differences();
-        if differences.is_empty() {
-            return;
+        if !differences.is_empty() {
+            warn!(
+                package = name,
+                version = %version,
+                path_in_vcs = %comparison.path_in_vcs,
+                located_path = comparison.located_path,
+                differences = %differences,
+                "source correspondence found archive members that differ or are missing"
+            );
         }
-        warn!(
-            package = name,
-            version = %version,
-            path_in_vcs = %comparison.path_in_vcs,
-            located_path = comparison.located_path,
-            differences = %differences,
-            "source correspondence found archive members that differ or are missing"
-        );
+        let findings = comparison.describe_findings();
+        if !findings.is_empty() {
+            warn!(
+                package = name,
+                version = %version,
+                path_in_vcs = %comparison.path_in_vcs,
+                located_path = comparison.located_path,
+                members = %findings,
+                "source correspondence found line-ending or file-mode differences"
+            );
+        }
     }
 }
 
@@ -1101,6 +1117,8 @@ fn decision_for_reasons(reasons: &BTreeSet<DecisionReason>) -> UpdateDecision {
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
                 | DecisionReason::SourceUnavailable
+                | DecisionReason::SourceLineEndings
+                | DecisionReason::SourceFileMode
         )
     }) {
         UpdateDecision::ReviewRequired
@@ -1368,5 +1386,18 @@ mod tests {
             DecisionReason::UnknownDependencyHome,
         ]);
         assert_eq!(decision_for_reasons(&blocked), UpdateDecision::Blocked);
+    }
+
+    #[test]
+    fn source_findings_require_review() {
+        for reason in [
+            DecisionReason::SourceLineEndings,
+            DecisionReason::SourceFileMode,
+        ] {
+            assert_eq!(
+                decision_for_reasons(&BTreeSet::from([reason])),
+                UpdateDecision::ReviewRequired
+            );
+        }
     }
 }
