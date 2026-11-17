@@ -117,11 +117,27 @@ impl Release {
 }
 
 /// The changes that one fixture makes to the base workspace.
+/// The dependency that one released crate declares on another crate of the tag.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum Sibling {
+    /// No dependency between two crates of the release.
+    #[default]
+    None,
+    /// The path dependency that the derivation accepts.
+    Accepted,
+    /// The accepted dependency, requiring another version.
+    Requirement(&'static str),
+    /// The accepted dependency, without the curated registry.
+    WithoutRegistry,
+    /// A path dependency on a member that the tag does not release.
+    Unreleased,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Variant {
-    /// Let the released binary depend on the released library by path.
-    pub(crate) sibling_dependency: bool,
+    /// The dependency that the released binary declares on the released library.
+    pub(crate) sibling: Sibling,
     /// Declare a `[patch.crates-io]` table in the root manifest.
     pub(crate) patch: bool,
     /// Declare a `[replace]` table in the root manifest.
@@ -325,8 +341,24 @@ fn write_manifests(root: &Path, variant: Variant) {
     let mut binary = String::from(
         "[package]\nname = \"example-bin\"\ndescription = \"An example binary\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n\n[dependencies]\nmirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\nearlier-lib.workspace = true\n",
     );
-    if variant.sibling_dependency {
-        binary.push_str("example-lib = { path = \"../lib\" }\n");
+    match variant.sibling {
+        Sibling::None => {}
+        Sibling::Accepted => binary.push_str(
+            "example-lib = { path = \"../lib\", version = \"=1.0.0\", registry = \"pkgre\" }\n",
+        ),
+        Sibling::Requirement(requirement) => {
+            writeln!(
+                binary,
+                "example-lib = {{ path = \"../lib\", version = {requirement:?}, registry = \"pkgre\" }}"
+            )
+            .expect("writing to a string");
+        }
+        Sibling::WithoutRegistry => {
+            binary.push_str("example-lib = { path = \"../lib\", version = \"=1.0.0\" }\n");
+        }
+        Sibling::Unreleased => binary.push_str(
+            "example-serve = { path = \"../serve\", version = \"=0.2.0\", registry = \"pkgre\" }\n",
+        ),
     }
     if variant.fork_dependency {
         binary.push_str("forked-dep = { version = \"1.0\", registry = \"pkgre\" }\n");
@@ -391,6 +423,7 @@ pub(crate) fn curated_archives(
         &temporary.path().join("targets"),
         checkout,
         &members,
+        &RegistrySources::LocalCurated(source.to_path_buf()),
     )
     .expect("package the curated archives")
 }

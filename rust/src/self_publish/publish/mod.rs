@@ -21,7 +21,7 @@
 mod checkout;
 mod live;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -438,6 +438,9 @@ fn run(
     let dependencies = derivation.dependencies.len();
     let yanked_dependencies = check_dependencies(&derivation.dependencies, &mut crates_io)
         .context("step 4: every dependency of the release must be on crates.io")?;
+    refuse_published_dependent_of_a_missing_sibling(&classified, &derivation.siblings).context(
+        "step 4: a crate of the release cannot be on crates.io before the crates it depends on",
+    )?;
     if let Some((crate_, SelfPublishCrateState::Different { found })) = classified
         .iter()
         .find(|(_, state)| matches!(state, SelfPublishCrateState::Different { .. }))
@@ -468,7 +471,13 @@ fn run(
         verify_publish_packages(&derivation, &environment, &classified, &missing).context(
             "step 6: the packages that cargo publish would upload must be the recorded ones",
         )?;
-        if let Err(error) = upload_missing(&environment, &mut classified, &missing, services) {
+        if let Err(error) = upload_missing(
+            &environment,
+            &mut classified,
+            &missing,
+            &derivation.siblings,
+            services,
+        ) {
             // The records say which crates were uploaded before the failure.
             log_crates(&classified);
             return Err(error.context(format!(
@@ -762,19 +771,22 @@ fn verify_packages(
 /// uploads run: each upload process gets it in its own environment, and no
 /// other process does.
 ///
-/// The uploads run in name order, one `cargo publish` per crate. A release's
-/// crates do not depend on each other, which the derivation refuses, so no
-/// order is needed today; once a dependency between crates of one tag is
-/// allowed, the uploads must follow dependency order.
+/// One `cargo publish` runs per crate, and a crate is uploaded after the crates
+/// of the release it depends on, so that crates.io can resolve its
+/// dependencies; name order decides among crates that do not depend on each
+/// other, which leaves a release without such dependencies uploading as it
+/// always did.
 fn upload_missing(
     environment: &UploadEnvironment,
     classified: &mut [(ReleaseCrate<'_>, SelfPublishCrateState)],
     missing: &[usize],
+    siblings: &BTreeMap<String, BTreeSet<String>>,
     services: &Services<'_>,
 ) -> Result<()> {
+    let order = upload_order(classified, missing, siblings)?;
     let token = services.tokens.read()?;
-    for position in missing {
-        let (crate_, _) = classified[*position];
+    for position in order {
+        let (crate_, _) = classified[position];
         let request = UploadRequest {
             environment,
             crates_io_name: &crate_.entry.crates_io_name,
@@ -788,7 +800,7 @@ fn upload_missing(
             )
         })?;
         wait_for_upload(&crate_, services)?;
-        classified[*position].1 = SelfPublishCrateState::Uploaded;
+        classified[position].1 = SelfPublishCrateState::Uploaded;
         info!(
             package = %crate_.identity.name,
             version = %crate_.identity.version,
@@ -797,6 +809,98 @@ fn upload_missing(
         );
     }
     drop(token);
+    Ok(())
+}
+
+/// Returns the positions of the missing crate versions in upload order.
+///
+/// A crate follows the crates of the release it depends on that this run
+/// uploads, and name order decides among crates that do not depend on each
+/// other; a crate whose dependencies crates.io already has is ready at once.
+///
+/// # Errors
+///
+/// Returns an error for crates of the release that depend on each other in a
+/// cycle.
+fn upload_order(
+    classified: &[(ReleaseCrate<'_>, SelfPublishCrateState)],
+    missing: &[usize],
+    siblings: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<Vec<usize>> {
+    let uploading = missing
+        .iter()
+        .map(|position| classified[*position].0.identity.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut order = Vec::with_capacity(missing.len());
+    let mut uploaded: BTreeSet<&str> = BTreeSet::new();
+    while order.len() < missing.len() {
+        let next = missing
+            .iter()
+            .copied()
+            .find(|position| {
+                let name = classified[*position].0.identity.name.as_str();
+                !uploaded.contains(name)
+                    && siblings.get(name).is_none_or(|dependencies| {
+                        dependencies
+                            .iter()
+                            .filter(|dependency| uploading.contains(dependency.as_str()))
+                            .all(|dependency| uploaded.contains(dependency.as_str()))
+                    })
+            })
+            .with_context(|| {
+                let remaining = missing
+                    .iter()
+                    .map(|position| classified[*position].0.identity.name.as_str())
+                    .filter(|name| !uploaded.contains(name))
+                    .collect::<Vec<_>>();
+                format!("the crates of the release {remaining:?} depend on each other in a cycle")
+            })?;
+        uploaded.insert(classified[next].0.identity.name.as_str());
+        order.push(next);
+    }
+    Ok(order)
+}
+
+/// Refuses a run whose crates.io state has a crate of the release published
+/// before a crate of the release that it depends on.
+///
+/// crates.io resolves a dependency when the dependent arrives, so this state
+/// means the two records disagree: the dependent's crates.io version cannot be
+/// the one `crates-io.lock` records for a sibling that crates.io never took.
+///
+/// # Errors
+///
+/// Returns an error naming the published crate and the missing crate it depends
+/// on.
+fn refuse_published_dependent_of_a_missing_sibling(
+    classified: &[(ReleaseCrate<'_>, SelfPublishCrateState)],
+    siblings: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<()> {
+    for (crate_, state) in classified {
+        if !matches!(
+            state,
+            SelfPublishCrateState::Published | SelfPublishCrateState::PublishedYanked
+        ) {
+            continue;
+        }
+        let Some(dependencies) = siblings.get(&crate_.identity.name) else {
+            continue;
+        };
+        for dependency in dependencies {
+            let missing = classified
+                .iter()
+                .find(|(other, _)| other.identity.name == *dependency)
+                .is_some_and(|(_, state)| *state == SelfPublishCrateState::Missing);
+            ensure!(
+                !missing,
+                "crate {} {} is published on crates.io as {}, but crate {dependency} {}, which it depends on, is missing; a crate of the release cannot be published before the crate it depends on, so the records and crates.io disagree",
+                crate_.identity.name,
+                crate_.identity.version,
+                crate_.entry.crates_io_name,
+                crate_.identity.version
+            );
+        }
+    }
     Ok(())
 }
 

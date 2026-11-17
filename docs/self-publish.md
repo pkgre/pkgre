@@ -169,19 +169,29 @@ that the catalog publishes from it:
      `[workspace.dependencies]`), no `registry` key, and `package = "<crates.io name>"`
      under the unchanged dependency key for a first-party dependency, a path dependency on
      a renamed member included;
+   - it accepts a dependency of one released crate on another released crate of the same tag
+     when the manifest declares it as a path dependency of that crate's own directory,
+     requires exactly the tag's version `=X.Y.Z`, and names `registry = "pkgre"`, which is
+     what the reconciler accepts; the rewrite keeps the path and the version, gives it
+     `package = "<crates.io name>"` under the unchanged key, and removes `registry`;
    - it refuses `[patch]` and `[replace]`, a dependency between two released crates of one
-     tag, a dependency on a fork, a member that is not released but depends on something
-     crates.io does not have, and a first-party version without an entry in
-     `crates-io.lock`.
+     tag that does not meet those rules, a dependency on a crate the tag does not release, a
+     dependency on a fork, a member that is not released but depends on something crates.io
+     does not have, and a first-party version without an entry in `crates-io.lock`.
 4. It translates `Cargo.lock`: a source of the `pkgre` registry becomes crates.io; a
    mirrored identity keeps its name, version and checksum; a first-party identity of an
    earlier release takes its crates.io name and the `crate-sha256` of its `crates-io.lock`
    entry; a workspace member takes its crates.io name, also in the dependency lists of
-   other packages.
+   other packages, and stays a path package, since the rewritten manifest keeps the path and
+   Cargo packages the release's crates together.
 5. It packages the release with the pinned Cargo, in a fresh isolated Cargo home that uses
    plain crates.io, from a working directory outside the checkout:
    `cargo package --no-verify --locked --allow-dirty`, with one `-p` for each released
-   crate, twice, requiring identical bytes. `--locked` proves that crates.io resolves the
+   crate, twice, requiring identical bytes. One run packages every crate of the release, so
+   Cargo serves a crate of the tag to the crates that depend on it through the temporary
+   registry it builds from the archives of that run, and the packaged `Cargo.lock` of a
+   dependent names its sibling under the sibling's crates.io name, crates.io's source, and
+   the archive of that same run. `--locked` proves that crates.io resolves the
    translated lock without a change. The derivation refuses to run Cargo when the working
    directory or a directory above it holds `.cargo/config.toml` or `.cargo/config`, as a
    file, directory or symbolic link, since such configuration could replace crates.io.
@@ -194,7 +204,11 @@ that the catalog publishes from it:
    same packages at the same versions under the mapped names, every package outside the
    workspace with its own registry's source and expected checksum: the catalog's
    `crate-sha256` in the retained archive, and crates.io's, for a first-party identity the
-   `crate-sha256` of its `crates-io.lock` entry, in the derived one.
+   `crate-sha256` of its `crates-io.lock` entry, in the derived one. A crate of the release
+   that another crate of the release depends on is such a package too: the retained archive
+   names it under the `pkgre` registry with the catalog's `crate-sha256`, and the derived
+   archive under crates.io with the archive this run packaged, which is the entry the run
+   records for it.
 7. It records the result.
 
 Deriving from the tag and proving the result against the retained archive is what lets
@@ -389,31 +403,42 @@ For one release, a run:
    version and checksum, and a crate of an earlier release under its crates.io name and the
    `crate-sha256` of its `crates-io.lock` entry. The derivation refuses a dependency on an
    abandoned version, on a fork, or on a version without an entry, so this check sees only
-   identities that crates.io is expected to have. A yanked dependency is reported rather than
-   refused, since Cargo accepts a yanked version that a lock file pins.
+   identities that crates.io is expected to have. A crate of the release is not one of them:
+   the release itself serves it, so crates.io may lack it, and a crate of the release that
+   crates.io already has while a crate it depends on is missing is refused, since crates.io
+   cannot have taken the dependent before its sibling. A yanked dependency is reported rather
+   than refused, since Cargo accepts a yanked version that a lock file pins.
 5. builds the missing crates with Cargo's verification, `cargo package --locked --allow-dirty`
    in the derived, rewritten workspace, against plain crates.io, in an isolated Cargo home, from
    a working directory that no Cargo configuration covers, and requires each archive's SHA-256
-   to equal its `crates-io.lock` entry. This is the only step in which package code, such as a
+   to equal its `crates-io.lock` entry. The missing crates are packaged in one run, so a crate
+   whose sibling crates.io does not have yet is packaged against that sibling of the same run. This is the only step in which package code, such as a
    build script or a proc macro, runs, and it happens while no token is in reach. The step runs
    Cargo in a process group of its own, with a null standard input, so that a token piped to the
    routine never reaches Cargo or the packages, and ends that group once Cargo returns, so that
    no process the package code started outlives it.
-6. with `--upload`, and only after steps 1 to 5 passed, packages each missing crate the way
-   `cargo publish` packages it, `cargo package --no-verify --locked --allow-dirty`, in the same
+6. with `--upload`, and only after steps 1 to 5 passed, packages the missing crates the way
+   `cargo publish` packages them, `cargo package --no-verify --locked --allow-dirty`, in the same
    derived workspace and in the upload's own isolated Cargo home, which configures plain
-   crates.io with the `cargo:token` credential provider and no other registry; it requires each
-   of those archives to equal its `crates-io.lock` entry, and only then reads the token and
-   runs `cargo publish --no-verify --locked --allow-dirty` for each missing crate, with the
-   token in the environment of that one process alone. `--no-verify` keeps package code from
+   crates.io with the `cargo:token` credential provider and no other registry; they are
+   packaged in one run, as in step 5, so a dependent whose sibling crates.io does not have yet
+   is packaged against that sibling of the same run, and it requires each of those archives to
+   equal its `crates-io.lock` entry. Only then does it read the token and run
+   `cargo publish --no-verify --locked --allow-dirty` for each missing crate, with the token in
+   the environment of that one process alone. A crate of the release is published after the
+   crates it depends on, and name order decides among crates that do not depend on each other,
+   so a release whose crates do not depend on each other uploads in name order, as it always
+   did. `--no-verify` keeps package code from
    running while the token is present, and no package code runs between the comparison and the
    upload, so the bytes that reach crates.io are the ones the run compared.
 7. waits, with a bound, until crates.io's index shows each uploaded crate with the recorded
    checksum, and reports every crate version of the release.
 
 A run after a partial failure uploads only what crates.io still lacks, so running the same
-command again finishes the release; a run whose crates are all published reads no token and
-uploads nothing. The routine never yanks, deletes, or changes owners.
+command again finishes the release, including one whose library is published and whose binary
+is missing; a run whose crates are all published reads no token and uploads nothing, and a run
+that finds a dependent published while a crate it depends on is missing refuses, naming both.
+The routine never yanks, deletes, or changes owners.
 
 `--git=<url>` chooses between several self-publishing repositories that use the same release
 tag; without it such a tag is refused, and the refusal names the repositories.

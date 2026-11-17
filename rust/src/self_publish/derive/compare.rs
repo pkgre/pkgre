@@ -74,7 +74,12 @@ pub(super) fn compare_archives(
         &derived_archive,
         expectations,
     )?;
-    compare_lock_files(&curated_archive, &derived_archive, expectations)?;
+    compare_lock_files(
+        curated.name,
+        &curated_archive,
+        &derived_archive,
+        expectations,
+    )?;
     Ok(())
 }
 
@@ -542,7 +547,13 @@ struct LockedPackage {
 
 /// Compares the two packaged lock files with the checksums that each side must
 /// serve.
+///
+/// `root` is the curated name of the crate whose archive this is: its own entry
+/// is a workspace member on both sides, while a crate of the same release that
+/// it depends on is a package of the curated registry in the curated archive and
+/// a crates.io package in the derived one.
 fn compare_lock_files(
+    root: &str,
     curated: &ComparedArchive,
     derived: &ComparedArchive,
     expectations: &Expectations,
@@ -569,6 +580,10 @@ fn compare_lock_files(
             expected.crates_io_name,
             package.version
         );
+        if package.name == root {
+            compare_own_entry(package, counterpart)?;
+            continue;
+        }
         match (&expected.curated_checksum, &expected.derived_checksum) {
             (None, None) => {
                 ensure!(
@@ -630,6 +645,32 @@ fn compare_lock_files(
             package.version
         );
     }
+    Ok(())
+}
+
+/// Compares the entry of the crate whose archive this is, which is a workspace
+/// member on both sides.
+///
+/// # Errors
+///
+/// Returns an error for an entry that names a source or a checksum.
+fn compare_own_entry(curated: &LockedPackage, derived: &LockedPackage) -> Result<()> {
+    ensure!(
+        curated.source.is_none() && curated.checksum.is_none(),
+        "{} {} is the crate of this archive, but the curated lock records source {:?} and checksum {:?}",
+        curated.name,
+        curated.version,
+        curated.source,
+        curated.checksum
+    );
+    ensure!(
+        derived.source.is_none() && derived.checksum.is_none(),
+        "{} {} is the crate of this archive, but the crates.io lock records source {:?} and checksum {:?}",
+        derived.name,
+        derived.version,
+        derived.source,
+        derived.checksum
+    );
     Ok(())
 }
 

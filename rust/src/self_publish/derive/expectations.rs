@@ -23,9 +23,12 @@ use super::cargo_lock::LockIndex;
 pub(super) struct ExpectedPackage {
     /// crates.io name.
     pub(super) crates_io_name: String,
-    /// SHA-256 that the curated lock must record, absent for a workspace member.
+    /// SHA-256 that the curated archive's lock must record, absent for a
+    /// workspace member that the release does not publish.
     pub(super) curated_checksum: Option<String>,
-    /// SHA-256 that the derived lock must record, absent for a workspace member.
+    /// SHA-256 that the derived archive's lock must record, absent for a
+    /// workspace member that the release does not publish, and for a released
+    /// crate until the derivation packaged it.
     pub(super) derived_checksum: Option<String>,
     /// Whether the package is a workspace member of the tag.
     pub(super) member: bool,
@@ -109,14 +112,59 @@ impl Expectations {
         self.names.contains_key(name)
     }
 
+    /// Binds the archives of the crates that the release publishes.
+    ///
+    /// A crate of the release that another crate of the release depends on is a
+    /// package of the curated registry in the curated archive, with the archive
+    /// `registry/main.lock` records, and a crates.io package in the derived
+    /// archive, with the archive this run packaged; the comparison needs both
+    /// before it reads the first archive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a released crate without a derived archive, or for a
+    /// package that the release does not publish.
+    pub(super) fn bind_release(
+        &mut self,
+        released: &[super::ReleasedCrate],
+        derived: &BTreeMap<(String, Version), String>,
+    ) -> Result<()> {
+        for package in released {
+            let key = (package.name.clone(), package.version.clone());
+            let archive_sha256 = derived.get(&key).with_context(|| {
+                format!(
+                    "the release packaged no archive for {} {}",
+                    package.name, package.version
+                )
+            })?;
+            let expected = self.packages.get_mut(&key).with_context(|| {
+                format!(
+                    "the lock holds no package {} {}, which the release publishes",
+                    package.name, package.version
+                )
+            })?;
+            ensure!(
+                expected.member,
+                "package {} {} is not a workspace member of the tag, so the release does not publish it",
+                package.name,
+                package.version
+            );
+            expected.curated_checksum = Some(package.crate_sha256.clone());
+            expected.derived_checksum = Some(archive_sha256.clone());
+        }
+        Ok(())
+    }
+
     /// Returns every package outside the release's workspace that crates.io
     /// must serve for the release, in name and version order.
     ///
     /// A workspace member that the release does not publish stays a path
-    /// package and is not one of them.
+    /// package, and a crate of the release is served by the release itself, so
+    /// neither is one of them.
     pub(super) fn dependencies(&self) -> Vec<super::DerivedDependency> {
         self.packages
             .iter()
+            .filter(|(_, expected)| !expected.member)
             .filter_map(|((_, version), expected)| {
                 let crate_sha256 = expected.derived_checksum.clone()?;
                 Some(super::DerivedDependency {
@@ -152,6 +200,7 @@ fn resolve_package(
         // and stays a path package.
         return Ok(ExpectedPackage {
             crates_io_name: package.name.clone(),
+            member: true,
             ..ExpectedPackage::default()
         });
     }

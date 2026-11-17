@@ -19,7 +19,7 @@ use semver::Version;
 
 use super::super::catalog::{CatalogIdentity, GitRelease};
 use super::super::config::CratesIoConfig;
-use super::super::derive::tests::fixtures::{self, LocalSource, Release, Variant};
+use super::super::derive::tests::fixtures::{self, LocalSource, Release, Sibling, Variant};
 use super::super::isolation::ChildEnvironment;
 use super::super::lock::{CratesIoLock, CratesIoPackage};
 use super::super::lock_command::{LocalNetwork, self_publish_lock_in};
@@ -67,19 +67,12 @@ struct Fixture {
     work: fixtures::Temp,
 }
 
-/// Builds the fixture, with the abandoned records that `abandoned` names, and
-/// records the release's entries by deriving them.
-fn build(parent: &Path, abandoned: &[(&str, &str, &str)]) -> Fixture {
+/// Builds the fixture of one variant, with the abandoned records that
+/// `abandoned` names.
+fn build_with(parent: &Path, abandoned: &[(&str, &str, &str)], variant: Variant) -> Fixture {
     let source = LocalSource::build(&parent.join("local"));
-    let release = fixtures::release(parent, &source, Variant::default());
-    let candidate = fixtures::catalog_at(
-        parent,
-        "candidate",
-        &source,
-        &release,
-        Variant::default(),
-        true,
-    );
+    let release = fixtures::release(parent, &source, variant);
+    let candidate = fixtures::catalog_at(parent, "candidate", &source, &release, variant, true);
     let work = fixtures::Temp::new("pkgre-publish-work");
     let repositories = BTreeMap::from([(REPOSITORY.to_owned(), release.root.clone())]);
     self_publish_lock_in(
@@ -549,9 +542,10 @@ impl Setup {
         Self::with_abandoned(parent, &[])
     }
 
-    /// Builds a fixture whose `crates-io.toml` records abandoned versions.
-    fn with_abandoned(parent: &Path, abandoned: &[(&str, &str, &str)]) -> Self {
-        let fixture = build(parent, abandoned);
+    /// Builds the fixture of one variant, whose `crates-io.toml` records the
+    /// abandoned versions that `abandoned` names.
+    fn with_variant(parent: &Path, abandoned: &[(&str, &str, &str)], variant: Variant) -> Self {
+        let fixture = build_with(parent, abandoned, variant);
         let crates_io = FakeCratesIo::default();
         for name in fixture.crates_io_names() {
             crates_io.set_owners(&name, vec![user_owner(OWNER)]);
@@ -573,6 +567,11 @@ impl Setup {
             uploader,
             tokens: FakeTokens::with_token(),
         }
+    }
+
+    /// Builds a fixture whose `crates-io.toml` records abandoned versions.
+    fn with_abandoned(parent: &Path, abandoned: &[(&str, &str, &str)]) -> Self {
+        Self::with_variant(parent, abandoned, Variant::default())
     }
 
     /// Returns the services of one run.
@@ -685,6 +684,87 @@ fn a_dry_run_reports_the_crates_that_crates_io_lacks() {
     assert!(setup.uploader.tokens().is_empty());
     assert_eq!(setup.tokens.reads(), 0);
     assert!(setup.crates_io.calls() > 0);
+}
+
+/// The variant whose binary depends on the library of the same tag.
+fn sibling_release() -> Variant {
+    Variant {
+        sibling: Sibling::Accepted,
+        ..Variant::default()
+    }
+}
+
+#[test]
+fn a_release_may_depend_on_a_sibling_that_crates_io_does_not_have_yet() {
+    let temporary = fixtures::Temp::new("pkgre-publish-sibling-dry");
+    let setup = Setup::with_variant(temporary.path(), &[], sibling_release());
+    let summary = setup.dry_run().expect("the dry run passes");
+    assert_eq!(summary.would_upload, 2);
+    assert_eq!(
+        summary.dependencies, 4,
+        "a crate of the release is served by the release, not by crates.io"
+    );
+    assert_eq!(summary.yanked_dependencies, 0);
+    assert!(setup.uploader.uploads().is_empty());
+    assert_eq!(setup.tokens.reads(), 0);
+}
+
+#[test]
+fn uploads_a_sibling_before_the_crate_that_depends_on_it() {
+    let temporary = fixtures::Temp::new("pkgre-publish-sibling-order");
+    let setup = Setup::with_variant(temporary.path(), &[], sibling_release());
+    let summary = setup.execute(true).expect("the upload passes");
+    assert_eq!(summary.uploaded, 2);
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(LIB).crates_io_name,
+            setup.fixture.entry(BIN).crates_io_name
+        ],
+        "the library is uploaded first, although the binary's name sorts before it"
+    );
+    for name in [BIN, LIB] {
+        assert_eq!(
+            Setup::record(&summary, name).state,
+            SelfPublishCrateState::Uploaded
+        );
+    }
+}
+
+#[test]
+fn a_resumed_run_uploads_a_dependent_whose_sibling_is_published() {
+    let temporary = fixtures::Temp::new("pkgre-publish-sibling-resume");
+    let setup = Setup::with_variant(temporary.path(), &[], sibling_release());
+    // An earlier run uploaded the library and stopped before the binary.
+    setup.publish(LIB);
+    let summary = setup.execute(true).expect("the resumed upload passes");
+    assert_eq!(summary.published, 1);
+    assert_eq!(summary.uploaded, 1);
+    assert_eq!(
+        Setup::record(&summary, LIB).state,
+        SelfPublishCrateState::Published
+    );
+    assert_eq!(
+        Setup::record(&summary, BIN).state,
+        SelfPublishCrateState::Uploaded
+    );
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![setup.fixture.entry(BIN).crates_io_name],
+        "only the binary is uploaded, and its package reproduces the recorded bytes"
+    );
+}
+
+#[test]
+fn refuses_a_dependent_that_crates_io_has_before_its_sibling() {
+    let temporary = fixtures::Temp::new("pkgre-publish-sibling-out-of-order");
+    let setup = Setup::with_variant(temporary.path(), &[], sibling_release());
+    // crates.io has the binary, and not the library it depends on.
+    setup.publish(BIN);
+    let error = refusal(setup.dry_run());
+    assert!(error.contains(BIN), "{error}");
+    assert!(error.contains(LIB), "{error}");
+    assert!(error.contains("is missing"), "{error}");
 }
 
 #[test]

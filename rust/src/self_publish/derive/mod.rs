@@ -181,6 +181,9 @@ pub(super) struct Derivation {
     /// Every package outside the release's workspace that crates.io must serve
     /// for the release, in name and version order.
     pub(super) dependencies: Vec<DerivedDependency>,
+    /// The crates of the release that each crate of the release depends on, by
+    /// Cargo package name.
+    pub(super) siblings: BTreeMap<String, BTreeSet<String>>,
     /// The rewritten workspace, which the verified packaging and the upload
     /// keep using.
     pub(super) workspace: DerivedWorkspace,
@@ -258,10 +261,12 @@ impl DerivedWorkspace {
     /// upload's own Cargo home and environment, and returns their archives by
     /// crates.io name.
     ///
-    /// The command packages without verifying, so it runs no package code: the
-    /// upload routine calls it after the verified packaging and before it reads
-    /// the token, so that the bytes it uploads are the bytes it compared with
-    /// `crates-io.lock`.
+    /// The crates are packaged together, so that a crate of the release whose
+    /// sibling crates.io does not have yet is packaged against that sibling of
+    /// the same run. The command packages without verifying, so it runs no
+    /// package code: the upload routine calls it after the verified packaging
+    /// and before it reads the token, so that the bytes it uploads are the bytes
+    /// it compared with `crates-io.lock`.
     ///
     /// # Errors
     ///
@@ -275,28 +280,27 @@ impl DerivedWorkspace {
         ensure_no_cargo_configuration(&self.work)?;
         let manifest = self.manifest();
         let target = self.upload_target();
-        let mut archives = BTreeMap::new();
-        for (name, version) in packages {
-            let archive = cargo::package_for_upload(
-                &self.cargo,
-                environment,
-                &self.work,
-                &target,
-                &manifest,
-                name,
-                version,
-            )
-            .with_context(|| format!("package crate {name} {version} as cargo publish would"))?;
-            archives.insert(name.clone(), archive);
-        }
-        Ok(archives)
+        cargo::package_group(
+            &self.cargo,
+            environment,
+            &self.work,
+            &target,
+            &manifest,
+            packages,
+            &self.sources,
+            cargo::Build::Package,
+        )
+        .context("package the crates of the release as cargo publish would")
     }
 
     /// Packages the named crates with Cargo's verification, in the rewritten
     /// workspace, and returns their archives by crates.io name.
     ///
-    /// The packages are built after packaging, so package code such as a build
-    /// script or a proc macro runs; the caller must hold no token.
+    /// The crates are packaged together, so that a crate of the release whose
+    /// sibling crates.io does not have yet is packaged against that sibling of
+    /// the same run. The packages are built after packaging, so package code
+    /// such as a build script or a proc macro runs; the caller must hold no
+    /// token.
     ///
     /// # Errors
     ///
@@ -308,21 +312,17 @@ impl DerivedWorkspace {
     ) -> Result<BTreeMap<String, Vec<u8>>> {
         ensure_no_cargo_configuration(&self.work)?;
         let manifest = self.manifest();
-        let mut archives = BTreeMap::new();
-        for (name, version) in packages {
-            let archive = cargo::package_verified(
-                &self.cargo,
-                &self.environment,
-                &self.work,
-                &self.targets,
-                &manifest,
-                name,
-                version,
-            )
-            .with_context(|| format!("verify the crates.io package of {name} {version}"))?;
-            archives.insert(name.clone(), archive);
-        }
-        Ok(archives)
+        cargo::package_group(
+            &self.cargo,
+            &self.environment,
+            &self.work,
+            &self.targets,
+            &manifest,
+            packages,
+            &self.sources,
+            cargo::Build::Verify,
+        )
+        .context("verify the crates.io packages of the release")
     }
 }
 
@@ -429,7 +429,7 @@ pub(super) fn derive_release_in(
     ensure_release_members(&workspace, released, &release.tag)?;
     let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
     let published = published_crates(&workspace, released, config, &release.tag)?;
-    let expectations = Expectations::build(&lock, catalog, config, earlier, &published)?;
+    let mut expectations = Expectations::build(&lock, catalog, config, earlier, &published)?;
     let plan = workspace::ReleasePlan::new(&workspace, &lock, &expectations, &published)?;
     workspace::rewrite_manifests(&workspace, &plan, &expectations)?;
     cargo_lock::translate_lock(&checkout.root, &expectations)?;
@@ -450,7 +450,28 @@ pub(super) fn derive_release_in(
         &root.join("targets"),
         &checkout.root,
         &members,
+        &registry_sources,
     )?;
+    // The comparison proves the packaged locks against the archives this run
+    // packages, so a crate that depends on another crate of the release is
+    // compared with the sibling's crates.io archive, not the curated one.
+    let mut derived = BTreeMap::new();
+    for package in released {
+        let crates_io_name = published
+            .get(&package.name)
+            .expect("every released crate has a crates.io name");
+        let archive = archives.get(crates_io_name).with_context(|| {
+            format!(
+                "pinned Cargo produced no archive for {} {}",
+                crates_io_name, package.version
+            )
+        })?;
+        derived.insert(
+            (package.name.clone(), package.version.clone()),
+            sha256_bytes(archive),
+        );
+    }
+    expectations.bind_release(released, &derived)?;
 
     let mut packages = Vec::new();
     for package in released {
@@ -523,10 +544,12 @@ pub(super) fn derive_release_in(
             ))
     });
     let dependencies = expectations.dependencies();
+    let siblings = sibling_dependencies(&workspace, &published);
     let targets = root.join("targets");
     Ok(Derivation {
         packages,
         dependencies,
+        siblings,
         workspace: DerivedWorkspace {
             temporary,
             cargo,
@@ -537,6 +560,31 @@ pub(super) fn derive_release_in(
             sources: registry_sources,
         },
     })
+}
+
+/// Returns the crates of the release that each crate of the release depends on.
+///
+/// The routine uploads a crate after the crates it depends on, so it needs these
+/// edges, by Cargo package name.
+fn sibling_dependencies(
+    workspace: &workspace::Workspace,
+    published: &BTreeMap<String, String>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut siblings = BTreeMap::new();
+    for member in &workspace.members {
+        if !published.contains_key(&member.name) {
+            continue;
+        }
+        let dependencies = member
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.package.as_str())
+            .filter(|package| published.contains_key(*package) && *package != member.name)
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        siblings.insert(member.name.clone(), dependencies);
+    }
+    siblings
 }
 
 /// Requires the crates that the catalog publishes from the tag to be exactly

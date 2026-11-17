@@ -48,6 +48,17 @@ pub(super) enum RegistrySources {
     LocalCurated(PathBuf),
 }
 
+impl RegistrySources {
+    /// Returns the directory source that replaces the registries, if any.
+    #[cfg(test)]
+    pub(super) fn local_directory(&self) -> Option<&Path> {
+        match self {
+            Self::Local(directory) | Self::LocalCurated(directory) => Some(directory),
+            Self::CratesIo => None,
+        }
+    }
+}
+
 /// Returns the registries that one derivation resolves its packages from.
 #[cfg_attr(not(test), allow(unused_variables))]
 pub(super) fn registry_sources(sources: super::Sources<'_>) -> RegistrySources {
@@ -161,11 +172,27 @@ fn write_local_source(text: &mut String, sources: &RegistrySources) -> Result<()
     Ok(())
 }
 
+/// How one packaging run builds the crates it packages.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Build {
+    /// Package only, as `cargo publish` does, which runs no package code.
+    Package,
+    /// Package and build, which runs the package code of the release.
+    Verify,
+}
+
 /// Packages the named members of one checkout twice and returns the archives by
 /// package name.
 ///
 /// The working directory and the target directories are created below `root`,
 /// which lies outside `checkout`. Both runs must produce identical bytes.
+///
+/// Cargo serves the crates of one packaging run to each other through a
+/// temporary registry, so a crate of the release may depend on another one. A
+/// test's directory source replaces that registry, and Cargo then looks the
+/// sibling up in the directory alone, so [`package_once`] packages such a run
+/// one crate at a time and lets the source serve each archive to the crates that
+/// depend on it.
 ///
 /// # Errors
 ///
@@ -179,39 +206,31 @@ pub(super) fn package_members(
     targets: &Path,
     checkout: &Path,
     members: &[(String, Version)],
+    sources: &RegistrySources,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     ensure_no_cargo_configuration(work)?;
     let manifest_path = checkout.join("Cargo.toml");
     let mut archives: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for directory in TARGET_DIRECTORIES {
         let target = targets.join(directory);
-        let mut arguments = vec![
-            OsString::from("package"),
-            OsString::from("--no-verify"),
-            OsString::from("--locked"),
-            OsString::from("--allow-dirty"),
-            OsString::from("--manifest-path"),
-            manifest_path.as_os_str().to_owned(),
-            OsString::from("--target-dir"),
-            target.as_os_str().to_owned(),
-        ];
-        for (name, _) in members {
-            arguments.push(OsString::from("--package"));
-            arguments.push(OsString::from(name));
-        }
-        run_cargo(cargo, environment, work, arguments)?;
-        for (name, version) in members {
-            let archive = target
-                .join("package")
-                .join(format!("{name}-{version}.crate"));
-            let bytes = read_bounded_archive(&archive)?;
-            match archives.get(name) {
+        package_once(
+            cargo,
+            environment,
+            work,
+            &target,
+            &manifest_path,
+            members,
+            sources,
+            Build::Package,
+        )?;
+        for (name, bytes) in read_archives(&target, members)? {
+            match archives.get(&name) {
                 Some(first) => ensure!(
                     first == &bytes,
-                    "pinned Cargo produced non-deterministic archives for {name} {version}"
+                    "pinned Cargo produced non-deterministic archives for {name}"
                 ),
                 None => {
-                    archives.insert(name.clone(), bytes);
+                    archives.insert(name, bytes);
                 }
             }
         }
@@ -219,83 +238,243 @@ pub(super) fn package_members(
     Ok(archives)
 }
 
-/// Packages one crate of the rewritten workspace with Cargo's verification and
-/// returns its archive.
-///
-/// Unlike [`package_members`], the command builds the packaged crate, so
-/// package code, such as a build script or a proc macro, runs. The caller must
-/// therefore run it only while no token is in reach. The command runs in a
-/// process group of its own, which is ended once it returns, so that no process
-/// the package code started outlives it.
+/// Packages the named members of one checkout into one target directory and
+/// returns their archives by package name.
 ///
 /// # Errors
 ///
-/// Returns an error when Cargo fails, or when the archive is missing or too
-/// large.
-pub(super) fn package_verified(
+/// Returns an error when Cargo fails, when an archive is missing or too large,
+/// or, in a test, when the members cannot be ordered or added to the source.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn package_group(
     cargo: &Path,
     environment: &ChildEnvironment,
     work: &Path,
     target: &Path,
     manifest_path: &Path,
-    name: &str,
-    version: &Version,
-) -> Result<Vec<u8>> {
-    let arguments = vec![
-        OsString::from("package"),
-        OsString::from("--locked"),
-        OsString::from("--allow-dirty"),
-        OsString::from("--manifest-path"),
-        manifest_path.as_os_str().to_owned(),
-        OsString::from("--target-dir"),
-        target.as_os_str().to_owned(),
-        OsString::from("--package"),
-        OsString::from(name),
-    ];
-    run_cargo_grouped(cargo, environment, work, arguments)?;
-    let archive = target
-        .join("package")
-        .join(format!("{name}-{version}.crate"));
-    read_bounded_archive(&archive)
+    members: &[(String, Version)],
+    sources: &RegistrySources,
+    build: Build,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    package_once(
+        cargo,
+        environment,
+        work,
+        target,
+        manifest_path,
+        members,
+        sources,
+        build,
+    )?;
+    read_archives(target, members)
 }
 
-/// Packages one crate the way `cargo publish` packages it, without verifying,
-/// and returns its archive.
+/// Packages the named members of one checkout into one target directory.
 ///
-/// The command runs no package code, so a run can call it while a token is in
-/// reach; the upload routine calls it before reading the token, so that the
-/// archive it uploads is the one it compared with `crates-io.lock`.
+/// A production run packages them in one command, so that Cargo's temporary
+/// registry serves each crate of the release to the crates that depend on it.
 ///
 /// # Errors
 ///
-/// Returns an error when Cargo fails, or when the archive is missing or too
-/// large.
-pub(super) fn package_for_upload(
+/// Returns an error when Cargo fails, or, in a test, when the members cannot be
+/// ordered or added to the source.
+#[allow(clippy::too_many_arguments)]
+fn package_once(
     cargo: &Path,
     environment: &ChildEnvironment,
     work: &Path,
     target: &Path,
     manifest_path: &Path,
-    name: &str,
-    version: &Version,
-) -> Result<Vec<u8>> {
-    let arguments = vec![
+    members: &[(String, Version)],
+    sources: &RegistrySources,
+    build: Build,
+) -> Result<()> {
+    #[cfg(test)]
+    if let Some(directory) = sources.local_directory() {
+        return package_into_source(
+            cargo,
+            environment,
+            work,
+            target,
+            manifest_path,
+            members,
+            directory,
+            build,
+        );
+    }
+    let _ = (sources, build);
+    #[cfg(not(test))]
+    let _ = sources;
+    let mut arguments = vec![
         OsString::from("package"),
-        OsString::from("--no-verify"),
         OsString::from("--locked"),
         OsString::from("--allow-dirty"),
         OsString::from("--manifest-path"),
         manifest_path.as_os_str().to_owned(),
         OsString::from("--target-dir"),
         target.as_os_str().to_owned(),
-        OsString::from("--package"),
-        OsString::from(name),
     ];
-    run_cargo(cargo, environment, work, arguments)?;
-    let archive = target
-        .join("package")
-        .join(format!("{name}-{version}.crate"));
-    read_bounded_archive(&archive)
+    if build == Build::Package {
+        arguments.insert(1, OsString::from("--no-verify"));
+    }
+    for (name, _) in members {
+        arguments.push(OsString::from("--package"));
+        arguments.push(OsString::from(name));
+    }
+    run_build(cargo, environment, work, arguments, build)
+}
+
+/// Runs one packaging command, in its own process group when it builds.
+///
+/// # Errors
+///
+/// Returns an error when the command cannot be started or exits unsuccessfully.
+fn run_build(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    arguments: Vec<OsString>,
+    build: Build,
+) -> Result<()> {
+    match build {
+        Build::Package => run_cargo(cargo, environment, work, arguments).map(|_| ()),
+        Build::Verify => run_cargo_grouped(cargo, environment, work, arguments).map(|_| ()),
+    }
+}
+
+/// Returns the archives that one packaging run wrote, by package name.
+///
+/// # Errors
+///
+/// Returns an error for an archive that is missing, not a regular file, or too
+/// large.
+fn read_archives(
+    target: &Path,
+    members: &[(String, Version)],
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let mut archives = BTreeMap::new();
+    for (name, version) in members {
+        let archive = target
+            .join("package")
+            .join(format!("{name}-{version}.crate"));
+        ensure!(
+            fs::symlink_metadata(&archive)
+                .with_context(|| format!("inspect Cargo archive {}", archive.display()))?
+                .file_type()
+                .is_file(),
+            "Cargo did not produce a regular archive at {}",
+            archive.display()
+        );
+        archives.insert(name.clone(), read_bounded_archive(&archive)?);
+    }
+    Ok(archives)
+}
+
+/// Packages the members one at a time in dependency order, adding each archive
+/// to a test's directory source before the crates that depend on it are
+/// packaged.
+///
+/// Cargo's temporary registry is what serves the crates of one run to each
+/// other, and a directory source replaces it, so a test serves them from the
+/// source instead, as a registry that already has them does.
+///
+/// # Errors
+///
+/// Returns an error when Cargo fails, when an archive is missing or too large,
+/// when the lock cannot be read, or when an archive cannot be added to the
+/// source.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn package_into_source(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    target: &Path,
+    manifest_path: &Path,
+    members: &[(String, Version)],
+    directory: &Path,
+    build: Build,
+) -> Result<()> {
+    let checkout = manifest_path
+        .parent()
+        .context("the workspace manifest has no parent directory")?;
+    let lock = super::cargo_lock::LockIndex::load(&checkout.join("Cargo.lock"))?;
+    let mut remaining = members.to_vec();
+    let mut packaged: Vec<String> = Vec::new();
+    while !remaining.is_empty() {
+        let ready = remaining
+            .iter()
+            .position(|(name, version)| {
+                lock.package(name, version).is_some_and(|package| {
+                    package
+                        .dependencies
+                        .iter()
+                        .filter(|(dependency, _)| members.iter().any(|(name, _)| name == dependency))
+                        .all(|(dependency, _)| packaged.contains(dependency))
+                })
+            })
+            .with_context(|| {
+                format!(
+                    "the members {remaining:?} depend on each other in a cycle, or the lock does not resolve them"
+                )
+            })?;
+        let (name, version) = remaining.remove(ready);
+        let mut arguments = vec![
+            OsString::from("package"),
+            OsString::from("--locked"),
+            OsString::from("--allow-dirty"),
+            OsString::from("--manifest-path"),
+            manifest_path.as_os_str().to_owned(),
+            OsString::from("--target-dir"),
+            target.as_os_str().to_owned(),
+            OsString::from("--package"),
+            OsString::from(&name),
+        ];
+        if build == Build::Package {
+            arguments.insert(1, OsString::from("--no-verify"));
+        }
+        run_build(cargo, environment, work, arguments, build)?;
+        let archive = target
+            .join("package")
+            .join(format!("{name}-{version}.crate"));
+        let bytes = read_bounded_archive(&archive)?;
+        add_to_source(directory, &name, &version, &bytes)?;
+        packaged.push(name);
+    }
+    Ok(())
+}
+
+/// Adds one packaged crate to a directory source, as a registry that serves it
+/// does.
+///
+/// # Errors
+///
+/// Returns an error for an archive that cannot be read, or a file that cannot
+/// be written.
+#[cfg(test)]
+fn add_to_source(directory: &Path, name: &str, version: &Version, archive: &[u8]) -> Result<()> {
+    let listed = crate::update::read_crate_archive(name, version, archive, &[])?;
+    let paths = listed.files.keys().cloned().collect::<Vec<_>>();
+    let wanted = paths.iter().map(String::as_str).collect::<Vec<_>>();
+    let contents = crate::update::read_crate_archive(name, version, archive, &wanted)?;
+    let crate_directory = directory.join(format!("{name}-{version}"));
+    for (path, bytes) in &contents.contents {
+        let path = crate_directory.join(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create directory {}", parent.display()))?;
+        }
+        fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
+    }
+    fs::write(
+        crate_directory.join(".cargo-checksum.json"),
+        format!(
+            "{{\"files\":{{}},\"package\":\"{}\"}}",
+            crate::artifact::sha256_bytes(archive)
+        ),
+    )
+    .with_context(|| format!("write the checksum of {name} {version}"))?;
+    Ok(())
 }
 
 /// Runs one Cargo command in the isolated environment and returns its output.
