@@ -860,6 +860,17 @@ fn log_source_correspondence(name: &str, version: &Version, correspondence: &Sou
                 "source correspondence located the package directory"
             );
         }
+        let copied_and_linked = comparison.describe_copied_and_linked();
+        if !copied_and_linked.is_empty() {
+            info!(
+                package = name,
+                version = %version,
+                path_in_vcs = %comparison.path_in_vcs,
+                located_path = comparison.located_path,
+                members = %copied_and_linked,
+                "source correspondence read members through a copy or a link's own text"
+            );
+        }
         let differences = comparison.describe_differences();
         if differences.is_empty() {
             return;
