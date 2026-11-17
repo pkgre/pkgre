@@ -382,6 +382,9 @@ impl ComparisonReport {
 }
 
 /// One archive member's place in the public tree.
+///
+/// Each flag is a separate fact the report records for the reviewer, so they stay separate fields.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) struct FileComparison {
@@ -398,11 +401,20 @@ pub(crate) struct FileComparison {
     pub(crate) submodule: Option<String>,
     /// The exact commit of that submodule tree.
     pub(crate) submodule_commit: Option<String>,
-    /// Whether Cargo copied the member into the package root from outside it.
+    /// Whether the manifest names a file Cargo copies into the package root from outside it.
     pub(crate) copied: bool,
+    /// Whether the member is the package's own file of that name instead, which Cargo keeps where
+    /// it would copy one and only warns that the archive will hold the package's own file.
+    pub(crate) copy_skipped: bool,
+    /// Whether the member holds a symbolic link's own text, which Cargo archives as a plain file
+    /// when the checkout it packaged from had the link as one.
+    pub(crate) link_text: bool,
     pub(crate) archive_sha256: String,
+    /// The digest of the bytes compared: the file the compared path reaches, or the text of the
+    /// symbolic link at it.
     pub(crate) repository_sha256: Option<String>,
     pub(crate) archive_executable: bool,
+    /// The executable bit of those bytes; a link's own text is a plain file.
     pub(crate) repository_executable: Option<bool>,
     pub(crate) disposition: &'static str,
 }
@@ -453,6 +465,59 @@ struct GitBlob {
     executable: bool,
 }
 
+/// The bytes one archive member may equal: the file its path reaches, and the symbolic link the
+/// path itself names.
+struct MemberSource {
+    /// The path reached after following symbolic links, present only when it differs from the path
+    /// read.
+    resolved_path: Option<String>,
+    /// The submodule the path was read from.
+    submodule: Option<SubmoduleMount>,
+    /// The regular file the path reaches, with its digest and mode.
+    file: Option<GitBlob>,
+    /// The symbolic link the path names, with the digest of its own text and the mode a plain file
+    /// holding that text has.
+    link: Option<GitBlob>,
+}
+
+/// How one archive member corresponds to one repository path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileMatch {
+    /// The member equals the file the path reaches, in bytes and executable bit.
+    File,
+    /// The member equals the symbolic link's own text, as a plain file.
+    LinkText,
+}
+
+impl MemberSource {
+    /// How the member corresponds to this source, if it does.
+    fn matched(&self, file: &ArchiveFile) -> Option<FileMatch> {
+        let archive_executable = file.mode & 0o111 != 0;
+        let equals =
+            |blob: &GitBlob| blob.sha256 == file.sha256 && blob.executable == archive_executable;
+        if self.file.as_ref().is_some_and(equals) {
+            return Some(FileMatch::File);
+        }
+        self.link
+            .as_ref()
+            .filter(|blob| equals(blob))
+            .map(|_| FileMatch::LinkText)
+    }
+
+    /// The bytes the member matched.
+    fn matched_blob(&self, matched: FileMatch) -> Option<&GitBlob> {
+        match matched {
+            FileMatch::File => self.file.as_ref(),
+            FileMatch::LinkText => self.link.as_ref(),
+        }
+    }
+
+    /// The bytes the tree holds at the path, when the member matches neither.
+    fn held(&self) -> Option<&GitBlob> {
+        self.file.as_ref().or(self.link.as_ref())
+    }
+}
+
 /// The wall-clock budget of one archive-to-tree comparison.
 struct Deadline {
     started: Instant,
@@ -491,6 +556,9 @@ struct Resolution {
     submodule: Option<SubmoduleMount>,
     /// The regular file found, absent when the path does not exist.
     file: Option<ResolvedFile>,
+    /// The text of the symbolic link at exactly the requested path, present when that path names
+    /// one; a link reached through another one is not this member's own entry.
+    link_text: Option<String>,
 }
 
 /// The regular file one resolution reached, before its bytes are read.
@@ -568,6 +636,7 @@ impl<'a> TreeResolver<'a> {
                         path: path.to_owned(),
                         submodule: None,
                         file: None,
+                        link_text: None,
                     });
                 };
                 return match entry {
@@ -583,17 +652,25 @@ impl<'a> TreeResolver<'a> {
                             executable,
                             size,
                         }),
+                        link_text: None,
                     }),
                     TreeEntry::Symlink { target } => {
+                        // The first redirection of a request is the link the request names; a
+                        // deeper one is reached through it and is not this member's own entry.
                         let redirects = redirects + 1;
                         check_redirects(redirects)?;
-                        let target = resolve_link_target(&candidate, &target)?;
-                        self.resolve_from(tree, &target, redirects)
+                        let resolved = resolve_link_target(&candidate, &target)?;
+                        let mut resolution = self.resolve_from(tree, &resolved, redirects)?;
+                        if redirects == 1 {
+                            resolution.link_text = Some(target);
+                        }
+                        Ok(resolution)
                     }
                     TreeEntry::Directory | TreeEntry::Gitlink { .. } => Ok(Resolution {
                         path: path.to_owned(),
                         submodule: None,
                         file: None,
+                        link_text: None,
                     }),
                 };
             }
@@ -603,6 +680,7 @@ impl<'a> TreeResolver<'a> {
                         path: path.to_owned(),
                         submodule: None,
                         file: None,
+                        link_text: None,
                     });
                 }
                 DirectoryState::Directory => resolved = candidate,
@@ -635,6 +713,28 @@ impl<'a> TreeResolver<'a> {
             path: path.to_owned(),
             submodule: None,
             file: None,
+            link_text: None,
+        })
+    }
+
+    /// Reads one archive-member path: the file it reaches and the symbolic link it names.
+    fn member_source(&self, path: &str) -> Result<MemberSource> {
+        let resolution = self.resolve(path)?;
+        let file = self
+            .file_bytes(&resolution, MAX_GIT_BLOB_BYTES)?
+            .map(|bytes| GitBlob {
+                sha256: sha256_bytes(&bytes),
+                executable: resolution.file.as_ref().is_some_and(|file| file.executable),
+            });
+        let link = resolution.link_text.as_deref().map(|target| GitBlob {
+            sha256: sha256_bytes(target.as_bytes()),
+            executable: false,
+        });
+        Ok(MemberSource {
+            resolved_path: (resolution.path != path).then_some(resolution.path),
+            submodule: resolution.submodule,
+            file,
+            link,
         })
     }
 
@@ -826,13 +926,8 @@ fn build_comparison_report(
             files.push(ignored_comparison(file));
             continue;
         }
-        let expected_path = join_vcs_path(&path_in_vcs, &source_path_for_archive_file(&file.path));
-        let (compared_path, copied) = match copied_files.get(&file.path) {
-            Some(source) => (source.clone(), true),
-            None => (expected_path.clone(), false),
-        };
-        let resolution = match resolver.resolve(&compared_path) {
-            Ok(value) => value,
+        let member = match compare_member(&resolver, file, &path_in_vcs, &copied_files) {
+            Ok(member) => member,
             Err(error) => {
                 // A difference is already established, so the archive is blocked whatever the
                 // remaining members hold; an exhausted budget cannot excuse it.
@@ -842,47 +937,10 @@ fn build_comparison_report(
                 return Err(error);
             }
         };
-        let blob = resolver
-            .file_bytes(&resolution, MAX_GIT_BLOB_BYTES)?
-            .map(|bytes| GitBlob {
-                sha256: sha256_bytes(&bytes),
-                executable: resolution.file.as_ref().is_some_and(|file| file.executable),
-            });
-        let archive_executable = file.mode & 0o111 != 0;
-        let disposition = match &blob {
-            Some(blob) if blob.sha256 == file.sha256 && blob.executable == archive_executable => {
-                "match"
-            }
-            Some(_) => {
-                matches = false;
-                "different"
-            }
-            None => {
-                matches = false;
-                "missing"
-            }
-        };
-        let resolved_path = (resolution.path != compared_path).then_some(resolution.path);
-        files.push(FileComparison {
-            archive_path: file.path.clone(),
-            expected_path: Some(expected_path),
-            compared_path: Some(compared_path),
-            resolved_path,
-            submodule: resolution
-                .submodule
-                .as_ref()
-                .map(|mount| mount.repository.clone()),
-            submodule_commit: resolution
-                .submodule
-                .as_ref()
-                .map(|mount| mount.commit.clone()),
-            copied,
-            archive_sha256: file.sha256.clone(),
-            repository_sha256: blob.as_ref().map(|value| value.sha256.clone()),
-            archive_executable,
-            repository_executable: blob.as_ref().map(|value| value.executable),
-            disposition,
-        });
+        if member.disposition != "match" {
+            matches = false;
+        }
+        files.push(member);
     }
     let report = ComparisonReport {
         path_in_vcs,
@@ -890,6 +948,72 @@ fn build_comparison_report(
         files,
     };
     Ok((report, matches))
+}
+
+/// Compares one archive member with the repository file Cargo packaged it from.
+///
+/// A member is normally the file its own path names. It is a copy instead when the manifest names
+/// a `readme` or `license-file` outside the package directory: Cargo copies that file into the
+/// package root, but keeps a file the package already holds under the same name, warning only that
+/// the archived crate will contain the package's own file. Until 1.71 it kept a package file of
+/// that name anywhere in the package; from 1.71 it keeps one at the package root. An archive does
+/// not say which Cargo packaged it, so a copied member is compared with the copy's source and then
+/// with the package's own file, and the report says which of them matched.
+///
+/// A member may also hold a symbolic link's own text: Cargo archives a link as a plain file when
+/// the checkout it packaged from had the link as one, which a checkout without symbolic links
+/// writes as a file holding the target's text.
+fn compare_member(
+    resolver: &TreeResolver<'_>,
+    file: &ArchiveFile,
+    path_in_vcs: &str,
+    copied_files: &BTreeMap<String, String>,
+) -> Result<FileComparison> {
+    let expected_path = join_vcs_path(path_in_vcs, &source_path_for_archive_file(&file.path));
+    let copy_source = copied_files.get(&file.path);
+    let mut compared_path = copy_source.map_or_else(|| expected_path.clone(), Clone::clone);
+    let mut source = resolver.member_source(&compared_path)?;
+    let mut matched = source.matched(file);
+    let mut copy_skipped = false;
+    if matched.is_none() && copy_source.is_some() {
+        let own = resolver.member_source(&expected_path)?;
+        if let Some(own_matched) = own.matched(file) {
+            source = own;
+            matched = Some(own_matched);
+            compared_path.clone_from(&expected_path);
+            copy_skipped = true;
+        }
+    }
+    let held = match matched {
+        Some(matched) => source.matched_blob(matched),
+        None => source.held(),
+    };
+    let disposition = match matched {
+        Some(_) => "match",
+        None if held.is_some() => "different",
+        None => "missing",
+    };
+    let repository_sha256 = held.map(|blob| blob.sha256.clone());
+    let repository_executable = held.map(|blob| blob.executable);
+    Ok(FileComparison {
+        archive_path: file.path.clone(),
+        expected_path: Some(expected_path),
+        compared_path: Some(compared_path),
+        resolved_path: source.resolved_path,
+        submodule: source
+            .submodule
+            .as_ref()
+            .map(|mount| mount.repository.clone()),
+        submodule_commit: source.submodule.as_ref().map(|mount| mount.commit.clone()),
+        copied: copy_source.is_some(),
+        copy_skipped,
+        link_text: matched == Some(FileMatch::LinkText),
+        archive_sha256: file.sha256.clone(),
+        repository_sha256,
+        archive_executable: file.mode & 0o111 != 0,
+        repository_executable,
+        disposition,
+    })
 }
 
 /// The package directory the archive was packaged from, and whether it had to be located.
@@ -1208,6 +1332,8 @@ fn ignored_comparison(file: &ArchiveFile) -> FileComparison {
         submodule: None,
         submodule_commit: None,
         copied: false,
+        copy_skipped: false,
+        link_text: false,
         archive_sha256: file.sha256.clone(),
         repository_sha256: None,
         archive_executable: file.mode & 0o111 != 0,
@@ -2468,6 +2594,99 @@ mod tests {
         let readme = comparison(report(&correspondence), "README.md");
         assert_eq!(readme.disposition, "different");
         assert!(readme.copied);
+        assert!(!readme.copy_skipped);
+    }
+
+    #[test]
+    fn copied_readme_that_the_package_already_holds_matches_its_own_file() {
+        let manifest = "[package]\nname = \"demo\"\nreadme.workspace = true\n";
+        let archive = member_archive(b"member readme", manifest.as_bytes());
+        let tree = FakeTree::new([
+            (
+                "Cargo.toml",
+                text(
+                    "[workspace]\nmembers = [\"member\"]\n\n[workspace.package]\nreadme = \"README.md\"\n",
+                ),
+            ),
+            ("README.md", text("workspace readme")),
+            ("member/Cargo.toml", text(manifest)),
+            ("member/README.md", text("member readme")),
+            ("member/src/lib.rs", text("member source")),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let readme = comparison(report(&correspondence), "README.md");
+        assert_eq!(readme.disposition, "match");
+        assert!(
+            readme.copied,
+            "the workspace readme is the file Cargo copies"
+        );
+        assert!(
+            readme.copy_skipped,
+            "Cargo keeps the readme the package already holds"
+        );
+        assert!(!readme.link_text);
+        assert_eq!(readme.compared_path.as_deref(), Some("member/README.md"));
+        assert_eq!(
+            readme.repository_sha256.as_deref(),
+            Some(sha256_bytes(b"member readme").as_str())
+        );
+    }
+
+    #[test]
+    fn copied_readme_that_matches_neither_its_source_nor_the_package_is_different() {
+        let manifest = "[package]\nname = \"demo\"\nreadme = \"../README.md\"\n";
+        let archive = member_archive(b"archived readme", manifest.as_bytes());
+        let tree = FakeTree::new([
+            ("README.md", text("workspace readme")),
+            ("member/Cargo.toml", text(manifest)),
+            ("member/README.md", text("member readme")),
+            ("member/src/lib.rs", text("member source")),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        let readme = comparison(report(&correspondence), "README.md");
+        assert_eq!(readme.disposition, "different");
+        assert!(readme.copied);
+        assert!(!readme.copy_skipped);
+        assert_eq!(readme.compared_path.as_deref(), Some("README.md"));
+    }
+
+    #[test]
+    fn copied_readme_that_is_a_symbolic_link_matches_its_own_text() {
+        let manifest = "[package]\nname = \"demo\"\nreadme = \"../README.md\"\n";
+        let archive = member_archive(b"../README.md", manifest.as_bytes());
+        let tree = FakeTree::new([
+            ("README.md", text("workspace readme")),
+            ("member/Cargo.toml", text(manifest)),
+            ("member/README.md", link("../README.md")),
+            ("member/src/lib.rs", text("member source")),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let readme = comparison(report(&correspondence), "README.md");
+        assert_eq!(readme.disposition, "match");
+        assert!(readme.copied);
+        assert!(readme.copy_skipped);
+        assert!(readme.link_text);
+        assert_eq!(readme.compared_path.as_deref(), Some("member/README.md"));
     }
 
     #[test]
@@ -2517,6 +2736,108 @@ mod tests {
         assert_eq!(license.compared_path.as_deref(), Some("member/LICENSE-MIT"));
         assert_eq!(license.resolved_path.as_deref(), Some("legal/LICENSE-MIT"));
         assert!(license.submodule.is_none());
+    }
+
+    #[test]
+    fn symbolic_link_member_matches_its_own_text() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("LICENSE", b"../LICENSE"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("LICENSE", text("license text")),
+            ("member/LICENSE", link("../LICENSE")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(
+                correspondence.evidence,
+                SourceEvidence::PublisherAsserted { .. }
+            ),
+            "unexpected evidence {:?}",
+            correspondence.evidence
+        );
+        let license = comparison(report(&correspondence), "LICENSE");
+        assert_eq!(license.disposition, "match");
+        assert!(license.link_text, "the member holds the link's own text");
+        assert!(!license.copied);
+        assert_eq!(license.resolved_path.as_deref(), Some("LICENSE"));
+        assert_eq!(
+            license.repository_sha256.as_deref(),
+            Some(sha256_bytes(b"../LICENSE").as_str())
+        );
+        assert_eq!(license.repository_executable, Some(false));
+    }
+
+    #[test]
+    fn executable_member_holding_a_symbolic_link_text_is_different() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                executable("LICENSE", b"../LICENSE"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("LICENSE", text("license text")),
+            ("member/LICENSE", link("../LICENSE")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        let license = comparison(report(&correspondence), "LICENSE");
+        assert_eq!(license.disposition, "different");
+        assert!(!license.link_text);
+    }
+
+    #[test]
+    fn symbolic_link_member_with_other_bytes_is_different() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("LICENSE", b"another license"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/LICENSE", link("../LICENSE")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        let license = comparison(report(&correspondence), "LICENSE");
+        assert_eq!(license.disposition, "different");
+        assert!(!license.link_text);
+    }
+
+    #[test]
+    fn link_text_does_not_rescue_a_link_that_escapes_the_repository() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("escape", b"../.."),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/escape", link("../..")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert_eq!(
+            unavailable_reason(&correspondence),
+            "repository-symlink-escapes-repository"
+        );
     }
 
     #[test]
@@ -3008,7 +3329,7 @@ mod tests {
             (
                 "member/tool",
                 FakeNode::File {
-                    contents: b"tool".to_vec(),
+                    contents: b"tool program".to_vec(),
                     executable: true,
                 },
             ),
@@ -3018,7 +3339,7 @@ mod tests {
         let archive = archive(
             vec![
                 file("Cargo.toml.orig", b"manifest"),
-                executable("run", b"tool"),
+                executable("run", b"tool program"),
             ],
             Some("member"),
         );
@@ -3036,7 +3357,10 @@ mod tests {
         assert_eq!(run.repository_executable, Some(true));
 
         let plain = super::tests::archive(
-            vec![file("Cargo.toml.orig", b"manifest"), file("run", b"tool")],
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("run", b"tool program"),
+            ],
             Some("member"),
         );
         let correspondence = promoted(&plain, Some(b"manifest"), Some("member"), &tree);

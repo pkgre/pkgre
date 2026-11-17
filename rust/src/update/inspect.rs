@@ -514,6 +514,8 @@ mod tests {
                             submodule: None,
                             submodule_commit: None,
                             copied: false,
+                            copy_skipped: false,
+                            link_text: false,
                             archive_sha256: sha256_bytes(b"source\n"),
                             repository_sha256: Some(sha256_bytes(b"source\n")),
                             archive_executable: false,

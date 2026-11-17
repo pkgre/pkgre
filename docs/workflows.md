@@ -82,7 +82,7 @@ Template includes automatic + review-required, omits blocked, refuses existing o
 $ pkgre-rust update-inspect registry 2026-08-24-routine.toml example 1.2.3 review-example-1.2.3
 ```
 
-Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted. `inspection.toml` carries the complete source comparison report beside its digest: every archive member's expected path, compared path, resolved path after a symbolic link or submodule, the submodule it was read from, whether Cargo copied it into the package root, both digests and modes, and its disposition (`match`, `different`, `missing`, `cargo-generated`).
+Output=`candidate.crate`, optional `base.crate`, `inspection.toml`, `README.txt`; no Cargo/compiler/build/package/repository code executes. Treat archives as untrusted. `inspection.toml` carries the complete source comparison report beside its digest: every archive member's expected path, compared path, resolved path after a symbolic link or submodule, the submodule it was read from, whether Cargo copies it into the package root, whether the package's own file of that name was kept instead (`copy-skipped`), whether it holds a symbolic link's own text (`link-text`), both digests and modes, and its disposition (`match`, `different`, `missing`, `cargo-generated`).
 
 4. Optionally add typed evidence beneath request:
 
