@@ -91,10 +91,11 @@ impl fmt::Display for RejectReason {
 ///
 /// Both catalogs must strictly load as schema 5. Registry serving topology must be identical,
 /// every accepted admission manifest/lock pair must stay byte-identical, every accepted identity
-/// must be retained with immutable evidence including its admission binding, every crates.io
-/// identity new since the accepted catalog must be bound to an admission batch that is new in the
-/// candidate, accepted category rules and package-name homes must not move or disappear, and every
-/// retained body must be present with a matching SHA-256.
+/// must be retained with immutable evidence including its admission binding and category, an
+/// identity's state may change only from `active` to `removed`, every crates.io identity new since
+/// the accepted catalog must be bound to an admission batch that is new in the candidate, accepted
+/// category rules and package-name homes must not move or disappear, and every retained body must
+/// be present with a matching SHA-256.
 ///
 /// # Errors
 ///
@@ -234,8 +235,8 @@ fn verify_identities(accepted: &Catalog, candidate: &Catalog) -> Result<(), Reje
             || accepted_approval.index_row_sha256 != candidate_approval.index_row_sha256
             || accepted_approval.admission_sha256 != candidate_approval.admission_sha256
             || accepted_approval.admitted_at != candidate_approval.admitted_at
-            || accepted_approval.state != candidate_approval.state
             || accepted_approval.source != candidate_approval.source
+            || !permitted_state(accepted_approval.state, candidate_approval.state)
         {
             return Err(RejectReason::MutatedIdentity(identity_name(
                 accepted_approval,
@@ -246,6 +247,16 @@ fn verify_identities(accepted: &Catalog, candidate: &Catalog) -> Result<(), Reje
         }
     }
     Ok(())
+}
+
+/// Returns whether one lifecycle step is the only state change a candidate may make.
+///
+/// A successful removal turns an accepted `active` identity into a `removed` tombstone, whose
+/// archive is no longer served and whose retained index row renders as yanked. Every other state
+/// change, reactivation included, is a mutation of immutable evidence.
+fn permitted_state(accepted: PackageState, candidate: PackageState) -> bool {
+    accepted == candidate
+        || (accepted == PackageState::Active && candidate == PackageState::Removed)
 }
 
 /// Returns every admission manifest and generated lock name with its complete-content SHA-256.
@@ -630,6 +641,107 @@ mod tests {
                     cargo_version: Version::parse(CARGO_VERSION).unwrap(),
                 },
             });
+        }
+
+        /// Removes one mirrored version the way `lock` does: the declaration no longer lists the
+        /// version, while the generated lock keeps the identity as an irreversible tombstone.
+        fn remove_mirror(
+            &mut self,
+            category: &'static str,
+            name: &'static str,
+            version: &'static str,
+        ) {
+            let versions = self
+                .mirrors
+                .get_mut(category)
+                .expect("fixture category exists")
+                .get_mut(name)
+                .expect("fixture mirror name is declared");
+            let position = versions
+                .iter()
+                .position(|value| *value == version)
+                .expect("fixture mirror version is declared");
+            versions.remove(position);
+            self.lock_identity(name, version, |package| {
+                assert!(
+                    matches!(package.source, LockedSource::CratesIo {}),
+                    "fixture removal of a mirror must name a crates.io identity"
+                );
+                package.state = PackageState::Removed;
+            });
+        }
+
+        /// Removes one Git publication the way `lock` does: the declaration no longer lists the
+        /// tag, the generated lock keeps the identity as a tombstone, and the removed identity's
+        /// archive is deleted because nothing else retains those bytes.
+        fn remove_git_tag(
+            &mut self,
+            category: &'static str,
+            name: &'static str,
+            tag: &'static str,
+        ) {
+            let tags = &mut self
+                .publishes
+                .get_mut(category)
+                .expect("fixture category exists")
+                .iter_mut()
+                .find(|(declared, _)| *declared == name)
+                .expect("fixture publish name is declared")
+                .1;
+            let position = tags
+                .iter()
+                .position(|value| *value == tag)
+                .expect("fixture tag is declared");
+            tags.remove(position);
+            let archive_sha256 = self.lock_identity_by(
+                name,
+                |package| match &package.source {
+                    LockedSource::GitTag { tag: locked, .. } => locked.as_str() == tag,
+                    LockedSource::CratesIo {} => false,
+                },
+                |package| {
+                    package.state = PackageState::Removed;
+                    package.crate_sha256.clone()
+                },
+            );
+            fs::remove_file(
+                self.root
+                    .join("objects/crates")
+                    .join(format!("{archive_sha256}.crate")),
+            )
+            .expect("fixture Git archive is retained");
+        }
+
+        /// Applies `update` to the locked identity `name` `version`.
+        fn lock_identity(
+            &mut self,
+            name: &str,
+            version: &str,
+            update: impl FnOnce(&mut LockedPackage),
+        ) {
+            let parsed = Version::parse(version).unwrap();
+            let package = self
+                .packages
+                .iter_mut()
+                .find(|package| package.name == name && package.version == parsed)
+                .expect("fixture package identity is locked");
+            update(package);
+        }
+
+        /// Applies `update` to the locked identity `name` selected by `select` and returns its
+        /// value.
+        fn lock_identity_by<T>(
+            &mut self,
+            name: &str,
+            select: impl Fn(&LockedPackage) -> bool,
+            update: impl FnOnce(&mut LockedPackage) -> T,
+        ) -> T {
+            let package = self
+                .packages
+                .iter_mut()
+                .find(|package| package.name == name && select(package))
+                .expect("fixture package identity is locked");
+            update(package)
         }
 
         /// Writes one generated admission pair covering the given packages and binds them to it.
@@ -1126,6 +1238,133 @@ mod tests {
         assert_eq!(
             check_transition(accepted.root(), removed.root()),
             Err(RejectReason::MissingHome("main/warp".to_owned()))
+        );
+    }
+
+    #[test]
+    fn accepts_a_mirror_removal_and_a_git_tag_removal() {
+        let accepted = Fixture::new("removal-accepted");
+        accepted.write();
+
+        let mut mirror = Fixture::new("removal-mirror");
+        mirror.remove_mirror("general", "demo", "1.0.0");
+        mirror.write();
+        check_transition(accepted.root(), mirror.root())
+            .expect("a locked mirror removal must be an accepted successor");
+
+        let mut tags_accepted = Fixture::new("removal-tags-accepted");
+        tags_accepted.add_git_tag("pkgre", "demo-tool", "0.1.0", "tool/v0.1.0");
+        tags_accepted.add_git_tag("pkgre", "demo-tool", "0.2.0", "tool/v0.2.0");
+        tags_accepted.write();
+        let mut tag = Fixture::new("removal-tag");
+        tag.add_git_tag("pkgre", "demo-tool", "0.1.0", "tool/v0.1.0");
+        tag.add_git_tag("pkgre", "demo-tool", "0.2.0", "tool/v0.2.0");
+        tag.remove_git_tag("pkgre", "demo-tool", "tool/v0.2.0");
+        tag.write();
+        check_transition(tags_accepted.root(), tag.root())
+            .expect("a locked Git-tag removal must be an accepted successor");
+    }
+
+    #[test]
+    fn rejects_reactivation_of_a_removed_identity() {
+        let mut removed = Fixture::new("reactivation-removed");
+        removed.remove_mirror("general", "demo", "1.0.0");
+        removed.write();
+        let active = Fixture::new("reactivation-active");
+        active.write();
+        assert_eq!(
+            check_transition(removed.root(), active.root()),
+            Err(RejectReason::MutatedIdentity("main/demo/1.0.0".to_owned()))
+        );
+    }
+
+    #[test]
+    fn rejects_a_removal_that_also_changes_immutable_evidence() {
+        let accepted = Fixture::without_admission("removal-evidence-accepted");
+        accepted.write();
+
+        let mut archive = Fixture::without_admission("removal-evidence-archive");
+        archive.remove_mirror("general", "demo", "1.0.0");
+        archive.packages[0].crate_sha256 = "11".repeat(32);
+        archive.write();
+        assert_eq!(
+            check_transition(accepted.root(), archive.root()),
+            Err(RejectReason::MutatedIdentity("main/demo/1.0.0".to_owned()))
+        );
+
+        let mut category = Fixture::without_admission("removal-evidence-category");
+        category.remove_mirror("general", "demo", "1.0.0");
+        category.move_name("demo", "general", "extra");
+        category.write();
+        assert_eq!(
+            check_transition(accepted.root(), category.root()),
+            Err(RejectReason::CategoryMove("main/demo/1.0.0".to_owned()))
+        );
+
+        let mut tags_accepted = Fixture::new("removal-source-accepted");
+        tags_accepted.add_git_tag("pkgre", "demo-tool", "0.1.0", "tool/v0.1.0");
+        tags_accepted.add_git_tag("pkgre", "demo-tool", "0.2.0", "tool/v0.2.0");
+        tags_accepted.write();
+        let mut source = Fixture::new("removal-source");
+        source.add_git_tag("pkgre", "demo-tool", "0.1.0", "tool/v0.1.0");
+        source.add_git_tag("pkgre", "demo-tool", "0.2.0", "tool/v0.2.0");
+        source.remove_git_tag("pkgre", "demo-tool", "tool/v0.2.0");
+        source.lock_identity("demo-tool", "0.2.0", |package| {
+            if let LockedSource::GitTag { commit, .. } = &mut package.source {
+                *commit = "3".repeat(40);
+            }
+        });
+        source.write();
+        assert_eq!(
+            check_transition(tags_accepted.root(), source.root()),
+            Err(RejectReason::MutatedIdentity(
+                "main/demo-tool/0.2.0".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_a_removal_that_also_changes_admission_evidence() {
+        let accepted = Fixture::new("removal-admission-accepted");
+        accepted.write();
+        let mut removed = Fixture::new("removal-admission-removed");
+        removed.remove_mirror("general", "demo", "1.0.0");
+        removed.write();
+        let accepted_catalog = Catalog::load(accepted.root()).unwrap();
+        let candidate_catalog = Catalog::load(removed.root()).unwrap();
+        verify_identities(&accepted_catalog, &candidate_catalog)
+            .expect("a removal alone is not a mutation");
+
+        // Dropping the accepted binding needs an unloadable tree, so check the rule on loaded
+        // catalogs whose binding was removed.
+        let mut unbound = Catalog::load(removed.root()).unwrap();
+        unbound.approvals[0].admission_sha256 = None;
+        assert_eq!(
+            verify_identities(&accepted_catalog, &unbound),
+            Err(RejectReason::MutatedIdentity("main/demo/1.0.0".to_owned()))
+        );
+    }
+
+    #[test]
+    fn rejects_a_removal_that_also_mutates_another_identity() {
+        let mut accepted = Fixture::new("removal-other-accepted");
+        accepted.add_git_tag("pkgre", "demo-tool", "0.1.0", "tool/v0.1.0");
+        accepted.write();
+
+        let mut candidate = Fixture::new("removal-other-candidate");
+        candidate.add_git_tag("pkgre", "demo-tool", "0.1.0", "tool/v0.1.0");
+        candidate.remove_mirror("general", "demo", "1.0.0");
+        candidate.lock_identity("demo-tool", "0.1.0", |package| {
+            if let LockedSource::GitTag { tag_oid, .. } = &mut package.source {
+                *tag_oid = "9".repeat(40);
+            }
+        });
+        candidate.write();
+        assert_eq!(
+            check_transition(accepted.root(), candidate.root()),
+            Err(RejectReason::MutatedIdentity(
+                "main/demo-tool/0.1.0".to_owned()
+            ))
         );
     }
 }

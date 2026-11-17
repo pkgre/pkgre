@@ -864,6 +864,7 @@ fn bounded_lossy(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::io::{Seek, SeekFrom};
     use std::sync::atomic::AtomicU64 as StdAtomicU64;
     use std::sync::atomic::Ordering as AtomicOrdering;
@@ -871,6 +872,7 @@ mod tests {
     use crate::config::{CatalogSource, Config};
     use pkgre_rust::accepted_ref::derive_repository_identity;
     use pkgre_rust::artifact::sha256_bytes;
+    use pkgre_rust::http_response::{PreparedRoute, evaluate_request};
 
     use super::*;
 
@@ -1001,6 +1003,39 @@ mod tests {
                 &[
                     GIT_IDENTITY.as_slice(),
                     &["commit", "--quiet", "-m", "drop main.lock"],
+                ]
+                .concat(),
+            );
+            rev_parse(&self.path(), "HEAD")
+        }
+
+        /// Removes one mirrored version from the fixture catalog the way `lock` does: the
+        /// declaration drops the version and the generated lock records the tombstone.
+        fn advance_removing_sse_stream(&self) -> String {
+            let human = self.path().join("registry/main.toml");
+            let declared = std::fs::read_to_string(&human).unwrap();
+            let edited = declared.replace(
+                "sse-stream = [\"0.2.1\", \"0.2.5\"]",
+                "sse-stream = [\"0.2.1\"]",
+            );
+            assert_ne!(edited, declared, "fixture declares sse-stream 0.2.5");
+            std::fs::write(&human, edited).unwrap();
+            let lock = self.path().join("registry/main.lock");
+            let text = std::fs::read_to_string(&lock).unwrap();
+            let active =
+                "[[packages]]\nname = \"sse-stream\"\nversion = \"0.2.5\"\nstate = \"active\"";
+            assert!(text.contains(active), "fixture locks sse-stream 0.2.5");
+            std::fs::write(
+                &lock,
+                text.replacen(active, &active.replace("active", "removed"), 1),
+            )
+            .unwrap();
+            git(&self.path(), &["add", "."]);
+            git(
+                &self.path(),
+                &[
+                    GIT_IDENTITY.as_slice(),
+                    &["commit", "--quiet", "-m", "remove sse-stream 0.2.5"],
                 ]
                 .concat(),
             );
@@ -1363,6 +1398,107 @@ poll-interval-secs = 1
         let report = watcher.poll_once().await;
         assert_eq!(report.reason, TransitionReason::RejectedHashSuppressed);
         assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+    }
+
+    /// A merged removal needs no fresh baseline: the watcher reloads the removal commit and
+    /// serves the version as a yanked tombstone while every other route stays byte-identical.
+    #[tokio::test]
+    async fn removal_commit_is_reloaded_and_served_as_a_tombstone() {
+        let directory = TempDir::new("pkgre-watch-removal");
+        let origin = Origin::new("pkgre-watch-removal-origin");
+        let config = watcher_config(&directory, &origin, &origin.root);
+        let shared = shared_for(&config);
+        let watcher = watcher_for(&config, &shared);
+        watcher.startup().await.unwrap();
+        let before = shared.snapshot().await.unwrap();
+
+        let commit = origin.advance_removing_sse_stream();
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::AcceptForward);
+        assert_eq!(report.reason, TransitionReason::ValidForwardCandidate);
+        assert_eq!(stored_commit(&directory), commit);
+        let after = shared.snapshot().await.unwrap();
+        assert_eq!(after.source_commit, commit);
+
+        // The removed version's index row renders as yanked; the kept version stays selectable.
+        let index = "/ss/e-/sse-stream";
+        let response = evaluate_request(index.as_bytes(), "GET", &[], &after.routes);
+        assert_eq!(response.status(), 200);
+        let body = std::str::from_utf8(response.body().expect("index body")).unwrap();
+        let removed = body
+            .lines()
+            .find(|line| line.contains("\"vers\":\"0.2.5\""))
+            .expect("removed row is retained");
+        assert!(
+            removed.contains("\"yanked\":true"),
+            "removed row must be yanked: {removed}"
+        );
+        let kept = body
+            .lines()
+            .find(|line| line.contains("\"vers\":\"0.2.1\""))
+            .expect("kept row is retained");
+        assert!(
+            kept.contains("\"yanked\":false"),
+            "kept row must stay active: {kept}"
+        );
+
+        // The release manifest records the same state change and nothing else.
+        let release = "/release.json";
+        let before_release = release_document(&before.routes);
+        let after_release = release_document(&after.routes);
+        let mut before_rest = before_release.clone();
+        let mut after_rest = after_release.clone();
+        let before_packages = before_rest["packages"].take();
+        let after_packages = after_rest["packages"].take();
+        assert_eq!(before_rest, after_rest, "release topology must not change");
+        let before_packages = before_packages.as_array().expect("release packages");
+        let after_packages = after_packages.as_array().expect("release packages");
+        assert_eq!(before_packages.len(), after_packages.len());
+        let mut removed_packages = 0;
+        for (before_package, after_package) in before_packages.iter().zip(after_packages) {
+            if before_package["name"] == "sse-stream" && before_package["version"] == "0.2.5" {
+                removed_packages += 1;
+                let mut expected = before_package.clone();
+                expected["yanked"] = true.into();
+                assert_eq!(after_package, &expected, "removed package must be yanked");
+            } else {
+                assert_eq!(
+                    before_package, after_package,
+                    "package {} {} must not change",
+                    before_package["name"], before_package["version"]
+                );
+            }
+        }
+        assert_eq!(removed_packages, 1);
+
+        // The tombstone route stays, and every other route is unchanged.
+        let tombstone = "/v1/main/sse-stream/0.2.5/c123f296ade4ec4b8b0f6162116e6629f5146922ca5ab40ca9d3c2e73ab4761e";
+        assert_eq!(
+            before.routes.get(tombstone),
+            after.routes.get(tombstone),
+            "the removed version's route must stay unchanged"
+        );
+        assert_eq!(
+            evaluate_request(tombstone.as_bytes(), "GET", &[], &after.routes).status(),
+            302
+        );
+        assert_eq!(before.routes.len(), after.routes.len());
+        for (path, route) in &before.routes {
+            if path == index || path == release {
+                continue;
+            }
+            assert_eq!(
+                after.routes.get(path),
+                Some(route),
+                "route {path} must not change"
+            );
+        }
+    }
+
+    fn release_document(routes: &BTreeMap<String, PreparedRoute>) -> serde_json::Value {
+        let response = evaluate_request(b"/release.json", "GET", &[], routes);
+        assert_eq!(response.status(), 200);
+        serde_json::from_slice(response.body().expect("release body")).expect("release JSON")
     }
 
     #[tokio::test]
