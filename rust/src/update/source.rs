@@ -59,6 +59,10 @@ const MAX_TREE_MANIFESTS: usize = 512;
 const MAX_WORKSPACE_ANCESTORS: usize = 32;
 /// Bytes one symbolic link's own text may hold and still be a plausible path.
 const MAX_LINK_TEXT_BYTES: usize = 4096;
+/// The unavailable reason of a symbolic link that escapes the repository.
+const SYMLINK_ESCAPE_REASON: &str = "repository-symlink-escapes-repository";
+/// The unavailable reason of a chain of symbolic links that loops or is too long.
+const REDIRECT_LOOP_REASON: &str = "repository-path-redirect-loop";
 /// Members one planning log line names.
 const MAX_REPORTED_MEMBERS: usize = 20;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -377,8 +381,9 @@ impl ComparisonReport {
     }
 
     /// Names the first members the comparison read through a Cargo copy or a symbolic link's own
-    /// text for the planning log, with the flags that applied and the repository file each was
-    /// compared with.
+    /// text for the planning log, with the flags that applied, the disposition each came out with,
+    /// and the repository file each was compared with. A copied member that came out `different`
+    /// is named here too, so the line describes what was read rather than what matched.
     pub(crate) fn describe_copied_and_linked(&self) -> String {
         describe_members(
             &self
@@ -398,10 +403,10 @@ impl ComparisonReport {
                     .join(", ");
                     match file.compared_path.as_deref() {
                         Some(compared_path) => format!(
-                            "{} ({flags}; compared with {compared_path})",
-                            file.archive_path
+                            "{} ({flags}; {}; compared with {compared_path})",
+                            file.archive_path, file.disposition
                         ),
-                        None => format!("{} ({flags})", file.archive_path),
+                        None => format!("{} ({flags}; {})", file.archive_path, file.disposition),
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -467,7 +472,7 @@ pub(crate) struct FileComparison {
     /// The executable bit of those bytes; a link's own text is a plain file.
     pub(crate) repository_executable: Option<bool>,
     /// The digest of the package's own file of that name, present for a copied member that matched
-    /// neither it nor the copy's source.
+    /// the copy's source while the package also holds its own file, or that matched neither file.
     pub(crate) package_file_sha256: Option<String>,
     /// The executable bit of that file.
     pub(crate) package_file_executable: Option<bool>,
@@ -910,33 +915,64 @@ impl<'a> TreeResolver<'a> {
 
 fn check_redirects(redirects: usize) -> Result<()> {
     if redirects > MAX_PATH_REDIRECTS {
-        return Err(unavailable_error("repository-path-redirect-loop"));
+        return Err(unavailable_error(REDIRECT_LOOP_REASON));
     }
     Ok(())
+}
+
+/// Whether one error says the comparison could not follow a symbolic link.
+///
+/// A copied member is compared with the copy's source and then with the package's own file of that
+/// name; a package file behind a link the comparison cannot follow is no candidate, while every
+/// other error says the comparison could not do its work and must stay.
+fn is_unfollowable_link(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Unavailable>()
+        .is_some_and(|unavailable| {
+            matches!(
+                unavailable.reason,
+                SYMLINK_ESCAPE_REASON | REDIRECT_LOOP_REASON
+            )
+        })
 }
 
 /// Resolves one symbolic-link target to a repository-relative path.
 fn resolve_link_target(link_path: &str, target: &str) -> Result<String> {
     if target.starts_with('/') || target.contains('\\') {
-        return Err(unavailable_error("repository-symlink-escapes-repository"));
+        return Err(unavailable_error(SYMLINK_ESCAPE_REASON));
     }
     let base = link_path
         .rsplit_once('/')
         .map_or("", |(directory, _)| directory);
-    resolve_repository_path(base, target)
-        .ok_or_else(|| unavailable_error("repository-symlink-escapes-repository"))
+    resolve_repository_path(base, target).ok_or_else(|| unavailable_error(SYMLINK_ESCAPE_REASON))
 }
 
-/// Returns whether one symbolic link's text can be a path, and so the text a plain file Cargo read
-/// would hold.
+/// Returns whether one symbolic link's text is a plain relative path, and so the text a plain file
+/// Cargo read can hold.
 ///
 /// Cargo archives a link as a plain file when the checkout it packaged from had the link as one,
-/// and that file holds the link's target text. Only a path can be such a text: at most
-/// `MAX_LINK_TEXT_BYTES` bytes, with no NUL and no newline. Anything else is content chosen to equal
-/// another file's bytes, which a checkout shows only as a dangling link, so the comparison refuses
-/// it rather than let the archive claim source a reader of the checkout would not find.
+/// and that file holds the link's target text. A checkout can follow only a path, and a kernel
+/// resolves one component at a time: zero or more leading `..` components, then ordinary names, at
+/// most `MAX_LINK_TEXT_BYTES` bytes in all, with no NUL and no newline. A `.` component, an empty
+/// one (a leading or trailing `/`, or `//`), or a `..` after a name lets a text name a path that
+/// the tree does not hold, such as source code followed by `//a/../../../LICENSE` or a path through
+/// a file, which a reader of the checkout would never find. So the comparison refuses such a text
+/// rather than let the archive claim that source.
 fn link_text_is_plausible(target: &str) -> bool {
-    target.len() <= MAX_LINK_TEXT_BYTES && !target.contains('\0') && !target.contains('\n')
+    if target.len() > MAX_LINK_TEXT_BYTES || target.contains('\0') || target.contains('\n') {
+        return false;
+    }
+    let mut named = false;
+    for component in target.split('/') {
+        if component == ".." && !named {
+            continue;
+        }
+        if component.is_empty() || component == "." || component == ".." {
+            return false;
+        }
+        named = true;
+    }
+    named
 }
 
 /// Joins `relative` to `base` inside the repository, refusing an escape above its root.
@@ -1061,9 +1097,15 @@ fn compare_member(
     if copy_source.is_some() {
         // The package's own file of that name may be the one Cargo packaged: the comparison does
         // not apply the package's `include` and `exclude` rules, so it cannot tell which one Cargo
-        // took. An own file the comparison cannot follow must not turn a difference into
-        // unavailable evidence, so its errors are dropped here.
-        if let Ok(own) = resolver.member_source(&expected_path) {
+        // took. A package file the comparison cannot follow is no candidate at all, so the copy's
+        // source stays what the member is compared with; any other error says the comparison could
+        // not do its work and stays.
+        let own = match resolver.member_source(&expected_path) {
+            Ok(own) => Some(own),
+            Err(error) if is_unfollowable_link(&error) => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(own) = own {
             if let Some(own_matched) = own.matched(file) {
                 // Cargo keeps the package's own file where it would copy one, and its warning says
                 // that the archived crate will contain the copy in the root of the package.
@@ -1078,7 +1120,11 @@ fn compare_member(
                     source = own;
                     compared_path.clone_from(&expected_path);
                 } else if matched.is_some() {
+                    // The member matched the copy's source while the package also holds its own
+                    // file, so the report carries that file's digest beside the compared one.
                     copy_ambiguous = true;
+                    package_file_sha256 = Some(own_blob.sha256.clone());
+                    package_file_executable = Some(own_blob.executable);
                 } else {
                     // Neither file matches, so the report also carries the own file's digest.
                     package_file_sha256 = Some(own_blob.sha256.clone());
@@ -3074,6 +3120,157 @@ mod tests {
     }
 
     #[test]
+    fn dangling_link_text_of_a_plain_path_is_not_the_member() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("LICENSE", b"../MISSING"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/LICENSE", link("../MISSING")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "a link that names nothing offers no text"
+        );
+        let license = comparison(report(&correspondence), "LICENSE");
+        assert_eq!(license.disposition, "missing");
+        assert!(!license.link_text);
+    }
+
+    #[test]
+    fn link_text_that_is_not_a_plain_relative_path_is_not_offered() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("NOTICE", b"./LICENSE"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/LICENSE", text("license text")),
+            ("member/NOTICE", link("./LICENSE")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "a `.` component is not a path a plain file can hold"
+        );
+        let notice = comparison(report(&correspondence), "NOTICE");
+        assert_eq!(notice.disposition, "different");
+        assert!(!notice.link_text);
+    }
+
+    #[test]
+    fn code_cancelled_by_a_parent_component_does_not_reach_a_file() {
+        let code =
+            "pub fn f() { std::process::Command::new(\"sh\").status().ok(); } //a/../../../LICENSE";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("src/lib.rs", code.as_bytes()),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/LICENSE", text("license text")),
+            ("member/src/lib.rs", link(code)),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "an empty component and a `..` after a name are no path"
+        );
+        let library = comparison(report(&correspondence), "src/lib.rs");
+        assert_eq!(library.disposition, "different");
+        assert!(!library.link_text);
+    }
+
+    #[test]
+    fn code_cancelled_by_a_parent_component_does_not_reach_a_directory() {
+        let code = "pub fn f() { evil() } //x/../..";
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("src/lib.rs", code.as_bytes()),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/src/lib.rs", link(code)),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(matches!(
+            correspondence.evidence,
+            SourceEvidence::Mismatch { .. }
+        ));
+        let library = comparison(report(&correspondence), "src/lib.rs");
+        assert_eq!(library.disposition, "missing");
+        assert!(!library.link_text);
+    }
+
+    #[test]
+    fn dot_dot_through_a_file_is_not_offered() {
+        let archive = archive(
+            vec![
+                file("Cargo.toml.orig", b"manifest"),
+                file("COPYING", b"LICENSE/../LICENSE"),
+            ],
+            Some("member"),
+        );
+        let tree = FakeTree::new([
+            ("member/Cargo.toml", text("manifest")),
+            ("member/LICENSE", text("license text")),
+            ("member/COPYING", link("LICENSE/../LICENSE")),
+        ]);
+        let correspondence = promoted(&archive, Some(b"manifest"), Some("member"), &tree);
+        assert!(
+            matches!(correspondence.evidence, SourceEvidence::Mismatch { .. }),
+            "a path through a file is not one a checkout can follow"
+        );
+        let copying = comparison(report(&correspondence), "COPYING");
+        assert_eq!(copying.disposition, "different");
+        assert!(!copying.link_text);
+    }
+
+    #[test]
+    fn package_file_error_that_is_not_a_link_keeps_the_comparison_unavailable() {
+        let manifest = "[package]\nname = \"demo\"\nreadme = \"../README.md\"\n";
+        let archive = member_archive(b"own readme", manifest.as_bytes());
+        let tree = FakeTree::new([
+            ("README.md", text("workspace readme")),
+            ("member/Cargo.toml", text(manifest)),
+            ("member/README.md", link("../vendor/README.md")),
+            (
+                ".gitmodules",
+                text(
+                    "[submodule \"vendor\"]\n\tpath = vendor\n\turl = https://github.com/example/vendored\n",
+                ),
+            ),
+            (
+                "vendor",
+                FakeNode::Gitlink {
+                    commit: SUBMODULE_COMMIT.to_owned(),
+                },
+            ),
+            ("member/src/lib.rs", text("member source")),
+        ]);
+        let correspondence = promoted(&archive, Some(manifest.as_bytes()), Some("member"), &tree);
+        assert_eq!(
+            unavailable_reason(&correspondence),
+            "repository-submodule-fetch-failed",
+            "a failure the comparison cannot excuse stays unavailable"
+        );
+    }
+
+    #[test]
     fn symbolic_link_to_a_directory_matches_its_own_text() {
         let archive = archive(
             vec![
@@ -3188,9 +3385,15 @@ mod tests {
         );
         assert_eq!(build.compared_path.as_deref(), Some("tools/build.rs"));
         assert_eq!(
+            build.package_file_sha256.as_deref(),
+            Some(sha256_bytes(b"fn main() {}").as_str()),
+            "the package's own file is named beside the compared one"
+        );
+        assert_eq!(build.package_file_executable, Some(false));
+        assert_eq!(
             report(&correspondence).describe_copied_and_linked(),
-            "LICENSE (link-text; compared with member/LICENSE), \
-build.rs (copied, copy-ambiguous; compared with tools/build.rs)"
+            "LICENSE (link-text; match; compared with member/LICENSE), \
+build.rs (copied, copy-ambiguous; match; compared with tools/build.rs)"
         );
     }
 

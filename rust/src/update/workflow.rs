@@ -868,7 +868,7 @@ fn log_source_correspondence(name: &str, version: &Version, correspondence: &Sou
                 path_in_vcs = %comparison.path_in_vcs,
                 located_path = comparison.located_path,
                 members = %copied_and_linked,
-                "source correspondence matched members through a copy or a link's own text"
+                "source correspondence read members through a copy or a link's own text"
             );
         }
         let differences = comparison.describe_differences();
