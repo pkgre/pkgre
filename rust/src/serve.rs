@@ -10,7 +10,8 @@ use crate::artifact::{ArtifactMap, sha256_file};
 use crate::http_response::PreparedRoute;
 use crate::policy::validate_sha256;
 use crate::projection::{
-    CatalogProjection, ProjectedResponseKind, ProjectionLimits, RedirectDestination,
+    CatalogProjection, FirstPartyOrigin, ProjectedResponseKind, ProjectionLimits,
+    RedirectDestination,
 };
 use crate::schema::Catalog;
 
@@ -78,26 +79,36 @@ impl Snapshot {
 
 /// Builds one immutable snapshot from a strictly validated catalog tree.
 ///
-/// Redirect mode serves the projection exactly. Body mode additionally replaces every
-/// advertised upstream redirect with a locally served, hash-verified archive body and
+/// Redirect mode serves the projection exactly, resolving every first-party redirect's `Location`
+/// against the serving origin's configured `first_party_origin`. Body mode additionally replaces
+/// every advertised upstream redirect with a locally served, hash-verified archive body and
 /// refuses to publish when any body is missing or mismatched in the archive store.
 ///
 /// # Errors
 ///
 /// Returns an error for any invalid catalog, failed projection limit, missing retained
-/// body, or an incomplete or hash-mismatched body-mode archive store.
+/// body, an incomplete or hash-mismatched body-mode archive store, or redirect delivery without
+/// a configured first-party origin.
 pub fn build_snapshot(
     root: &Path,
     mode: DeliveryMode,
     archive_store: Option<&Path>,
+    first_party_origin: Option<&FirstPartyOrigin>,
     limits: ProjectionLimits,
 ) -> Result<Snapshot> {
-    // Body mode fails closed before any catalog work when no store is configured.
+    // Body mode fails closed before any catalog work when no store is configured, and redirect
+    // mode fails closed before any catalog work when no first-party origin is configured.
     let store = match mode {
         DeliveryMode::Redirect => None,
         DeliveryMode::Body => Some(archive_store.with_context(
             || "body delivery mode requires an archive store path in the service configuration",
         )?),
+    };
+    let first_party_origin = match mode {
+        DeliveryMode::Redirect => Some(first_party_origin.with_context(
+            || "redirect delivery mode requires a first-party origin in the service configuration",
+        )?),
+        DeliveryMode::Body => None,
     };
     let catalog = Catalog::load(root)
         .with_context(|| format!("validate serving catalog {}", root.display()))?;
@@ -129,7 +140,7 @@ pub fn build_snapshot(
                 continue;
             }
         }
-        let prepared = PreparedRoute::from_projected(route.response())
+        let prepared = PreparedRoute::from_projected(route.response(), first_party_origin)
             .with_context(|| format!("prepare route {}", route.path()))?;
         routes.insert(route.path().to_owned(), prepared);
     }
@@ -290,11 +301,28 @@ mod tests {
             Path::new("/nonexistent-catalog"),
             DeliveryMode::Body,
             None,
+            None,
             ProjectionLimits::default(),
         )
         .unwrap_err();
         assert!(
             format!("{error:#}").contains("requires an archive store"),
+            "got: {error:#}"
+        );
+    }
+
+    #[test]
+    fn redirect_mode_requires_a_first_party_origin_before_any_catalog_work() {
+        let error = build_snapshot(
+            Path::new("/nonexistent-catalog"),
+            DeliveryMode::Redirect,
+            None,
+            None,
+            ProjectionLimits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("requires a first-party origin"),
             "got: {error:#}"
         );
     }
@@ -308,15 +336,22 @@ mod tests {
         assert!(redirect_archive_sha256("/v1/main/leaf/1.0.0").is_err());
     }
 
+    /// The frozen fixture's own public origin, used wherever a first-party location is resolved.
+    fn fixture_origin() -> FirstPartyOrigin {
+        FirstPartyOrigin::parse("https://rust.pkg.re").unwrap()
+    }
+
     #[test]
     fn frozen_catalog_builds_redirect_snapshot_serving_exact_bytes() {
         let temp = TempDir::new("pkgre-serve-snapshot");
         let root = fixture_root(&temp);
 
+        let origin = fixture_origin();
         let snapshot = build_snapshot(
             &root,
             DeliveryMode::Redirect,
             None,
+            Some(&origin),
             ProjectionLimits::default(),
         )
         .unwrap();
@@ -381,6 +416,86 @@ mod tests {
         );
     }
 
+    /// Returns every `Location` the snapshot answers, keyed by its redirect route path.
+    fn redirect_locations(snapshot: &Snapshot) -> BTreeMap<String, String> {
+        snapshot
+            .routes
+            .keys()
+            .filter_map(|path| {
+                let get = evaluate_request(path.as_bytes(), "GET", &[], &snapshot.routes);
+                if get.status() != 302 {
+                    return None;
+                }
+                let location = get
+                    .headers()
+                    .iter()
+                    .find(|header| header.name() == "Location")
+                    .map(|header| header.value().to_owned())
+                    .expect("a redirect answers with a Location");
+                Some((path.clone(), location))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn first_party_redirects_use_the_configured_origin_and_crates_io_stays_fixed() {
+        let temp = TempDir::new("pkgre-serve-first-party-origin");
+        let root = fixture_root(&temp);
+
+        let production = fixture_origin();
+        let alternative = FirstPartyOrigin::parse("https://registry.example:8443").unwrap();
+        let snapshot_for = |origin: &FirstPartyOrigin| {
+            build_snapshot(
+                &root,
+                DeliveryMode::Redirect,
+                None,
+                Some(origin),
+                ProjectionLimits::default(),
+            )
+            .unwrap()
+        };
+        let production_snapshot = snapshot_for(&production);
+        let alternative_snapshot = snapshot_for(&alternative);
+
+        let production_locations = redirect_locations(&production_snapshot);
+        let alternative_locations = redirect_locations(&alternative_snapshot);
+        assert_eq!(production_locations.len(), 747);
+        assert_eq!(production_locations.len(), alternative_locations.len());
+
+        let mut crates_io = 0_usize;
+        let mut first_party = 0_usize;
+        for (path, location) in &production_locations {
+            let other = alternative_locations
+                .get(path)
+                .expect("both snapshots project the same route table");
+            if let Some(suffix) = location.strip_prefix("https://rust.pkg.re/crates/") {
+                assert_eq!(
+                    other,
+                    &format!("https://registry.example:8443/crates/{suffix}"),
+                    "first-party redirect {path} must use its configured origin"
+                );
+                assert!(
+                    suffix
+                        .strip_suffix(".crate")
+                        .is_some_and(|sha256| sha256.len() == 64),
+                    "{path}: {location}"
+                );
+                first_party += 1;
+            } else {
+                assert_eq!(
+                    other, location,
+                    "a crates.io redirect {path} must not depend on the first-party origin"
+                );
+                assert!(
+                    location.starts_with("https://static.crates.io/crates/"),
+                    "{path}: {location}"
+                );
+                crates_io += 1;
+            }
+        }
+        assert_eq!((crates_io, first_party), (744, 3));
+    }
+
     #[test]
     fn body_mode_refuses_an_incomplete_archive_store() {
         let temp = TempDir::new("pkgre-serve-body-missing");
@@ -392,6 +507,7 @@ mod tests {
             &root,
             DeliveryMode::Body,
             Some(&store),
+            None,
             ProjectionLimits::default(),
         )
         .unwrap_err();
@@ -400,6 +516,19 @@ mod tests {
             rendered.contains("read body-mode archive for"),
             "missing bodies must fail with the first missing route, got: {rendered}"
         );
+
+        // Body mode replaces every redirect with a body and never resolves a `Location`, so a
+        // configured first-party origin changes nothing about it.
+        let origin = fixture_origin();
+        let with_origin = build_snapshot(
+            &root,
+            DeliveryMode::Body,
+            Some(&store),
+            Some(&origin),
+            ProjectionLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(format!("{with_origin:#}"), rendered);
     }
 
     #[test]
@@ -411,12 +540,19 @@ mod tests {
 
         // The migration only rewrites declarations and downloads.json; the retained
         // bodies are still absent, so both delivery modes must refuse to publish.
-        for (mode, store) in [
-            (DeliveryMode::Redirect, None),
-            (DeliveryMode::Body, Some(temp.path())),
+        let origin = fixture_origin();
+        for (mode, store, first_party_origin) in [
+            (DeliveryMode::Redirect, None, Some(&origin)),
+            (DeliveryMode::Body, Some(temp.path()), None),
         ] {
-            let error =
-                build_snapshot(&root, mode, store, ProjectionLimits::default()).unwrap_err();
+            let error = build_snapshot(
+                &root,
+                mode,
+                store,
+                first_party_origin,
+                ProjectionLimits::default(),
+            )
+            .unwrap_err();
             let rendered = format!("{error:#}");
             assert!(
                 rendered.contains("differs from generated locks"),

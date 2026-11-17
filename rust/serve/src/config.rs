@@ -10,6 +10,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 
 use pkgre_rust::accepted_ref::{RepositoryConfig, derive_repository_identity};
+use pkgre_rust::projection::FirstPartyOrigin;
 use pkgre_rust::serve::DeliveryMode;
 
 /// Exact command-line usage for the serving origin.
@@ -58,6 +59,8 @@ pub struct Config {
     pub delivery: DeliveryMode,
     /// Content-addressed archive store required by body delivery.
     pub archive_store: Option<PathBuf>,
+    /// Origin of first-party archive redirects; required by redirect delivery only.
+    pub first_party_origin: Option<FirstPartyOrigin>,
     /// Maximum concurrently dispatched public registry requests.
     pub max_concurrency: NonZeroU32,
 }
@@ -124,6 +127,12 @@ struct RegistrySection {
     delivery: String,
     #[serde(rename = "archive-store")]
     archive_store: Option<PathBuf>,
+    /// Exact `https` origin of first-party archive redirects, required by redirect delivery.
+    ///
+    /// It is operator configuration, never catalog data: the serving origin resolves every
+    /// first-party redirect's `Location` as `<first-party-origin>/crates/<sha256>.crate`.
+    #[serde(rename = "first-party-origin")]
+    first_party_origin: Option<String>,
 }
 
 /// Accepted-ref watcher section.
@@ -174,6 +183,16 @@ impl ConfigFile {
             ),
             _ => {}
         }
+        let first_party_origin = match (delivery, &self.registry.first_party_origin) {
+            (DeliveryMode::Redirect, None) => {
+                bail!("registry.first-party-origin is required when delivery = \"redirect\"")
+            }
+            (DeliveryMode::Body, Some(origin)) => bail!(
+                "registry.first-party-origin {origin:?} is only valid when delivery = \"redirect\""
+            ),
+            (DeliveryMode::Redirect, Some(origin)) => Some(FirstPartyOrigin::parse(origin)?),
+            (DeliveryMode::Body, None) => None,
+        };
         ensure!(
             self.public.bind != self.admin.bind,
             "public and admin bind addresses must differ"
@@ -195,6 +214,7 @@ impl ConfigFile {
             source,
             delivery,
             archive_store: self.registry.archive_store,
+            first_party_origin,
             max_concurrency: self.limits.max_concurrency,
         })
     }
@@ -271,6 +291,7 @@ bind = "127.0.0.1:3001"
 [registry]
 catalog = "/srv/pkgre/registry"
 delivery = "redirect"
+first-party-origin = "https://rust.pkg.re"
 
 [limits]
 max-concurrency = 64
@@ -279,7 +300,7 @@ max-concurrency = 64
     fn body_text() -> String {
         REDIRECT_TEXT
             .replace(
-                "delivery = \"redirect\"",
+                "delivery = \"redirect\"\nfirst-party-origin = \"https://rust.pkg.re\"",
                 "delivery = \"body\"\narchive-store = \"/srv/pkgre/archives\"",
             )
             .replace("bind = \"127.0.0.1:3001\"", "bind = \"127.0.0.1:3002\"")
@@ -298,6 +319,7 @@ bind = "127.0.0.1:3001"
 
 [registry]
 delivery = "redirect"
+first-party-origin = "https://rust.pkg.re"
 
 [limits]
 max-concurrency = 64
@@ -324,6 +346,14 @@ poll-interval-secs = 30
         );
         assert_eq!(config.delivery, DeliveryMode::Redirect);
         assert_eq!(config.archive_store, None);
+        assert_eq!(
+            config.first_party_origin,
+            Some(FirstPartyOrigin::parse("https://rust.pkg.re").unwrap())
+        );
+        assert_eq!(
+            config.first_party_origin.as_ref().unwrap().as_str(),
+            "https://rust.pkg.re"
+        );
         assert_eq!(config.max_concurrency.get(), 64);
     }
 
@@ -335,7 +365,78 @@ poll-interval-secs = 30
             config.archive_store,
             Some(PathBuf::from("/srv/pkgre/archives"))
         );
+        assert_eq!(config.first_party_origin, None);
         assert_ne!(config.public_bind, config.admin_bind);
+    }
+
+    #[test]
+    fn first_party_origin_is_required_by_redirect_delivery_only() {
+        let missing = REDIRECT_TEXT.replace("first-party-origin = \"https://rust.pkg.re\"\n", "");
+        let error = parse_text(&missing).unwrap_err();
+        assert!(
+            format!("{error:#}")
+                .contains("registry.first-party-origin is required when delivery = \"redirect\""),
+            "got: {error:#}"
+        );
+
+        let refused = body_text().replace(
+            "delivery = \"body\"",
+            "delivery = \"body\"\nfirst-party-origin = \"https://rust.pkg.re\"",
+        );
+        let error = parse_text(&refused).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("is only valid when delivery = \"redirect\""),
+            "got: {error:#}"
+        );
+    }
+
+    #[test]
+    fn malformed_first_party_origins_fail_closed() {
+        let cases: [(&str, &str); 16] = [
+            ("empty", ""),
+            ("no-scheme", "rust.pkg.re"),
+            ("plain-http", "http://rust.pkg.re"),
+            ("upper-scheme", "HTTPS://rust.pkg.re"),
+            ("no-host", "https://"),
+            ("user-info", "https://user@rust.pkg.re"),
+            ("path", "https://rust.pkg.re/crates"),
+            ("query", "https://rust.pkg.re?query=1"),
+            ("fragment", "https://rust.pkg.re#fragment"),
+            ("port-empty", "https://rust.pkg.re:"),
+            ("port-zero", "https://rust.pkg.re:0"),
+            ("upper-host", "https://Rust.pkg.re"),
+            ("ipv6", "https://[::1]"),
+            ("ipv6-with-port", "https://[::1]:8443"),
+            ("numeric-host", "https://010.0.0.1"),
+            ("internationalized-label", "https://xn--a.example"),
+        ];
+        for (label, origin) in cases {
+            let text = REDIRECT_TEXT.replace(
+                "first-party-origin = \"https://rust.pkg.re\"",
+                &format!("first-party-origin = \"{origin}\""),
+            );
+            assert!(parse_text(&text).is_err(), "{label} must fail");
+        }
+
+        for (configured, canonical) in [
+            (
+                "https://registry.example:8443/",
+                "https://registry.example:8443",
+            ),
+            ("https://rust.pkg.re:443", "https://rust.pkg.re"),
+            ("https://127.0.0.1:443", "https://127.0.0.1"),
+        ] {
+            let text = REDIRECT_TEXT.replace(
+                "first-party-origin = \"https://rust.pkg.re\"",
+                &format!("first-party-origin = \"{configured}\""),
+            );
+            let config = parse_text(&text).unwrap();
+            assert_eq!(
+                config.first_party_origin.as_ref().unwrap().as_str(),
+                canonical,
+                "{configured}"
+            );
+        }
     }
 
     #[test]
@@ -495,7 +596,10 @@ poll-interval-secs = 30
             ),
             (
                 "body-without-store",
-                REDIRECT_TEXT.replace("delivery = \"redirect\"", "delivery = \"body\""),
+                REDIRECT_TEXT.replace(
+                    "delivery = \"redirect\"\nfirst-party-origin = \"https://rust.pkg.re\"",
+                    "delivery = \"body\"",
+                ),
             ),
             (
                 "redirect-with-store",

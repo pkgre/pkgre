@@ -7,7 +7,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pkgre_rust::artifact::{ArtifactMap, sha256_bytes};
-use pkgre_rust::projection::{CatalogProjection, ProjectedRepresentation, ProjectedResponseKind};
+use pkgre_rust::projection::{
+    CatalogProjection, FirstPartyOrigin, ProjectedRepresentation, ProjectedResponseKind,
+};
 use pkgre_rust::render;
 use pkgre_rust::schema::{Catalog, Source};
 
@@ -115,7 +117,8 @@ fn frozen_current_catalog_projects_exactly_and_matches_static_rendering() {
         }
     }
 
-    let manifest = projection.manifest_bytes().unwrap();
+    let production_origin = FirstPartyOrigin::parse("https://rust.pkg.re").unwrap();
+    let manifest = projection.manifest_bytes(&production_origin).unwrap();
     assert_eq!(manifest, EXPECTED_PROJECTION);
     assert_eq!(EXPECTED_PROJECTION.len(), 462_388);
     assert_eq!(

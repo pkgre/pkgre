@@ -38,7 +38,7 @@ use pkgre_rust::accepted_ref::{
     RepositoryConfig, SemanticValidity, StartupInput, TransitionDecision, TransitionReason,
     canonical_accepted_ref_bytes, evaluate_reload, evaluate_startup,
 };
-use pkgre_rust::projection::ProjectionLimits;
+use pkgre_rust::projection::{FirstPartyOrigin, ProjectionLimits};
 use pkgre_rust::serve::{DeliveryMode, Snapshot, build_snapshot};
 use pkgre_rust::transition::check_transition;
 use tokio::process::Command;
@@ -81,6 +81,7 @@ pub struct Watcher {
     repository: RepositoryConfig,
     delivery: DeliveryMode,
     archive_store: Option<PathBuf>,
+    first_party_origin: Option<FirstPartyOrigin>,
     shared: Arc<web::Shared>,
     accepted: RwLock<Option<AcceptedRef>>,
     suppressed: Mutex<HashSet<String>>,
@@ -94,6 +95,7 @@ impl Watcher {
         config: &WatcherConfig,
         delivery: DeliveryMode,
         archive_store: Option<PathBuf>,
+        first_party_origin: Option<FirstPartyOrigin>,
         shared: Arc<web::Shared>,
     ) -> Self {
         Self {
@@ -105,6 +107,7 @@ impl Watcher {
             repository: config.repository.clone(),
             delivery,
             archive_store,
+            first_party_origin,
             shared,
             accepted: RwLock::new(None),
             suppressed: Mutex::new(HashSet::new()),
@@ -621,6 +624,7 @@ impl Watcher {
     async fn build_snapshot_from(&self, root: &Path) -> Result<Snapshot> {
         let delivery = self.delivery;
         let archive_store = self.archive_store.clone();
+        let first_party_origin = self.first_party_origin.clone();
         let root = root.to_owned();
         let display = root.display().to_string();
         tokio::task::spawn_blocking(move || {
@@ -628,6 +632,7 @@ impl Watcher {
                 &root,
                 delivery,
                 archive_store.as_deref(),
+                first_party_origin.as_ref(),
                 ProjectionLimits::default(),
             )
         })
@@ -1062,6 +1067,7 @@ bind = "127.0.0.1:30101"
 
 [registry]
 delivery = "redirect"
+first-party-origin = "https://rust.pkg.re"
 
 [limits]
 max-concurrency = 8
@@ -1094,6 +1100,7 @@ poll-interval-secs = 1
             watcher_config,
             config.delivery,
             config.archive_store.clone(),
+            config.first_party_origin.clone(),
             Arc::clone(shared),
         ))
     }
