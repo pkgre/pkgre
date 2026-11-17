@@ -579,6 +579,116 @@ fn exact_request_not_newer_than_its_lane_is_refused_by_planning_and_application_
     );
 }
 
+/// Admits the held versions, then checks that planning and application refuse a lane request alike.
+fn assert_plan_and_apply_refuse_a_lane_request_alike(
+    label: &str,
+    packages: Vec<FixturePackage>,
+    held: &[&str],
+    request: &str,
+) {
+    let temporary = TemporaryDirectory::new(label);
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(packages);
+    for (index, version) in held.iter().enumerate() {
+        let path = temporary.path().join(format!("2026-08-2{index}-demo.toml"));
+        plan_exact_update_with(
+            &catalog_root,
+            "demo",
+            &Version::parse(version).unwrap(),
+            &path,
+            &fixture,
+            UtcTimestamp::now().unwrap(),
+        )
+        .unwrap();
+        apply_admission_manifest_with(
+            &catalog_root,
+            &path,
+            &fixture,
+            &fixture,
+            &UtcTimestamp::now().unwrap(),
+        )
+        .unwrap();
+    }
+
+    let requested = Version::parse(request).unwrap();
+    let expected = "requested compatibility lane has no prior locked base";
+    let manifest_path = temporary.path().join("2026-08-29-demo-lane.toml");
+    let error = plan_exact_update_with(
+        &catalog_root,
+        "demo",
+        &requested,
+        &manifest_path,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(format!("{error:#}"), expected);
+    assert!(!manifest_path.exists());
+
+    let manifest = AdmissionManifest {
+        schema: super::ADMISSION_MANIFEST_SCHEMA,
+        entries: vec![AdmissionRequest {
+            category: "main/general".parse().unwrap(),
+            name: "demo".to_owned(),
+            version: Some(requested),
+            tag: None,
+            evidence: Vec::new(),
+        }],
+    };
+    let request_path = temporary.path().join("2026-08-29-demo-lane-request.toml");
+    fs::write(
+        &request_path,
+        serialize_admission_manifest(&manifest).unwrap(),
+    )
+    .unwrap();
+    let error = apply_admission_manifest_with(
+        &catalog_root,
+        &request_path,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").ends_with(expected),
+        "unexpected error: {error:#}"
+    );
+}
+
+#[test]
+fn exact_request_newer_than_its_lane_but_published_before_every_lock_is_refused_alike() {
+    assert_plan_and_apply_refuse_a_lane_request_alike(
+        "pkgre-admission-v2-lane-out-of-order",
+        vec![
+            FixturePackage::new("demo", "1.5.1", "src/lib.rs", b"pub fn demo() {}\n")
+                .with_published_at("2022-01-01T00:00:00Z"),
+            FixturePackage::new("demo", "1.6.0", "src/lib.rs", b"pub fn demo_v16() {}\n")
+                .with_published_at("2021-01-01T00:00:00Z"),
+        ],
+        &["1.5.1"],
+        "1.6.0",
+    );
+}
+
+#[test]
+fn exact_request_newer_than_its_lane_with_only_a_cross_lane_lock_is_refused_alike() {
+    assert_plan_and_apply_refuse_a_lane_request_alike(
+        "pkgre-admission-v2-lane-cross",
+        vec![
+            FixturePackage::new("demo", "0.9.0", "src/lib.rs", b"pub fn demo_v09() {}\n")
+                .with_published_at("2019-01-01T00:00:00Z"),
+            FixturePackage::new("demo", "1.5.1", "src/lib.rs", b"pub fn demo() {}\n")
+                .with_published_at("2022-01-01T00:00:00Z"),
+            FixturePackage::new("demo", "1.6.0", "src/lib.rs", b"pub fn demo_v16() {}\n")
+                .with_published_at("2021-01-01T00:00:00Z"),
+        ],
+        &["0.9.0", "1.5.1"],
+        "1.6.0",
+    );
+}
+
 fn malicious_build_fixture(marker: &Path) -> FixtureResolver {
     let payload = format!(
         "fn main() {{ std::fs::write({:?}, b\"executed\").unwrap(); }}\n",

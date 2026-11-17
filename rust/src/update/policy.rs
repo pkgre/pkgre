@@ -247,11 +247,11 @@ pub struct SelectedExactCandidate {
 
 /// Selects one exact update candidate, including prereleases and stable `0.0.x` identities.
 ///
-/// Explicit selection still enforces the 30-day minimum age, rejects yanked or previously locked identities, and applies the compatibility-lane rule that application applies. Existing names use the most recently published locked identity at or before the candidate as their review base; a request published before every locked release of its name has no base, so its review covers the whole archive instead of a delta.
+/// Explicit selection still enforces the 30-day minimum age, rejects yanked or previously locked identities, and applies both compatibility-lane rules that application applies. Existing names use the most recently published locked identity at or before the candidate as their review base. A request whose lane holds no active identity and which was published before every locked release of its name has no base, so its review covers the whole archive instead of a delta.
 ///
 /// # Errors
 ///
-/// Returns an error for a future publication, duplicate history, a missing/yanked/young/already-locked candidate, a locked identity missing from upstream history, or a request inside a compatibility lane whose active maximum is not older than it.
+/// Returns an error for a future publication, duplicate history, a missing/yanked/young/already-locked candidate, a locked identity missing from upstream history, a request inside a compatibility lane whose active maximum is not older than it, or such a request without a locked release of its own lane published no later than it.
 pub fn select_exact_candidate(
     evaluation_time: &UtcTimestamp,
     history: &[PolicyRelease],
@@ -310,12 +310,7 @@ pub fn select_exact_candidate(
         age_seconds >= MIN_RELEASE_AGE_DAYS * SECONDS_PER_DAY,
         "requested identity {requested} is younger than the {MIN_RELEASE_AGE_DAYS}-day release-age floor"
     );
-    ensure_request_is_newer_than_active_lane_maximum(
-        locked
-            .iter()
-            .map(|release| (&release.version, release.active)),
-        requested,
-    )?;
+    ensure_request_fits_its_lane(locked, requested, candidate)?;
 
     let base = locked
         .iter()
@@ -339,9 +334,46 @@ pub fn select_exact_candidate(
     })
 }
 
+/// Returns the active compatibility lane of one request and the highest version locked in it.
+fn active_lane<'a>(
+    locked: &'a [LockedRelease],
+    requested: &Version,
+) -> Option<(CompatibilityLane, &'a Version)> {
+    let lane = implicit_lane(requested)?;
+    let maximum = locked
+        .iter()
+        .filter(|release| release.active)
+        .filter(|release| implicit_lane(&release.version).as_ref() == Some(&lane))
+        .map(|release| &release.version)
+        .max()?;
+    Some((lane, maximum))
+}
+
+/// Refuses an in-lane request that `update-apply` would refuse, and nothing else.
+///
+/// A lane that holds an active identity bounds its exact requests twice: the request must be newer than the lane's active maximum, and it must have a locked release of its own lane published no later than it, so that application can review it against an in-lane base. Both are application's rules, so planning refuses the same requests instead of emitting a template that application would reject.
+fn ensure_request_fits_its_lane(
+    locked: &[LockedRelease],
+    requested: &Version,
+    candidate: &PolicyRelease,
+) -> Result<()> {
+    let Some((lane, maximum)) = active_lane(locked, requested) else {
+        return Ok(());
+    };
+    ensure_lane_request_is_newer(requested, maximum)?;
+    ensure!(
+        locked.iter().any(|release| {
+            implicit_lane(&release.version).as_ref() == Some(&lane)
+                && release.published_at <= candidate.published_at
+        }),
+        "requested compatibility lane has no prior locked base"
+    );
+    Ok(())
+}
+
 /// Refuses a request inside a compatibility lane whose active maximum is not older than it.
 ///
-/// `update-apply` applies this rule when it recomputes an exact admission request, so planning refuses the same requests up front instead of emitting a template that application would reject. A version that is itself locked is left to the already-locked rule.
+/// This is the catalog-only half of the lane rule, for refusing an exact request before planning fetches anything; `select_exact_candidate` adds the in-lane base requirement once publication times are known. A version that is itself locked is left to the already-locked rule.
 pub(crate) fn ensure_request_is_newer_than_active_lane_maximum<'a>(
     releases: impl IntoIterator<Item = (&'a Version, bool)>,
     requested: &Version,
@@ -782,6 +814,60 @@ mod tests {
             Version::parse("1.2.0").unwrap()
         );
         assert!(!other_lane.predates_locked_releases);
+    }
+
+    #[test]
+    fn exact_selection_requires_an_in_lane_base_when_the_lane_is_active() {
+        let history = vec![
+            release("0.9.0", "2019-01-01T00:00:00Z", false),
+            release("1.0.0", "2021-01-01T00:00:00Z", false),
+            release("1.3.0", "2020-01-01T00:00:00Z", false),
+            release("1.6.0", "2021-01-01T00:00:00Z", false),
+            release("1.5.1", "2022-01-01T00:00:00Z", false),
+        ];
+        let evaluation = timestamp("2024-01-01T00:00:00Z");
+        let requested = Version::parse("1.6.0").unwrap();
+
+        for held in [
+            vec![locked("1.5.1", "2022-01-01T00:00:00Z", true)],
+            vec![
+                locked("0.9.0", "2019-01-01T00:00:00Z", true),
+                locked("1.5.1", "2022-01-01T00:00:00Z", true),
+            ],
+        ] {
+            let error =
+                select_exact_candidate(&evaluation, &history, &held, &requested).unwrap_err();
+            assert_eq!(
+                format!("{error:#}"),
+                "requested compatibility lane has no prior locked base"
+            );
+        }
+
+        let planned = select_exact_candidate(
+            &evaluation,
+            &history,
+            &[
+                locked("1.3.0", "2020-01-01T00:00:00Z", true),
+                locked("1.5.1", "2022-01-01T00:00:00Z", true),
+            ],
+            &requested,
+        )
+        .unwrap();
+        assert_eq!(
+            planned.base.unwrap().version,
+            Version::parse("1.3.0").unwrap()
+        );
+        assert!(!planned.predates_locked_releases);
+
+        let outside = select_exact_candidate(
+            &evaluation,
+            &history,
+            &[locked("1.0.0", "2021-01-01T00:00:00Z", true)],
+            &Version::parse("0.9.0").unwrap(),
+        )
+        .unwrap();
+        assert!(outside.base.is_none());
+        assert!(outside.predates_locked_releases);
     }
 
     #[test]

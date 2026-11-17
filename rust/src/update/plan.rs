@@ -1318,6 +1318,92 @@ mod tests {
         assert!(format!("{error:#}").contains("repeats Cargo package identity"));
     }
 
+    #[test]
+    fn predating_reason_and_base_must_agree_with_package_activity() {
+        let mut without_base = sample_plan();
+        without_base.candidates[0].activity = PackageActivity::Inactive;
+        without_base.candidates[0].reasons = vec![
+            DecisionReason::InactiveRevival,
+            DecisionReason::SourceUnavailable,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let error = serialize_update_plan(&without_base).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("existing package candidate has no locked base"),
+            "unexpected error: {error:#}"
+        );
+
+        let mut with_base = sample_plan();
+        let candidate = &mut with_base.candidates[0];
+        candidate.activity = PackageActivity::Active;
+        candidate.base = Some(PlannedIdentity {
+            version: Version::parse("1.0.0").unwrap(),
+            published_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            source_row_sha256: "07".repeat(32),
+            crate_sha256: "08".repeat(32),
+        });
+        candidate.base_archive = Some(candidate.candidate_archive.clone());
+        candidate.archive_delta = Some(ArchiveDelta {
+            delta_sha256: "09".repeat(32),
+            added: Vec::new(),
+            removed: Vec::new(),
+            changed: Vec::new(),
+            build_surface_changed: false,
+        });
+        candidate.reasons = vec![
+            DecisionReason::SourceUnavailable,
+            DecisionReason::PredatesLockedReleases,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let error = serialize_update_plan(&with_base).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("predating-release reason disagrees"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn predating_reason_is_refused_on_a_new_package() {
+        let mut plan = sample_plan();
+        plan.candidates[0].reasons = vec![
+            DecisionReason::NewPackage,
+            DecisionReason::SourceUnavailable,
+            DecisionReason::PredatesLockedReleases,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("predating-release reason disagrees"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn predating_reason_alone_requires_review() {
+        let mut plan = sample_plan();
+        let candidate = &mut plan.candidates[0];
+        candidate.activity = PackageActivity::Active;
+        let commit = "11".repeat(20);
+        candidate.candidate_archive.vcs_commit = Some(commit.clone());
+        candidate.source = SourceEvidence::PublisherAsserted {
+            repository: "https://github.com/example/demo".to_owned(),
+            commit,
+            path: String::new(),
+            comparison_sha256: "12".repeat(32),
+        };
+        candidate.reasons = vec![
+            DecisionReason::PredatesLockedReleases,
+            DecisionReason::ExplicitCandidate,
+        ];
+        candidate.decision = UpdateDecision::Automatic;
+
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("decision disagrees with its reasons"),
+            "unexpected error: {error:#}"
+        );
+    }
+
     fn sample_plan() -> UpdatePlan {
         let identity = PlannedIdentity {
             version: Version::parse("1.0.1").unwrap(),

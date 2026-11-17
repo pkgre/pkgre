@@ -135,7 +135,7 @@ Selection/guardrails:
 
 - candidate non-yanked + at least 30×24 hours old at command UTC time; future timestamps fail;
 - broad mode only active stable lanes: `major` for `major≥1`; `minor` for stable `0.minor.patch` where `minor>0`;
-- exact requests follow the same guardrails plus one lane rule: an exact version inside a compatibility lane whose active maximum is not older is refused, as `update-apply` refuses it, and a version published before every locked release of its name is planned without a review base as `review-required`;
+- exact requests follow the same guardrails plus the lane rules: an exact version inside a compatibility lane whose active maximum is not older, or which has no locked release of that lane published no later than it, is refused as `update-apply` refuses it, and a version published before every locked release of its name in a lane without an active identity is planned without a review base as `review-required`;
 - dormant wake-up = first ≥365-day adjacent publication gap after locked base; all upstream rows, including yanked/prerelease, count as activity;
 - evidence = complete sparse history, exact base/candidate rows + checksum-verified archives, bounded archive/build/dependency delta, version-scoped crates.io API facts, and promoted public-source correspondence;
 - `automatic`:no escalation reason; included;
