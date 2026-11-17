@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(
             half.margins(),
             "approvals=5000/10000 routes=10000/20000 inline_body_bytes=8388608/16777216 \
-             inline_bytes=67108864/134217728 archives=500/1000 \
+             inline_bytes=67108864/134217728 archives=5000/10000 \
              archive_body_bytes=52428800/104857600 archive_bytes=268435456/536870912 \
              snapshot_body_bytes=268435456/536870912"
         );
@@ -229,17 +229,26 @@ mod tests {
 
         let production = CheckSummary {
             usage: ProjectionUsage {
-                approvals: 748,
-                routes: 1352,
+                approvals: 833,
+                routes: 1508,
                 inline_bytes: 2_085_191,
-                archives: 748,
-                archive_bytes: 100_000_000,
-                snapshot_body_bytes: 102_085_191,
+                archives: 833,
+                archive_bytes: 138_448_077,
+                snapshot_body_bytes: 140_533_268,
                 ..ProjectionUsage::default()
             },
             limits,
         };
-        assert_eq!(production.margins(), "archives=748/1000");
+        assert_eq!(production.margins(), "");
+
+        let many_archives = CheckSummary {
+            usage: ProjectionUsage {
+                archives: 5_000,
+                ..ProjectionUsage::default()
+            },
+            limits,
+        };
+        assert_eq!(many_archives.margins(), "archives=5000/10000");
     }
 
     fn half_of(limits: ProjectionLimits) -> ProjectionUsage {
