@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use crate::artifact::sha256_bytes;
-use crate::projection::{ProjectedRepresentation, ProjectedResponse};
+use crate::projection::{FirstPartyOrigin, ProjectedRepresentation, ProjectedResponse};
 use crate::request_target::CanonicalRequestTarget;
 
 /// Exact value returned with an unsupported-method response.
@@ -64,10 +64,17 @@ pub struct PreparedRoute {
 impl PreparedRoute {
     /// Precomputes all body metadata and redirect output used during request dispatch.
     ///
+    /// A first-party redirect resolves its `Location` against `first_party_origin`, the serving
+    /// origin's configured first-party origin; a crates.io redirect needs none.
+    ///
     /// # Errors
     ///
-    /// Returns an error if a retained body length cannot be represented by the HTTP policy.
-    pub fn from_projected(response: &ProjectedResponse) -> Result<Self> {
+    /// Returns an error if a retained body length cannot be represented by the HTTP policy or a
+    /// first-party redirect has no configured origin.
+    pub fn from_projected(
+        response: &ProjectedResponse,
+        first_party_origin: Option<&FirstPartyOrigin>,
+    ) -> Result<Self> {
         let representation = response.representation();
         if let Some(body) = response.shared_body() {
             let _ = u64::try_from(body.len()).context("projected response body is too large")?;
@@ -78,13 +85,15 @@ impl PreparedRoute {
                 location: None,
             });
         }
+        let location = match response.redirect_destination() {
+            Some(destination) => Some(destination.location(first_party_origin)?),
+            None => None,
+        };
         Ok(Self {
             representation,
             body: None,
             entity_tag: None,
-            location: response
-                .redirect_destination()
-                .map(crate::projection::RedirectDestination::location),
+            location,
         })
     }
 
@@ -408,10 +417,11 @@ mod tests {
 
         use crate::projection::RedirectDestination;
 
+        let origin = FirstPartyOrigin::parse("https://rust.pkg.re").unwrap();
         let body = b"{}\n".to_vec();
         let expected_entity_tag = entity_tag(&body);
         let inline = ProjectedResponse::inline(body.clone(), ProjectedRepresentation::MetadataJson);
-        let prepared = PreparedRoute::from_projected(&inline).unwrap();
+        let prepared = PreparedRoute::from_projected(&inline, Some(&origin)).unwrap();
         assert_eq!(
             prepared.representation,
             ProjectedRepresentation::MetadataJson
@@ -428,7 +438,7 @@ mod tests {
 
         let archive_sha256 = sha256_bytes(&body);
         let archive = ProjectedResponse::archive(Arc::new(body.clone()), archive_sha256);
-        let prepared = PreparedRoute::from_projected(&archive).unwrap();
+        let prepared = PreparedRoute::from_projected(&archive, Some(&origin)).unwrap();
         assert_eq!(prepared.representation, ProjectedRepresentation::Archive);
         assert_eq!(
             prepared.body.as_deref().map(Vec::as_slice),
@@ -444,13 +454,32 @@ mod tests {
             name: "fixture".to_owned(),
             version: Version::new(1, 0, 0),
         });
-        let prepared = PreparedRoute::from_projected(&redirect).unwrap();
+        let prepared = PreparedRoute::from_projected(&redirect, Some(&origin)).unwrap();
         assert_eq!(prepared.representation, ProjectedRepresentation::Redirect);
         assert_eq!(prepared.body, None);
         assert_eq!(prepared.entity_tag, None);
         assert_eq!(
             prepared.location.as_deref(),
             Some("https://static.crates.io/crates/fixture/1.0.0/download")
+        );
+
+        let first_party_sha256 = sha256_bytes(b"archive");
+        let first_party = ProjectedResponse::redirect(RedirectDestination::FirstParty {
+            sha256: first_party_sha256.clone(),
+        });
+        let prepared = PreparedRoute::from_projected(&first_party, Some(&origin)).unwrap();
+        assert_eq!(
+            prepared.location.as_deref(),
+            Some(format!("https://rust.pkg.re/crates/{first_party_sha256}.crate").as_str())
+        );
+        let error = PreparedRoute::from_projected(&first_party, None).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("requires a configured first-party origin"),
+            "got: {error:#}"
+        );
+        assert!(
+            PreparedRoute::from_projected(&redirect, None).is_ok(),
+            "a crates.io redirect needs no first-party origin"
         );
     }
 

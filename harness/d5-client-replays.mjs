@@ -982,6 +982,7 @@ async function main() {
       "[registry]",
       `catalog = "${rustCatalog}"`,
       'delivery = "redirect"',
+      `first-party-origin = "https://${rustHost}"`,
       "[limits]",
       "max-concurrency = 64",
       "",

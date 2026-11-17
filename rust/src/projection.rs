@@ -7,7 +7,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
 use serde::Serialize;
 
@@ -240,14 +240,17 @@ impl CatalogProjection {
 
     /// Derives deterministic evidence for every route in this immutable snapshot.
     ///
+    /// The `first_party_origin` is the serving origin's configuration, recorded only as the
+    /// resolved `Location` of a first-party redirect; it never comes from the catalog.
+    ///
     /// # Errors
     ///
     /// Returns an error if a body length cannot be represented as `u64`.
-    pub fn manifest(&self) -> Result<ProjectionManifest> {
+    pub fn manifest(&self, first_party_origin: &FirstPartyOrigin) -> Result<ProjectionManifest> {
         let routes = self
             .routes()
             .iter()
-            .map(ProjectedRoute::manifest)
+            .map(|route| route.manifest(first_party_origin))
             .collect::<Result<_>>()?;
         Ok(ProjectionManifest {
             schema: PROJECTION_MANIFEST_SCHEMA.to_owned(),
@@ -261,8 +264,9 @@ impl CatalogProjection {
     /// # Errors
     ///
     /// Returns an error if manifest construction or JSON serialization fails.
-    pub fn manifest_bytes(&self) -> Result<Vec<u8>> {
-        self.manifest()?.canonical_bytes()
+    pub fn manifest_bytes(&self, first_party_origin: &FirstPartyOrigin) -> Result<Vec<u8>> {
+        self.manifest(first_party_origin)?
+            .canonical_bytes(first_party_origin)
     }
 }
 
@@ -290,10 +294,10 @@ impl ProjectedRoute {
         &self.response
     }
 
-    fn manifest(&self) -> Result<ProjectionManifestRoute> {
+    fn manifest(&self, first_party_origin: &FirstPartyOrigin) -> Result<ProjectionManifestRoute> {
         Ok(ProjectionManifestRoute {
             path: self.path.clone(),
-            response: self.response.manifest()?,
+            response: self.response.manifest(first_party_origin)?,
         })
     }
 }
@@ -440,7 +444,10 @@ impl ProjectedResponse {
         }
     }
 
-    fn manifest(&self) -> Result<ProjectionManifestResponse> {
+    fn manifest(
+        &self,
+        first_party_origin: &FirstPartyOrigin,
+    ) -> Result<ProjectionManifestResponse> {
         match &self.source {
             ProjectedResponseSource::Inline {
                 body,
@@ -462,7 +469,7 @@ impl ProjectedResponse {
                 Ok(ProjectionManifestResponse::Redirect {
                     representation: ProjectedRepresentation::Redirect,
                     destination: destination.clone(),
-                    location: destination.location(),
+                    location: destination.location(Some(first_party_origin))?,
                 })
             }
         }
@@ -479,19 +486,137 @@ pub enum RedirectDestination {
     FirstParty { sha256: String },
 }
 
+/// Exact configured origin of the serving origin's first-party archive redirects.
+///
+/// The origin is operator configuration, never catalog data: a first-party
+/// [`RedirectDestination`] resolves its `Location` against this value alone. The stored value is
+/// canonical: an accepted trailing `/` is dropped, so the origin never ends in `/`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirstPartyOrigin(String);
+
+impl FirstPartyOrigin {
+    /// Validates one exact `https` origin.
+    ///
+    /// Accepted: the `https` scheme, a lowercase DNS name or IPv4 literal, an optional port, and
+    /// no user information, path other than empty or `/`, query, or fragment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for any other value, naming the rule it breaks.
+    pub fn parse(value: &str) -> Result<Self> {
+        ensure!(
+            value.is_ascii(),
+            "first-party origin must be ASCII: {value:?}"
+        );
+        ensure!(
+            !value.bytes().any(|byte| byte.is_ascii_whitespace()),
+            "first-party origin must not contain whitespace: {value:?}"
+        );
+        let Some(rest) = value.strip_prefix("https://") else {
+            bail!("first-party origin must use the https scheme: {value:?}");
+        };
+        ensure!(
+            !rest.contains(['?', '#']),
+            "first-party origin must not have a query or fragment: {value:?}"
+        );
+        ensure!(
+            !rest.contains('@'),
+            "first-party origin must not have user information: {value:?}"
+        );
+        let (authority, path) = match rest.find('/') {
+            Some(index) => rest.split_at(index),
+            None => (rest, ""),
+        };
+        ensure!(
+            path.is_empty() || path == "/",
+            "first-party origin must not have a path: {value:?}"
+        );
+        let (host, port) = match authority.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        };
+        validate_first_party_host(host)?;
+        let port = match port {
+            Some(port) => {
+                ensure!(
+                    !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()),
+                    "first-party origin port must be numeric: {value:?}"
+                );
+                let number = port.parse::<u16>().with_context(|| {
+                    format!("first-party origin port is out of range: {value:?}")
+                })?;
+                ensure!(
+                    number != 0 && number.to_string() == port,
+                    "first-party origin port must be 1-65535 in canonical decimal: {value:?}"
+                );
+                Some(number)
+            }
+            None => None,
+        };
+        let origin = match port {
+            Some(port) => format!("https://{host}:{port}"),
+            None => format!("https://{host}"),
+        };
+        Ok(Self(origin))
+    }
+
+    /// Returns the canonical origin, which never ends in `/`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Rejects a host that is not a lowercase DNS name or an IPv4 literal.
+fn validate_first_party_host(host: &str) -> Result<()> {
+    ensure!(!host.is_empty(), "first-party origin must have a host");
+    ensure!(
+        host.len() <= 253,
+        "first-party origin host exceeds 253 bytes: {host:?}"
+    );
+    for label in host.split('.') {
+        ensure!(
+            !label.is_empty(),
+            "first-party origin host has an empty label: {host:?}"
+        );
+        ensure!(
+            label.len() <= 63,
+            "first-party origin host label exceeds 63 bytes: {host:?}"
+        );
+        ensure!(
+            !label.starts_with('-') && !label.ends_with('-'),
+            "first-party origin host label must not begin or end with `-`: {host:?}"
+        );
+        ensure!(
+            label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+            "first-party origin host must be a lowercase DNS name or IPv4 literal: {host:?}"
+        );
+    }
+    Ok(())
+}
+
 impl RedirectDestination {
     /// Resolves the closed typed destination to its exact HTTP `Location` value.
     ///
     /// Catalog-provided URLs are deliberately not accepted: the result is derived only from the
-    /// validated crate identity or content hash stored in this descriptor.
-    #[must_use]
-    pub fn location(&self) -> String {
+    /// validated crate identity or content hash stored in this descriptor, plus, for a first-party
+    /// destination, the serving origin's configured [`FirstPartyOrigin`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a first-party destination is resolved without a configured origin.
+    pub fn location(&self, first_party_origin: Option<&FirstPartyOrigin>) -> Result<String> {
         match self {
-            Self::CratesIo { name, version } => {
-                format!("https://static.crates.io/crates/{name}/{version}/download")
-            }
+            Self::CratesIo { name, version } => Ok(format!(
+                "https://static.crates.io/crates/{name}/{version}/download"
+            )),
             Self::FirstParty { sha256 } => {
-                format!("https://rust.pkg.re/crates/{sha256}.crate")
+                let origin = first_party_origin.context(
+                    "first-party archive redirect requires a configured first-party origin",
+                )?;
+                Ok(format!("{}/crates/{sha256}.crate", origin.as_str()))
             }
         }
     }
@@ -523,10 +648,13 @@ pub struct ProjectionManifest {
 impl ProjectionManifest {
     /// Validates schema, canonical route ordering, hashes, and closed redirects.
     ///
+    /// A first-party redirect location is checked against the serving origin's configured
+    /// `first_party_origin`, the same value that resolved it.
+    ///
     /// # Errors
     ///
     /// Returns an error if any manifest invariant is violated.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self, first_party_origin: &FirstPartyOrigin) -> Result<()> {
         ensure!(
             self.schema == PROJECTION_MANIFEST_SCHEMA,
             "projection manifest schema must be {PROJECTION_MANIFEST_SCHEMA}"
@@ -547,7 +675,7 @@ impl ProjectionManifest {
                     route.path
                 );
             }
-            route.response.validate(&route.path)?;
+            route.response.validate(&route.path, first_party_origin)?;
             previous_path = Some(&route.path);
         }
         Ok(())
@@ -558,8 +686,8 @@ impl ProjectionManifest {
     /// # Errors
     ///
     /// Returns an error if validation or serialization fails.
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
-        self.validate()?;
+    pub fn canonical_bytes(&self, first_party_origin: &FirstPartyOrigin) -> Result<Vec<u8>> {
+        self.validate(first_party_origin)?;
         let mut bytes = serde_json::to_vec_pretty(self).context("serialize projection manifest")?;
         bytes.push(b'\n');
         Ok(bytes)
@@ -609,13 +737,14 @@ pub enum ProjectionManifestResponse {
         representation: ProjectedRepresentation,
         /// Typed destination fields; arbitrary URLs are unrepresentable.
         destination: RedirectDestination,
-        /// Exact output derived from `destination`.
+        /// Exact output derived from `destination` and the serving origin's configured
+        /// first-party origin.
         location: String,
     },
 }
 
 impl ProjectionManifestResponse {
-    fn validate(&self, path: &str) -> Result<()> {
+    fn validate(&self, path: &str, first_party_origin: &FirstPartyOrigin) -> Result<()> {
         match self {
             Self::Inline {
                 representation,
@@ -665,7 +794,7 @@ impl ProjectionManifestResponse {
                 );
                 validate_redirect_route(path, destination)?;
                 ensure!(
-                    location == &destination.location(),
+                    location == &destination.location(Some(first_party_origin))?,
                     "redirect location does not match its typed destination at {path}"
                 );
                 Ok(())
@@ -992,6 +1121,11 @@ mod tests {
 
     use super::*;
 
+    /// The serving origin's configuration used wherever a first-party location is resolved.
+    fn first_party_origin() -> FirstPartyOrigin {
+        FirstPartyOrigin::parse("https://rust.pkg.re").unwrap()
+    }
+
     fn tiny_limits() -> ProjectionLimits {
         ProjectionLimits {
             max_approvals: 1,
@@ -1137,13 +1271,19 @@ mod tests {
 
     #[test]
     fn redirect_locations_are_derived_from_typed_fields() {
+        let origin = first_party_origin();
         let crates_io = RedirectDestination::CratesIo {
             name: "crate_name-2".to_owned(),
             version: Version::parse("1.2.3-alpha.1+build.5").unwrap(),
         };
         assert_eq!(
-            crates_io.location(),
+            crates_io.location(Some(&origin)).unwrap(),
             "https://static.crates.io/crates/crate_name-2/1.2.3-alpha.1+build.5/download"
+        );
+        assert_eq!(
+            crates_io.location(None).unwrap(),
+            "https://static.crates.io/crates/crate_name-2/1.2.3-alpha.1+build.5/download",
+            "a crates.io destination needs no configured first-party origin"
         );
 
         let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -1151,9 +1291,67 @@ mod tests {
             sha256: sha256.to_owned(),
         };
         assert_eq!(
-            first_party.location(),
+            first_party.location(Some(&origin)).unwrap(),
             format!("https://rust.pkg.re/crates/{sha256}.crate")
         );
+        let alternative = FirstPartyOrigin::parse("https://registry.example:8443").unwrap();
+        assert_eq!(
+            first_party.location(Some(&alternative)).unwrap(),
+            format!("https://registry.example:8443/crates/{sha256}.crate")
+        );
+        let error = first_party.location(None).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("requires a configured first-party origin"),
+            "got: {error:#}"
+        );
+    }
+
+    #[test]
+    fn first_party_origin_accepts_only_an_exact_https_origin() {
+        for accepted in [
+            ("https://rust.pkg.re", "https://rust.pkg.re"),
+            ("https://rust.pkg.re/", "https://rust.pkg.re"),
+            (
+                "https://registry.example:8443",
+                "https://registry.example:8443",
+            ),
+            ("https://127.0.0.1:8443", "https://127.0.0.1:8443"),
+            ("https://localhost", "https://localhost"),
+        ] {
+            let origin = FirstPartyOrigin::parse(accepted.0).unwrap();
+            assert_eq!(origin.as_str(), accepted.1, "{}", accepted.0);
+        }
+        for refused in [
+            "",
+            "rust.pkg.re",
+            "http://rust.pkg.re",
+            "HTTP://rust.pkg.re",
+            "https://",
+            "https:///crates",
+            "https://rust.pkg.re/crates",
+            "https://rust.pkg.re/crates/",
+            "https://rust.pkg.re?query=1",
+            "https://rust.pkg.re#fragment",
+            "https://user@rust.pkg.re",
+            "https://user:secret@rust.pkg.re",
+            "https://Rust.pkg.re",
+            "https://rust.pkg.re:",
+            "https://rust.pkg.re:0",
+            "https://rust.pkg.re:65536",
+            "https://rust.pkg.re:08443",
+            "https://rust.pkg.re:port",
+            "https:// rust.pkg.re",
+            "https://rust..pkg.re",
+            "https://-rust.pkg.re",
+            "https://rust.pkg.re-",
+            "https://[::1]:8443",
+            "https://rust.pkg.re/.",
+        ] {
+            assert!(
+                FirstPartyOrigin::parse(refused).is_err(),
+                "first-party origin {refused:?} must be refused"
+            );
+        }
     }
 
     const METADATA_SHA256: &str =
@@ -1291,7 +1489,8 @@ mod tests {
             name: "serde".to_owned(),
             version: Version::parse("1.0.0").unwrap(),
         };
-        let location = crates_io.location();
+        let origin = first_party_origin();
+        let location = crates_io.location(Some(&origin)).unwrap();
         let response = || ProjectionManifestResponse::Redirect {
             representation: ProjectedRepresentation::Redirect,
             destination: crates_io.clone(),
@@ -1299,7 +1498,7 @@ mod tests {
         };
         assert!(
             response()
-                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"), &origin)
                 .is_ok()
         );
         for path in [
@@ -1311,7 +1510,7 @@ mod tests {
             "/v1/main/serde/1.0.0".to_owned(),
         ] {
             assert!(
-                response().validate(&path).is_err(),
+                response().validate(&path, &origin).is_err(),
                 "invalid redirect route was accepted: {path}"
             );
         }
@@ -1326,7 +1525,7 @@ mod tests {
         };
         assert!(
             wrong_name
-                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"), &origin)
                 .is_err()
         );
         let wrong_version = ProjectionManifestResponse::Redirect {
@@ -1339,7 +1538,7 @@ mod tests {
         };
         assert!(
             wrong_version
-                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"), &origin)
                 .is_err()
         );
 
@@ -1352,7 +1551,10 @@ mod tests {
         };
         assert!(
             wrong_sha
-                .validate(&format!("/v1/main/gitcrate/2.0.0/{METADATA_SHA256}"))
+                .validate(
+                    &format!("/v1/main/gitcrate/2.0.0/{METADATA_SHA256}"),
+                    &origin
+                )
                 .is_err()
         );
 
@@ -1363,8 +1565,30 @@ mod tests {
         };
         assert!(
             wrong_location
-                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"))
+                .validate(&format!("/v1/main/serde/1.0.0/{METADATA_SHA256}"), &origin)
                 .is_err()
+        );
+
+        let first_party = RedirectDestination::FirstParty {
+            sha256: ARCHIVE_SHA256.to_owned(),
+        };
+        let route = format!("/v1/main/gitcrate/2.0.0/{ARCHIVE_SHA256}");
+        let resolved = ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
+            destination: first_party.clone(),
+            location: first_party.location(Some(&origin)).unwrap(),
+        };
+        assert!(resolved.validate(&route, &origin).is_ok());
+
+        let alternative = FirstPartyOrigin::parse("https://registry.example").unwrap();
+        let foreign_location = ProjectionManifestResponse::Redirect {
+            representation: ProjectedRepresentation::Redirect,
+            destination: first_party.clone(),
+            location: first_party.location(Some(&alternative)).unwrap(),
+        };
+        assert!(
+            foreign_location.validate(&route, &origin).is_err(),
+            "a first-party location resolved from another origin must be refused"
         );
     }
 
@@ -1375,21 +1599,33 @@ mod tests {
             unreachable!();
         };
         *representation = ProjectedRepresentation::Archive;
-        assert!(test_manifest(vec![inline]).validate().is_err());
+        assert!(
+            test_manifest(vec![inline])
+                .validate(&first_party_origin())
+                .is_err()
+        );
 
         let mut config = inline_manifest_route("/config.json");
         let ProjectionManifestResponse::Inline { representation, .. } = &mut config.response else {
             unreachable!();
         };
         *representation = ProjectedRepresentation::MetadataText;
-        assert!(test_manifest(vec![config]).validate().is_err());
+        assert!(
+            test_manifest(vec![config])
+                .validate(&first_party_origin())
+                .is_err()
+        );
 
         let mut sparse = inline_manifest_route("/2/cc");
         let ProjectionManifestResponse::Inline { representation, .. } = &mut sparse.response else {
             unreachable!();
         };
         *representation = ProjectedRepresentation::MetadataJson;
-        assert!(test_manifest(vec![sparse]).validate().is_err());
+        assert!(
+            test_manifest(vec![sparse])
+                .validate(&first_party_origin())
+                .is_err()
+        );
 
         let mut archive = ProjectionManifestRoute {
             path: format!("/crates/{ARCHIVE_SHA256}.crate"),
@@ -1405,7 +1641,11 @@ mod tests {
             unreachable!();
         };
         *representation = ProjectedRepresentation::MetadataJson;
-        assert!(test_manifest(vec![archive]).validate().is_err());
+        assert!(
+            test_manifest(vec![archive])
+                .validate(&first_party_origin())
+                .is_err()
+        );
 
         let destination = RedirectDestination::FirstParty {
             sha256: ARCHIVE_SHA256.to_owned(),
@@ -1414,7 +1654,7 @@ mod tests {
             path: format!("/v1/main/gitcrate/2.0.0/{ARCHIVE_SHA256}"),
             response: ProjectionManifestResponse::Redirect {
                 representation: ProjectedRepresentation::Redirect,
-                location: destination.location(),
+                location: destination.location(Some(&first_party_origin())).unwrap(),
                 destination,
             },
         };
@@ -1423,7 +1663,11 @@ mod tests {
             unreachable!();
         };
         *representation = ProjectedRepresentation::MetadataText;
-        assert!(test_manifest(vec![redirect]).validate().is_err());
+        assert!(
+            test_manifest(vec![redirect])
+                .validate(&first_party_origin())
+                .is_err()
+        );
     }
 
     #[test]
@@ -1434,7 +1678,11 @@ mod tests {
             bytes: 0,
             sha256: "ABCDEF".to_owned(),
         };
-        assert!(test_manifest(vec![bad_inline]).validate().is_err());
+        assert!(
+            test_manifest(vec![bad_inline])
+                .validate(&first_party_origin())
+                .is_err()
+        );
 
         let bad_archive = ProjectionManifestRoute {
             path: format!("/crates/{ARCHIVE_SHA256}.crate"),
@@ -1445,14 +1693,18 @@ mod tests {
                 archive_sha256: ARCHIVE_SHA256.to_owned(),
             },
         };
-        assert!(test_manifest(vec![bad_archive]).validate().is_err());
+        assert!(
+            test_manifest(vec![bad_archive])
+                .validate(&first_party_origin())
+                .is_err()
+        );
 
         assert!(
             test_manifest(vec![
                 inline_manifest_route("/b"),
                 inline_manifest_route("/a")
             ])
-            .validate()
+            .validate(&first_party_origin())
             .is_err()
         );
         assert!(
@@ -1460,14 +1712,14 @@ mod tests {
                 inline_manifest_route("/a"),
                 inline_manifest_route("/a")
             ])
-            .validate()
+            .validate(&first_party_origin())
             .is_err()
         );
         test_manifest(vec![
             inline_manifest_route("/A"),
             inline_manifest_route("/a"),
         ])
-        .validate()
+        .validate(&first_party_origin())
         .unwrap();
     }
 
@@ -1517,8 +1769,8 @@ mod tests {
             },
         };
 
-        let first = projection.manifest_bytes().unwrap();
-        let second = projection.manifest_bytes().unwrap();
+        let first = projection.manifest_bytes(&first_party_origin()).unwrap();
+        let second = projection.manifest_bytes(&first_party_origin()).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.last(), Some(&b'\n'));
         assert_ne!(first.get(first.len() - 2), Some(&b'\n'));

@@ -273,7 +273,7 @@ Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memo
 
 - Fetch root `https://rust.pkg.re/config.json`; require `https://rust.pkg.re/v1/main/{crate}/{version}/{sha256-checksum}`.
 - Fetch rows across categories; compare checksums/routes/yank state with `release.json`.
-- A `redirect` mirror route→`302` to static.crates.io; a `retained` mirror or Git route→`302` to the same-host `crates/<sha256>.crate` (body mode serves that body with `200` instead). Download + verify SHA-256. A query, fragment, or percent-encoding other than the allowed `%2f`→`400`; an unknown canonical path (changed case or checksum)→`404`; unsupported method→`405`.
+- A `redirect` mirror route→`302` to static.crates.io; a `retained` mirror or Git route→`302` to `<first-party-origin>/crates/<sha256>.crate`,where `[registry] first-party-origin` is the serving instance's own configured origin (body mode serves that body with `200` instead). Download + verify SHA-256. A query, fragment, or percent-encoding other than the allowed `%2f`→`400`; an unknown canonical path (changed case or checksum)→`404`; unsupported method→`405`.
 - Compare live release/downloads with committed candidate; require the exact projection, including routes for removed identities.
 - Fresh Cargo home/cache + only `[registries.pkgre] index = "sparse+https://rust.pkg.re/"`; build `--locked` across mirror + Git packages; confirm `Cargo.lock` source is root URL.
 

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use pkgre_rust::migrate::{migrate_retained_delivery, migrate_v4_to_v5};
 use pkgre_rust::policy::validate_catalog;
-use pkgre_rust::projection::ProjectionLimits;
+use pkgre_rust::projection::{FirstPartyOrigin, ProjectionLimits};
 use pkgre_rust::schema::Catalog;
 use pkgre_rust::serve::{DeliveryMode, build_snapshot};
 
@@ -187,6 +187,21 @@ fn retained_delivery_migration_is_in_place_idempotent_and_strictly_gated() {
         &registry,
         DeliveryMode::Redirect,
         None,
+        None,
+        ProjectionLimits::default(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("requires a first-party origin"),
+        "redirect delivery must refuse a missing first-party origin: {error:#}"
+    );
+
+    let origin = FirstPartyOrigin::parse("https://rust.pkg.re").unwrap();
+    let error = build_snapshot(
+        &registry,
+        DeliveryMode::Redirect,
+        None,
+        Some(&origin),
         ProjectionLimits::default(),
     )
     .unwrap_err();

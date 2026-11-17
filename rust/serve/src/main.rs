@@ -44,6 +44,7 @@ async fn serve(config: Config) -> Result<()> {
                 watcher_config,
                 config.delivery,
                 config.archive_store.clone(),
+                config.first_party_origin.clone(),
                 Arc::clone(&shared),
             ));
             watcher.startup().await.with_context(|| {
@@ -60,6 +61,7 @@ async fn serve(config: Config) -> Result<()> {
                 catalog,
                 config.delivery,
                 config.archive_store.as_deref(),
+                config.first_party_origin.as_ref(),
                 ProjectionLimits::default(),
             )
             .with_context(|| format!("build serving snapshot from {}", catalog.display()))?;

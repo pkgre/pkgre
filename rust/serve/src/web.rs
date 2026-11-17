@@ -321,7 +321,7 @@ mod tests {
     use axum::http::header::{CONTENT_LENGTH, LOCATION};
     use http_body_util::BodyExt;
     use pkgre_rust::artifact::sha256_bytes;
-    use pkgre_rust::projection::ProjectionLimits;
+    use pkgre_rust::projection::{FirstPartyOrigin, ProjectionLimits};
     use pkgre_rust::serve::build_snapshot;
     use serde_json::{Value, json};
     use tower::ServiceExt;
@@ -379,11 +379,14 @@ mod tests {
                 .unwrap();
             assert!(status.success());
             let root = extraction.join("registry");
+            let first_party_origin =
+                FirstPartyOrigin::parse("https://rust.pkg.re").expect("fixture origin");
             Arc::new(
                 build_snapshot(
                     &root,
                     DeliveryMode::Redirect,
                     None,
+                    Some(&first_party_origin),
                     ProjectionLimits::default(),
                 )
                 .unwrap(),
