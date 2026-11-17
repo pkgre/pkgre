@@ -717,7 +717,14 @@ impl Resolver for FixtureResolver {
         })
     }
 
-    fn resolve_git_tag(&self, _: &str, _: &str, _: &str, _: &Version) -> Result<ResolvedPackage> {
+    fn resolve_git_tag_group(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[&str],
+        _: &[crate::package::PublishedPackage<'_>],
+        _: &Version,
+    ) -> Result<Vec<ResolvedPackage>> {
         bail!("fixture does not resolve Git tags")
     }
 }
