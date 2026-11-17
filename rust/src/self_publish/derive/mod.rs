@@ -249,7 +249,10 @@ impl DerivedWorkspace {
         ensure_no_cargo_configuration(&self.work)?;
         let cargo_home = self.root().join(cargo::UPLOAD_CARGO_HOME_DIRECTORY);
         cargo::prepare_upload_cargo_home(&cargo_home, &self.sources)?;
-        ChildEnvironment::capture(&cargo_home, &self.cargo)
+        let environment = ChildEnvironment::capture(&cargo_home, &self.cargo)?;
+        #[cfg(test)]
+        let environment = cargo::with_test_crates_io(environment, &self.sources)?;
+        Ok(environment)
     }
 
     /// Returns the target directory of an upload.
@@ -287,10 +290,40 @@ impl DerivedWorkspace {
             &target,
             &manifest,
             packages,
-            &self.sources,
             cargo::Build::Package,
         )
         .context("package the crates of the release as cargo publish would")
+    }
+
+    /// Packages one crate alone in the upload's Cargo home and requires the
+    /// archive that `crates-io.lock` records for it.
+    ///
+    /// The routine runs this just before `cargo publish`, once crates.io serves
+    /// the crates the package depends on, so the bytes that reach crates.io are
+    /// the bytes it compared. The command runs no package code, and the child
+    /// process holds no token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Cargo fails, or when the archive differs from the
+    /// recorded one.
+    pub(super) fn verify_publish_archive(
+        &self,
+        environment: &ChildEnvironment,
+        name: &str,
+        version: &Version,
+        recorded: &str,
+    ) -> Result<()> {
+        let archives = self.publish_archives(environment, &[(name.to_owned(), version.clone())])?;
+        let archive = archives.get(name).with_context(|| {
+            format!("the packaging produced no archive for crate {name} {version}")
+        })?;
+        let sha256 = sha256_bytes(archive);
+        ensure!(
+            sha256 == recorded,
+            "the package that cargo publish would upload for crate {name} {version} has SHA-256 {sha256}, but crates-io.lock records {recorded}; the routine uploads nothing"
+        );
+        Ok(())
     }
 
     /// Packages the named crates with Cargo's verification, in the rewritten
@@ -319,7 +352,6 @@ impl DerivedWorkspace {
             &self.targets,
             &manifest,
             packages,
-            &self.sources,
             cargo::Build::Verify,
         )
         .context("verify the crates.io packages of the release")
@@ -385,6 +417,8 @@ pub(super) fn derive_release_in(
     let registry_sources = cargo::registry_sources(sources);
     cargo::prepare_cargo_home(&cargo_home, registry_sources.clone())?;
     let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
+    #[cfg(test)]
+    let environment = cargo::with_test_crates_io(environment, &registry_sources)?;
     let work = root.join("work");
     std::fs::create_dir(&work)
         .with_context(|| format!("create derivation directory {}", work.display()))?;
@@ -429,8 +463,11 @@ pub(super) fn derive_release_in(
     ensure_release_members(&workspace, released, &release.tag)?;
     let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
     let published = published_crates(&workspace, released, config, &release.tag)?;
-    let mut expectations = Expectations::build(&lock, catalog, config, earlier, &published)?;
-    let plan = workspace::ReleasePlan::new(&workspace, &lock, &expectations, &published)?;
+    let curated_index = cargo::curated_index(&registry_sources)?;
+    let mut expectations =
+        Expectations::build(&lock, catalog, config, earlier, &published, &curated_index)?;
+    let plan =
+        workspace::ReleasePlan::new(&workspace, &lock, &expectations, &published, &curated_index)?;
     workspace::rewrite_manifests(&workspace, &plan, &expectations)?;
     cargo_lock::translate_lock(&checkout.root, &expectations)?;
 
@@ -450,7 +487,6 @@ pub(super) fn derive_release_in(
         &root.join("targets"),
         &checkout.root,
         &members,
-        &registry_sources,
     )?;
     // The comparison proves the packaged locks against the archives this run
     // packages, so a crate that depends on another crate of the release is

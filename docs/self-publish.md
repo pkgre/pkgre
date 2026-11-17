@@ -412,8 +412,9 @@ For one release, a run:
    in the derived, rewritten workspace, against plain crates.io, in an isolated Cargo home, from
    a working directory that no Cargo configuration covers, and requires each archive's SHA-256
    to equal its `crates-io.lock` entry. The missing crates are packaged in one run, so a crate
-   whose sibling crates.io does not have yet is packaged against that sibling of the same run. This is the only step in which package code, such as a
-   build script or a proc macro, runs, and it happens while no token is in reach. The step runs
+   whose sibling crates.io does not have yet is packaged against that sibling of the same run.
+   This is the only step in which package code, such as a build script or a proc macro, runs,
+   and it happens while no token is in reach. The step runs
    Cargo in a process group of its own, with a null standard input, so that a token piped to the
    routine never reaches Cargo or the packages, and ends that group once Cargo returns, so that
    no process the package code started outlives it.

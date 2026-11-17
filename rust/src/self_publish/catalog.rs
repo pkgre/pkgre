@@ -43,6 +43,9 @@ pub(crate) struct CatalogIdentity {
     pub(crate) removed: bool,
     /// The Git publication of the identity, absent for a mirrored identity.
     pub(crate) release: Option<GitRelease>,
+    /// Cargo package names of the dependencies that the retained source row
+    /// names, which a release's own crates depend on.
+    pub(crate) dependencies: Vec<String>,
 }
 
 /// One Git publication of a package identity.
@@ -102,15 +105,19 @@ impl CatalogSnapshot {
             })?;
         let catalog = Catalog::load(&registry)
             .with_context(|| format!("load catalog {}", registry.display()))?;
-        Ok(Self::from_catalog(&catalog, declarations, registry_index))
+        Self::from_catalog(&catalog, declarations, registry_index)
     }
 
     /// Takes the facts of one strictly loaded catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a retained source row that cannot be read or parsed.
     pub(crate) fn from_catalog(
         catalog: &Catalog,
         publish_declarations: Vec<(String, String)>,
         registry_index: String,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut identities = Vec::new();
         for approval in &catalog.approvals {
             if approval.registry != CATALOG_REGISTRY {
@@ -139,6 +146,13 @@ impl CatalogSnapshot {
                 crate_sha256: approval.archive_sha256.clone(),
                 removed: approval.is_removed(),
                 release,
+                dependencies: source_row_dependencies(catalog, &approval.index_record_sha256)
+                    .with_context(|| {
+                        format!(
+                            "read the source row of {} {}",
+                            approval.name, approval.version
+                        )
+                    })?,
             });
         }
         let mirrors = catalog
@@ -153,13 +167,13 @@ impl CatalogSnapshot {
             .filter(|key| key.registry == CATALOG_REGISTRY)
             .map(|key| key.name.clone())
             .collect();
-        Self {
+        Ok(Self {
             registry_index,
             identities,
             mirrors,
             publish_names,
             publish_declarations,
-        }
+        })
     }
 
     /// Returns the identity of one exact crate version.
@@ -173,6 +187,46 @@ impl CatalogSnapshot {
     pub(crate) fn is_mirror(&self, name: &str) -> bool {
         self.mirrors.iter().any(|mirror| mirror == name)
     }
+}
+
+/// Returns the Cargo package names that one retained source row names.
+///
+/// The row is the one the catalog keeps under the identity's
+/// `source-row-sha256`, so this reads the dependencies the release itself
+/// declared, without the network.
+///
+/// # Errors
+///
+/// Returns an error for a row that cannot be read or parsed.
+fn source_row_dependencies(catalog: &Catalog, source_row_sha256: &str) -> Result<Vec<String>> {
+    let path = catalog
+        .root
+        .join("objects")
+        .join("rows")
+        .join(format!("{source_row_sha256}.json"));
+    let bytes = std::fs::read(&path)
+        .with_context(|| format!("read retained source row {}", path.display()))?;
+    let row: serde_json::Value = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse retained source row {}", path.display()))?;
+    let dependencies = row
+        .get("deps")
+        .and_then(serde_json::Value::as_array)
+        .with_context(|| format!("retained source row {} has no deps", path.display()))?;
+    let mut names = Vec::new();
+    for dependency in dependencies {
+        let name = dependency
+            .get("package")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| dependency.get("name").and_then(serde_json::Value::as_str))
+            .with_context(|| {
+                format!(
+                    "a dependency of retained source row {} names no package",
+                    path.display()
+                )
+            })?;
+        names.push(name.to_owned());
+    }
+    Ok(names)
 }
 
 /// Returns the publish declarations of the catalog registry.

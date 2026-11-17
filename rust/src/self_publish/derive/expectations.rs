@@ -15,7 +15,6 @@ use semver::Version;
 use super::super::catalog::CatalogSnapshot;
 use super::super::config::CratesIoConfig;
 use super::super::lock::CratesIoLock;
-use super::cargo::CURATED_INDEX;
 use super::cargo_lock::LockIndex;
 
 /// What one package of the lock must be on each side.
@@ -40,6 +39,9 @@ pub(super) struct Expectations {
     /// The crates.io name of every curated package name, when all its versions
     /// agree.
     names: BTreeMap<String, String>,
+    /// The index that the run's Cargo home configures for the curated registry,
+    /// which every package of the curated registry names as its source.
+    curated_index: String,
 }
 
 impl Expectations {
@@ -63,11 +65,13 @@ impl Expectations {
         config: &CratesIoConfig,
         earlier: &CratesIoLock,
         published: &BTreeMap<String, String>,
+        curated_index: &str,
     ) -> Result<Self> {
         let mut packages = BTreeMap::new();
         let mut names: BTreeMap<String, String> = BTreeMap::new();
         for package in lock.packages() {
-            let expected = resolve_package(catalog, config, earlier, published, package)?;
+            let expected =
+                resolve_package(catalog, config, earlier, published, package, curated_index)?;
             match names.get(&package.name) {
                 Some(previous) => ensure!(
                     previous == &expected.crates_io_name,
@@ -81,7 +85,17 @@ impl Expectations {
             }
             packages.insert((package.name.clone(), package.version.clone()), expected);
         }
-        Ok(Self { packages, names })
+        Ok(Self {
+            packages,
+            names,
+            curated_index: curated_index.to_owned(),
+        })
+    }
+
+    /// Returns the index that the curated lock names for a package of the
+    /// curated registry.
+    pub(super) fn curated_index(&self) -> &str {
+        &self.curated_index
     }
 
     /// Returns what one exact package of the lock must be.
@@ -184,6 +198,7 @@ fn resolve_package(
     earlier: &CratesIoLock,
     published: &BTreeMap<String, String>,
     package: &super::cargo_lock::LockedPackage,
+    curated_index: &str,
 ) -> Result<ExpectedPackage> {
     if package.source.is_none()
         && let Some(crates_io_name) = published.get(&package.name)
@@ -206,7 +221,7 @@ fn resolve_package(
     }
     let source = package.source.as_deref().unwrap_or_default();
     ensure!(
-        source == CURATED_INDEX || source == format!("registry+{CURATED_INDEX}"),
+        super::cargo::names_index(source, curated_index),
         "package {} {} comes from the unsupported source {source:?}; every package of the release comes from the curated registry",
         package.name,
         package.version

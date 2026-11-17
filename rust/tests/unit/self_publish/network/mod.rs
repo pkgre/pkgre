@@ -1116,6 +1116,7 @@ fn fixture_identity(
             cargo_version: Version::parse(fixtures::CARGO_VERSION)
                 .expect("parse the pinned version"),
         }),
+        dependencies: Vec::new(),
     }
 }
 

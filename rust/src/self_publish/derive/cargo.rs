@@ -37,23 +37,23 @@ const TARGET_DIRECTORIES: [&str; 2] = ["target-one", "target-two"];
 pub(super) enum RegistrySources {
     /// Plain crates.io, as the derivation packages a release.
     CratesIo,
-    /// A local directory source that replaces crates.io and the curated
-    /// registry, so that a test needs no network.
+    /// A local registry that serves both registries from one Git index, so that
+    /// a test needs no network.
     #[cfg(test)]
     Local(PathBuf),
-    /// A local directory source that replaces both registries and makes the
-    /// curated registry the default, as the reconciler's own packaging
-    /// configures a checkout whose manifests declare `registry = "pkgre"`.
+    /// The same local registry, and the curated registry as the default, as the
+    /// reconciler's own packaging configures a checkout whose manifests declare
+    /// `registry = "pkgre"`.
     #[cfg(test)]
     LocalCurated(PathBuf),
 }
 
 impl RegistrySources {
-    /// Returns the directory source that replaces the registries, if any.
+    /// Returns the root of the local registry, if a test named one.
     #[cfg(test)]
-    pub(super) fn local_directory(&self) -> Option<&Path> {
+    pub(super) fn local_root(&self) -> Option<&Path> {
         match self {
-            Self::Local(directory) | Self::LocalCurated(directory) => Some(directory),
+            Self::Local(root) | Self::LocalCurated(root) => Some(root),
             Self::CratesIo => None,
         }
     }
@@ -69,55 +69,109 @@ pub(super) fn registry_sources(sources: super::Sources<'_>) -> RegistrySources {
     RegistrySources::CratesIo
 }
 
-/// Writes the config of a fresh isolated Cargo home.
+/// The variable through which Cargo's own test suite points crates.io at another
+/// index.
+///
+/// It is Cargo's, not this program's: a test uses it so that crates.io keeps its
+/// source id while resolving from a local Git index, which is what keeps Cargo's
+/// temporary registry serving a crate of one release to the crates that depend on
+/// it. A source replacement would bypass that registry, and production never sets
+/// or passes this variable.
+#[cfg(test)]
+const CRATES_IO_TEST_VARIABLE: &str = "__CARGO_TEST_CRATES_IO_URL_DO_NOT_USE_THIS";
+
+/// Points crates.io at a test's local index, which only a test does.
 ///
 /// # Errors
 ///
-/// Returns an error for a home that already exists, or for a config that cannot
-/// be written.
+/// Returns an error for a local source whose path is not UTF-8.
+#[cfg(test)]
+pub(super) fn with_test_crates_io(
+    environment: ChildEnvironment,
+    sources: &RegistrySources,
+) -> Result<ChildEnvironment> {
+    let Some(root) = sources.local_root() else {
+        return Ok(environment);
+    };
+    Ok(environment.with_variable(CRATES_IO_TEST_VARIABLE, &local_index(root)?))
+}
+
+/// Writes the config of a fresh isolated Cargo home.
+///
+/// A test's home reads the curated registry from a local Git index, and crates.io
+/// as a Git registry too, since Cargo's own testing hook points it at that index.
+/// Neither registry is replaced, so Cargo's temporary registry still serves the
+/// crates of one release to each other.
+///
+/// # Errors
+///
+/// Returns an error for a home that already exists, for a config that cannot be
+/// written, or for a local index whose path is not UTF-8.
 #[allow(clippy::needless_pass_by_value)]
+#[cfg_attr(not(test), allow(unused_variables))]
 pub(super) fn prepare_cargo_home(cargo_home: &Path, sources: RegistrySources) -> Result<()> {
     fs::create_dir(cargo_home)
         .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+    #[cfg(test)]
+    let local = sources.local_root().map(local_index).transpose()?;
+    #[cfg(not(test))]
+    let local: Option<String> = None;
+    let index = local.as_deref().unwrap_or(CURATED_INDEX);
     let mut text = String::new();
     writeln!(text, "[registries]").expect("writing to a string");
-    writeln!(
-        text,
-        "{CURATED_REGISTRY} = {{ index = \"{CURATED_INDEX}\" }}"
-    )
-    .expect("writing to a string");
+    writeln!(text, "{CURATED_REGISTRY} = {{ index = \"{index}\" }}").expect("writing to a string");
+    if local.is_some() {
+        writeln!(text, "\n[registries.crates-io]\nprotocol = \"git\"")
+            .expect("writing to a string");
+    }
     #[cfg(test)]
     if matches!(sources, RegistrySources::LocalCurated(_)) {
         writeln!(text, "\n[registry]\ndefault = {CURATED_REGISTRY:?}")
             .expect("writing to a string");
     }
-    match &sources {
-        RegistrySources::CratesIo => {}
-        #[cfg(test)]
-        RegistrySources::Local(directory) | RegistrySources::LocalCurated(directory) => {
-            let directory = directory.to_str().with_context(|| {
-                format!("local Cargo source {} is not UTF-8", directory.display())
-            })?;
-            writeln!(text, "\n[source.crates-io]\nreplace-with = \"local\"")
-                .expect("writing to a string");
-            #[cfg(test)]
-            if matches!(sources, RegistrySources::LocalCurated(_)) {
-                writeln!(
-                    text,
-                    "\n[source.{CURATED_REGISTRY}]\nregistry = \"{CURATED_INDEX}\"\nreplace-with = \"local\""
-                )
-                .expect("writing to a string");
-            }
-            writeln!(text, "\n[source.local]\ndirectory = {directory:?}")
-                .expect("writing to a string");
-            // A test that misses a dependency must fail rather than reach the
-            // network of the machine that runs it.
-            writeln!(text, "\n[net]\noffline = true").expect("writing to a string");
-        }
-    }
     let path = cargo_home.join("config.toml");
     fs::write(&path, text)
         .with_context(|| format!("write isolated Cargo config {}", path.display()))
+}
+
+/// Returns whether one Cargo source names one registry index.
+///
+/// Cargo writes a sparse registry's index URL without the `registry+` prefix in a
+/// lock file, and a Git registry's with it; a manifest names the index alone.
+pub(super) fn names_index(source: &str, index: &str) -> bool {
+    source == index || source == format!("registry+{index}")
+}
+
+/// Returns the index that the run's Cargo home configures for the curated
+/// registry.
+///
+/// A production run configures the registry's own sparse index; a test points it
+/// at a local Git index, and the lock files then name that index.
+///
+/// # Errors
+///
+/// Returns an error for a local index whose path is not UTF-8.
+#[cfg_attr(not(test), allow(clippy::unnecessary_wraps, unused_variables))]
+pub(super) fn curated_index(sources: &RegistrySources) -> Result<String> {
+    #[cfg(test)]
+    if let Some(root) = sources.local_root() {
+        return local_index(root);
+    }
+    Ok(CURATED_INDEX.to_owned())
+}
+
+/// Returns the `file:` URL of a test's local index.
+///
+/// # Errors
+///
+/// Returns an error for a path that is not UTF-8.
+#[cfg(test)]
+fn local_index(root: &Path) -> Result<String> {
+    let index = root.join("index");
+    let index = index
+        .to_str()
+        .with_context(|| format!("local index {} is not UTF-8", index.display()))?;
+    Ok(format!("file://{index}"))
 }
 
 /// Writes the config of the isolated Cargo home that uploads to crates.io.
@@ -125,8 +179,8 @@ pub(super) fn prepare_cargo_home(cargo_home: &Path, sources: RegistrySources) ->
 /// The home configures plain crates.io and the `cargo:token` credential
 /// provider, and nothing else: no other registry, so `cargo publish` can only
 /// reach crates.io, and the token comes from the environment of the one upload
-/// process alone. A test replaces crates.io with its local directory source, so
-/// that the packaging of the upload needs no network.
+/// process alone. A test points crates.io at its local index, so that the
+/// packaging of the upload needs no network.
 ///
 /// # Errors
 ///
@@ -138,38 +192,18 @@ pub(super) fn prepare_upload_cargo_home(
 ) -> Result<()> {
     fs::create_dir(cargo_home)
         .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+    #[cfg_attr(not(test), allow(unused_mut))]
     let mut text = String::from("[registry]\ncredential-provider = [\"cargo:token\"]\n");
-    write_local_source(&mut text, sources)?;
+    #[cfg(test)]
+    if sources.local_root().is_some() {
+        write!(text, "\n[registries.crates-io]\nprotocol = \"git\"\n")
+            .expect("writing to a string");
+    }
+    #[cfg(not(test))]
+    let _ = sources;
     let path = cargo_home.join("config.toml");
     fs::write(&path, text)
         .with_context(|| format!("write isolated Cargo config {}", path.display()))
-}
-
-/// Appends the source replacement of a local directory source.
-///
-/// Only a test names one, so that its packaging needs no network; a production
-/// home resolves plain crates.io.
-///
-/// # Errors
-///
-/// Returns an error for a local source whose path is not UTF-8, which only a
-/// test can name, so a production build cannot fail here.
-#[cfg_attr(not(test), allow(clippy::unnecessary_wraps))]
-fn write_local_source(text: &mut String, sources: &RegistrySources) -> Result<()> {
-    #[cfg(test)]
-    if let RegistrySources::Local(directory) | RegistrySources::LocalCurated(directory) = sources {
-        let directory = directory
-            .to_str()
-            .with_context(|| format!("local Cargo source {} is not UTF-8", directory.display()))?;
-        write!(
-            text,
-            "\n[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = {directory:?}\n\n[net]\noffline = true\n"
-        )
-        .expect("writing to a string");
-    }
-    #[cfg(not(test))]
-    let _ = (text, sources);
-    Ok(())
 }
 
 /// How one packaging run builds the crates it packages.
@@ -206,7 +240,6 @@ pub(super) fn package_members(
     targets: &Path,
     checkout: &Path,
     members: &[(String, Version)],
-    sources: &RegistrySources,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     ensure_no_cargo_configuration(work)?;
     let manifest_path = checkout.join("Cargo.toml");
@@ -220,7 +253,6 @@ pub(super) fn package_members(
             &target,
             &manifest_path,
             members,
-            sources,
             Build::Package,
         )?;
         for (name, bytes) in read_archives(&target, members)? {
@@ -245,7 +277,6 @@ pub(super) fn package_members(
 ///
 /// Returns an error when Cargo fails, when an archive is missing or too large,
 /// or, in a test, when the members cannot be ordered or added to the source.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn package_group(
     cargo: &Path,
     environment: &ChildEnvironment,
@@ -253,7 +284,6 @@ pub(super) fn package_group(
     target: &Path,
     manifest_path: &Path,
     members: &[(String, Version)],
-    sources: &RegistrySources,
     build: Build,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     package_once(
@@ -263,7 +293,6 @@ pub(super) fn package_group(
         target,
         manifest_path,
         members,
-        sources,
         build,
     )?;
     read_archives(target, members)
@@ -286,25 +315,8 @@ fn package_once(
     target: &Path,
     manifest_path: &Path,
     members: &[(String, Version)],
-    sources: &RegistrySources,
     build: Build,
 ) -> Result<()> {
-    #[cfg(test)]
-    if let Some(directory) = sources.local_directory() {
-        return package_into_source(
-            cargo,
-            environment,
-            work,
-            target,
-            manifest_path,
-            members,
-            directory,
-            build,
-        );
-    }
-    let _ = (sources, build);
-    #[cfg(not(test))]
-    let _ = sources;
     let mut arguments = vec![
         OsString::from("package"),
         OsString::from("--locked"),
@@ -368,113 +380,6 @@ fn read_archives(
         archives.insert(name.clone(), read_bounded_archive(&archive)?);
     }
     Ok(archives)
-}
-
-/// Packages the members one at a time in dependency order, adding each archive
-/// to a test's directory source before the crates that depend on it are
-/// packaged.
-///
-/// Cargo's temporary registry is what serves the crates of one run to each
-/// other, and a directory source replaces it, so a test serves them from the
-/// source instead, as a registry that already has them does.
-///
-/// # Errors
-///
-/// Returns an error when Cargo fails, when an archive is missing or too large,
-/// when the lock cannot be read, or when an archive cannot be added to the
-/// source.
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn package_into_source(
-    cargo: &Path,
-    environment: &ChildEnvironment,
-    work: &Path,
-    target: &Path,
-    manifest_path: &Path,
-    members: &[(String, Version)],
-    directory: &Path,
-    build: Build,
-) -> Result<()> {
-    let checkout = manifest_path
-        .parent()
-        .context("the workspace manifest has no parent directory")?;
-    let lock = super::cargo_lock::LockIndex::load(&checkout.join("Cargo.lock"))?;
-    let mut remaining = members.to_vec();
-    let mut packaged: Vec<String> = Vec::new();
-    while !remaining.is_empty() {
-        let ready = remaining
-            .iter()
-            .position(|(name, version)| {
-                lock.package(name, version).is_some_and(|package| {
-                    package
-                        .dependencies
-                        .iter()
-                        .filter(|(dependency, _)| members.iter().any(|(name, _)| name == dependency))
-                        .all(|(dependency, _)| packaged.contains(dependency))
-                })
-            })
-            .with_context(|| {
-                format!(
-                    "the members {remaining:?} depend on each other in a cycle, or the lock does not resolve them"
-                )
-            })?;
-        let (name, version) = remaining.remove(ready);
-        let mut arguments = vec![
-            OsString::from("package"),
-            OsString::from("--locked"),
-            OsString::from("--allow-dirty"),
-            OsString::from("--manifest-path"),
-            manifest_path.as_os_str().to_owned(),
-            OsString::from("--target-dir"),
-            target.as_os_str().to_owned(),
-            OsString::from("--package"),
-            OsString::from(&name),
-        ];
-        if build == Build::Package {
-            arguments.insert(1, OsString::from("--no-verify"));
-        }
-        run_build(cargo, environment, work, arguments, build)?;
-        let archive = target
-            .join("package")
-            .join(format!("{name}-{version}.crate"));
-        let bytes = read_bounded_archive(&archive)?;
-        add_to_source(directory, &name, &version, &bytes)?;
-        packaged.push(name);
-    }
-    Ok(())
-}
-
-/// Adds one packaged crate to a directory source, as a registry that serves it
-/// does.
-///
-/// # Errors
-///
-/// Returns an error for an archive that cannot be read, or a file that cannot
-/// be written.
-#[cfg(test)]
-fn add_to_source(directory: &Path, name: &str, version: &Version, archive: &[u8]) -> Result<()> {
-    let listed = crate::update::read_crate_archive(name, version, archive, &[])?;
-    let paths = listed.files.keys().cloned().collect::<Vec<_>>();
-    let wanted = paths.iter().map(String::as_str).collect::<Vec<_>>();
-    let contents = crate::update::read_crate_archive(name, version, archive, &wanted)?;
-    let crate_directory = directory.join(format!("{name}-{version}"));
-    for (path, bytes) in &contents.contents {
-        let path = crate_directory.join(path);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("create directory {}", parent.display()))?;
-        }
-        fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
-    }
-    fs::write(
-        crate_directory.join(".cargo-checksum.json"),
-        format!(
-            "{{\"files\":{{}},\"package\":\"{}\"}}",
-            crate::artifact::sha256_bytes(archive)
-        ),
-    )
-    .with_context(|| format!("write the checksum of {name} {version}"))?;
-    Ok(())
 }
 
 /// Runs one Cargo command in the isolated environment and returns its output.

@@ -20,6 +20,7 @@ use semver::Version;
 use super::super::catalog::{CatalogIdentity, GitRelease};
 use super::super::config::CratesIoConfig;
 use super::super::derive::tests::fixtures::{self, LocalSource, Release, Sibling, Variant};
+use super::super::derive::{ReleasedCrate, Sources, derive_release_with};
 use super::super::isolation::ChildEnvironment;
 use super::super::lock::{CratesIoLock, CratesIoPackage};
 use super::super::lock_command::{LocalNetwork, self_publish_lock_in};
@@ -29,9 +30,9 @@ use super::super::network::{
 };
 use super::super::state::LOCK_FILE;
 use super::{
-    SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary, Services, Token, TokenSource,
-    UploadEnvironment, UploadRequest, Uploader, Verification, WaitPolicy, live, run,
-    token_variable, verified_archives,
+    ReleaseCrate, SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary, Services, Token,
+    TokenSource, UploadEnvironment, UploadRequest, Uploader, Verification, WaitPolicy, live,
+    refuse_dependent_of_an_abandoned_sibling, run, token_variable, upload_order, verified_archives,
 };
 use crate::artifact::sha256_bytes;
 use crate::self_publish::catalog::CatalogSnapshot;
@@ -65,6 +66,9 @@ struct Fixture {
     catalog: CatalogSnapshot,
     /// The directory that derivations work in.
     work: fixtures::Temp,
+    /// The crates.io archives that the derivation packaged, by crate name, which
+    /// crates.io serves once a run uploaded them.
+    derived: BTreeMap<String, Vec<u8>>,
 }
 
 /// Builds the fixture of one variant, with the abandoned records that
@@ -89,13 +93,59 @@ fn build_with(parent: &Path, abandoned: &[(&str, &str, &str)], variant: Variant)
         abandon(&candidate.root, abandoned);
     }
     let catalog = CatalogSnapshot::load(&candidate.root).expect("load the fixture catalog");
-    Fixture {
+    let mut fixture = Fixture {
         source,
         release,
         candidate,
         catalog,
         work,
-    }
+        derived: BTreeMap::new(),
+    };
+    fixture.derived = derived_archives(&fixture);
+    fixture
+}
+
+/// Derives the release and returns the crates.io archives, by crate name.
+fn derived_archives(fixture: &Fixture) -> BTreeMap<String, Vec<u8>> {
+    let version = fixture.release.version(LIB);
+    let facts = fixture
+        .catalog
+        .identity(LIB, &version)
+        .and_then(|identity| identity.release.clone())
+        .expect("the catalog holds the release");
+    let released = [LIB, BIN]
+        .into_iter()
+        .map(|name| {
+            let archive = fixture.candidate.curated[name].clone();
+            ReleasedCrate {
+                name: name.to_owned(),
+                version: fixture.release.version(name),
+                crate_sha256: sha256_bytes(&archive),
+                archive,
+            }
+        })
+        .collect::<Vec<_>>();
+    let path = fixture.candidate.root.join("self-publish/crates-io.toml");
+    let config = CratesIoConfig::parse(&fs::read(&path).expect("read the config"), &path)
+        .expect("parse the fixture config");
+    let earlier = CratesIoLock::load(&fixture.candidate.root.join("self-publish").join(LOCK_FILE))
+        .expect("load the fixture entries");
+    derive_release_with(
+        &facts,
+        &released,
+        &fixture.catalog,
+        &config,
+        &earlier,
+        Sources::local(
+            &fixture.release.root,
+            Some(&fixture.source.root),
+            fixture.work.path(),
+        ),
+    )
+    .expect("derive the fixture release")
+    .into_iter()
+    .map(|package| (package.entry.name, package.archive))
+    .collect()
 }
 
 /// Commits the catalog repository and marks its only commit as merged into
@@ -173,6 +223,11 @@ impl Fixture {
                 .checksum(fixtures::EARLIER_CRATES_IO_NAME, "0.9.0"),
         ));
         dependencies
+    }
+
+    /// Returns the derived crates.io archive of one crate of the release.
+    fn derived_archive(&self, name: &str) -> Option<Vec<u8>> {
+        self.derived.get(name).cloned()
     }
 
     /// Returns the crates.io names of the released crates, in name order.
@@ -402,6 +457,14 @@ impl RegistryIndex for FakeRegistry {
 struct FakeUploader {
     /// crates.io, which the fake publishes into.
     crates_io: FakeCratesIo,
+    /// The root of the local registry that Cargo reads, which the fake makes
+    /// serve each crate it uploads.
+    index: PathBuf,
+    /// The derived archive that the fake publishes for each crates.io name.
+    archives: BTreeMap<String, Vec<u8>>,
+    /// The dependencies that each published crate declares, as its index row
+    /// names them.
+    dependencies: BTreeMap<String, Vec<(&'static str, &'static str)>>,
     /// The checksum that the fake publishes for each crates.io name.
     checksums: BTreeMap<String, String>,
     /// How many uploads succeed before the fake fails.
@@ -422,8 +485,29 @@ impl FakeUploader {
                 (entry.crates_io_name, entry.crate_sha256)
             })
             .collect();
+        let archives = [BIN, LIB]
+            .into_iter()
+            .filter_map(|name| {
+                let entry = fixture.entry(name);
+                fixture
+                    .derived_archive(name)
+                    .map(|archive| (entry.crates_io_name, archive))
+            })
+            .collect();
+        let dependencies = [BIN, LIB]
+            .into_iter()
+            .map(|name| {
+                (
+                    fixture.entry(name).crates_io_name,
+                    fixtures::derived_dependencies(name),
+                )
+            })
+            .collect();
         Self {
             crates_io,
+            index: fixture.source.root.clone(),
+            archives,
+            dependencies,
             checksums,
             fail_after: Cell::new(usize::MAX),
             uploads: RefCell::new(Vec::new()),
@@ -472,8 +556,26 @@ impl Uploader for FakeUploader {
         self.tokens
             .borrow_mut()
             .push(request.token.expose().to_owned());
-        self.crates_io
-            .add_version(request.crates_io_name, request.version.clone(), checksum);
+        self.crates_io.add_version(
+            request.crates_io_name,
+            request.version.clone(),
+            checksum.clone(),
+        );
+        if let Some(archive) = self.archives.get(request.crates_io_name) {
+            let dependencies = self
+                .dependencies
+                .get(request.crates_io_name)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            fixtures::publish_archive(
+                &self.index,
+                request.crates_io_name,
+                &request.version.to_string(),
+                archive,
+                &checksum,
+                dependencies,
+            );
+        }
         Ok(())
     }
 }
@@ -623,7 +725,7 @@ impl Setup {
     }
 
     /// Publishes one crate of the release on crates.io with the recorded
-    /// checksum.
+    /// checksum, on the fake crates.io and on the local index that Cargo reads.
     fn publish(&self, name: &str) {
         let entry = self.fixture.entry(name);
         self.crates_io.set_versions(
@@ -633,6 +735,16 @@ impl Setup {
                 entry.crate_sha256.clone(),
                 false,
             )]),
+        );
+        let archive = self
+            .fixture
+            .derived_archive(name)
+            .unwrap_or_else(|| panic!("the fixture derives {name}"));
+        self.fixture.source.publish_archive(
+            &entry.crates_io_name,
+            &entry.version.to_string(),
+            &archive,
+            &fixtures::derived_dependencies(name),
         );
     }
 
@@ -765,6 +877,133 @@ fn refuses_a_dependent_that_crates_io_has_before_its_sibling() {
     assert!(error.contains(BIN), "{error}");
     assert!(error.contains(LIB), "{error}");
     assert!(error.contains("is missing"), "{error}");
+}
+
+#[test]
+fn refuses_a_release_whose_crate_depends_on_an_abandoned_sibling() {
+    let temporary = fixtures::Temp::new("pkgre-publish-sibling-abandoned");
+    let setup = Setup::with_variant(
+        temporary.path(),
+        &[(LIB, fixtures::VERSION, "crates.io refused the name")],
+        sibling_release(),
+    );
+    let error = refusal(setup.dry_run());
+    assert!(error.contains(BIN), "{error}");
+    assert!(error.contains(LIB), "{error}");
+    assert!(error.contains("abandoned"), "{error}");
+}
+
+#[test]
+fn refuses_a_dependent_of_an_abandoned_sibling_before_anything_is_packaged() {
+    let version: Version = fixtures::VERSION.parse().expect("parse a version");
+    let release = GitRelease {
+        git: REPOSITORY.to_owned(),
+        tag: fixtures::tag(),
+        tag_oid: "a".repeat(40),
+        commit: "b".repeat(40),
+        cargo_version: "1.95.0".parse().expect("parse a version"),
+    };
+    let identities = [BIN, LIB].map(|name| CatalogIdentity {
+        name: name.to_owned(),
+        version: version.clone(),
+        crate_sha256: "c".repeat(64),
+        removed: false,
+        release: Some(release.clone()),
+        dependencies: Vec::new(),
+    });
+    let entries = [BIN, LIB].map(|name| CratesIoPackage {
+        name: name.to_owned(),
+        version: version.clone(),
+        crates_io_name: name.to_owned(),
+        crate_sha256: "d".repeat(64),
+        pkgre_crate_sha256: "e".repeat(64),
+        git: REPOSITORY.to_owned(),
+        tag: fixtures::tag(),
+        commit: "b".repeat(40),
+        cargo_version: "1.95.0".parse().expect("parse a version"),
+    });
+    let classified = vec![
+        (
+            ReleaseCrate {
+                identity: &identities[0],
+                entry: &entries[0],
+            },
+            SelfPublishCrateState::Missing,
+        ),
+        (
+            ReleaseCrate {
+                identity: &identities[1],
+                entry: &entries[1],
+            },
+            SelfPublishCrateState::Abandoned,
+        ),
+    ];
+    let siblings = BTreeMap::from([(BIN.to_owned(), BTreeSet::from([LIB.to_owned()]))]);
+
+    let error = refuse_dependent_of_an_abandoned_sibling(&classified, &siblings)
+        .expect_err("a dependent of an abandoned crate is refused");
+
+    let error = format!("{error:#}");
+    assert!(error.contains(BIN), "{error}");
+    assert!(error.contains(LIB), "{error}");
+    assert!(error.contains("abandon"), "{error}");
+}
+
+#[test]
+fn a_cycle_of_release_crates_has_no_upload_order() {
+    let version: Version = fixtures::VERSION.parse().expect("parse a version");
+    let release = GitRelease {
+        git: REPOSITORY.to_owned(),
+        tag: fixtures::tag(),
+        tag_oid: "a".repeat(40),
+        commit: "b".repeat(40),
+        cargo_version: "1.95.0".parse().expect("parse a version"),
+    };
+    let identities = [BIN, LIB].map(|name| CatalogIdentity {
+        name: name.to_owned(),
+        version: version.clone(),
+        crate_sha256: "c".repeat(64),
+        removed: false,
+        release: Some(release.clone()),
+        dependencies: Vec::new(),
+    });
+    let entries = [BIN, LIB].map(|name| CratesIoPackage {
+        name: name.to_owned(),
+        version: version.clone(),
+        crates_io_name: name.to_owned(),
+        crate_sha256: "d".repeat(64),
+        pkgre_crate_sha256: "e".repeat(64),
+        git: REPOSITORY.to_owned(),
+        tag: fixtures::tag(),
+        commit: "b".repeat(40),
+        cargo_version: "1.95.0".parse().expect("parse a version"),
+    });
+    let classified = vec![
+        (
+            ReleaseCrate {
+                identity: &identities[0],
+                entry: &entries[0],
+            },
+            SelfPublishCrateState::Missing,
+        ),
+        (
+            ReleaseCrate {
+                identity: &identities[1],
+                entry: &entries[1],
+            },
+            SelfPublishCrateState::Missing,
+        ),
+    ];
+    let siblings = BTreeMap::from([
+        (BIN.to_owned(), BTreeSet::from([LIB.to_owned()])),
+        (LIB.to_owned(), BTreeSet::from([BIN.to_owned()])),
+    ]);
+
+    let error = upload_order(&classified, &[0, 1], &siblings)
+        .expect_err("crates that depend on each other have no upload order");
+
+    let error = format!("{error:#}");
+    assert!(error.contains("depend on each other in a cycle"), "{error}");
 }
 
 #[test]
@@ -1346,6 +1585,7 @@ fn two_repositories() -> (CatalogSnapshot, CratesIoConfig) {
             commit: "2".repeat(40),
             cargo_version: "1.95.0".parse().expect("parse a version"),
         }),
+        dependencies: Vec::new(),
     })
     .collect();
     let catalog = CatalogSnapshot {

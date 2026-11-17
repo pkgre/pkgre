@@ -13,7 +13,7 @@ use semver::Version;
 use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
-use super::cargo::{CRATES_IO_INDEX, CURATED_INDEX};
+use super::cargo::{CRATES_IO_INDEX, names_index};
 use super::expectations::Expectations;
 use crate::update::{ComparedArchive, read_crate_archive};
 
@@ -212,7 +212,7 @@ fn compare_dependencies(
         })?;
         if let Some(registry) = entry.get(REGISTRY_INDEX_KEY).and_then(TomlValue::as_str) {
             ensure!(
-                registry == CURATED_INDEX,
+                registry == expectations.curated_index(),
                 "the curated dependency {key:?} names the registry {registry:?}, not the curated registry"
             );
         }
@@ -524,17 +524,9 @@ fn compact(value: &TomlValue) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
 }
 
-/// The source that the curated lock records for an external package.
-///
-/// Cargo writes a sparse registry's index URL without the `registry+` prefix in
-/// a lock file.
-fn curated_lock_source() -> String {
-    CURATED_INDEX.to_owned()
-}
-
-/// The source that the derived lock records for an external package.
-fn crates_io_lock_source() -> String {
-    format!("registry+{CRATES_IO_INDEX}")
+/// Returns whether a lock file names one registry index as a package's source.
+fn is_index_source(source: Option<&str>, index: &str) -> bool {
+    source.is_some_and(|source| names_index(source, index))
 }
 
 /// One package of an archived `Cargo.lock`.
@@ -605,7 +597,7 @@ fn compare_lock_files(
             }
             (curated_checksum, derived_checksum) => {
                 ensure!(
-                    package.source.as_deref() == Some(curated_lock_source().as_str()),
+                    is_index_source(package.source.as_deref(), expectations.curated_index()),
                     "{} {} comes from {:?} in the curated lock, not from the curated registry",
                     package.name,
                     package.version,
@@ -620,7 +612,7 @@ fn compare_lock_files(
                     curated_checksum
                 );
                 ensure!(
-                    counterpart.source.as_deref() == Some(crates_io_lock_source().as_str()),
+                    is_index_source(counterpart.source.as_deref(), CRATES_IO_INDEX),
                     "{} {} comes from {:?} in the crates.io lock, not from crates.io",
                     expected.crates_io_name,
                     package.version,

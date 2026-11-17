@@ -10,7 +10,7 @@ use semver::{Version, VersionReq};
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value, value};
 
 use super::super::isolation::ChildEnvironment;
-use super::cargo::{CURATED_INDEX, run_cargo};
+use super::cargo::{names_index, run_cargo};
 use super::cargo_lock::LockIndex;
 use super::expectations::Expectations;
 
@@ -18,8 +18,6 @@ use super::expectations::Expectations;
 pub(super) const CURATED_REGISTRY: &str = "pkgre";
 /// The registry a released crate publishes to on crates.io.
 pub(super) const CRATES_IO_REGISTRY: &str = "crates-io";
-/// The curated registry's sources, as `cargo metadata` reports them.
-const CURATED_SOURCES: [&str; 2] = [CURATED_INDEX, "registry+sparse+https://rust.pkg.re/"];
 /// The alternative spellings Cargo accepts for the development dependency table.
 const DEV_DEPENDENCY_SPELLINGS: [&str; 2] = ["dev-dependencies", "dev_dependencies"];
 /// The alternative spellings Cargo accepts for the build dependency table.
@@ -267,13 +265,14 @@ impl ReleasePlan {
         lock: &LockIndex,
         expectations: &Expectations,
         published: &BTreeMap<String, String>,
+        curated_index: &str,
     ) -> Result<Self> {
         let plan = Self {
             published: published.clone(),
             libraries: library_pins(workspace, published),
             binaries: binary_pins(workspace),
         };
-        plan.validate_dependencies(workspace, lock, expectations)?;
+        plan.validate_dependencies(workspace, lock, expectations, curated_index)?;
         Ok(plan)
     }
 
@@ -300,12 +299,13 @@ impl ReleasePlan {
         workspace: &Workspace,
         lock: &LockIndex,
         expectations: &Expectations,
+        curated_index: &str,
     ) -> Result<()> {
         for member in &workspace.members {
             for dependency in &member.dependencies {
-                check_dependency_source(member, dependency)?;
+                check_dependency_source(member, dependency, curated_index)?;
                 if member.released {
-                    validate_released_dependency(member, dependency, workspace)?;
+                    validate_released_dependency(member, dependency, workspace, curated_index)?;
                 }
             }
             let locked = lock
@@ -354,10 +354,11 @@ impl ReleasePlan {
 /// curated registry instead of a path, on a sibling without the curated
 /// registry, on a sibling whose requirement is not exactly the tag's version, or
 /// on a path that is not the sibling's own directory.
-fn validate_released_dependency(
+pub(super) fn validate_released_dependency(
     member: &Member,
     dependency: &MemberDependency,
     workspace: &Workspace,
+    curated_index: &str,
 ) -> Result<()> {
     let key = dependency.key();
     let Some(target) = workspace.member(&dependency.package) else {
@@ -383,7 +384,7 @@ fn validate_released_dependency(
         dependency
             .registry
             .as_deref()
-            .is_some_and(|index| CURATED_SOURCES.contains(&index)),
+            .is_some_and(|index| names_index(index, curated_index)),
         "crate {} depends on {key}, a crate of the same tag, which does not declare registry = {CURATED_REGISTRY:?}",
         member.name
     );
@@ -432,11 +433,15 @@ fn same_directory(left: &Path, right: &Path) -> Result<bool> {
 
 /// Refuses a dependency whose Cargo source is not the curated registry or a
 /// workspace member.
-fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Result<()> {
+fn check_dependency_source(
+    member: &Member,
+    dependency: &MemberDependency,
+    curated_index: &str,
+) -> Result<()> {
     let Some(source) = &dependency.source else {
         return Ok(());
     };
-    if source == "registry+https://github.com/rust-lang/crates.io-index" {
+    if names_index(source, "https://github.com/rust-lang/crates.io-index") {
         bail!(
             "{} takes {} from crates.io directly, which the curated registry cannot serve; every dependency comes from registry {CURATED_REGISTRY:?}",
             member.name,
@@ -444,7 +449,7 @@ fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Re
         );
     }
     ensure!(
-        CURATED_SOURCES.contains(&source.as_str()),
+        names_index(source, curated_index),
         "{} takes {} from the unsupported source {source:?}; every dependency comes from registry {CURATED_REGISTRY:?}",
         member.name,
         dependency.package
@@ -453,7 +458,7 @@ fn check_dependency_source(member: &Member, dependency: &MemberDependency) -> Re
         dependency
             .registry
             .as_deref()
-            .is_some_and(|index| CURATED_SOURCES.contains(&index)),
+            .is_some_and(|index| names_index(index, curated_index)),
         "{} does not declare registry {CURATED_REGISTRY:?} for {}",
         member.name,
         dependency.package

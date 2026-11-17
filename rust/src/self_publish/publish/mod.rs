@@ -441,6 +441,9 @@ fn run(
     refuse_published_dependent_of_a_missing_sibling(&classified, &derivation.siblings).context(
         "step 4: a crate of the release cannot be on crates.io before the crates it depends on",
     )?;
+    refuse_dependent_of_an_abandoned_sibling(&classified, &derivation.siblings).context(
+        "step 4: a crate of the release cannot be published while a crate it depends on is abandoned",
+    )?;
     if let Some((crate_, SelfPublishCrateState::Different { found })) = classified
         .iter()
         .find(|(_, state)| matches!(state, SelfPublishCrateState::Different { .. }))
@@ -466,6 +469,8 @@ fn run(
         verify_packages(&derivation, &classified, &missing, services)
             .context("step 5: the verified packages must reproduce crates-io.lock")?;
     }
+    let order = upload_order(&classified, &missing, &derivation.siblings)
+        .context("the crates of the release must be publishable in dependency order")?;
     if upload && !missing.is_empty() {
         let environment = upload_environment(&derivation)?;
         verify_publish_packages(&derivation, &environment, &classified, &missing).context(
@@ -473,8 +478,9 @@ fn run(
         )?;
         if let Err(error) = upload_missing(
             &environment,
+            &derivation.workspace,
             &mut classified,
-            &missing,
+            &order,
             &derivation.siblings,
             services,
         ) {
@@ -778,15 +784,35 @@ fn verify_packages(
 /// always did.
 fn upload_missing(
     environment: &UploadEnvironment,
+    workspace: &DerivedWorkspace,
     classified: &mut [(ReleaseCrate<'_>, SelfPublishCrateState)],
-    missing: &[usize],
+    order: &[usize],
     siblings: &BTreeMap<String, BTreeSet<String>>,
     services: &Services<'_>,
 ) -> Result<()> {
-    let order = upload_order(classified, missing, siblings)?;
     let token = services.tokens.read()?;
-    for position in order {
+    for position in order.iter().copied() {
         let (crate_, _) = classified[position];
+        if siblings
+            .get(&crate_.identity.name)
+            .is_some_and(|dependencies| !dependencies.is_empty())
+        {
+            // crates.io serves the crates this one depends on by now, so the
+            // package `cargo publish` builds is the one this home builds alone.
+            workspace
+                .verify_publish_archive(
+                    &environment.environment,
+                    &crate_.entry.crates_io_name,
+                    &crate_.identity.version,
+                    &crate_.entry.crate_sha256,
+                )
+                .with_context(|| {
+                    format!(
+                        "check the package that cargo publish would upload for crate {} {}",
+                        crate_.identity.name, crate_.identity.version
+                    )
+                })?;
+        }
         let request = UploadRequest {
             environment,
             crates_io_name: &crate_.entry.crates_io_name,
@@ -898,6 +924,44 @@ fn refuse_published_dependent_of_a_missing_sibling(
                 crate_.identity.version,
                 crate_.entry.crates_io_name,
                 crate_.identity.version
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Refuses a crate of the release that this run publishes while a crate of the
+/// release it depends on is abandoned.
+///
+/// crates.io never takes the abandoned crate, so the dependent could not resolve
+/// it; the remedy is to abandon the dependent too.
+///
+/// # Errors
+///
+/// Returns an error naming the dependent and the abandoned crate it depends on.
+fn refuse_dependent_of_an_abandoned_sibling(
+    classified: &[(ReleaseCrate<'_>, SelfPublishCrateState)],
+    siblings: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<()> {
+    for (crate_, state) in classified {
+        if *state == SelfPublishCrateState::Abandoned {
+            continue;
+        }
+        let Some(dependencies) = siblings.get(&crate_.identity.name) else {
+            continue;
+        };
+        for dependency in dependencies {
+            let abandoned = classified
+                .iter()
+                .find(|(other, _)| other.identity.name == *dependency)
+                .is_some_and(|(_, state)| *state == SelfPublishCrateState::Abandoned);
+            ensure!(
+                !abandoned,
+                "crate {} {} depends on {}, which crates-io.toml records as abandoned; crates.io never takes the abandoned crate, so the dependent cannot reach it either: abandon {} too",
+                crate_.identity.name,
+                crate_.identity.version,
+                dependency,
+                crate_.identity.name
             );
         }
     }
