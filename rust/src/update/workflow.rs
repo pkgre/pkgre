@@ -161,6 +161,7 @@ struct CandidateSelection {
     activity: PackageActivity,
     lane: Option<CompatibilityLane>,
     base: Option<LockedRelease>,
+    predates_locked_releases: bool,
     candidate: PolicyRelease,
     age_seconds: u64,
     dormant_gap: Option<PublicationGap>,
@@ -286,6 +287,12 @@ fn build_plan_with<R: PlannerResolver>(
     );
 
     let targets = planning_targets(&catalog, request)?;
+    if let PlanRequest::Exact { version, .. } = request {
+        let (key, _) = targets
+            .first()
+            .expect("exact planning selected exactly one package");
+        ensure_exact_request_is_newer_than_active_lane_maximum(&catalog, key, version)?;
+    }
     let mut candidates = Vec::new();
     for (key, home) in targets {
         let history = resolver.history(&key.name).with_context(|| {
@@ -395,6 +402,24 @@ fn planning_targets(
     Ok(targets)
 }
 
+/// Refuses an exact request that one active compatibility lane already supersedes.
+///
+/// The catalog alone answers this, so an exact request that `update-apply` would refuse is refused before any network work.
+fn ensure_exact_request_is_newer_than_active_lane_maximum(
+    catalog: &Catalog,
+    key: &PackageKey,
+    requested: &Version,
+) -> Result<()> {
+    super::policy::ensure_request_is_newer_than_active_lane_maximum(
+        catalog
+            .approvals
+            .iter()
+            .filter(|approval| approval.registry == key.registry && approval.name == key.name)
+            .map(|approval| (&approval.version, approval.state == PackageState::Active)),
+        requested,
+    )
+}
+
 fn policy_history(history: &CratesIoHistory) -> Result<Vec<PolicyRelease>> {
     history
         .rows
@@ -492,6 +517,7 @@ fn select_candidates(
                 activity,
                 lane: Some(selected.lane),
                 base: Some(selected.base),
+                predates_locked_releases: false,
                 candidate: selected.candidate,
                 age_seconds: selected.age_seconds,
                 dormant_gap: selected.dormant_gap,
@@ -507,6 +533,7 @@ fn select_candidates(
                 activity,
                 lane: None,
                 base: selected.base,
+                predates_locked_releases: selected.predates_locked_releases,
                 candidate: selected.candidate,
                 age_seconds: selected.age_seconds,
                 dormant_gap: selected.dormant_gap,
@@ -536,6 +563,7 @@ fn select_candidates(
                         activity,
                         lane: Some(selected.lane),
                         base: Some(selected.base),
+                        predates_locked_releases: false,
                         candidate: selected.candidate,
                         age_seconds: selected.age_seconds,
                         dormant_gap: selected.dormant_gap,
@@ -548,6 +576,7 @@ fn select_candidates(
                         activity,
                         lane: None,
                         base: selected.base,
+                        predates_locked_releases: selected.predates_locked_releases,
                         candidate: selected.candidate,
                         age_seconds: selected.age_seconds,
                         dormant_gap: selected.dormant_gap,
@@ -738,6 +767,9 @@ fn classify_candidate_reasons(
             reasons.insert(DecisionReason::InactiveRevival);
         }
         PackageActivity::Active => {}
+    }
+    if selection.predates_locked_releases {
+        reasons.insert(DecisionReason::PredatesLockedReleases);
     }
     if selection.dormant_gap.is_some() {
         reasons.insert(DecisionReason::DormantWakeup);
@@ -1093,6 +1125,7 @@ fn is_source_promotion_reason(reason: DecisionReason) -> bool {
             | DecisionReason::BuildSurfaceChanged
             | DecisionReason::PublisherDiscontinuity
             | DecisionReason::RepositoryDiscontinuity
+            | DecisionReason::PredatesLockedReleases
     )
 }
 
@@ -1116,6 +1149,7 @@ fn decision_for_reasons(reasons: &BTreeSet<DecisionReason>) -> UpdateDecision {
                 | DecisionReason::BuildSurfaceChanged
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
+                | DecisionReason::PredatesLockedReleases
                 | DecisionReason::SourceUnavailable
                 | DecisionReason::SourceLineEndings
                 | DecisionReason::SourceFileMode
@@ -1200,7 +1234,7 @@ mod tests {
                 .collect(),
             publish_names: BTreeSet::new(),
             approvals: vec![
-                approval("active", "1.0.0", PackageState::Active),
+                approval("active", "1.2.0", PackageState::Active),
                 approval("exact-only", "0.0.1", PackageState::Active),
                 approval("inactive", "1.0.0", PackageState::Removed),
             ],
@@ -1348,6 +1382,42 @@ mod tests {
         assert_eq!(selected[0].base, None);
         assert_eq!(selected[0].lane, None);
         assert!(selected[0].explicit);
+    }
+
+    #[test]
+    fn exact_request_lane_rule_reads_the_catalog_without_any_fetch() {
+        let catalog = planning_catalog();
+        let key = PackageKey::new("universe", "active");
+        let error = ensure_exact_request_is_newer_than_active_lane_maximum(
+            &catalog,
+            &key,
+            &Version::parse("1.1.0").unwrap(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            "requested identity 1.1.0 is not newer than active lane maximum 1.2.0"
+        );
+        for version in ["1.3.0", "0.9.0", "1.2.0"] {
+            ensure_exact_request_is_newer_than_active_lane_maximum(
+                &catalog,
+                &key,
+                &Version::parse(version).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn predating_release_is_a_review_reason_that_promotes_source_evidence() {
+        let reasons = BTreeSet::from([DecisionReason::PredatesLockedReleases]);
+        assert_eq!(
+            decision_for_reasons(&reasons),
+            UpdateDecision::ReviewRequired
+        );
+        assert!(is_source_promotion_reason(
+            DecisionReason::PredatesLockedReleases
+        ));
     }
 
     fn dependency(package: &str, requirement: &str) -> IndexDependency {

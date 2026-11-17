@@ -221,6 +221,8 @@ pub enum DecisionReason {
     SourceUnavailable,
     /// Mechanical source correspondence disagrees.
     SourceMismatch,
+    /// Exact requested identity was published before every locked release of its name.
+    PredatesLockedReleases,
     /// Promoted source correspondence differs only in line endings; rustc reads CRLF in Rust
     /// source as LF, but a member read as bytes keeps them.
     SourceLineEndings,
@@ -519,8 +521,11 @@ fn validate_candidate_release(plan: &UpdatePlan, candidate: &UpdateCandidate) ->
             "new package candidate unexpectedly has a locked base"
         ),
         PackageActivity::Inactive | PackageActivity::Active => ensure!(
-            candidate.base.is_some(),
-            "existing package candidate has no locked base"
+            candidate.base.is_some()
+                || candidate
+                    .reasons
+                    .contains(&DecisionReason::PredatesLockedReleases),
+            "existing package candidate has no locked base and does not predate its locked releases"
         ),
     }
     validate_candidate_lane(candidate)
@@ -857,6 +862,13 @@ fn validate_reason_consistency(candidate: &UpdateCandidate) -> Result<()> {
         "dormant-wakeup reason disagrees with publication evidence"
     );
     ensure!(
+        candidate
+            .reasons
+            .contains(&DecisionReason::PredatesLockedReleases)
+            == (candidate.activity != PackageActivity::New && candidate.base.is_none()),
+        "predating-release reason disagrees with the candidate base and package activity"
+    );
+    ensure!(
         candidate.reasons.contains(&DecisionReason::NewDependency)
             != candidate.dependencies.new_packages.is_empty(),
         "new-dependency reason disagrees with dependency evidence"
@@ -916,6 +928,7 @@ fn validate_reason_consistency(candidate: &UpdateCandidate) -> Result<()> {
                 | DecisionReason::BuildSurfaceChanged
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
+                | DecisionReason::PredatesLockedReleases
         )
     });
     ensure!(
@@ -952,6 +965,7 @@ fn validate_decision(candidate: &UpdateCandidate) -> Result<()> {
                 | DecisionReason::BuildSurfaceChanged
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
+                | DecisionReason::PredatesLockedReleases
                 | DecisionReason::SourceUnavailable
                 | DecisionReason::SourceLineEndings
                 | DecisionReason::SourceFileMode
@@ -1302,6 +1316,92 @@ mod tests {
         });
         let error = serialize_update_plan(&plan).unwrap_err();
         assert!(format!("{error:#}").contains("repeats Cargo package identity"));
+    }
+
+    #[test]
+    fn predating_reason_and_base_must_agree_with_package_activity() {
+        let mut without_base = sample_plan();
+        without_base.candidates[0].activity = PackageActivity::Inactive;
+        without_base.candidates[0].reasons = vec![
+            DecisionReason::InactiveRevival,
+            DecisionReason::SourceUnavailable,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let error = serialize_update_plan(&without_base).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("existing package candidate has no locked base"),
+            "unexpected error: {error:#}"
+        );
+
+        let mut with_base = sample_plan();
+        let candidate = &mut with_base.candidates[0];
+        candidate.activity = PackageActivity::Active;
+        candidate.base = Some(PlannedIdentity {
+            version: Version::parse("1.0.0").unwrap(),
+            published_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            source_row_sha256: "07".repeat(32),
+            crate_sha256: "08".repeat(32),
+        });
+        candidate.base_archive = Some(candidate.candidate_archive.clone());
+        candidate.archive_delta = Some(ArchiveDelta {
+            delta_sha256: "09".repeat(32),
+            added: Vec::new(),
+            removed: Vec::new(),
+            changed: Vec::new(),
+            build_surface_changed: false,
+        });
+        candidate.reasons = vec![
+            DecisionReason::SourceUnavailable,
+            DecisionReason::PredatesLockedReleases,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let error = serialize_update_plan(&with_base).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("predating-release reason disagrees"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn predating_reason_is_refused_on_a_new_package() {
+        let mut plan = sample_plan();
+        plan.candidates[0].reasons = vec![
+            DecisionReason::NewPackage,
+            DecisionReason::SourceUnavailable,
+            DecisionReason::PredatesLockedReleases,
+            DecisionReason::ExplicitCandidate,
+        ];
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("predating-release reason disagrees"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn predating_reason_alone_requires_review() {
+        let mut plan = sample_plan();
+        let candidate = &mut plan.candidates[0];
+        candidate.activity = PackageActivity::Active;
+        let commit = "11".repeat(20);
+        candidate.candidate_archive.vcs_commit = Some(commit.clone());
+        candidate.source = SourceEvidence::PublisherAsserted {
+            repository: "https://github.com/example/demo".to_owned(),
+            commit,
+            path: String::new(),
+            comparison_sha256: "12".repeat(32),
+        };
+        candidate.reasons = vec![
+            DecisionReason::PredatesLockedReleases,
+            DecisionReason::ExplicitCandidate,
+        ];
+        candidate.decision = UpdateDecision::Automatic;
+
+        let error = serialize_update_plan(&plan).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("decision disagrees with its reasons"),
+            "unexpected error: {error:#}"
+        );
     }
 
     fn sample_plan() -> UpdatePlan {
