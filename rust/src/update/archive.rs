@@ -17,6 +17,12 @@ const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ENTRIES: usize = 20_000;
 const MAX_COMPRESSION_RATIO: u64 = 200;
+/// Largest accepted GNU long-name body, its NUL terminator included.
+const MAX_LONG_NAME_BYTES: u64 = 4096;
+/// Entry type of a GNU long-name header.
+const GNU_LONG_NAME_TYPE: u8 = b'L';
+/// Placeholder name GNU tar writes in the header of a long-name entry.
+const GNU_LONG_NAME_PLACEHOLDER: &str = "././@LongLink";
 
 /// Stable metadata for one regular archive file.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -65,6 +71,8 @@ pub struct ArchiveAnalysis {
 /// Inspects one exact `.crate` archive without extracting or executing any content.
 ///
 /// The parser accepts only one canonical root, regular files, and directories. It rejects traversal, absolute/non-canonical/non-UTF-8 paths, duplicate normalized paths, links, special/PAX/GNU-extension entries, unsafe mode bits, invalid tar checksums, concatenated nonzero data after the tar terminator, excessive sizes/counts, and compression ratios above 200:1.
+///
+/// A GNU long-name entry (`././@LongLink`, type `L`) is accepted as the path of the single file or directory entry that follows it, because Cargo's tar writer emits one for every member path over 100 bytes; the name it carries passes exactly the checks and limits a path in a header passes.
 ///
 /// # Errors
 ///
@@ -209,6 +217,7 @@ fn read_tar_entries<R: Read>(
     let mut contents = ArchiveContents::default();
     let mut zero_blocks = 0_u8;
     let mut entries = 0_usize;
+    let mut long_name: Option<String> = None;
     loop {
         let mut header = [0_u8; TAR_BLOCK_BYTES];
         reader
@@ -217,6 +226,10 @@ fn read_tar_entries<R: Read>(
         if header.iter().all(|byte| *byte == 0) {
             zero_blocks += 1;
             if zero_blocks == 2 {
+                ensure!(
+                    long_name.is_none(),
+                    "crate archive ends with a GNU long-name entry that names no entry"
+                );
                 return Ok(contents);
             }
             continue;
@@ -230,8 +243,67 @@ fn read_tar_entries<R: Read>(
             "crate archive exceeds {} entries",
             limits.entries
         );
-        contents.read_entry(reader, &header, expected_root, limits.file, wanted)?;
+        if header[156] == GNU_LONG_NAME_TYPE {
+            ensure!(
+                long_name.is_none(),
+                "crate archive repeats a GNU long-name entry"
+            );
+            long_name = Some(read_long_name(reader, &header)?);
+            continue;
+        }
+        contents.read_entry(
+            reader,
+            &header,
+            expected_root,
+            limits.file,
+            wanted,
+            long_name.take(),
+        )?;
     }
+}
+
+/// Reads one GNU long-name entry and returns the path it names.
+///
+/// GNU tar writes a type `L` header named [`GNU_LONG_NAME_PLACEHOLDER`] whose
+/// body is the NUL-terminated path of the next entry, for any member path that
+/// does not fit the 100-byte header name field. Cargo's tar writer emits one for
+/// every such member, so ordinary crates.io archives carry them.
+fn read_long_name<R: Read>(
+    reader: &mut BoundedReader<R>,
+    header: &[u8; TAR_BLOCK_BYTES],
+) -> Result<String> {
+    validate_tar_checksum(header)?;
+    let mode = u32::try_from(parse_tar_number(&header[100..108], "mode")?)
+        .context("tar mode exceeds u32")?;
+    ensure!(
+        mode & 0o7000 == 0,
+        "tar entry uses unsafe special mode bits"
+    );
+    ensure!(
+        tar_path(header)? == GNU_LONG_NAME_PLACEHOLDER,
+        "crate archive contains an unsupported GNU long-name entry"
+    );
+    let size = parse_tar_number(&header[124..136], "size")?;
+    ensure!(
+        (1..=MAX_LONG_NAME_BYTES).contains(&size),
+        "GNU long-name entry size {size} is outside 1..={MAX_LONG_NAME_BYTES}"
+    );
+    let mut body = vec![0_u8; usize::try_from(size).context("GNU long-name size exceeds usize")?];
+    reader
+        .read_exact(&mut body)
+        .context("read GNU long-name entry")?;
+    read_padding(reader, size)?;
+    ensure!(
+        body.last() == Some(&0),
+        "GNU long-name entry is not NUL-terminated"
+    );
+    let name = &body[..body.len() - 1];
+    ensure!(
+        !name.contains(&0),
+        "GNU long-name entry has data after its NUL terminator"
+    );
+    let name = std::str::from_utf8(name).context("GNU long-name entry is not valid UTF-8")?;
+    Ok(name.to_owned())
 }
 
 impl ArchiveContents {
@@ -242,6 +314,7 @@ impl ArchiveContents {
         expected_root: &str,
         file_limit: u64,
         wanted: &[&str],
+        long_name: Option<String>,
     ) -> Result<()> {
         validate_tar_checksum(header)?;
         let mode = u32::try_from(parse_tar_number(&header[100..108], "mode")?)
@@ -252,7 +325,18 @@ impl ArchiveContents {
         );
         let size = parse_tar_number(&header[124..136], "size")?;
         let entry_type = header[156];
-        let path = tar_path(header)?;
+        if long_name.is_some() {
+            ensure!(
+                matches!(entry_type, 0 | b'0' | b'5'),
+                "GNU long-name entry is not followed by a file or directory entry"
+            );
+        }
+        // A long-name entry replaces the header name, which GNU truncates to the
+        // first 100 bytes of the path it carries in full.
+        let path = match long_name {
+            Some(name) => name,
+            None => tar_path(header)?,
+        };
         let normalized = normalize_archive_path(&path, entry_type == b'5')?;
         ensure!(
             self.seen_paths.insert(normalized.clone()),
@@ -269,7 +353,7 @@ impl ArchiveContents {
             b'3' | b'4' | b'6' => {
                 bail!("crate archive contains a device/FIFO entry at {relative:?}")
             }
-            b'x' | b'g' | b'L' | b'K' => {
+            b'x' | b'g' | b'K' => {
                 bail!("crate archive contains unsupported extended tar metadata at {relative:?}")
             }
             other => bail!("crate archive contains unsupported tar type {other:#04x}"),
@@ -748,6 +832,173 @@ mod tests {
     }
 
     #[test]
+    fn gnu_long_name_entry_names_the_next_file() {
+        assert!(LONG_PATH.len() > 100);
+        let long_name = with_nul(LONG_PATH);
+        let archive = archive(&[
+            Entry::directory("demo-1.0.0/", 0o755),
+            Entry::raw(GNU_LONG_NAME_PLACEHOLDER, b'L', &long_name, 0o644),
+            Entry::raw(truncated(LONG_PATH), b'0', b"fn main() {}\n", 0o755),
+        ]);
+        let result =
+            inspect_crate_archive("demo", &Version::parse("1.0.0").unwrap(), &archive).unwrap();
+        let relative = LONG_PATH.strip_prefix("demo-1.0.0/").unwrap();
+        assert_eq!(
+            result.files,
+            vec![ArchiveFile {
+                path: relative.to_owned(),
+                size: 13,
+                mode: 0o755,
+                sha256: sha256_bytes(b"fn main() {}\n"),
+                binary: false,
+            }]
+        );
+        assert_eq!(
+            result.build_surface.get(&format!("file:{relative}:0755")),
+            Some(&sha256_bytes(b"fn main() {}\n"))
+        );
+        assert!(
+            inspect_with_limits(
+                "demo",
+                &Version::parse("1.0.0").unwrap(),
+                &archive,
+                ArchiveLimits {
+                    file: 4,
+                    ..ArchiveLimits::production()
+                },
+                &[],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn gnu_long_name_entry_names_the_next_directory() {
+        let long_directory = "demo-1.0.0/tests/some_very_long_directory_name_that_does_not_fit_the_tar_header_name_field_of_one_hundred_bytes";
+        assert!(long_directory.len() > 100);
+        let long_name = with_nul(&format!("{long_directory}/"));
+        let archive = archive(&[
+            Entry::raw(GNU_LONG_NAME_PLACEHOLDER, b'L', &long_name, 0o644),
+            Entry::raw(truncated(long_directory), b'5', b"", 0o755),
+            Entry::file("demo-1.0.0/a", b"one", 0o644),
+        ]);
+        let result =
+            inspect_crate_archive("demo", &Version::parse("1.0.0").unwrap(), &archive).unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].path, "a");
+    }
+
+    #[test]
+    fn malformed_gnu_long_name_entries_are_rejected() {
+        let member = Entry::raw(truncated(LONG_PATH), b'0', b"fn main() {}\n", 0o644);
+        for (body, following, expected) in [
+            (
+                b"demo-1.0.0/../escape\0".to_vec(),
+                vec![member],
+                "non-canonical or contains traversal",
+            ),
+            (
+                b"/demo-1.0.0/escape\0".to_vec(),
+                vec![member],
+                "tar path is absolute",
+            ),
+            (
+                b"other-1.0.0/escape\0".to_vec(),
+                vec![member],
+                "outside mandatory root",
+            ),
+            (
+                LONG_PATH.as_bytes().to_vec(),
+                vec![member],
+                "not NUL-terminated",
+            ),
+            (
+                b"demo-1.0.0/escape\0trailing\0".to_vec(),
+                vec![member],
+                "data after its NUL terminator",
+            ),
+            (vec![0xff, 0xfe, 0], vec![member], "not valid UTF-8"),
+            (
+                with_nul(LONG_PATH),
+                vec![Entry::link("demo-1.0.0/link", "target")],
+                "not followed by a file or directory entry",
+            ),
+            (
+                with_nul(LONG_PATH),
+                vec![Entry::raw(
+                    "demo-1.0.0/.cargo_vcs_info.json",
+                    b'x',
+                    b"1 comment=0\0",
+                    0o644,
+                )],
+                "not followed by a file or directory entry",
+            ),
+            (vec![b'a'; 5000], vec![member], "outside 1..=4096"),
+        ] {
+            let mut entries = vec![Entry::raw(GNU_LONG_NAME_PLACEHOLDER, b'L', &body, 0o644)];
+            entries.extend_from_slice(&following);
+            assert_error(&archive(&entries), expected);
+        }
+
+        // A long-name header that is not GNU's placeholder.
+        let long_name = with_nul(LONG_PATH);
+        assert_error(
+            &archive(&[
+                Entry::raw("demo-1.0.0/escape", b'L', &long_name, 0o644),
+                member,
+            ]),
+            "unsupported GNU long-name entry",
+        );
+
+        // Two long-name entries in a row.
+        assert_error(
+            &archive(&[
+                Entry::raw(GNU_LONG_NAME_PLACEHOLDER, b'L', &long_name, 0o644),
+                Entry::raw(GNU_LONG_NAME_PLACEHOLDER, b'L', &long_name, 0o644),
+                member,
+            ]),
+            "repeats a GNU long-name entry",
+        );
+
+        // A long-name entry that names no entry.
+        assert_error(
+            &archive(&[Entry::raw(
+                GNU_LONG_NAME_PLACEHOLDER,
+                b'L',
+                &long_name,
+                0o644,
+            )]),
+            "names no entry",
+        );
+
+        // A long name that repeats a path the archive already holds.
+        assert_error(
+            &archive(&[
+                Entry::file("demo-1.0.0/a", b"one", 0o644),
+                Entry::raw(
+                    GNU_LONG_NAME_PLACEHOLDER,
+                    b'L',
+                    &with_nul("demo-1.0.0/a"),
+                    0o644,
+                ),
+                member,
+            ]),
+            "repeats normalized path",
+        );
+    }
+
+    #[test]
+    fn other_gnu_and_pax_extension_entries_are_still_rejected() {
+        for entry_type in [b'K', b'x', b'g'] {
+            let archive = archive(&[
+                Entry::raw("demo-1.0.0/a", entry_type, b"target\0", 0o644),
+                Entry::file("demo-1.0.0/a", b"fn main() {}\n", 0o644),
+            ]);
+            assert_error(&archive, "unsupported extended tar metadata");
+        }
+    }
+
+    #[test]
     fn file_count_size_stream_and_ratio_limits_fail_closed() {
         let entries = [
             Entry::file("demo-1.0.0/a", b"one", 0o644),
@@ -806,6 +1057,28 @@ mod tests {
         );
     }
 
+    /// A member path longer than the 100-byte tar header name field.
+    const LONG_PATH: &str = "demo-1.0.0/tests/some_very_long_module_name_that_does_not_fit_the_tar_header_name_field_of_one_hundred_bytes.rs";
+
+    /// The NUL-terminated body GNU writes for a long-name entry.
+    fn with_nul(name: &str) -> Vec<u8> {
+        let mut body = name.as_bytes().to_vec();
+        body.push(0);
+        body
+    }
+
+    /// The header name GNU writes beside a long-name entry: the first 99 bytes.
+    fn truncated(path: &str) -> &str {
+        &path[..99]
+    }
+
+    fn assert_error(archive: &[u8], expected: &str) {
+        let error =
+            inspect_crate_archive("demo", &Version::parse("1.0.0").unwrap(), archive).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains(expected), "{message}");
+    }
+
     #[derive(Clone, Copy)]
     enum Entry<'a> {
         File {
@@ -820,6 +1093,13 @@ mod tests {
         Link {
             path: &'a str,
             target: &'a str,
+        },
+        /// A header of an explicit type whose body is exactly `body`.
+        Raw {
+            path: &'a str,
+            entry_type: u8,
+            body: &'a [u8],
+            mode: u32,
         },
     }
 
@@ -839,6 +1119,15 @@ mod tests {
         const fn link(path: &'a str, target: &'a str) -> Self {
             Self::Link { path, target }
         }
+
+        const fn raw(path: &'a str, entry_type: u8, body: &'a [u8], mode: u32) -> Self {
+            Self::Raw {
+                path,
+                entry_type,
+                body,
+                mode,
+            }
+        }
     }
 
     fn archive(entries: &[Entry<'_>]) -> Vec<u8> {
@@ -852,6 +1141,12 @@ mod tests {
                 } => (*path, *contents, *mode, b'0', ""),
                 Entry::Directory { path, mode } => (*path, &[][..], *mode, b'5', ""),
                 Entry::Link { path, target } => (*path, &[][..], 0o777, b'2', *target),
+                Entry::Raw {
+                    path,
+                    entry_type,
+                    body,
+                    mode,
+                } => (*path, *body, *mode, *entry_type, ""),
             };
             let mut header = [0_u8; TAR_BLOCK_BYTES];
             set_string(&mut header[..100], path);
