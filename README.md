@@ -158,6 +158,14 @@ Create+commit `.cargo/disabled-crates-io/`. Do not use `source.crates-io.replace
 
 For the user's own Cargo setup rather than a project's,`pkgre install` ([`cli/README.md`](cli/README.md)) adds only the `[registries.pkgre]` alias above to the Cargo home's configuration:it neither sets the default registry nor replaces crates.io,so the project configuration stays the fail-closed choice.
 
+Install `pkgre` from crates.io, or from the registry itself before the alias exists, then add the alias; `--locked` builds it with the curated dependency versions of its lock file:
+
+```sh
+cargo install --locked pkgre
+# or: cargo install --locked --index sparse+https://rust.pkg.re/ pkgre
+pkgre install
+```
+
 ## License
 
 Apache-2.0.
