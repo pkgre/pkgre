@@ -221,6 +221,8 @@ pub enum DecisionReason {
     SourceUnavailable,
     /// Mechanical source correspondence disagrees.
     SourceMismatch,
+    /// Exact requested identity was published before every locked release of its name.
+    PredatesLockedReleases,
     /// Promoted source correspondence differs only in line endings; rustc reads CRLF in Rust
     /// source as LF, but a member read as bytes keeps them.
     SourceLineEndings,
@@ -519,8 +521,11 @@ fn validate_candidate_release(plan: &UpdatePlan, candidate: &UpdateCandidate) ->
             "new package candidate unexpectedly has a locked base"
         ),
         PackageActivity::Inactive | PackageActivity::Active => ensure!(
-            candidate.base.is_some(),
-            "existing package candidate has no locked base"
+            candidate.base.is_some()
+                || candidate
+                    .reasons
+                    .contains(&DecisionReason::PredatesLockedReleases),
+            "existing package candidate has no locked base and does not predate its locked releases"
         ),
     }
     validate_candidate_lane(candidate)
@@ -857,6 +862,13 @@ fn validate_reason_consistency(candidate: &UpdateCandidate) -> Result<()> {
         "dormant-wakeup reason disagrees with publication evidence"
     );
     ensure!(
+        candidate
+            .reasons
+            .contains(&DecisionReason::PredatesLockedReleases)
+            == (candidate.activity != PackageActivity::New && candidate.base.is_none()),
+        "predating-release reason disagrees with the candidate base and package activity"
+    );
+    ensure!(
         candidate.reasons.contains(&DecisionReason::NewDependency)
             != candidate.dependencies.new_packages.is_empty(),
         "new-dependency reason disagrees with dependency evidence"
@@ -916,6 +928,7 @@ fn validate_reason_consistency(candidate: &UpdateCandidate) -> Result<()> {
                 | DecisionReason::BuildSurfaceChanged
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
+                | DecisionReason::PredatesLockedReleases
         )
     });
     ensure!(
@@ -952,6 +965,7 @@ fn validate_decision(candidate: &UpdateCandidate) -> Result<()> {
                 | DecisionReason::BuildSurfaceChanged
                 | DecisionReason::PublisherDiscontinuity
                 | DecisionReason::RepositoryDiscontinuity
+                | DecisionReason::PredatesLockedReleases
                 | DecisionReason::SourceUnavailable
                 | DecisionReason::SourceLineEndings
                 | DecisionReason::SourceFileMode

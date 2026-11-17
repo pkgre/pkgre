@@ -16,7 +16,8 @@ use serde_json::json;
 use super::inspect::InspectionResolver;
 use super::workflow::PlannerResolver;
 use super::{
-    AdmissionEvidence, AdmissionManifest, SourceCorrespondence, SourceEvidence, UtcTimestamp,
+    AdmissionEvidence, AdmissionManifest, AdmissionRequest, DecisionReason, PackageActivity,
+    SourceCorrespondence, SourceEvidence, UpdateDecision, UtcTimestamp,
     apply::apply_admission_manifest_with, inspect::inspect_update_candidate_with,
     load_admission_manifest, serialize_admission_manifest, validate_admission_inventory,
     workflow::plan_exact_update_with,
@@ -26,7 +27,7 @@ use crate::import::{CratesIoHistory, SparseIndexRow};
 use crate::index::IndexRecord;
 use crate::lock::{self, ReconcileSummary, ResolvedPackage, Resolver};
 use crate::policy::validate_catalog;
-use crate::schema::{Catalog, LockedSource, Source};
+use crate::schema::{Catalog, LockedSource, PackageState, Source};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -376,6 +377,208 @@ fn apply_rejects_upstream_yank_and_route_drift_without_mutating_catalog() {
     assert_eq!(snapshot_tree(&catalog_root).unwrap(), before);
 }
 
+#[test]
+#[allow(clippy::too_many_lines)]
+fn exact_request_older_than_every_locked_release_reviews_the_whole_archive() {
+    let temporary = TemporaryDirectory::new("pkgre-admission-v2-predating");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("demo", "1.0.0", "src/lib.rs", b"pub fn demo() {}\n")
+            .with_published_at("2021-01-01T00:00:00Z"),
+        FixturePackage::new("demo", "0.9.0", "src/lib.rs", b"pub fn demo_v0() {}\n")
+            .with_published_at("2020-01-01T00:00:00Z"),
+    ]);
+    let first = prepare_manifest(
+        temporary.path(),
+        &catalog_root,
+        &fixture,
+        &["demo"],
+        "2026-08-24-demo",
+    );
+    apply_admission_manifest_with(
+        &catalog_root,
+        &first,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+
+    let older = Version::parse("0.9.0").unwrap();
+    let manifest_path = temporary.path().join("2026-08-25-demo-0-9-0.toml");
+    let plan = plan_exact_update_with(
+        &catalog_root,
+        "demo",
+        &older,
+        &manifest_path,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(plan.candidates.len(), 1);
+    let candidate = &plan.candidates[0];
+    assert_eq!(candidate.activity, PackageActivity::Active);
+    assert_eq!(candidate.candidate.version, older);
+    assert!(candidate.base.is_none());
+    assert!(candidate.base_archive.is_none());
+    assert!(candidate.archive_delta.is_none());
+    assert!(candidate.dormant_gap.is_none());
+    assert!(
+        candidate
+            .reasons
+            .contains(&DecisionReason::PredatesLockedReleases)
+    );
+    assert!(
+        candidate
+            .reasons
+            .contains(&DecisionReason::ExplicitCandidate)
+    );
+    assert_eq!(candidate.decision, UpdateDecision::ReviewRequired);
+
+    let review = temporary.path().join("review-demo-0.9.0");
+    inspect_update_candidate_with(
+        &catalog_root,
+        &manifest_path,
+        "demo",
+        &older,
+        &review,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    assert!(review.join("candidate.crate").is_file());
+    assert!(!review.join("base.crate").exists());
+
+    let summary = apply_admission_manifest_with(
+        &catalog_root,
+        &manifest_path,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    assert!(summary.changed);
+    assert_eq!(summary.names_added, 0);
+    assert_eq!(summary.packages_added, 1);
+
+    let catalog = Catalog::load(&catalog_root).unwrap();
+    validate_catalog(&catalog).unwrap();
+    validate_admission_inventory(&catalog).unwrap();
+    let locked = catalog
+        .approvals
+        .iter()
+        .find(|approval| approval.name == "demo" && approval.version == older)
+        .unwrap();
+    assert_eq!(locked.state, PackageState::Active);
+    assert!(locked.admission_sha256.is_some());
+    let declaration = fs::read_to_string(catalog_root.join("main.toml")).unwrap();
+    assert!(
+        declaration.contains("demo = [\"0.9.0\",\"1.0.0\"]"),
+        "declaration: {declaration}"
+    );
+
+    crate::check::check(&catalog_root).unwrap();
+    let fingerprint = super::catalog_fingerprint(&catalog_root).unwrap();
+    assert_eq!(
+        lock::reconcile(&catalog_root).unwrap(),
+        ReconcileSummary::default()
+    );
+    assert_eq!(
+        super::catalog_fingerprint(&catalog_root).unwrap(),
+        fingerprint
+    );
+}
+
+#[test]
+fn exact_request_not_newer_than_its_lane_is_refused_by_planning_and_application_alike() {
+    let temporary = TemporaryDirectory::new("pkgre-admission-v2-lane");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("demo", "1.2.0", "src/lib.rs", b"pub fn demo() {}\n")
+            .with_published_at("2021-01-01T00:00:00Z"),
+        FixturePackage::new("demo", "1.1.0", "src/lib.rs", b"pub fn demo_old() {}\n")
+            .with_published_at("2023-01-01T00:00:00Z"),
+    ]);
+    let first = temporary.path().join("2026-08-24-demo.toml");
+    plan_exact_update_with(
+        &catalog_root,
+        "demo",
+        &Version::parse("1.2.0").unwrap(),
+        &first,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    apply_admission_manifest_with(
+        &catalog_root,
+        &first,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+
+    let superseded = Version::parse("1.1.0").unwrap();
+    let expected = "requested identity 1.1.0 is not newer than active lane maximum 1.2.0";
+    let manifest_path = temporary.path().join("2026-08-25-demo-1-1-0.toml");
+    let offline = FixtureResolver::new(Vec::new());
+    let error = plan_exact_update_with(
+        &catalog_root,
+        "demo",
+        &superseded,
+        &manifest_path,
+        &offline,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(format!("{error:#}"), expected);
+    assert!(!manifest_path.exists());
+
+    let error = plan_exact_update_with(
+        &catalog_root,
+        "demo",
+        &superseded,
+        &manifest_path,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(format!("{error:#}"), expected);
+
+    let manifest = AdmissionManifest {
+        schema: super::ADMISSION_MANIFEST_SCHEMA,
+        entries: vec![AdmissionRequest {
+            category: "main/general".parse().unwrap(),
+            name: "demo".to_owned(),
+            version: Some(superseded),
+            tag: None,
+            evidence: Vec::new(),
+        }],
+    };
+    let request_path = temporary.path().join("2026-08-25-demo-superseded.toml");
+    fs::write(
+        &request_path,
+        serialize_admission_manifest(&manifest).unwrap(),
+    )
+    .unwrap();
+    let error = apply_admission_manifest_with(
+        &catalog_root,
+        &request_path,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").ends_with(expected),
+        "unexpected error: {error:#}"
+    );
+}
+
 fn malicious_build_fixture(marker: &Path) -> FixtureResolver {
     let payload = format!(
         "fn main() {{ std::fs::write({:?}, b\"executed\").unwrap(); }}\n",
@@ -464,7 +667,7 @@ fn assert_admitted_catalog(
         );
         assert_eq!(
             locked.index_record_sha256,
-            sha256_bytes(&package.source_row)
+            sha256_bytes(&package.source_row())
         );
         assert!(matches!(locked.source, Source::CratesIo));
         assert_eq!(
@@ -473,7 +676,7 @@ fn assert_admitted_catalog(
                     .join(format!("{}.json", locked.index_record_sha256))
             )
             .unwrap(),
-            package.source_row
+            package.source_row()
         );
         assert!(
             fs::read_to_string(root.join("main.toml"))
@@ -550,69 +753,46 @@ struct FixturePackage {
     name: String,
     version: Version,
     archive: Vec<u8>,
-    source_row: Vec<u8>,
-    history: CratesIoHistory,
+    published_at: String,
+    yanked: bool,
 }
 
 impl FixturePackage {
     fn new(name: &str, version: &str, file: &str, contents: &[u8]) -> Self {
         let version = Version::parse(version).unwrap();
         let archive = crate_archive(name, &version, file, contents);
-        let checksum = sha256_bytes(&archive);
-        let mut source_row = serde_json::to_vec(&json!({
-            "name": name,
-            "vers": version.to_string(),
-            "deps": [],
-            "cksum": checksum,
-            "features": {},
-            "yanked": false,
-            "pubtime": "2020-01-01T00:00:00Z",
-        }))
-        .unwrap();
-        source_row.push(b'\n');
-        let record = IndexRecord::parse(&source_row).unwrap();
-        record.validate_structure().unwrap();
-        let history = CratesIoHistory {
-            bytes: source_row.clone(),
-            sha256: sha256_bytes(&source_row),
-            rows: vec![SparseIndexRow {
-                bytes: source_row.clone(),
-                record,
-            }],
-        };
         Self {
             name: name.to_owned(),
             version,
             archive,
-            source_row,
-            history,
+            published_at: "2020-01-01T00:00:00Z".to_owned(),
+            yanked: false,
         }
     }
 
     fn with_yanked(mut self, yanked: bool) -> Self {
+        self.yanked = yanked;
+        self
+    }
+
+    fn with_published_at(mut self, published_at: &str) -> Self {
+        self.published_at = published_at.to_owned();
+        self
+    }
+
+    fn source_row(&self) -> Vec<u8> {
         let mut source_row = serde_json::to_vec(&json!({
             "name": self.name,
             "vers": self.version.to_string(),
             "deps": [],
             "cksum": sha256_bytes(&self.archive),
             "features": {},
-            "yanked": yanked,
-            "pubtime": "2020-01-01T00:00:00Z",
+            "yanked": self.yanked,
+            "pubtime": self.published_at,
         }))
         .unwrap();
         source_row.push(b'\n');
-        let record = IndexRecord::parse(&source_row).unwrap();
-        record.validate_structure().unwrap();
-        self.source_row = source_row.clone();
-        self.history = CratesIoHistory {
-            bytes: source_row.clone(),
-            sha256: sha256_bytes(&source_row),
-            rows: vec![SparseIndexRow {
-                bytes: source_row,
-                record,
-            }],
-        };
-        self
+        source_row
     }
 }
 
@@ -650,18 +830,31 @@ impl FixtureResolver {
 
 impl PlannerResolver for FixtureResolver {
     fn history(&self, name: &str) -> Result<CratesIoHistory> {
-        let mut matches = self
+        let mut packages = self
             .packages
             .values()
-            .filter(|package| package.name == name);
-        let package = matches
-            .next()
-            .with_context(|| format!("fixture has no history for {name}"))?;
-        ensure!(
-            matches.next().is_none(),
-            "single-row fixture unexpectedly repeats package {name}"
-        );
-        Ok(package.history.clone())
+            .filter(|package| package.name == name)
+            .collect::<Vec<_>>();
+        ensure!(!packages.is_empty(), "fixture has no history for {name}");
+        packages.sort_by(|left, right| left.version.cmp(&right.version));
+        let rows = packages
+            .iter()
+            .map(|package| {
+                let bytes = package.source_row();
+                let record = IndexRecord::parse(&bytes)?;
+                record.validate_structure()?;
+                Ok(SparseIndexRow { bytes, record })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let bytes = rows
+            .iter()
+            .flat_map(|row| row.bytes.clone())
+            .collect::<Vec<u8>>();
+        Ok(CratesIoHistory {
+            sha256: sha256_bytes(&bytes),
+            bytes,
+            rows,
+        })
     }
 
     fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>> {
@@ -712,7 +905,7 @@ impl Resolver for FixtureResolver {
             name: package.name.clone(),
             version: package.version.clone(),
             archive_bytes: package.archive.clone(),
-            source_row_bytes: package.source_row.clone(),
+            source_row_bytes: package.source_row(),
             published_at: None,
             source: LockedSource::CratesIo {},
         })
