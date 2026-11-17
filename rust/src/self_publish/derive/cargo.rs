@@ -4,10 +4,15 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Read;
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, bail, ensure};
+use nix::sys::signal::{Signal, killpg};
+use nix::unistd::Pid;
 use semver::Version;
 use tracing::debug;
 
@@ -22,6 +27,8 @@ pub(super) const CURATED_INDEX: &str = "sparse+https://rust.pkg.re/";
 pub(super) const CRATES_IO_INDEX: &str = "https://github.com/rust-lang/crates.io-index";
 /// Directory of the isolated Cargo home inside a derivation's temporary root.
 pub(super) const CARGO_HOME_DIRECTORY: &str = "cargo-home";
+/// Directory of the isolated Cargo home that uploads to crates.io.
+pub(super) const UPLOAD_CARGO_HOME_DIRECTORY: &str = "upload-cargo-home";
 /// Target directories of the two packaging runs.
 const TARGET_DIRECTORIES: [&str; 2] = ["target-one", "target-two"];
 
@@ -102,6 +109,58 @@ pub(super) fn prepare_cargo_home(cargo_home: &Path, sources: RegistrySources) ->
         .with_context(|| format!("write isolated Cargo config {}", path.display()))
 }
 
+/// Writes the config of the isolated Cargo home that uploads to crates.io.
+///
+/// The home configures plain crates.io and the `cargo:token` credential
+/// provider, and nothing else: no other registry, so `cargo publish` can only
+/// reach crates.io, and the token comes from the environment of the one upload
+/// process alone. A test replaces crates.io with its local directory source, so
+/// that the packaging of the upload needs no network.
+///
+/// # Errors
+///
+/// Returns an error for a home that already exists, or for a config that cannot
+/// be written.
+pub(super) fn prepare_upload_cargo_home(
+    cargo_home: &Path,
+    sources: &RegistrySources,
+) -> Result<()> {
+    fs::create_dir(cargo_home)
+        .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+    let mut text = String::from("[registry]\ncredential-provider = [\"cargo:token\"]\n");
+    write_local_source(&mut text, sources)?;
+    let path = cargo_home.join("config.toml");
+    fs::write(&path, text)
+        .with_context(|| format!("write isolated Cargo config {}", path.display()))
+}
+
+/// Appends the source replacement of a local directory source.
+///
+/// Only a test names one, so that its packaging needs no network; a production
+/// home resolves plain crates.io.
+///
+/// # Errors
+///
+/// Returns an error for a local source whose path is not UTF-8, which only a
+/// test can name, so a production build cannot fail here.
+#[cfg_attr(not(test), allow(clippy::unnecessary_wraps))]
+fn write_local_source(text: &mut String, sources: &RegistrySources) -> Result<()> {
+    #[cfg(test)]
+    if let RegistrySources::Local(directory) | RegistrySources::LocalCurated(directory) = sources {
+        let directory = directory
+            .to_str()
+            .with_context(|| format!("local Cargo source {} is not UTF-8", directory.display()))?;
+        write!(
+            text,
+            "\n[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = {directory:?}\n\n[net]\noffline = true\n"
+        )
+        .expect("writing to a string");
+    }
+    #[cfg(not(test))]
+    let _ = (text, sources);
+    Ok(())
+}
+
 /// Packages the named members of one checkout twice and returns the archives by
 /// package name.
 ///
@@ -160,7 +219,90 @@ pub(super) fn package_members(
     Ok(archives)
 }
 
+/// Packages one crate of the rewritten workspace with Cargo's verification and
+/// returns its archive.
+///
+/// Unlike [`package_members`], the command builds the packaged crate, so
+/// package code, such as a build script or a proc macro, runs. The caller must
+/// therefore run it only while no token is in reach. The command runs in a
+/// process group of its own, which is ended once it returns, so that no process
+/// the package code started outlives it.
+///
+/// # Errors
+///
+/// Returns an error when Cargo fails, or when the archive is missing or too
+/// large.
+pub(super) fn package_verified(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    target: &Path,
+    manifest_path: &Path,
+    name: &str,
+    version: &Version,
+) -> Result<Vec<u8>> {
+    let arguments = vec![
+        OsString::from("package"),
+        OsString::from("--locked"),
+        OsString::from("--allow-dirty"),
+        OsString::from("--manifest-path"),
+        manifest_path.as_os_str().to_owned(),
+        OsString::from("--target-dir"),
+        target.as_os_str().to_owned(),
+        OsString::from("--package"),
+        OsString::from(name),
+    ];
+    run_cargo_grouped(cargo, environment, work, arguments)?;
+    let archive = target
+        .join("package")
+        .join(format!("{name}-{version}.crate"));
+    read_bounded_archive(&archive)
+}
+
+/// Packages one crate the way `cargo publish` packages it, without verifying,
+/// and returns its archive.
+///
+/// The command runs no package code, so a run can call it while a token is in
+/// reach; the upload routine calls it before reading the token, so that the
+/// archive it uploads is the one it compared with `crates-io.lock`.
+///
+/// # Errors
+///
+/// Returns an error when Cargo fails, or when the archive is missing or too
+/// large.
+pub(super) fn package_for_upload(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    target: &Path,
+    manifest_path: &Path,
+    name: &str,
+    version: &Version,
+) -> Result<Vec<u8>> {
+    let arguments = vec![
+        OsString::from("package"),
+        OsString::from("--no-verify"),
+        OsString::from("--locked"),
+        OsString::from("--allow-dirty"),
+        OsString::from("--manifest-path"),
+        manifest_path.as_os_str().to_owned(),
+        OsString::from("--target-dir"),
+        target.as_os_str().to_owned(),
+        OsString::from("--package"),
+        OsString::from(name),
+    ];
+    run_cargo(cargo, environment, work, arguments)?;
+    let archive = target
+        .join("package")
+        .join(format!("{name}-{version}.crate"));
+    read_bounded_archive(&archive)
+}
+
 /// Runs one Cargo command in the isolated environment and returns its output.
+///
+/// The command gets a null standard input, which `output` arranges, so that a
+/// token piped to the routine is never in reach of Cargo: the derivation's
+/// packaging and the no-verify packaging of the upload both run this way.
 ///
 /// # Errors
 ///
@@ -171,6 +313,90 @@ pub(super) fn run_cargo(
     work: &Path,
     arguments: impl IntoIterator<Item = OsString>,
 ) -> Result<Vec<u8>> {
+    let mut command = cargo_command(cargo, environment, work, arguments);
+    debug!(?command, "running isolated Cargo command");
+    let output = command.output().context("start the pinned Cargo")?;
+    require_success(output)
+}
+
+/// Runs one Cargo command that executes package code in a process group of its
+/// own, and ends whatever the package code left in that group.
+///
+/// The command gets a null standard input, so that a token piped to the routine
+/// cannot be read through Cargo's own `/proc` entry, and its output is captured:
+/// Cargo runs fresh and dumpable, and its environment is what the packages
+/// build with. Both pipes are read on their own threads, so that a process the
+/// package code left holding one of them cannot keep the routine from ending
+/// the group.
+///
+/// A build script or a proc macro can start a process that keeps running after
+/// Cargo returns. Such a process would still see the environment of the upload
+/// that follows, so the run ends the group here rather than leaving it to the
+/// end of the routine. A process that detaches itself from the group is out of
+/// reach, which the security model records as a residual risk.
+///
+/// # Errors
+///
+/// Returns an error when the command cannot be started or exits unsuccessfully;
+/// the error carries the last bytes of the captured output.
+pub(super) fn run_cargo_grouped(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Result<Vec<u8>> {
+    let mut command = cargo_command(cargo, environment, work, arguments);
+    command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    debug!(
+        ?command,
+        "running isolated Cargo command in its own process group"
+    );
+    let mut child = command.spawn().context("start the pinned Cargo")?;
+    let group = i32::try_from(child.id()).context("a child process ID is out of range")?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("the pinned Cargo has no standard output")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("the pinned Cargo has no standard error")?;
+    let stdout = read_on_thread(stdout);
+    let stderr = read_on_thread(stderr);
+    let status = child.wait().context("wait for the pinned Cargo")?;
+    // Whatever the package code started stays in the child's group, which is
+    // now empty of Cargo itself. The readers are joined afterwards, so that a
+    // process still holding a pipe cannot delay the kill.
+    if let Err(error) = killpg(Pid::from_raw(group), Signal::SIGKILL) {
+        debug!(%error, "the process group of the packaging had already ended");
+    }
+    require_success(Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+/// Reads one stream of a child process on its own thread.
+fn read_on_thread(mut stream: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stream.read_to_end(&mut bytes);
+        bytes
+    })
+}
+
+/// Builds one Cargo command in the isolated environment.
+fn cargo_command(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    arguments: impl IntoIterator<Item = OsString>,
+) -> Command {
     let mut command = Command::new(cargo);
     command.current_dir(work).args(arguments);
     environment.apply_with(
@@ -180,8 +406,16 @@ pub(super) fn run_cargo(
             ("CARGO_NET_GIT_FETCH_WITH_CLI", OsStr::new("false")),
         ],
     );
-    debug!(?command, "running isolated Cargo command");
-    let output = command.output().context("start the pinned Cargo")?;
+    command
+}
+
+/// Returns the output of one successful Cargo command.
+///
+/// # Errors
+///
+/// Returns an error naming the exit status and the last bytes of the output when
+/// the command failed.
+fn require_success(output: Output) -> Result<Vec<u8>> {
     if !output.status.success() {
         let stdout = bounded_lossy(&output.stdout);
         let stderr = bounded_lossy(&output.stderr);

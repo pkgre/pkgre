@@ -23,11 +23,11 @@ use super::catalog::{
 };
 use super::check::AcceptedState;
 use super::config::CratesIoConfig;
-use super::derive::{MemberFacts, Sources, derive_release_with, retained_crate};
+use super::derive::{Derivation, MemberFacts, Sources, derive_release_in, retained_crate};
 use super::lock::CratesIoPackage;
 use super::state::{RepositoryState, SelfPublishState};
 
-pub(crate) use live::{LiveCratesIo, LiveReleaseRepository};
+pub(crate) use live::{LiveCratesIo, LiveRegistryIndex, LiveReleaseRepository};
 
 /// Most keywords that crates.io accepts on one crate.
 const MAX_KEYWORDS: usize = 5;
@@ -100,6 +100,51 @@ pub(crate) trait CratesIo {
     /// Returns an error when crates.io cannot be read or answers with a
     /// failure.
     fn category_slugs(&self) -> Result<BTreeSet<String>>;
+}
+
+/// A sparse Cargo registry index, as the upload routine reads the `pkgre`
+/// registry.
+///
+/// The routine publishes only what the `pkgre` registry already serves, so it
+/// reads the registry's own sparse index with the same rules as crates.io's:
+/// bounded documents, no token, and no fallback.
+pub(crate) trait RegistryIndex {
+    /// Returns every published version of one crate name at one sparse index,
+    /// or `None` when the index does not have the crate.
+    ///
+    /// `index` is the registry's declared index URL, with or without the
+    /// `sparse+` prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the index cannot be read, answers with a failure,
+    /// or publishes a document this crate does not understand.
+    fn versions(&self, index: &str, name: &str) -> Result<Option<Vec<CratesIoVersion>>>;
+}
+
+/// The crate versions of one release, and how its network checks judge them.
+pub(crate) struct ReleaseCrates<'a> {
+    /// The crate versions of the release, in the order the run names them.
+    pub(crate) identities: &'a [CatalogIdentity],
+    /// Whether the checks judge a crate version that is abandoned.
+    pub(crate) abandoned: Abandoned,
+}
+
+/// Whether the network checks of a release judge a crate version that
+/// `crates-io.toml` records as abandoned.
+///
+/// crates.io never takes an abandoned version, so the reasons for abandoning it
+/// are exactly the checks that fail for it: a name someone else owns, or a
+/// version crates.io holds with another archive. The upload routine therefore
+/// skips those checks, so that the rest of the release can still be published,
+/// while `self-publish-check` judges every crate version it checks, since an
+/// added release cannot be abandoned in the change that adds it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Abandoned {
+    /// Check the crate version like any other.
+    Check,
+    /// Skip crates.io's owners, version, and package-rule checks of it.
+    Skip,
 }
 
 /// What a release tag's repository says about the tag.
@@ -223,17 +268,45 @@ pub(crate) fn check_added_releases(
         check_release(
             git,
             tag,
-            identities,
+            &ReleaseCrates {
+                identities,
+                abandoned: Abandoned::Check,
+            },
             state,
             self_publish,
             services,
             &mut crates_io,
         )
+        .map(|_| ())
         .with_context(|| {
             format!("the network checks of release tag {tag:?} of {git:?} must pass")
         })?;
     }
     Ok(releases.len())
+}
+
+/// Runs the network checks of one release that the caller names, and returns
+/// its derivation.
+///
+/// [`check_added_releases`] checks the releases that a run adds; the upload
+/// routine checks the release it is about to publish, whether or not the run
+/// adds it, and keeps the derived workspace for the packaging and the upload
+/// that follow.
+///
+/// # Errors
+///
+/// Returns the error of [`check_added_releases`] for this release.
+pub(crate) fn check_release_named(
+    state: &RepositoryState,
+    self_publish: &SelfPublishState,
+    git: &str,
+    tag: &str,
+    crates: &ReleaseCrates<'_>,
+    services: &Services<'_>,
+    crates_io: &mut CratesIoState<'_>,
+) -> Result<Derivation> {
+    check_release(git, tag, crates, state, self_publish, services, crates_io)
+        .with_context(|| format!("the network checks of release tag {tag:?} of {git:?} must pass"))
 }
 
 /// Returns the releases that the candidate adds, grouped by repository and tag.
@@ -269,17 +342,19 @@ fn added_releases(
     releases
 }
 
-/// Runs every network check of one added release.
+/// Runs every network check of one added release, and returns its derivation.
 #[allow(clippy::too_many_lines)]
 fn check_release(
     git: &str,
     tag: &str,
-    identities: &[CatalogIdentity],
+    crates: &ReleaseCrates<'_>,
     state: &RepositoryState,
     self_publish: &SelfPublishState,
     services: &Services<'_>,
     crates_io: &mut CratesIoState<'_>,
-) -> Result<()> {
+) -> Result<Derivation> {
+    let identities = crates.identities;
+    let abandoned = crates.abandoned;
     let release = release_of_group(git, tag, identities)?;
     for identity in identities {
         ensure!(
@@ -315,6 +390,14 @@ fn check_release(
 
     let expected = expected_owners(&self_publish.config);
     for identity in identities {
+        if abandoned == Abandoned::Skip && is_abandoned(self_publish, identity) {
+            tracing::info!(
+                package = %identity.name,
+                version = %identity.version,
+                "skipping the crates.io checks of an abandoned crate version, which crates.io never takes"
+            );
+            continue;
+        }
         let entry = entry_of(self_publish, &identity.name, &identity.version)?;
         check_name(identity, entry, &expected, crates_io)?;
     }
@@ -330,7 +413,7 @@ fn check_release(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let derived = derive_release_with(
+    let derived = derive_release_in(
         &release,
         &curated,
         &state.catalog,
@@ -341,6 +424,7 @@ fn check_release(
     .with_context(|| format!("derive the crates.io packages of release tag {tag:?} of {git:?}"))?;
 
     let slugs = if derived
+        .packages
         .iter()
         .any(|package| !package.facts.categories.is_empty())
     {
@@ -348,7 +432,7 @@ fn check_release(
     } else {
         BTreeSet::new()
     };
-    for package in &derived {
+    for package in &derived.packages {
         let entry = entry_of(self_publish, &package.entry.name, &package.entry.version)?;
         ensure!(
             package.entry.crate_sha256 == entry.crate_sha256,
@@ -358,6 +442,14 @@ fn check_release(
             package.entry.crate_sha256,
             entry.crate_sha256
         );
+        if abandoned == Abandoned::Skip
+            && self_publish
+                .config
+                .abandoned_version(&package.entry.name, &package.entry.version)
+                .is_some()
+        {
+            continue;
+        }
         check_crates_io_rules(
             &package.entry.name,
             &package.entry.version,
@@ -366,7 +458,15 @@ fn check_release(
             &slugs,
         )?;
     }
-    Ok(())
+    Ok(derived)
+}
+
+/// Returns whether `crates-io.toml` records one crate version as abandoned.
+fn is_abandoned(self_publish: &SelfPublishState, identity: &CatalogIdentity) -> bool {
+    self_publish
+        .config
+        .abandoned_version(&identity.name, &identity.version)
+        .is_some()
 }
 
 /// Returns the `crates-io.lock` entry of one crate version.
@@ -414,11 +514,11 @@ fn check_name(
     Ok(())
 }
 
-/// Returns whether two versions are the same crates.io version.
+/// Returns whether two versions are the same published version.
 ///
-/// crates.io and Cargo ignore build metadata for identity, so `0.5.0+build`
-/// and `0.5.0` are one version there.
-fn same_version(left: &Version, right: &Version) -> bool {
+/// Cargo and crates.io ignore build metadata for identity, so `0.5.0+build`
+/// and `0.5.0` are one version there, and a sparse index lists one row for it.
+pub(crate) fn same_version(left: &Version, right: &Version) -> bool {
     left.major == right.major
         && left.minor == right.minor
         && left.patch == right.patch
@@ -579,7 +679,7 @@ fn expected_owners(config: &CratesIoConfig) -> BTreeSet<String> {
 }
 
 /// The crates.io facts of one run, read once per crate name.
-struct CratesIoState<'a> {
+pub(crate) struct CratesIoState<'a> {
     /// crates.io.
     crates_io: &'a dyn CratesIo,
     /// Owners by crate name.
@@ -592,7 +692,7 @@ struct CratesIoState<'a> {
 
 impl<'a> CratesIoState<'a> {
     /// Returns the state of one run.
-    fn new(crates_io: &'a dyn CratesIo) -> Self {
+    pub(crate) fn new(crates_io: &'a dyn CratesIo) -> Self {
         Self {
             crates_io,
             owners: BTreeMap::new(),
@@ -611,7 +711,7 @@ impl<'a> CratesIoState<'a> {
     }
 
     /// Returns the versions of one crate name, reading them at most once.
-    fn versions(&mut self, name: &str) -> Result<&Option<Vec<CratesIoVersion>>> {
+    pub(crate) fn versions(&mut self, name: &str) -> Result<&Option<Vec<CratesIoVersion>>> {
         if !self.versions.contains_key(name) {
             let versions = self.crates_io.versions(name)?;
             self.versions.insert(name.to_owned(), versions);

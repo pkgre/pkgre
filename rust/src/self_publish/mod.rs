@@ -1,6 +1,6 @@
 //! Self-publishing state: the crates.io names of a catalog's own crates, the
-//! generated record of what was released to crates.io, and the checks and
-//! derivations that read the network.
+//! generated record of what was released to crates.io, and the checks,
+//! derivations, and upload that read the network.
 //!
 //! The state lives in `self-publish/crates-io.toml`, written by people, and
 //! `self-publish/crates-io.lock`, generated and never edited by hand. Both
@@ -11,8 +11,9 @@
 //! loader and runs the checks that need no network, and then the network checks
 //! of the releases that the run adds. [`self_publish_lock`] derives the
 //! crates.io package of every release that has no `crates-io.lock` entry yet and
-//! records it. The upload is later work; the derivation, the canonical form of
-//! `crates-io.lock`, and the network traits are the seam for it.
+//! records it. [`self_publish`] is the local routine that publishes one release
+//! to crates.io: a dry run, or, with `--upload`, the upload of the crates that
+//! crates.io still lacks.
 
 mod catalog;
 mod check;
@@ -24,7 +25,9 @@ mod lock;
 mod lock_command;
 mod name;
 mod network;
+mod publish;
 mod state;
 
 pub use check::{SelfPublishCheckSummary, check_repository};
 pub use lock_command::{SelfPublishLockEntry, SelfPublishLockSummary, self_publish_lock};
+pub use publish::{SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary, self_publish};

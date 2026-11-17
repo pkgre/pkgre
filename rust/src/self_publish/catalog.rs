@@ -18,6 +18,8 @@ pub(crate) const CATALOG_DIRECTORY: &str = "registry";
 /// The catalog facts the self-publishing state is checked against.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CatalogSnapshot {
+    /// The declared index of `registry/main`, as the catalog spells it.
+    pub(crate) registry_index: String,
     /// Every identity of `registry/main.lock`, active or removed.
     pub(crate) identities: Vec<CatalogIdentity>,
     /// Package names that `registry/main` mirrors.
@@ -88,15 +90,26 @@ impl CatalogSnapshot {
         let inputs = load_registry_inputs(&registry)
             .with_context(|| format!("load catalog {}", registry.display()))?;
         let declarations = self::publish_declarations(&inputs);
+        let registry_index = inputs
+            .iter()
+            .find(|input| input.file.registry.name == CATALOG_REGISTRY)
+            .map(|input| input.file.registry.index.clone())
+            .with_context(|| {
+                format!(
+                    "catalog {} declares no registry {CATALOG_REGISTRY}",
+                    registry.display()
+                )
+            })?;
         let catalog = Catalog::load(&registry)
             .with_context(|| format!("load catalog {}", registry.display()))?;
-        Ok(Self::from_catalog(&catalog, declarations))
+        Ok(Self::from_catalog(&catalog, declarations, registry_index))
     }
 
     /// Takes the facts of one strictly loaded catalog.
     pub(crate) fn from_catalog(
         catalog: &Catalog,
         publish_declarations: Vec<(String, String)>,
+        registry_index: String,
     ) -> Self {
         let mut identities = Vec::new();
         for approval in &catalog.approvals {
@@ -141,6 +154,7 @@ impl CatalogSnapshot {
             .map(|key| key.name.clone())
             .collect();
         Self {
+            registry_index,
             identities,
             mirrors,
             publish_names,

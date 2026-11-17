@@ -17,7 +17,8 @@ const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <ca
   pkgre-rust archive-import <archive-store> <catalog>
   pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
   pkgre-rust self-publish-check <repository> [<accepted-repository>]
-  pkgre-rust self-publish-lock <repository>";
+  pkgre-rust self-publish-lock <repository>
+  pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]";
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -54,6 +55,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("check-transition") => check_transition_command(&values),
         Some("self-publish-check") => self_publish_check(&values),
         Some("self-publish-lock") => self_publish_lock(&values),
+        Some("self-publish") => self_publish(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
@@ -322,6 +324,39 @@ fn self_publish_lock(arguments: &[OsString]) -> Result<()> {
         path = %repository.display(),
         "wrote self-publish/crates-io.lock"
     );
+    Ok(())
+}
+
+fn self_publish(arguments: &[OsString]) -> Result<()> {
+    let mut positional = Vec::new();
+    let mut upload = false;
+    let mut git: Option<&str> = None;
+    for argument in arguments {
+        let value = argument.to_str().context("argument is not valid UTF-8")?;
+        if value == "--upload" {
+            upload = true;
+        } else if let Some(repository) = value.strip_prefix("--git=") {
+            ensure!(
+                !repository.is_empty(),
+                "--git needs the URL of a self-publishing repository\n{USAGE}"
+            );
+            git = Some(repository);
+        } else {
+            ensure!(
+                !value.starts_with('-') || value == "-",
+                "unknown argument {value:?}\n{USAGE}"
+            );
+            positional.push(argument.clone());
+        }
+    }
+    ensure_arity(&positional, 2)?;
+    let repository = Path::new(&positional[0]);
+    let tag = positional[1]
+        .to_str()
+        .context("release tag is not valid UTF-8")?;
+    // The routine logs one record per crate version and the summary, also when
+    // it fails, so the command adds no report of its own.
+    pkgre_rust::self_publish::self_publish(repository, tag, upload, git)?;
     Ok(())
 }
 

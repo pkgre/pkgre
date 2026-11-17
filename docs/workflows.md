@@ -17,9 +17,12 @@ pkgre-rust migrate-retained-delivery <catalog-root>
 pkgre-rust archive-inventory <catalog> <output.json>
 pkgre-rust archive-import <archive-store> <catalog>
 pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
+pkgre-rust self-publish-check <repository> [<accepted-repository>]
+pkgre-rust self-publish-lock <repository>
+pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]
 ```
 
-Planning/inspection never mutates catalog; output must be absent + outside `registry/`. `update-apply` is the established-catalog path for mirror additions. `lock` mutates only bootstrap, empty reservations, removals, Git tags, and downloads convergence. `check` is local-only. Migrations never modify source. Render output must be absent. `<catalog>` is the registry directory, not repository parent.
+Planning/inspection never mutates catalog; output must be absent + outside `registry/`. `update-apply` is the established-catalog path for mirror additions. `lock` mutates only bootstrap, empty reservations, removals, Git tags, and downloads convergence. `check` is local-only. Migrations never modify source. Render output must be absent. `<catalog>` is the registry directory, not repository parent; the `self-publish` commands take `<repository>`, the directory that holds `registry/` and `self-publish/`.
 
 ## Admit crates.io mirror updates
 
@@ -137,6 +140,45 @@ A release is one annotated Git tag `rust/vX.Y.Z` on a commit of `main`, created 
 - A release tag never moves and is never deleted.
 
 The flake check `release-metadata`, run by CI on every pull request, refuses a published member that does not inherit the workspace version, that lacks `description`, `license` or `repository` (an inherited value counts when the root manifest sets it), or whose `keywords` crates.io would refuse: more than 5, longer than 20 characters, or not ASCII letters, digits, `_`, `-` and `+` starting with a letter or digit.
+
+## Self-publish to crates.io
+
+A release of a self-publishing repository also reaches crates.io, locally, from a checkout of this repository: a dry run first, then the upload. [`self-publish.md`](self-publish.md) describes the state, the checks and the routine in full.
+
+```console
+git -C /path/to/pkgre/rust fetch origin main
+# in a checkout of this repository, whose development shell builds the tool
+export TMPDIR="$(mktemp -d /tmp/pkgre-self-publish.XXXXXX)"
+nix develop -c cargo run --locked --release -p pkgre-rust -- self-publish /path/to/pkgre/rust rust/v0.5.0
+nix develop -c cargo run --locked --release -p pkgre-rust -- self-publish /path/to/pkgre/rust rust/v0.5.0 --upload
+```
+
+The development shell provides the pinned Cargo that the routine packages with (it sets `PKGRE_CARGO`), and `TMPDIR` must name a directory that no Cargo configuration covers: the routine refuses to run Cargo below one, with a message that names the file it found, so a home that holds `~/.cargo/config.toml` needs a `TMPDIR` below `/tmp`, as above.
+
+The upload is supported on Linux only, where the routine makes its own process non-dumpable while a token can be in reach; a dry run runs on every system.
+
+The first command is the dry run: it checks everything an upload needs and reports what the upload would do, and it uploads nothing. The second adds `--upload`: it reads the crates.io token at a prompt (or from one line of standard input, though the prompt is recommended), uploads only the crates that crates.io still lacks, and waits until crates.io's index shows each of them.
+
+The dry run builds the crates with Cargo's verification, and so does step 5 of an upload, so both run the build scripts and proc macros of the release and of its dependencies, as the user who runs the command. Give the token at the prompt rather than piping it: a piped token waits in standard input while that code runs.
+
+The checkout must be clean and its `HEAD` must be contained in the remote-tracking `origin/main`, so that only a merged release is published. The routine never fetches: when the containment check fails, run `git fetch origin main` first. `<tag>` is a release tag of a self-publishing repository, such as `rust/v0.5.0`; when two self-publishing repositories use the same tag, `--git=<url>` chooses one, and without it such a tag is refused.
+
+Each crate version of the release is reported in one of these states:
+
+| State | Meaning |
+|---|---|
+| `published` | crates.io has the version with the recorded checksum; nothing to do |
+| `published-yanked` | crates.io has the version and yanked it; the run reports it and never un-yanks it |
+| `missing` | crates.io does not have the version; the dry run would upload it |
+| `uploaded` | the run uploaded the version, and crates.io's index shows it |
+| `abandoned` | `[[abandoned]]` records the version; the run skipped it |
+| `different` | crates.io holds the version with another archive; the run refuses and uploads nothing |
+
+The summary counts the release's crate versions per state, and the packages outside the release whose crates.io state the run checked, with the yanked dependencies among them.
+
+**Resuming after a partial failure.** A run that failed halfway uploaded some crates and left the rest; run the same command again. A run uploads only what crates.io still lacks, so it carries on with the remaining crates, and a run whose crates are all published reads no token and uploads nothing.
+
+**When crates.io cannot take a release.** A release can reach the `pkgre` registry and still fail on crates.io, for example when someone takes a name in the meantime, or when crates.io refuses a package for a rule the checks did not know. The tag cannot move, so the way forward is a new version: a pull request appends an `[[abandoned]]` record to `self-publish/crates-io.toml`, with the reason crates.io gave, which the checks accept and the routine never uploads, and the next release goes to both registries as usual. When the name itself is lost, a crate whose entries are all abandoned may get another crates.io name in `[names]`, for its later versions.
 
 ## Publish first-party/fork Git tag
 

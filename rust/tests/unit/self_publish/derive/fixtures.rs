@@ -191,10 +191,13 @@ impl LocalSource {
     fn add_with_checksum(&mut self, name: &str, version: &str, checksum: String) {
         let directory = self.root.join(format!("{name}-{version}"));
         fs::create_dir_all(directory.join("src")).expect("create the crate directory");
+        // The library target is named after its own package, as a real crate's
+        // is, so that a dependent resolves each dependency by its own name.
+        let library = name.replace('-', "_");
         fs::write(
             directory.join("Cargo.toml"),
             format!(
-                "[package]\nname = {name:?}\nversion = {version:?}\nedition = \"2021\"\nlicense = \"MIT\"\ndescription = \"A fixture crate\"\n\n[lib]\nname = \"earlier_lib\"\n"
+                "[package]\nname = {name:?}\nversion = {version:?}\nedition = \"2021\"\nlicense = \"MIT\"\ndescription = \"A fixture crate\"\n\n[lib]\nname = {library:?}\n"
             ),
         )
         .expect("write the crate manifest");
@@ -888,4 +891,43 @@ pub(crate) fn decompress(archive: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::new();
     decoder.read_to_end(&mut bytes).expect("decompress");
     bytes
+}
+
+/// Writes one executable script, so that this process never holds a descriptor
+/// for it.
+///
+/// The test harness runs tests on several threads, and a descriptor open for
+/// writing here would be inherited by any child another test starts; executing
+/// the script would then fail with `ETXTBSY` until that child execs. A child of
+/// its own writes the script and makes it executable, and closes the descriptor
+/// before it exits.
+pub(crate) fn write_executable(path: &Path, contents: &str) {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|error| panic!("start the writer of {}: {error}", path.display()));
+    let mut stdin = writer
+        .stdin
+        .take()
+        .expect("the writer of the script has a standard input");
+    stdin
+        .write_all(contents.as_bytes())
+        .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
+    drop(stdin);
+    let output = writer
+        .wait_with_output()
+        .unwrap_or_else(|error| panic!("wait for the writer of {}: {error}", path.display()));
+    assert!(
+        output.status.success(),
+        "writing {} failed: {}",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

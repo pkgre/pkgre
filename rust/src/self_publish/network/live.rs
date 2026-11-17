@@ -20,7 +20,9 @@ use tracing::debug;
 use super::super::git;
 use super::super::isolation::ChildEnvironment;
 use super::super::name;
-use super::{CratesIo, CratesIoVersion, Owner, OwnerKind, ReleaseRepository, ReleaseTag};
+use super::{
+    CratesIo, CratesIoVersion, Owner, OwnerKind, RegistryIndex, ReleaseRepository, ReleaseTag,
+};
 use crate::index::{IndexRecord, index_path};
 use crate::package::TemporaryDirectory;
 use crate::policy::{validate_git_object_id, validate_git_tag, validate_https_repository};
@@ -56,8 +58,13 @@ impl CratesIo for LiveCratesIo {
         name::validate_syntax(name).context("read the owners of a crates.io crate")?;
         wait_for_api_interval()?;
         let url = format!("{API_ROOT}/crates/{name}/owners");
-        let response = request(&url, "read the crates.io owners", MAX_API_BYTES)
-            .with_context(|| format!("the crates.io owners of {name:?} could not be read"))?;
+        let response = request(
+            &url,
+            "crates.io",
+            "read the crates.io owners",
+            MAX_API_BYTES,
+        )
+        .with_context(|| format!("the crates.io owners of {name:?} could not be read"))?;
         let body = match response.status {
             200 => response.body,
             404 => return Ok(None),
@@ -73,8 +80,13 @@ impl CratesIo for LiveCratesIo {
     fn versions(&self, name: &str) -> Result<Option<Vec<CratesIoVersion>>> {
         name::validate_syntax(name).context("read the versions of a crates.io crate")?;
         let url = sparse_url(name);
-        let response = request(&url, "read the crates.io sparse index", MAX_INDEX_BYTES)
-            .with_context(|| format!("the crates.io versions of {name:?} could not be read"))?;
+        let response = request(
+            &url,
+            "crates.io",
+            "read the crates.io sparse index",
+            MAX_INDEX_BYTES,
+        )
+        .with_context(|| format!("the crates.io versions of {name:?} could not be read"))?;
         let body = match response.status {
             200 => response.body,
             404 => return Ok(None),
@@ -88,8 +100,13 @@ impl CratesIo for LiveCratesIo {
     fn category_slugs(&self) -> Result<BTreeSet<String>> {
         wait_for_api_interval()?;
         let url = format!("{API_ROOT}/category_slugs");
-        let response = request(&url, "read the crates.io category slugs", MAX_API_BYTES)
-            .context("the crates.io category slugs could not be read")?;
+        let response = request(
+            &url,
+            "crates.io",
+            "read the crates.io category slugs",
+            MAX_API_BYTES,
+        )
+        .context("the crates.io category slugs could not be read")?;
         ensure!(
             response.status == 200,
             "crates.io answered HTTP {} for {url}, so its category slugs could not be read",
@@ -102,6 +119,62 @@ impl CratesIo for LiveCratesIo {
 /// Returns the sparse-index URL of one crate name.
 pub(super) fn sparse_url(name: &str) -> String {
     format!("{SPARSE_ROOT}/{}", index_path(name))
+}
+
+/// The `pkgre` registry, read over its sparse index.
+pub(crate) struct LiveRegistryIndex;
+
+impl RegistryIndex for LiveRegistryIndex {
+    fn versions(&self, index: &str, name: &str) -> Result<Option<Vec<CratesIoVersion>>> {
+        name::validate_syntax(name).context("read the versions of a crate of a sparse index")?;
+        let url = sparse_index_url(index, name)?;
+        let response = request(
+            &url,
+            "the pkgre registry",
+            "read the pkgre registry's sparse index",
+            MAX_INDEX_BYTES,
+        )
+        .with_context(|| format!("the versions of {name:?} at {index:?} could not be read"))?;
+        let body = match response.status {
+            200 => response.body,
+            404 => return Ok(None),
+            status => bail!(
+                "the registry answered HTTP {status} for {url}, so the versions of {name:?} could not be read"
+            ),
+        };
+        parse_versions(name, &body)
+            .with_context(|| format!("parse the versions of {name:?} at {index:?}"))
+            .map(Some)
+    }
+}
+
+/// Returns the sparse-index URL of one crate name at one registry index.
+///
+/// `index` is a registry's declared index, `sparse+https://…` with a trailing
+/// slash; the `sparse+` prefix selects the sparse protocol and is not part of
+/// the URL that serves the index.
+///
+/// # Errors
+///
+/// Returns an error for an index that is not a plain HTTPS base URL.
+pub(super) fn sparse_index_url(index: &str, name: &str) -> Result<String> {
+    let root = index.strip_prefix("sparse+").unwrap_or(index);
+    let root = root.strip_suffix('/').unwrap_or(root);
+    let Some(rest) = root.strip_prefix("https://") else {
+        bail!("sparse index {index:?} is not an https URL");
+    };
+    ensure!(
+        !rest.is_empty() && !rest.starts_with('/'),
+        "sparse index {index:?} has no host"
+    );
+    ensure!(
+        !root.contains(['?', '#'])
+            && !root
+                .bytes()
+                .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control()),
+        "sparse index {index:?} has a query, a fragment, or whitespace"
+    );
+    Ok(format!("{root}/{}", index_path(name)))
 }
 
 /// Parses the owners document of one crates.io crate.
@@ -499,11 +572,14 @@ fn validate_branch(branch: &str) -> Result<()> {
 
 /// Reads one HTTPS document with `curl` and returns its status and body.
 ///
+/// `service` names the service the document comes from, so that a transport
+/// failure says which one is unavailable.
+///
 /// # Errors
 ///
 /// Returns an error when `curl` cannot run, reports a transport failure, or
 /// reads a body larger than `max_bytes`.
-fn request(url: &str, action: &str, max_bytes: usize) -> Result<Response> {
+fn request(url: &str, service: &str, action: &str, max_bytes: usize) -> Result<Response> {
     let limit = max_bytes.to_string();
     let mut command = Command::new("curl");
     command.args([
@@ -534,7 +610,7 @@ fn request(url: &str, action: &str, max_bytes: usize) -> Result<Response> {
     debug!(%url, %action, "fetching a public crates.io document");
     let output = command
         .output()
-        .with_context(|| format!("{action}: start curl"))?;
+        .with_context(|| format!("{action}: {service} could not be reached: start curl"))?;
     if let Some(code) = output.status.code()
         && code == CURL_TOO_LARGE
     {
@@ -542,7 +618,7 @@ fn request(url: &str, action: &str, max_bytes: usize) -> Result<Response> {
     }
     ensure!(
         output.status.success(),
-        "{action}: crates.io is unavailable: curl exited with {}\n{}",
+        "{action}: {service} is unavailable: curl exited with {}\n{}",
         output.status,
         bounded_lossy(&output.stderr)
     );
