@@ -1,8 +1,8 @@
 # Production mirror-admission runbook
 
-Purpose:execute one live crates.io mirror batch against the schema-5 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision pinned by the catalog's main-branch `Validate registry` workflow; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
+Purpose:execute one live crates.io mirror batch against the schema-5 root `main` registry in `pkgre/rust` with the exact `pkgre-rust` revision pinned by the catalog's main-branch `Validate registry` workflow; retain every admitted mirror archive in the catalog's content-addressed object store; update the exact generated download catalog in the same transaction; leave one complete registry-index PR unmerged for curator review.
 
-Warning:the checks below predate retained delivery. On a registry that declares `delivery = "retained"` (current production), the expected-diff checks in step 8, the commit list in step 11 (which omits the new crate objects although its `git add -- registry` stages them), the PR-body checklist in step 12, and the abort matrix in step 13 do not hold as written:`update-apply` adds one `objects/crates/<sha256>.crate` per admitted mirror, and schema-2 download routes carry a `delivery` object instead of `source`. Revise those checks before the next production update.
+The production registry declares `delivery = "retained"`:`update-apply` stores each admitted mirror archive once as `objects/crates/<sha256>.crate`, its schema-2 download route carries `{"delivery":{"delivery":"retained","path":"main/objects/crates/<sha256>.crate"}}`, and the rendered site publishes that body at `crates/<sha256>.crate`. A `redirect` registry stores no mirror archive and its routes carry the exact checksum-bound router URL instead, so its step-8 checks would differ.
 
 Scope:routine existing-package mirror updates. New/inactive names, prereleases, stable `0.0.x`, first-party Git tags, removals, name/category changes, and topology changes use targeted procedures in [`workflows.md`](workflows.md). `automatic` and `review-required` are review-priority labels, not merge authority; the protected review of the complete generated registry PR authorizes every admitted identity. Never auto-merge the final registry-index PR.
 
@@ -35,7 +35,7 @@ test "$(git -C "$CATALOG_REPO" rev-parse HEAD)" = "$(git -C "$CATALOG_REPO" rev-
 test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
 CATALOG_BASE="$(git -C "$CATALOG_REPO" rev-parse origin/main^{commit})"
 
-INDEXER_REV="$(git -C "$CATALOG_REPO" show "$CATALOG_BASE:$PAGES_WORKFLOW" | sed -n 's/^[[:space:]]*ref:[[:space:]]*\([0-9a-f]\{40\}\)[[:space:]]*$/\1/p')"
+INDEXER_REV="$(git -C "$CATALOG_REPO" show "$CATALOG_BASE:$PAGES_WORKFLOW" | sed -n 's/^[[:space:]]*ref:[[:space:]]*\([0-9a-f]\{40\}\)[[:space:]]*$/\1/p' | LC_ALL=C sort -u)"
 test "$(printf '%s\n' "$INDEXER_REV" | grep -c .)" -eq 1
 printf '%s\n' "$INDEXER_REV" | grep -Eq '^[0-9a-f]{40}$'
 git -C "$TOOL_REPO" fetch origin "$INDEXER_REV"
@@ -131,6 +131,8 @@ test "$EXPECTED_CANDIDATES" -eq "$((AUTOMATIC + REVIEW_REQUIRED))"
 printf 'automatic=%s\nreview-required=%s\nblocked=%s\nlogged=%s\nmanifest=%s\n' "$AUTOMATIC" "$REVIEW_REQUIRED" "$BLOCKED" "$TOTAL_LOGGED" "$EXPECTED_CANDIDATES" | tee "$ARTIFACTS/counts.txt"
 ```
 
+A one-identity batch may instead generate its template with `update-plan-exact <catalog> <package> <version> <manifest>`; the exact-form rules, including the merged-manifest order and filename rules, are in [`workflows.md`](workflows.md). The template filename names the batch:`update-apply` installs `admissions/<template-stem>.toml` + `admissions/<template-stem>.lock`, and that stem must be lowercase kebab-case.
+
 Selection/guardrails:
 
 - candidate non-yanked + at least 30×24 hours old at command UTC time; future timestamps fail;
@@ -220,7 +222,7 @@ Never rebase/carry a prepared manifest onto an unreviewed catalog base; restart 
 grep -Eq "packages_added=$EXPECTED_CANDIDATES([^0-9]|$)" "$ARTIFACTS/apply.log"
 ```
 
-Apply behavior:load canonical human requests; use current UTC policy clock; re-fetch/recompute every exact identity; reject young/yanked/locked/blocked/route-invalid/evidence-invalid requests; never substitute versions; calculate one generated batch lock; stage declarations, source rows, registry locks, canonical generated `downloads.json`, exact human manifest, and generated lock; strict-load/object-verify/test-render complete staged catalog; atomically install with rollback. Failure → do not hand-edit generated state; restore/verify clean base and replan when needed.
+Apply behavior:load canonical human requests; use current UTC policy clock; re-fetch/recompute every exact identity; reject young/yanked/locked/blocked/route-invalid/evidence-invalid requests; never substitute versions; calculate one generated batch lock; stage declarations, source rows, retained mirror archives, registry locks, canonical generated `downloads.json`, exact human manifest, and generated lock; strict-load/object-verify/test-render complete staged catalog; atomically install with rollback. Failure → do not hand-edit generated state; restore/verify clean base and replan when needed.
 
 ## 8. Audit the exact catalog diff + batch binding
 
@@ -237,16 +239,26 @@ git -C "$CATALOG_REPO" diff --binary --full-index -- registry > "$ARTIFACTS/cata
 test -s "$ARTIFACTS/catalog.patch"
 
 git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/objects/rows | LC_ALL=C sort > "$ARTIFACTS/new-rows.txt"
+git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/objects/crates | LC_ALL=C sort > "$ARTIFACTS/new-crates.txt"
 git -C "$CATALOG_REPO" diff --name-only --diff-filter=A -- registry/admissions | LC_ALL=C sort > "$ARTIFACTS/new-admission-files.txt"
 test "$(wc -l < "$ARTIFACTS/new-rows.txt")" -eq "$EXPECTED_CANDIDATES"
 test "$(wc -l < "$ARTIFACTS/new-admission-files.txt")" -eq 2
 test "$(grep -c "^registry/admissions/$BATCH.toml$" "$ARTIFACTS/new-admission-files.txt")" -eq 1
 test "$(grep -c "^registry/admissions/$BATCH.lock$" "$ARTIFACTS/new-admission-files.txt")" -eq 1
-test -z "$(git -C "$CATALOG_REPO" diff --name-only -- registry/objects/crates)"
+test -z "$(git -C "$CATALOG_REPO" diff --name-only --diff-filter=DMR -- registry/objects/crates)"
+
+git -C "$CATALOG_REPO" diff --unified=0 -- ':(glob)registry/*.lock' | sed -n 's/^+crate-sha256 = "\([0-9a-f]\{64\}\)"$/\1/p' | LC_ALL=C sort -u > "$ARTIFACTS/new-crate-hashes.txt"
+sed -e 's#^registry/objects/crates/##' -e 's#\.crate$##' "$ARTIFACTS/new-crates.txt" | LC_ALL=C sort -u > "$ARTIFACTS/new-crate-object-hashes.txt"
+test "$(wc -l < "$ARTIFACTS/new-crate-hashes.txt")" -eq "$EXPECTED_CANDIDATES"
+cmp "$ARTIFACTS/new-crate-hashes.txt" "$ARTIFACTS/new-crate-object-hashes.txt"
+while IFS= read -r hash; do
+  test "$(sha256sum "$CATALOG_DIR/objects/crates/$hash.crate" | cut -d' ' -f1)" = "$hash"
+done < "$ARTIFACTS/new-crate-hashes.txt"
+( cd "$CATALOG_REPO" && xargs -r -d '\n' jq -r '.cksum' < "$ARTIFACTS/new-rows.txt" ) | LC_ALL=C sort -u | cmp "$ARTIFACTS/new-crate-hashes.txt" -
 
 BATCH_LOCK="$CATALOG_DIR/admissions/$BATCH.lock"
 BATCH_HASH="$(sha256sum "$BATCH_LOCK" | cut -d' ' -f1)"
-git -C "$CATALOG_REPO" diff --unified=0 -- 'registry/*.lock' | sed -n 's/^+admission-sha256 = "\([0-9a-f]\{64\}\)"$/\1/p' > "$ARTIFACTS/new-admission-hashes.txt"
+git -C "$CATALOG_REPO" diff --unified=0 -- ':(glob)registry/*.lock' | sed -n 's/^+admission-sha256 = "\([0-9a-f]\{64\}\)"$/\1/p' > "$ARTIFACTS/new-admission-hashes.txt"
 test "$(wc -l < "$ARTIFACTS/new-admission-hashes.txt")" -eq "$EXPECTED_CANDIDATES"
 test "$(LC_ALL=C sort -u "$ARTIFACTS/new-admission-hashes.txt" | wc -l)" -eq 1
 test "$(head -n 1 "$ARTIFACTS/new-admission-hashes.txt")" = "$BATCH_HASH"
@@ -258,7 +270,9 @@ LC_ALL=C comm -23 "$ARTIFACTS/download-routes-before.ndjson" "$ARTIFACTS/downloa
 LC_ALL=C comm -13 "$ARTIFACTS/download-routes-before.ndjson" "$ARTIFACTS/download-routes-after.ndjson" > "$ARTIFACTS/download-routes-added.ndjson"
 test ! -s "$ARTIFACTS/download-routes-missing.ndjson"
 test "$(wc -l < "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
-test "$(jq -s '[.[] | select(.registry == "main" and .source == "crates-io")] | length' "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
+test "$(jq -s '[.[] | select(.registry == "main" and .delivery.delivery == "retained" and .delivery.path == ("main/objects/crates/" + .sha256 + ".crate"))] | length' "$ARTIFACTS/download-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATES"
+jq -r '.sha256' "$ARTIFACTS/download-routes-added.ndjson" | LC_ALL=C sort -u > "$ARTIFACTS/download-route-hashes.txt"
+cmp "$ARTIFACTS/new-crate-hashes.txt" "$ARTIFACTS/download-route-hashes.txt"
 cat "$ARTIFACTS/download-routes-added.ndjson"
 ```
 
@@ -266,10 +280,10 @@ Account for every path/byte:
 
 - only intended category declaration arrays gain the exact manifest versions;
 - root generated registry locks gain exactly one active crates.io identity/request with exact route/archive/source-row/routed-row hashes + shared `$BATCH_HASH`;
-- canonical `downloads.json` gains exactly one active `crates-io` route/request with exact registry/name/version/archive hash; no prior route changes/disappears;
-- exactly one new canonical source-row object/request;
+- canonical `downloads.json` gains exactly one active crates.io route/request with exact registry/name/version/archive hash and a `{"delivery":{"delivery":"retained","path":"main/objects/crates/<sha256>.crate"}}` object; no prior route changes/disappears;
+- exactly one new canonical source-row object/request whose `cksum` is the retained archive's SHA-256;
+- exactly one new `objects/crates/<sha256>.crate` retained mirror archive per distinct admitted identity, content-addressed by its own SHA-256 and byte-identical to the verified upstream archive; no prior crate object changes/disappears;
 - exactly one immutable `admissions/$BATCH.toml` + `admissions/$BATCH.lock` pair for the complete batch;
-- no `objects/crates/*` diff:mirror `.crate` bytes are verified then discarded and Cargo downloads through `https://static.crates.io/crates`;
 - no topology, `may-depend-on`, registry URL/download, name-home, prior identity/object/route, first-party archive, workflow/site, or unrelated change.
 
 Unexpected churn/count/hash/route/object mismatch → abort; never normalize generated files by hand.
@@ -332,7 +346,7 @@ test "$(wc -l < "$ARTIFACTS/live-routes-added.ndjson")" -eq "$EXPECTED_CANDIDATE
 cmp "$ARTIFACTS/download-routes-added.ndjson" "$ARTIFACTS/live-routes-added.ndjson"
 ```
 
-Require byte reproduction, monotonicity, unchanged registry/category/index/download/allowlist topology, unchanged name inventory, no missing package/route, and exact intended package + download-route additions/count. Any live/current-base mismatch → investigate/restart; do not bypass.
+Require byte reproduction, monotonicity, unchanged registry/category/index/download/allowlist topology, unchanged name inventory, no missing package/route, and exact intended package + download-route additions/count. `verify` re-renders the catalog and compares the complete tree, retained `crates/<sha256>.crate` bodies included, and `verify-monotonic` additionally requires a rendered body for every active crates.io route whose delivery is retained. Any live/current-base mismatch → investigate/restart; do not bypass.
 
 ## 11. Stage + commit one atomic registry change
 
@@ -349,11 +363,11 @@ git -C "$CATALOG_REPO" commit -m "registry: admit $BATCH mirror updates" -m 'Ass
 test -z "$(git -C "$CATALOG_REPO" status --porcelain=v1 --untracked-files=all)"
 ```
 
-Commit exact declarations + root locks + row objects + admission pair together. Attribution:one `Assisted-by:` trailer listing only actual contributing models/specialized analysis tools; never `Co-Authored-By:` or agent-generated `Signed-off-by:`.
+Commit exact declarations + root locks + row objects + retained mirror `objects/crates/<sha256>.crate` archives + admission pair together. Attribution:one `Assisted-by:` trailer listing only actual contributing models/specialized analysis tools; never `Co-Authored-By:` or agent-generated `Signed-off-by:`.
 
 ## 12. Push + open final curator-review PR
 
-Create a public-safe body. Include:batch manifest link/path; complete identity list or exact generated diff reference; candidate/automatic/review-required/blocked counts; catalog base SHA; deployed indexer SHA/version/binary SHA-256; review prioritization/optional evidence performed; admission-pair/shared-hash proof; exact added row/package/download-route counts; `check`; second-lock no-op; render/verify/verify-monotonic; no mirror archive objects; issue-closing statement when applicable. Exclude transient paths/raw logs/private data.
+Create a public-safe body. Include:batch manifest link/path; complete identity list or exact generated diff reference; candidate/automatic/review-required/blocked counts; catalog base SHA; deployed indexer SHA/version/binary SHA-256; review prioritization/optional evidence performed; admission-pair/shared-hash proof; exact added row/package/download-route counts; `check`; second-lock no-op; render/verify/verify-monotonic; the retained mirror archive objects and their verified digests; issue-closing statement when applicable. Exclude transient paths/raw logs/private data.
 
 ```bash
 git -C "$CATALOG_REPO" push --set-upstream origin "$BRANCH"
@@ -371,7 +385,7 @@ After CI:inspect remote PR head/base/diff/checks one final time. Do **not** enab
 
 Normal command failure removes staging + leaves the original catalog exact; installation failure attempts rollback. Killed reconciliation may leave sibling `.registry.pkgre-lock`, `.registry.pkgre-stage-*`, or `.registry.pkgre-backup-*` paths. Confirm no indexer process is active; preserve backup evidence; restore last complete catalog if needed; remove only verified stale guard/disposable stage; run `check`; compare Git; then restart. Never delete a guard while another process is active.
 
-Abort/preserve evidence on:wrong/non-full pin; build/version/Cargo uncertainty; dirty/stale/drifted base; catalog mutation during planning/inspection; malformed/noncanonical/empty unintended manifest; blocked identity manually present; young/yanked/locked/wrong identity; source mismatch; unknown/forbidden dependency route; unexplained archive/build/API/source evidence; apply/recovery failure; hand-edit temptation; missing/extra row/admission/hash binding; mirror `.crate` addition; topology/name/prior-history drift; failed check/no-op/reproduction/monotonicity/count; secret/private-data exposure; CI failure; curator rejection.
+Abort/preserve evidence on:wrong/non-full pin; build/version/Cargo uncertainty; dirty/stale/drifted base; catalog mutation during planning/inspection; malformed/noncanonical/empty unintended manifest; blocked identity manually present; young/yanked/locked/wrong identity; source mismatch; unknown/forbidden dependency route; unexplained archive/build/API/source evidence; apply/recovery failure; hand-edit temptation; missing/extra row/admission/hash binding; missing/extra/mismatched retained mirror `.crate` object; topology/name/prior-history drift; failed check/no-op/reproduction/monotonicity/count; secret/private-data exposure; CI failure; curator rejection.
 
 No failure permits identity substitution, policy relaxation, generated-file editing, force push, branch-protection bypass, or automatic merge of the registry-index PR.
 
