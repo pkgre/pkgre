@@ -1,6 +1,6 @@
-# P4 mechanical reorganization baseline
+# Mechanical reorganization baseline
 
-Captured:`2026-08-25T18:12Z`;tool source:`98ecd3b6866da4a23ccf7101dd6dbc4fb5402aaf`;production infra rollback pin:`ae1dfbfd4e965dffb538e356f005e4fbb32fdb77`;catalog source:`pkgre/rust@0fa205c9ec610cc31b7551f224ab8ff5a90450c3`,registry tree `35cbdb0e7622506461ad0d4340e3c1f40f594526`.
+Captured:`2026-08-25T18:12Z`;tool source:`98ecd3b6866da4a23ccf7101dd6dbc4fb5402aaf`;production deployment rollback pin:`ae1dfbfd4e965dffb538e356f005e4fbb32fdb77`;catalog source:`pkgre/rust@0fa205c9ec610cc31b7551f224ab8ff5a90450c3`,registry tree `35cbdb0e7622506461ad0d4340e3c1f40f594526`.
 
 | Contract | Baseline |
 |---|---|
@@ -10,4 +10,4 @@ Captured:`2026-08-25T18:12Z`;tool source:`98ecd3b6866da4a23ccf7101dd6dbc4fb5402a
 | Catalog check/render/verify | pass;563 files;sorted `(content SHA-256,path)` manifest SHA-256 `b2f68b4da9869c364b4d4296547396eb58215d9b2fd86bb05d9f77b9a9d96c1a`. |
 | Existing package tests | included in Nix package checks:unit,integration,clippy;download router fixtures remain authoritative for route/status/redirect behavior. |
 
-Equivalence rule:directory-only moves must preserve package/bin/version,CLI bytes,render-manifest hash,and current tests. Intentional renames occur only in later isolated commits;transitional `.#indexer`+`.#download-serve` outputs remain until rain deployment+rollback horizon.
+Equivalence rule:directory-only moves must preserve package/bin/version,CLI bytes,render-manifest hash,and current tests. Intentional renames occur only in later isolated commits;transitional `.#indexer`+`.#download-serve` outputs remain until the deployment and rollback horizon.

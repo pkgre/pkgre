@@ -22,11 +22,11 @@ Rust serving state:
 |---|---|---|---|
 | Rust | `github.com/pkgre/rust`→`pkgre-rust-serve` at `rust.pkg.re` | `https://rust.pkg.re/v1/<registry>/<crate>/<canonical-semver>/<sha256>` | Validated in-memory catalog projection;the `/v1` route redirects to or serves the content-addressed body |
 
-Target same-host state after the JavaScript publication gates:
+JavaScript serving state:
 
-| Ecosystem | Static index | Canonical archive route | Runtime route authority |
+| Ecosystem | Catalog source and service | Canonical archive route | Route authority |
 |---|---|---|---|
-| JavaScript | `github.com/pkgre/js`→`js.pkg.re` | `https://js.pkg.re/v1/js/<registry>/<sha256>` | Exact static marker at the same Pages path |
+| JavaScript | `github.com/pkgre/js`→`pkgre-js-serve` at `js.pkg.re` | `https://js.pkg.re/v1/js/<registry>/<sha256>` | Validated in-memory catalog snapshot;body delivery answers the content-addressed archive body,redirect delivery answers `302` to the route's closed destination |
 
 Cargo aliases are consumer-local;`main` is the catalog/index identity. Schema 5 remains multi-registry capable:an additional catalog registry such as `staging` renders below `https://rust.pkg.re/r/staging/`,has its own categories/locks/routes,and does not move existing `main` identities. The serving gate `check-transition` rejects a candidate that adds or removes a registry,so a new alias needs a fresh accepted baseline before the service publishes it.
 
@@ -50,8 +50,8 @@ Current Rust categories:
 
 - [`cli/`](cli/README.md):the `pkgre` command-line tool;`pkgre install` adds the `pkgre` registry alias to the user's own Cargo configuration.
 - `rust/`:Rust reconciler,validator,admission planner/applicator,schema migrators,deterministic renderer,download-catalog generator,release verifier.
-- `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,and isolated npm/Bun/Deno fixture.
-- [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,two-stage publication,consumer configuration,compatibility matrix,bootstrap+activation gate.
+- `js/`:dependency-free plain-ESM `pkgre-js` catalog/archive validator,deterministic packument+marker renderer,monotonic publication verifier,`pkgre-js-serve` immutable-snapshot server,and isolated npm/Bun/Deno fixture.
+- [`docs/js-registry.md`](docs/js-registry.md):JS catalog/archive policy,serving origin+watcher contract,offline rendering,consumer configuration,compatibility matrix,activation history.
 - `fixtures/redirect-marker-v1/`:provider-neutral exact marker bytes consumed by the JavaScript marker tests;Rust protocol fixtures live in `fixtures/dynamic-registry-v1/`;synthetic routes only.
 - [`docs/catalog.md`](docs/catalog.md):current schema-5 Rust declarations,categories,locks,admissions,routing,removal,migration.
 - [`docs/production-update-runbook.md`](docs/production-update-runbook.md):standalone production Rust mirror-update procedure ending in an unmerged curator-review PR.
@@ -59,6 +59,7 @@ Current Rust categories:
 - [`docs/security.md`](docs/security.md):trust model,enforced invariants,exclusions.
 - [`docs/dynamic-registry-readiness.md`](docs/dynamic-registry-readiness.md):minimal migration basis+phase-local validation policy for native Git-backed Rust/JavaScript serving.
 - Production Rust catalog/site:[`pkgre/rust`](https://github.com/pkgre/rust).
+- Production JavaScript catalog/site:[`pkgre/js`](https://github.com/pkgre/js).
 
 ## Build
 
@@ -86,7 +87,7 @@ $ pkgre-js verify catalog.json site-final
 $ pkgre-js verify-monotonic site-routes site-final
 ```
 
-The exact 30d catalog+archive policy,atomic filesystem boundary,route-first publication protocol,client matrix,and activation gate are documented in [`docs/js-registry.md`](docs/js-registry.md). Production JS metadata,markers,and objects remain unpublished until the P3/P6 operator gate succeeds;source-only/offline P7 work does not launch `js.pkg.re`.
+The exact 30d catalog+archive policy,atomic filesystem boundary,serving origin+watcher contract,client matrix,and activation history are documented in [`docs/js-registry.md`](docs/js-registry.md). `pkgre-js-serve` serves the accepted catalog of `github.com/pkgre/js` from an immutable in-memory snapshot in body delivery;the two-stage render stays offline verification for the dormant bootstrap rather than the serving path.
 
 ## Rust catalog operation
 

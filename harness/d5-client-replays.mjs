@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// D5 client replay harness (rollout plan §D5).
+// Client replay harness.
 //
 // Proves the pinned client matrix (cargo 1.95.0, npm 12.0.2 on node 24.15/26.7,
 // bun 1.3.14/1.4.0, deno 2.9.5) installs the fixture projects through the native

@@ -12,14 +12,14 @@
 // the record path is absent; any present malformed or mismatched record forbids
 // bootstrap and fails the service. The remote tip is never startup authority.
 //
-// Semantic-gate deviation from the Rust watcher (documented for D5
-// equivalence): the JS runtime has no transition module, so semantic validity
-// is candidate snapshot construction success plus re-validation of the
-// materialized accepted catalog. Repository-identity mismatch, full-ref
-// mismatch, malformed commits, unknown ancestry, and candidate object
-// unavailability stay policy-covered by accepted-ref.js fixture tests; the
-// watcher derives candidate fields from operator configuration and verified
-// Git output only.
+// Semantic-gate deviation from the Rust watcher (recorded so the two can be
+// compared for equivalence): the JS runtime has no transition module, so
+// semantic validity is candidate snapshot construction success plus
+// re-validation of the materialized accepted catalog. Repository-identity
+// mismatch, full-ref mismatch, malformed commits, unknown ancestry, and
+// candidate object unavailability stay policy-covered by accepted-ref.js
+// fixture tests; the watcher derives candidate fields from operator
+// configuration and verified Git output only.
 
 import { execFile } from "node:child_process";
 import { Buffer } from "node:buffer";

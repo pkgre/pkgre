@@ -1,6 +1,6 @@
 # JavaScript registry
 
-Status:P7 implementation complete for offline/source use;production metadata+markers+objects remain unpublished until P3/P6 operator evidence permits activation.
+Status:served by `pkgre-js-serve` at `https://js.pkg.re/` in body delivery from the accepted catalog of `github.com/pkgre/js`;the GitHub Pages origin is retired;the reviewed bootstrap in `pkgre/js` `bootstrap/js-v0.1.0/` is the watcher's first catalog input.
 
 ## Authority+scope
 
@@ -9,16 +9,43 @@ Status:P7 implementation complete for offline/source use;production metadata+mar
 - v1 registry alias=`main`;minimum upstream npm age=`2592000s`=30d;first-party `pkgre-js` is explicitly age-exempt and bound to `github.com/pkgre/pkgre` tag `js/v<version>`.
 - Initial closure=`{pkgre-js@0.1.0}`;runtime+development dependencies=none;future additions require exact recursively closed dependencies and reviewed immutable evidence.
 
-## Public protocol after activation
+## Public protocol
 
 | Artifact | Path | Rule |
 |---|---|---|
-| Unscoped packument | `/<name>` | Minimal deterministic npm metadata;current admitted versions only. |
-| Scoped packument | `/@scope/name` | Same contract;clients may percent-encode the scope separator on requests. |
-| Archive route | `/v1/js/main/<sha256>` | Exact marker-v1 bytes;Rain proxy validates bytes+returns fresh `307`. |
-| First-party object | `/packages/<sha256>.tgz` | Content-addressed immutable archive. |
+| Unscoped packument | `/<name>` | Minimal deterministic npm metadata;current admitted versions only;`200`. |
+| Scoped packument | `/@scope%2fname` | Same contract;the scope separator is the one percent-encoding a request target may carry. |
+| Archive route | `/v1/js/main/<sha256>` | Body delivery answers `200` with the exact archive bytes;redirect delivery answers `302` to the route's closed destination. |
+| First-party object | `/packages/<sha256>.tgz` | Content-addressed immutable archive;`200` with the bytes in both delivery modes. |
+| Index | `/` | No-JS HTML summary of the served source commit,delivery mode,and route counts. |
 
-Every packument tarball URL is same-host `https://js.pkg.re/v1/js/main/<sha256>`. npmjs-backed marker destination is the one canonical npm archive URL;first-party marker destination is the same-host content-addressed object. Unknown metadata/route→hard failure;no npmjs metadata passthrough.
+Every packument tarball URL is same-host `https://js.pkg.re/v1/js/main/<sha256>`. The npmjs route destination is the one canonical npm archive URL;the first-party route destination is the same-host content-addressed object. Unknown metadata/route→hard failure;no npmjs metadata passthrough. A rendered marker-v1 page is offline artifact bytes,not a response of the service.
+
+Routes answer `GET`+`HEAD` only and any other method answers `405` with `Allow: GET, HEAD`. Raw targets are canonical ASCII origin-form only:no query,fragment,trailing slash,empty/`.`/`..` segment,non-ASCII,or percent-encoding except the single `%2f` of a scoped packument target;a noncanonical target answers `400` before method or route lookup,a repeated raw-target header answers `404`,an unknown route answers `404`,and a request that arrives before a snapshot is installed answers `503`. Packuments answer `200` with `ETag`+`Cache-Control: public, max-age=60, must-revalidate`;archives answer `200` with `public, max-age=31536000, immutable`;redirects and errors answer `no-store`. The service installs a snapshot before it binds either listener,so the unready state is not reachable on a running instance.
+
+## Serving origin
+
+`pkgre-js-serve` is the `js` flake output (`js/src/serve/`;`bin` entry `src/serve/main.js`) and takes one `CONFIG` argument. `CONFIG` is strict JSON,`"schema":1`,with exact keys and no defaults or coercion:
+
+```json
+{"schema":1,
+ "public":{"bind":"127.0.0.1:8080"},
+ "admin":{"bind":"127.0.0.1:8081"},
+ "limits":{"max-concurrency":64},
+ "registry":{"delivery":"body","archive-store":"ARCHIVES"},
+ "watcher":{"origin":"ORIGIN","fullRef":"refs/heads/main","catalogPath":"registry/catalog.json","bootstrapCommit":"40HEX","statePath":"STATE","pollIntervalSeconds":30}}
+```
+
+- The public and admin binds must differ. The service listens on plain TCP and ignores Host;TLS and transport bounds are the deployment front end's concern.
+- `registry.delivery` is `body` or `redirect`. `body` requires `archive-store` and answers every archive route with the store's digest-verified bytes;`redirect` answers every archive route with `302` and may omit the store only while no first-party record needs a body. Any absent body or digest mismatch fails the whole snapshot closed.
+- Exactly one snapshot source is required:`registry.catalog` names a catalog file read once at startup,or `watcher` polls an accepted Git ref. The watcher form requires a relative `catalogPath`,`bootstrapCommit` as 40 lowercase hexadecimal characters,`statePath`,and a positive integer `pollIntervalSeconds`.
+- `limits.max-concurrency` bounds concurrent route dispatch. An invalid argument list exits `2`;an invalid configuration exits `1` naming the failing key on standard error.
+
+The watcher owns the accepted-ref record `statePath/accepted-ref.json` (canonical bytes,fsynced,and atomically renamed) and a bare Git mirror under `statePath/repository/`. Startup authority is the record alone:a present malformed or mismatched record fails the service,and `bootstrapCommit` is used only when the record is absent. Each poll compares the remote tip of `fullRef` once and accepts only a strictly forward descendant whose catalog validates and whose snapshot builds;the record is persisted before the snapshot is installed,and a failed fetch,validation,or persistence keeps the last-known-good snapshot+accepted ref. A rejected tip is suppressed by hash until the tip moves or the process restarts. Catalog bytes come from the accepted commit (`git show <commit>:<catalogPath>`),never from the network at request time;Git runs isolated:no hooks,no credential prompt,no proxy environment,`https` and local-file transport only,and bounded time and output.
+
+The snapshot is built completely before it is installed:one catalog validation,one rendered packument per package,one prepared response per route,and every required archive body read and digest-verified. Installation replaces the whole route map at once,so a request is answered from the snapshot's own frozen bytes,with no request-time catalog,upstream metadata,proxy,or refresh path.
+
+The public listener serves the index,packuments,routes,and redirects and trusts at most one `X-Pkgre-Original-URI` header as the request target (a repeat answers `404`). The admin listener serves `/healthz` (`200` while the process runs),`/readyz` (`200` with an installed snapshot,`503` without),and `GET`-only `/status` (`schema`,`ready`,`mode`,route counts,uptime);unknown admin paths answer `404`. Neither listener authenticates,so the admin listener belongs on a private address.
 
 ## Catalog contract
 
@@ -36,20 +63,20 @@ Every packument tarball URL is same-host `https://js.pkg.re/v1/js/main/<sha256>`
 - Require one canonical `package/package.json`;selected manifest must exactly match reviewed catalog identity+install fields.
 - Reject traversal,absolute/noncanonical paths,duplicates,links,special files,unsafe modes,package-local npm configuration,lifecycle scripts,and native-addon indicators.
 
-## Deterministic publication
+## Offline rendering
 
-Addition is two-stage and each command writes a new sibling directory atomically;output paths must not exist:
+The renderer is offline verification,not the serving path:it renders the two monotonic stages for a catalog and proves their inventories,and the `pkgre/js` `scripts/check-bootstrap.sh` re-renders the dormant bootstrap from the tagged source. Addition is two-stage and each command writes a new sibling directory atomically;output paths must not exist:
 
 ```console
 $ pkgre-js check catalog.json archives
 $ pkgre-js render-routes catalog.json archives site-current site-routes
 $ pkgre-js verify catalog.json site-routes
 $ pkgre-js verify-monotonic site-current site-routes
-# Deploy site-routes;read back exact route/object bytes;wait the measured Pages cache horizon.
+# The routes stage proves the immutable bytes before any metadata changes.
 $ pkgre-js render-final catalog.json site-routes site-final
 $ pkgre-js verify catalog.json site-final
 $ pkgre-js verify-monotonic site-routes site-final
-# Deploy site-final only after route/object evidence succeeds.
+# The final stage proves the metadata inventory;the service reads the catalog,not either tree.
 ```
 
 - Routes stage adds immutable marker/object bytes while preserving the previous metadata inventory byte-for-byte.
@@ -83,7 +110,7 @@ Commit this configuration;do not add a scope-specific npmjs override. Exact depe
 
 Pinned minimum policy:Node `24.15.0`+npm `12.0.2`;Bun `1.3.14`;Deno `2.9.5`. Pinned current snapshot at implementation:Node `26.7.0`+npm `12.0.2`;Bun `1.4.0`;Deno `2.9.5`. Minimum Node is selected by npm 12.0.2's engine floor;Bun/Deno floors are the earliest versions explicitly pinned+tested for this contract,not claims about older releases.
 
-Each x86_64+aarch64 Nix check runs with network disabled except loopback and proves:scoped+unscoped recursive install;same-host route+controlled `307`;fresh install;empty-cache frozen lock replay after metadata removal;unknown metadata failure without archive access;redirect-marker drift failure;route `404`/`503` failure;corrupt archive failure;bounded command time/output;expected methods,hosts,and paths only. `nix/js-compatibility-clients.nix` pins official archives+hashes;GitHub CI runs both native architectures.
+Each x86_64+aarch64 Nix check runs with network disabled except loopback and proves:scoped+unscoped recursive install;same-host fixture route+controlled `307`;fresh install;empty-cache frozen lock replay after metadata removal;unknown metadata failure without archive access;redirect-marker drift failure;route `404`/`503` failure;corrupt archive failure;bounded command time/output;expected methods,hosts,and paths only. `nix/js-compatibility-clients.nix` pins official archives+hashes;GitHub CI runs both native architectures.
 
 Local full verification:
 
@@ -93,9 +120,9 @@ $ nix flake check --print-build-logs
 $ nix build .#js
 ```
 
-## Bootstrap+activation gate
+## Activation history
 
-- Source implementation/PR/tag and dormant bootstrap artifacts may be published;do not place production catalog,packuments,markers,or objects in `pkgre/js` Pages output before successful P3 issuance+P6 deployed frontend evidence.
-- After merge:tag `js/v0.1.0`;pack twice from clean source under pinned Node/npm and require identical bytes;build+render `C0` twice;store reviewed catalog/archive/render dormant outside Pages output.
-- After operator gate:route/object deploy→direct-origin+edge readback/hash→cache wait→metadata deploy→two independent clean-HOME/cache self-host installs/tests/repacks with only admitted registry/archive egress.
-- Rain deployment,DNS,Gandi credential handling,and GitHub Pages custom-domain changes are operator-only;offline P7 completion does not imply a live registry launch.
+- `pkgre-js-serve` replaced the GitHub Pages origin and serves `https://js.pkg.re/`;`pkgre/js` no longer publishes a page,and a rendered stage is evidence,not the origin.
+- The reviewed `pkgre/js` bootstrap (`catalog.json`,`archives/<sha256>.tgz`,`site-previous/`,`site-routes/`,`site-final/`) stays byte-identical as that evidence and as the watcher's first catalog input;`SHA256SUMS` binds every other file of the directory.
+- Activation was an operator step:the service,its DNS record,its certificate,and its front end are operator-owned;nothing in this repository deploys them.
+- An addition now needs its archive body in the configured archive store before the catalog commit that names it:the watcher validates the candidate snapshot and fails closed otherwise,so the previous catalog keeps serving. A removal needs no body. The two render stages still prove that route-first order offline.
