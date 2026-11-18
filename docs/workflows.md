@@ -212,7 +212,7 @@ Preconditions:
 - credential-free HTTPS repository + immutable reviewed tag;
 - selected package version = tag final component, optional `v` prefix;
 - source manifest exactly `publish = ["pkgre"]`;
-- every dependency explicitly `registry = "pkgre"`, including optional/dev/build/target-specific; Git/crates.io/unknown sources fail; a `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, at that package's own directory, required as exactly `=X.Y.Z` of that tag's version, and every other path dependency fails;
+- every dependency explicitly `registry = "pkgre"`, or the retired alias `core`/`universe` of the same index from a tag of an earlier catalog, including optional/dev/build/target-specific; Git/crates.io/unknown sources fail; a `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, at that package's own directory, required as exactly `=X.Y.Z` of that tag's version, and every other path dependency fails;
 - a `path` dependency on a package the catalog locked already is taken from the registry index, which must serve that identity while the dependent is locked, and the packaged `Cargo.lock` must name its locked archive;
 - catalog home:use `main/pkgre` for a new first-party/standalone-fork name; an existing mirrored-name fork stays in that name's original category, retains its `[mirror]` declaration, and adds a same-name `[publish]` declaration there;
 - fork Cargo version must be unique across every locked mirror/publish identity for that name; never reuse `name + version` for different bytes/source;

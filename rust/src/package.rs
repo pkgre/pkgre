@@ -23,6 +23,21 @@ use crate::update::time::UtcTimestamp;
 
 const CARGO_REGISTRY: &str = "pkgre";
 const REGISTRY_INDEX: &str = "sparse+https://rust.pkg.re/";
+
+/// Registry names that the catalog declared for the curated index while it
+/// served it at another URL, each with the URL it named then.
+///
+/// A released tag may name one of them, and its committed `Cargo.lock` records
+/// that URL as the source of every dependency. The isolated Cargo home of a
+/// packaging declares each name at its old URL and replaces that source with
+/// the curated index, so Cargo resolves the versions the tag locked from the
+/// index that serves them now, while the packaged lock keeps the retired source
+/// and the archive reproduces the bytes the catalog locked.
+const RETIRED_REGISTRIES: [(&str, &str); 2] = [
+    ("core", "sparse+https://rust.pkg.re/core/"),
+    ("universe", "sparse+https://rust.pkg.re/universe/"),
+];
+
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -106,6 +121,8 @@ struct CargoDefaultRegistry {
 struct CargoSource<'a> {
     #[serde(rename = "replace-with", skip_serializing_if = "Option::is_none")]
     replace_with: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registry: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     directory: Option<&'a Path>,
 }
@@ -843,17 +860,18 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
     let disabled = cargo_home.join("disabled-crates-io");
     fs::create_dir(&disabled)
         .with_context(|| format!("create disabled Cargo source {}", disabled.display()))?;
-    let registries = BTreeMap::from([(
+    let mut registries = BTreeMap::from([(
         CARGO_REGISTRY,
         CargoRegistry {
             index: registry_index,
         },
     )]);
-    let source = BTreeMap::from([
+    let mut source = BTreeMap::from([
         (
             "crates-io",
             CargoSource {
                 replace_with: Some("disabled"),
+                registry: None,
                 directory: None,
             },
         ),
@@ -861,10 +879,27 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
             "disabled",
             CargoSource {
                 replace_with: None,
+                registry: None,
                 directory: Some(disabled.as_path()),
             },
         ),
     ]);
+    for (name, retired_index) in RETIRED_REGISTRIES {
+        registries.insert(
+            name,
+            CargoRegistry {
+                index: retired_index,
+            },
+        );
+        source.insert(
+            retired_index,
+            CargoSource {
+                replace_with: Some(CARGO_REGISTRY),
+                registry: Some(retired_index),
+                directory: None,
+            },
+        );
+    }
     let config = IsolatedCargoConfig {
         registries,
         registry: CargoDefaultRegistry {
@@ -1026,10 +1061,20 @@ fn describe_dependency(dependency: &MetadataDependency) -> String {
     }
 }
 
+/// Returns the index of the curated registry, followed by the URLs its retired
+/// names declared, which a released tag may still name.
+fn curated_registry_indexes(registry_index: &str) -> Vec<&str> {
+    std::iter::once(registry_index)
+        .chain(RETIRED_REGISTRIES.iter().map(|(_, index)| *index))
+        .collect()
+}
+
 /// Validates every dependency of one first-party package of a tag.
 ///
 /// A dependency must name the curated registry, whether Cargo takes it from
-/// that registry or from a path inside the tagged workspace.
+/// that registry or from a path inside the tagged workspace, and may name one
+/// of its retired names, whose index the isolated Cargo home replaces with the
+/// curated one.
 ///
 /// # Errors
 ///
@@ -1043,7 +1088,7 @@ fn validate_dependencies(
     tag_version: &Version,
     registry_index: &str,
 ) -> Result<()> {
-    let registry_indexes = [registry_index];
+    let registry_indexes = curated_registry_indexes(registry_index);
     for dependency in &package.dependencies {
         let Some(source) = &dependency.source else {
             validate_path_dependency(
@@ -1767,6 +1812,78 @@ mod tests {
         assert!(
             message.contains("a published tag must commit its Cargo.lock"),
             "the error says what the tag must hold: {message}"
+        );
+    }
+
+    #[test]
+    fn isolated_cargo_home_replaces_every_retired_registry_name() {
+        let temporary = TemporaryDirectory::new("pkgre-cargo-home").unwrap();
+        let cargo_home = temporary.path().join("cargo-home");
+        prepare_cargo_home(&cargo_home, REGISTRY_INDEX).unwrap();
+        let config: toml::Value =
+            toml::from_str(&fs::read_to_string(cargo_home.join("config.toml")).unwrap()).unwrap();
+        assert_eq!(
+            config["registries"][CARGO_REGISTRY]["index"].as_str(),
+            Some(REGISTRY_INDEX)
+        );
+        for (name, index) in RETIRED_REGISTRIES {
+            assert_eq!(config["registries"][name]["index"].as_str(), Some(index));
+            assert_eq!(config["source"][index]["registry"].as_str(), Some(index));
+            assert_eq!(
+                config["source"][index]["replace-with"].as_str(),
+                Some(CARGO_REGISTRY)
+            );
+        }
+    }
+
+    #[test]
+    fn a_dependency_may_name_a_retired_registry_alias() {
+        let version = Version::parse("0.3.0").unwrap();
+        let dependency = |index: &str| MetadataDependency {
+            name: "anyhow".to_owned(),
+            source: Some(index.to_owned()),
+            req: "^1.0".to_owned(),
+            kind: None,
+            rename: None,
+            optional: false,
+            uses_default_features: true,
+            features: Vec::new(),
+            target: None,
+            registry: Some(index.to_owned()),
+            path: None,
+        };
+        let package = |dependency| MetadataPackage {
+            name: "pkgre-indexer".to_owned(),
+            version: version.clone(),
+            manifest_path: PathBuf::from("Cargo.toml"),
+            dependencies: vec![dependency],
+            features: BTreeMap::new(),
+            links: None,
+            rust_version: None,
+            publish: Some(vec![CARGO_REGISTRY.to_owned()]),
+        };
+        let siblings = BTreeMap::new();
+        for (_, index) in RETIRED_REGISTRIES {
+            validate_dependencies(
+                &package(dependency(index)),
+                &[],
+                &siblings,
+                &version,
+                REGISTRY_INDEX,
+            )
+            .unwrap();
+        }
+        let error = validate_dependencies(
+            &package(dependency("sparse+https://example.test/other/")),
+            &[],
+            &siblings,
+            &version,
+            REGISTRY_INDEX,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("uses unsupported source"),
+            "{error:#}"
         );
     }
 
@@ -2679,6 +2796,52 @@ mod tests {
             assert_eq!(
                 alone.source_row_sha256, source_row_sha256,
                 "{name} generates the source row the catalog locked on its own"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the network and the released tags indexer/v0.1.1, indexer/v0.2.0 and indexer/v0.3.0"]
+    fn live_retired_registry_tags_package_to_the_locked_bytes() {
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let repository = "https://github.com/pkgre/pkgre";
+        // The archive and source-row SHA-256 values the production catalog locks
+        // for the package these tags publish.
+        let locked = [
+            (
+                "indexer/v0.1.1",
+                "3257df14bc1ae9d6f2eb99d5db90e5d2a9fbc13c870044c9db5ba89bcc0b96a2",
+                "b12f0350b65d153f4073d2090dadbbfd497e5746315872d1230d530fc8e46f92",
+            ),
+            (
+                "indexer/v0.2.0",
+                "9292cd7e7248ea3ee2a65184a492f107ae6af4a1186c41f57383973bc7686568",
+                "22a932799227a0e62387095572fa0b3a40508b4d0f238c5d62796891bf84250f",
+            ),
+            (
+                "indexer/v0.3.0",
+                "467be746eb89eb14da496a5d95a2cf13d20652644cf4ef18355be0723d95a755",
+                "f0a80df4bf810cb3a8f1b300e7637499f4dae72e2fb5f3bdbec636a59b30b28f",
+            ),
+        ];
+        for (tag, archive_sha256, source_row_sha256) in locked {
+            let materialization =
+                resolve_git_tag(repository, tag, "pkgre-indexer", &cargo_version).unwrap();
+            println!(
+                "live: {} {} {} {}",
+                tag,
+                materialization.version,
+                materialization.archive_sha256,
+                materialization.source_row_sha256
+            );
+            assert_eq!(materialization.name, "pkgre-indexer");
+            assert_eq!(
+                materialization.archive_sha256, archive_sha256,
+                "{tag} packages to the archive the catalog locked while its manifest names a retired registry"
+            );
+            assert_eq!(
+                materialization.source_row_sha256, source_row_sha256,
+                "{tag} generates the source row the catalog locked"
             );
         }
     }
