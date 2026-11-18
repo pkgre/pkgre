@@ -217,7 +217,7 @@ Preconditions:
 - catalog home:use `main/pkgre` for a new first-party/standalone-fork name; an existing mirrored-name fork stays in that name's original category, retains its `[mirror]` declaration, and adds a same-name `[publish]` declaration there;
 - fork Cargo version must be unique across every locked mirror/publish identity for that name; never reuse `name + version` for different bytes/source;
 - after the first published identity, retain the `[publish]` key + exact Git URL forever; removal empties `tags` rather than deleting/changing the declaration;
-- lockfile present; no submodules, symlinks, unsafe/special paths, ambiguity, or generated dirty state;
+- the tag commits the `Cargo.lock` of its workspace root; `cargo package --locked` accepts a workspace without one and resolves the dependency versions from the served index while it packages, so a tag that does not commit its lock is refused; no submodules, symlinks, unsafe/special paths, ambiguity, or generated dirty state;
 - reproducible archive under Cargo `1.95.0`.
 
 Workflow:

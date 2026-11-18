@@ -475,6 +475,7 @@ fn resolve_tag(
         &siblings,
     )?;
 
+    ensure_committed_lock_file(&checkout, request.tag)?;
     let archives = package_twice(
         &cargo,
         &cargo_home,
@@ -751,6 +752,25 @@ fn ensure_clean_checkout(environment: &ChildEnvironment, repository: &Path) -> R
         "inspect Git checkout cleanliness",
     )?;
     ensure!(status.is_empty(), "Git-tag checkout is dirty: {status}");
+    Ok(())
+}
+
+/// Requires the tagged workspace to commit the lock file that Cargo packages
+/// from.
+///
+/// `cargo package --locked` accepts a workspace without a lock file and writes
+/// one while it packages, so a tag that does not commit its lock would publish
+/// the dependency versions the served index resolves at packaging time instead
+/// of the versions the tag records.
+///
+/// # Errors
+///
+/// Returns an error for a workspace root without a `Cargo.lock`.
+fn ensure_committed_lock_file(checkout: &Path, tag: &str) -> Result<()> {
+    ensure!(
+        checkout.join(PACKAGED_LOCK).is_file(),
+        "Git tag {tag:?} does not commit a {PACKAGED_LOCK} at its workspace root; a published tag must commit its {PACKAGED_LOCK}, so that it is packaged at the dependency versions it records"
+    );
     Ok(())
 }
 
@@ -1728,6 +1748,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn git_tag_packaging_refuses_a_tag_without_a_committed_lock_file() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-lock").unwrap();
+        let source = create_test_release_with_lock(&temporary, false);
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let error = resolve_git_tag_from_file_in(
+            &root,
+            "https://example.invalid/pkgre-demo",
+            TEST_TAG,
+            "pkgre-demo",
+            &cargo_version,
+            source.to_str().unwrap(),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("a published tag must commit its Cargo.lock"),
+            "the error says what the tag must hold: {message}"
+        );
+    }
+
     /// Returns the first of `TMPDIR`, `/tmp`, and `/var/tmp` that no Cargo
     /// configuration covers.
     ///
@@ -1748,6 +1790,12 @@ mod tests {
     }
 
     fn create_test_release(temporary: &TemporaryDirectory) -> PathBuf {
+        create_test_release_with_lock(temporary, true)
+    }
+
+    /// Creates the same tagged release, either committing its lock file or
+    /// leaving the tag without one.
+    fn create_test_release_with_lock(temporary: &TemporaryDirectory, commit_lock: bool) -> PathBuf {
         let source = temporary.path().join("source");
         fs::create_dir_all(source.join("crates/demo/src")).unwrap();
         fs::write(
@@ -1768,14 +1816,16 @@ mod tests {
         run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
         test_git(&source, &["add", "."]);
         test_git(&source, &["commit", "--quiet", "-m", "release"]);
-        run_test_command(
-            Command::new("cargo")
-                .current_dir(&source)
-                .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
-                .arg("generate-lockfile"),
-        );
-        test_git(&source, &["add", "Cargo.lock"]);
-        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        if commit_lock {
+            run_test_command(
+                Command::new("cargo")
+                    .current_dir(&source)
+                    .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
+                    .arg("generate-lockfile"),
+            );
+            test_git(&source, &["add", "Cargo.lock"]);
+            test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        }
         test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
         source
     }
