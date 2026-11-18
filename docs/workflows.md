@@ -120,6 +120,31 @@ $ git diff --check
 
 Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, and `verify-monotonic`; this enforces that a PR cannot merge a manifest/template without fully applied state. Reapplying identical installed manifest no-ops; same filename/different content fails.
 
+### Exact admission templates
+
+A batch of exact identities takes one `update-plan-exact` run per identity, each writing one template outside the catalog, and the templates are merged by hand into one manifest; `update-apply` runs once on that merged file, so the whole batch shares one admission pair and one `admission-sha256` binding. A merge keeps one `schema = 2` header and concatenates the `[[admit]]` blocks with their evidence. The merged file's stem is the batch name:`update-apply` installs `admissions/<stem>.toml` + `admissions/<stem>.lock`.
+
+Two rules are enforced by the tool, not only by convention:
+
+- filename:the stem is lowercase ASCII kebab-case:1–128 bytes of `a`–`z`, digits and `-`, starting and ending alphanumeric, and the extension is lowercase `.toml`. `update-plan`/`update-plan-exact` refuse to write any other template name, `update-apply` refuses any other input name, and `check` re-validates every installed pair:`rustc_version-0-3-3.toml` is refused (underscore), `rustc-version-0-3-3.toml` is accepted.
+- order:requests sort by category, then ASCII-lowercased name, then the exact name as a tie-break, then the target (`version`, or `tag`) compared as a string. The version comparison is lexical, not SemVer:`uint` `0.10.2` precedes `uint` `0.9.5` because `"0.10.2" < "0.9.5"`. `update-apply` and `update-inspect` refuse a manifest whose requests are not in strict canonical order or repeat an identity, so re-sort after every merge; an exact version carries no build metadata.
+
+Merged manifest of two identities:
+
+```toml
+schema = 2
+
+[[admit]]
+category = "main/general"
+name = "uint"
+version = "0.10.2"
+
+[[admit]]
+category = "main/general"
+name = "uint"
+version = "0.9.5"
+```
+
 ### Bulk review
 
 1. Generate one broad manifest; count automatic/review-required/blocked logs.
