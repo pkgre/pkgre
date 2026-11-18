@@ -55,6 +55,16 @@ pub struct GitTagMaterialization {
 #[derive(Debug, Deserialize)]
 struct Metadata {
     packages: Vec<MetadataPackage>,
+    workspace_root: PathBuf,
+}
+
+/// The members of one tagged workspace, with the root Cargo resolved it from.
+struct WorkspaceMetadata {
+    /// Absolute path of the workspace root, which holds the lock file Cargo
+    /// packages from.
+    root: PathBuf,
+    /// Every member of the workspace.
+    packages: Vec<MetadataPackage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +117,8 @@ struct CargoSource<'a> {
     #[serde(rename = "replace-with", skip_serializing_if = "Option::is_none")]
     replace_with: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    registry: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     directory: Option<&'a Path>,
 }
 
@@ -141,9 +153,11 @@ struct GeneratedDependency {
 ///
 /// A path dependency is accepted only on another package that the tagged workspace publishes, because this entry point knows no catalog: the set is every member of the tag whose manifest sets exactly `publish = ["pkgre"]`, which is the widest set the catalog can publish from that tag, and no identity is admitted from here. [`resolve_git_tag_group`] takes the catalog's own set, with the archive it locked for each package, and the callers that admit an identity use it. A sibling this entry point accepts is bound to the archive its own packaging produces, or, when Cargo takes it from the registry, to the archive that registry serves, so a caller that verifies the archive hash, as [`reproduce_approved_git`] does, binds the result end to end.
 ///
+/// A tag that names a registry the catalog retired is refused here, since this entry point admits an identity without comparing it with a locked one; [`reproduce_approved_git`] is the entry point that may package such a tag.
+///
 /// # Errors
 ///
-/// Returns an error for an unsafe source, ambiguous package, malformed or moved tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty checkout, non-reproducible archive, or invalid package metadata.
+/// Returns an error for an unsafe source, a retired registry, ambiguous package, malformed or moved tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty checkout, a workspace without a committed lock or with a `[patch]` or `[replace]` section, non-reproducible archive, or invalid package metadata.
 pub fn resolve_git_tag(
     repository: &str,
     tag: &str,
@@ -158,6 +172,7 @@ pub fn resolve_git_tag(
             tag,
             packages: &packages,
             published: None,
+            allow_retired_registries: false,
         },
         &PackagingSource::live(repository),
         cargo_version,
@@ -175,7 +190,7 @@ pub fn resolve_git_tag(
 ///
 /// # Errors
 ///
-/// Returns an error for an empty group, a requested package outside `published`, a published package that is neither packaged nor carries its locked archive, an unsafe source, ambiguous package, malformed or moved tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty checkout, non-reproducible archive, a packaged lock that names another archive for a sibling, or invalid package metadata.
+/// Returns an error for an empty group, a requested package outside `published`, a published package that is neither packaged nor carries its locked archive, an unsafe source, a retired registry a new publication may not name, ambiguous package, malformed or moved tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty checkout, a workspace without a committed lock or with a `[patch]` or `[replace]` section, non-reproducible archive, a packaged lock that departs from the tag's workspace lock, or invalid package metadata.
 pub fn resolve_git_tag_group(
     repository: &str,
     tag: &str,
@@ -190,6 +205,7 @@ pub fn resolve_git_tag_group(
             tag,
             packages,
             published: Some(published),
+            allow_retired_registries: false,
         },
         &PackagingSource::live(repository),
         cargo_version,
@@ -197,6 +213,10 @@ pub fn resolve_git_tag_group(
 }
 
 /// Reproduces one locked Git publication and verifies every immutable source and content field.
+///
+/// The reproduction is the only resolution that may package a tag naming a
+/// registry the catalog retired, since it is the only one that compares the
+/// archive and source row it produces with the ones the catalog locked.
 ///
 /// # Errors
 ///
@@ -218,9 +238,44 @@ pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterializati
             approval.version
         );
     };
-    let materialization = resolve_git_tag(repository, tag, package, cargo_version)?;
+    let materialization = resolve_approved_git_tag(
+        &std::env::temp_dir(),
+        repository,
+        tag,
+        package,
+        &PackagingSource::live(repository),
+        cargo_version,
+    )?;
     verify_approved_materialization(approval, tag_oid, commit, subdir, &materialization)?;
     Ok(materialization)
+}
+
+/// Resolves and reproducibly packages the package of one locked Git publication.
+///
+/// A reproduction may package a tag that names a registry the catalog retired,
+/// because it is bound to the archive and source row the catalog locked.
+fn resolve_approved_git_tag(
+    root: &Path,
+    repository: &str,
+    tag: &str,
+    package: &str,
+    source: &PackagingSource<'_>,
+    cargo_version: &Version,
+) -> Result<GitTagMaterialization> {
+    let packages = [package];
+    let mut materializations = resolve_tag(
+        root,
+        &TagRequest {
+            repository,
+            tag,
+            packages: &packages,
+            published: None,
+            allow_retired_registries: true,
+        },
+        source,
+        cargo_version,
+    )?;
+    single_materialization(&mut materializations)
 }
 
 /// One package that the catalog publishes from one repository and tag.
@@ -249,6 +304,12 @@ struct TagRequest<'a> {
     /// Every package the catalog publishes from this repository and tag, when
     /// the caller knows it; `None` derives them from the tagged workspace.
     published: Option<&'a [PublishedPackage<'a>]>,
+    /// Whether a dependency may name a registry the catalog retired.
+    ///
+    /// Only a reproduction of an identity the catalog locked sets this: it
+    /// compares the archive and source row it produces with the ones the
+    /// catalog recorded, so the retired name cannot reach a new publication.
+    allow_retired_registries: bool,
 }
 
 /// Every package a path dependency of one tag may point at, with the archive the
@@ -350,8 +411,56 @@ pub(crate) fn resolve_git_tag_from_file_in(
         cargo_version,
         fetch_repository,
         registry_index: REGISTRY_INDEX,
+        allow_retired_registries: false,
     })?;
     single_materialization(&mut materializations)
+}
+
+/// Reproduces one locked tag from a local repository below a temporary root a
+/// test chooses, as [`reproduce_approved_git`] does over the network.
+///
+/// # Errors
+///
+/// Returns an error for a non-Git approval, or for the source, tag, package,
+/// toolchain, path, archive, or source-row mismatch that
+/// [`reproduce_approved_git`] reports.
+#[cfg(test)]
+pub(crate) fn reproduce_approved_git_from_file_in(
+    root: &Path,
+    approval: &Approval,
+    fetch_repository: &str,
+    registry_index: &str,
+) -> Result<GitTagMaterialization> {
+    let Source::GitTag {
+        repository,
+        tag,
+        tag_oid,
+        commit,
+        package,
+        subdir,
+        cargo_version,
+    } = &approval.source
+    else {
+        bail!(
+            "{} {} is not a Git-tag publication",
+            approval.name,
+            approval.version
+        );
+    };
+    let materialization = resolve_approved_git_tag(
+        root,
+        repository,
+        tag,
+        package,
+        &PackagingSource {
+            fetch_repository,
+            allow_file: true,
+            registry_index,
+        },
+        cargo_version,
+    )?;
+    verify_approved_materialization(approval, tag_oid, commit, subdir, &materialization)?;
+    Ok(materialization)
 }
 
 /// One tagged workspace that a test resolves from a local repository and a
@@ -374,6 +483,9 @@ pub(crate) struct FileTagRequest<'a> {
     pub(crate) fetch_repository: &'a str,
     /// Local index of the curated registry, so that the packaging needs no network.
     pub(crate) registry_index: &'a str,
+    /// Whether a dependency may name a registry the catalog retired, as only a
+    /// reproduction may.
+    pub(crate) allow_retired_registries: bool,
 }
 
 /// Resolves and reproducibly packages the packages of one tag from a local
@@ -395,6 +507,7 @@ pub(crate) fn resolve_git_tag_group_from_file(
             tag: request.tag,
             packages: request.packages,
             published: request.published,
+            allow_retired_registries: request.allow_retired_registries,
         },
         &PackagingSource {
             fetch_repository: request.fetch_repository,
@@ -458,15 +571,17 @@ fn resolve_tag(
         "Git repository has no regular root Cargo.toml"
     );
     let metadata = cargo_metadata(&cargo, &cargo_home, &environment, &root_manifest)?;
-    let packages = select_packages(&metadata, request.packages)?;
+    ensure_workspace_root_inside(&checkout, &metadata.root)?;
+    ensure_no_patch_or_replace(&metadata, &root_manifest)?;
+    let packages = select_packages(&metadata.packages, request.packages)?;
     let tag_version = packages
         .first()
         .with_context(|| format!("tag {:?} names no package", request.tag))?
         .version
         .clone();
-    let siblings = sibling_packages(request.published, &metadata, &packages)?;
+    let siblings = sibling_packages(request.published, &metadata.packages, &packages)?;
     let paths = validated_packages(
-        &metadata,
+        &metadata.packages,
         &packages,
         request,
         &tag_version,
@@ -475,6 +590,7 @@ fn resolve_tag(
         &siblings,
     )?;
 
+    let workspace_lock = read_workspace_lock(&metadata.root, request.tag)?;
     let archives = package_twice(
         &cargo,
         &cargo_home,
@@ -495,18 +611,68 @@ fn resolve_tag(
         expected.insert(package.name.clone(), sha256_bytes(archive_bytes));
     }
 
+    materialize_packages(
+        &packages,
+        paths,
+        archives,
+        &expected,
+        &siblings,
+        &workspace_lock,
+        &tag_version,
+        &TagEvidence {
+            tag_oid: &tag_oid,
+            commit: &commit,
+            commit_time: &commit_time,
+        },
+    )
+}
+
+/// The immutable Git evidence every materialization of one resolution records.
+struct TagEvidence<'a> {
+    /// Exact tag object ID.
+    tag_oid: &'a str,
+    /// Peeled commit object ID.
+    commit: &'a str,
+    /// Committer time of the published tag commit.
+    commit_time: &'a UtcTimestamp,
+}
+
+/// Verifies the packaged lock of every package and builds its materialization.
+///
+/// # Errors
+///
+/// Returns an error for a packaged lock that departs from the tag's evidence,
+/// or for a source row that cannot be generated.
+#[allow(clippy::too_many_arguments)]
+fn materialize_packages(
+    packages: &[&MetadataPackage],
+    paths: Vec<PathBuf>,
+    archives: Vec<Vec<u8>>,
+    expected: &BTreeMap<String, String>,
+    siblings: &Siblings,
+    workspace_lock: &LockFile,
+    tag_version: &Version,
+    evidence: &TagEvidence<'_>,
+) -> Result<Vec<GitTagMaterialization>> {
     let mut materializations = Vec::with_capacity(packages.len());
     for ((package, path), archive_bytes) in packages.iter().zip(paths).zip(archives) {
-        verify_sibling_archives(package, &archive_bytes, &expected, &tag_version)?;
+        verify_packaged_lock(
+            package,
+            &archive_bytes,
+            expected,
+            siblings,
+            workspace_lock,
+            tag_version,
+        )?;
         let archive_sha256 = sha256_bytes(&archive_bytes);
         let source_row_bytes = generated_index_record(package, &archive_sha256)?;
         let source_row_sha256 = sha256_bytes(&source_row_bytes);
         materializations.push(GitTagMaterialization {
             name: package.name.clone(),
             version: package.version.clone(),
-            tag_oid: tag_oid.clone(),
-            commit: commit.clone(),
-            commit_time: commit_time.clone(),
+            tag_oid: evidence.tag_oid.to_owned(),
+            commit: evidence.commit.to_owned(),
+            commit_time: evidence.commit_time.clone(),
             path,
             archive_bytes,
             source_row_bytes,
@@ -754,6 +920,94 @@ fn ensure_clean_checkout(environment: &ChildEnvironment, repository: &Path) -> R
     Ok(())
 }
 
+/// Refuses a tagged workspace whose manifests declare `[patch]` or `[replace]`.
+///
+/// Cargo drops both sections when it packages, so a patch that points at a path
+/// would let the packaged archive name a version other than the one the tag's
+/// lock records. The crates.io derivation refuses the same sections for the
+/// same reason. Every manifest Cargo resolves is read: the root manifest of the
+/// checkout, the manifest of the workspace root, which may sit below the
+/// checkout, and each member's.
+///
+/// # Errors
+///
+/// Returns an error for a manifest that cannot be read or parsed, or that holds
+/// either section.
+fn ensure_no_patch_or_replace(metadata: &WorkspaceMetadata, root_manifest: &Path) -> Result<()> {
+    let mut manifests = BTreeSet::from([
+        root_manifest.to_path_buf(),
+        metadata.root.join("Cargo.toml"),
+    ]);
+    manifests.extend(
+        metadata
+            .packages
+            .iter()
+            .map(|package| package.manifest_path.clone()),
+    );
+    for path in manifests {
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("read workspace manifest {}", path.display()))?;
+        let document: toml::Value = toml::from_str(&text)
+            .with_context(|| format!("parse workspace manifest {}", path.display()))?;
+        ensure!(
+            document.get("patch").is_none() && document.get("replace").is_none(),
+            "workspace manifest {} declares [patch] or [replace]; the packaging drops both, so the archive would not carry the versions the tag's lock records, and a tagged workspace must declare neither",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Requires the workspace root Cargo reports to lie inside the checkout.
+///
+/// Cargo resolves the workspace from the root manifest and can only walk up, so
+/// a root outside the checkout is unreachable from a tag; requiring it keeps a
+/// lock or manifest outside the tag from standing in for the tag's own, and
+/// fails closed when either path cannot be resolved.
+///
+/// # Errors
+///
+/// Returns an error when the checkout or the workspace root cannot be resolved,
+/// or when the root is not below the checkout.
+fn ensure_workspace_root_inside(checkout: &Path, workspace_root: &Path) -> Result<()> {
+    let checkout = fs::canonicalize(checkout)
+        .with_context(|| format!("canonicalize checkout {}", checkout.display()))?;
+    let workspace_root = fs::canonicalize(workspace_root)
+        .with_context(|| format!("canonicalize workspace root {}", workspace_root.display()))?;
+    ensure!(
+        workspace_root.starts_with(&checkout),
+        "Cargo resolved the workspace root {} outside the tag's checkout {}",
+        workspace_root.display(),
+        checkout.display()
+    );
+    Ok(())
+}
+
+/// Reads the lock file of the workspace Cargo resolved the tag with, at the
+/// root Cargo reports for it.
+///
+/// `cargo package --locked` accepts a workspace without a lock file and writes
+/// one while it packages, so a tag that does not commit the lock of its
+/// workspace root would publish the dependency versions the served index
+/// resolves at packaging time instead of the versions the tag records. The
+/// packaged lock of every archive is then compared with this file.
+///
+/// # Errors
+///
+/// Returns an error for a workspace root without a regular `Cargo.lock`, or for
+/// one that cannot be read or parsed.
+fn read_workspace_lock(workspace_root: &Path, tag: &str) -> Result<LockFile> {
+    let path = workspace_root.join(PACKAGED_LOCK);
+    ensure!(
+        path.is_file(),
+        "Git tag {tag:?} does not commit a {PACKAGED_LOCK} at its workspace root {}; a published tag must commit its {PACKAGED_LOCK}, so that it is packaged at the dependency versions it records",
+        workspace_root.display()
+    );
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("read workspace lock {}", path.display()))?;
+    toml::from_str(&text).with_context(|| format!("parse workspace lock {}", path.display()))
+}
+
 fn package_path(repository: &Path, manifest_path: &Path) -> Result<PathBuf> {
     let repository = fs::canonicalize(repository)
         .with_context(|| format!("canonicalize repository {}", repository.display()))?;
@@ -823,17 +1077,18 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
     let disabled = cargo_home.join("disabled-crates-io");
     fs::create_dir(&disabled)
         .with_context(|| format!("create disabled Cargo source {}", disabled.display()))?;
-    let registries = BTreeMap::from([(
+    let mut registries = BTreeMap::from([(
         CARGO_REGISTRY,
         CargoRegistry {
             index: registry_index,
         },
     )]);
-    let source = BTreeMap::from([
+    let mut source = BTreeMap::from([
         (
             "crates-io",
             CargoSource {
                 replace_with: Some("disabled"),
+                registry: None,
                 directory: None,
             },
         ),
@@ -841,10 +1096,27 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
             "disabled",
             CargoSource {
                 replace_with: None,
+                registry: None,
                 directory: Some(disabled.as_path()),
             },
         ),
     ]);
+    for (name, retired_index) in retired_registries() {
+        registries.insert(
+            name,
+            CargoRegistry {
+                index: retired_index,
+            },
+        );
+        source.insert(
+            retired_index,
+            CargoSource {
+                replace_with: Some(CARGO_REGISTRY),
+                registry: Some(retired_index),
+                directory: None,
+            },
+        );
+    }
     let config = IsolatedCargoConfig {
         registries,
         registry: CargoDefaultRegistry {
@@ -869,7 +1141,7 @@ fn cargo_metadata(
     cargo_home: &Path,
     environment: &ChildEnvironment,
     manifest_path: &Path,
-) -> Result<Vec<MetadataPackage>> {
+) -> Result<WorkspaceMetadata> {
     let mut command = isolated_cargo(cargo, environment);
     command.current_dir(cargo_home).args([
         OsStr::new("metadata"),
@@ -887,7 +1159,10 @@ fn cargo_metadata(
         !metadata.packages.is_empty(),
         "Cargo metadata holds no package"
     );
-    Ok(metadata.packages)
+    Ok(WorkspaceMetadata {
+        root: metadata.workspace_root,
+        packages: metadata.packages,
+    })
 }
 
 /// Selects and validates the requested packages of one tagged workspace.
@@ -917,7 +1192,14 @@ fn validated_packages(
         paths.push(package_path(checkout, &package.manifest_path)?);
     }
     for package in packages {
-        validate_dependencies(package, metadata, siblings, tag_version, registry_index)?;
+        validate_dependencies(
+            package,
+            metadata,
+            siblings,
+            tag_version,
+            registry_index,
+            request.allow_retired_registries,
+        )?;
     }
     Ok(paths)
 }
@@ -1006,24 +1288,69 @@ fn describe_dependency(dependency: &MetadataDependency) -> String {
     }
 }
 
+/// Returns the registry names that the catalog declared for the curated index
+/// while it served it at another URL, each with the URL it named then.
+///
+/// A released tag may name one of them, and its committed `Cargo.lock` records
+/// that URL as the source of every dependency. Only a reproduction of an
+/// identity the catalog locked may package such a tag: the isolated Cargo home
+/// declares each name at its old URL and replaces that source with the curated
+/// index, so Cargo resolves the versions the tag locked from the index that
+/// serves them now, while the packaged lock keeps the retired source and the
+/// archive reproduces the bytes the catalog locked. A new publication must name
+/// [`CARGO_REGISTRY`].
+///
+/// [`crate::policy::SCHEMA3_REGISTRIES`] records the index URL of every
+/// schema-3 registry, one of which is the current registry; `core` is the
+/// schema-2 registry that [`crate::category::category_for_v2_home`] maps, and
+/// no table records its URL.
+fn retired_registries() -> Vec<(&'static str, &'static str)> {
+    let mut retired = vec![("core", "sparse+https://rust.pkg.re/core/")];
+    retired.extend(
+        crate::policy::SCHEMA3_REGISTRIES
+            .iter()
+            .filter(|(name, _)| *name != CARGO_REGISTRY)
+            .copied(),
+    );
+    retired
+}
+
+/// Returns the index of the curated registry, followed by the URLs its retired
+/// names declared, which a reproduction may package.
+fn curated_registry_indexes(registry_index: &str) -> Vec<&str> {
+    std::iter::once(registry_index)
+        .chain(retired_registries().into_iter().map(|(_, index)| index))
+        .collect()
+}
+
 /// Validates every dependency of one first-party package of a tag.
 ///
 /// A dependency must name the curated registry, whether Cargo takes it from
-/// that registry or from a path inside the tagged workspace.
+/// that registry or from a path inside the tagged workspace. It may name one of
+/// the registry's retired names only when the request reproduces an identity the
+/// catalog locked, whose index the isolated Cargo home replaces with the curated
+/// one.
 ///
 /// # Errors
 ///
-/// Returns an error for an unpinned source, a path dependency outside the
-/// packages the catalog publishes from this tag, a requirement that is not the
-/// tag's own version, or a package of another version.
+/// Returns an error for an unpinned source, a retired registry that a new
+/// publication may not name, a path dependency outside the packages the catalog
+/// publishes from this tag, a requirement that is not the tag's own version, or
+/// a package of another version.
 fn validate_dependencies(
     package: &MetadataPackage,
     metadata: &[MetadataPackage],
     siblings: &Siblings,
     tag_version: &Version,
     registry_index: &str,
+    allow_retired_registries: bool,
 ) -> Result<()> {
-    let registry_indexes = [registry_index];
+    let curated = curated_registry_indexes(registry_index);
+    let registry_indexes = if allow_retired_registries {
+        curated.as_slice()
+    } else {
+        std::slice::from_ref(&registry_index)
+    };
     for dependency in &package.dependencies {
         let Some(source) = &dependency.source else {
             validate_path_dependency(
@@ -1031,14 +1358,14 @@ fn validate_dependencies(
                 metadata,
                 siblings,
                 tag_version,
-                &registry_indexes,
+                registry_indexes,
             )?;
             continue;
         };
         ensure!(
-            is_curated_registry_source(source, &registry_indexes),
-            "first-party package dependency {} uses unsupported source {source:?}; use registry = {CARGO_REGISTRY:?} explicitly",
-            describe_dependency(dependency)
+            is_curated_registry_source(source, registry_indexes),
+            "{}",
+            unsupported_source(dependency, source)
         );
         ensure!(
             dependency
@@ -1050,6 +1377,53 @@ fn validate_dependencies(
         );
     }
     Ok(())
+}
+
+/// Returns the error for a dependency that names a registry the catalog
+/// retired.
+///
+/// Only a reproduction of a locked identity may keep such a name, and the
+/// message says so for a registry dependency and a path dependency alike.
+fn retired_registry_error(described: &str, name: &str) -> String {
+    format!(
+        "first-party package dependency {described} names the retired registry {name:?}, which only a reproduction of a locked identity may use; a new publication must name registry = {CARGO_REGISTRY:?}"
+    )
+}
+
+/// Returns the error for a dependency whose source the request does not admit.
+///
+/// A retired name has its own message, since its removal from the catalog is
+/// the reason a new publication may not name it.
+fn unsupported_source(dependency: &MetadataDependency, source: &str) -> String {
+    let described = describe_dependency(dependency);
+    let index = source.strip_prefix("registry+").unwrap_or(source);
+    if let Some((name, _)) = retired_registries()
+        .into_iter()
+        .find(|(_, retired_index)| *retired_index == index)
+    {
+        return retired_registry_error(&described, name);
+    }
+    format!(
+        "first-party package dependency {described} uses unsupported source {source:?}; use registry = {CARGO_REGISTRY:?} explicitly"
+    )
+}
+
+/// Returns the error for a path dependency that does not name an admitted
+/// registry.
+///
+/// A retired name has its own message, as for a registry dependency.
+fn unsupported_path_registry(dependency: &MetadataDependency) -> String {
+    let described = describe_dependency(dependency);
+    let declared = dependency.registry.as_deref();
+    if let Some((name, _)) = retired_registries()
+        .into_iter()
+        .find(|(_, retired_index)| Some(*retired_index) == declared)
+    {
+        return retired_registry_error(&described, name);
+    }
+    format!(
+        "first-party package dependency {described} is a path dependency that does not declare registry = {CARGO_REGISTRY:?}; a package of the same tag must be required from the curated registry"
+    )
 }
 
 /// Validates one dependency that Cargo takes from a path inside the tagged
@@ -1080,7 +1454,8 @@ fn validate_path_dependency(
             .registry
             .as_deref()
             .is_some_and(|index| registry_indexes.contains(&index)),
-        "first-party package dependency {described} is a path dependency that does not declare registry = {CARGO_REGISTRY:?}; a package of the same tag must be required from the curated registry"
+        "{}",
+        unsupported_path_registry(dependency)
     );
     let exact = format!("={tag_version}");
     let expected = VersionReq::parse(&exact).context("build the exact requirement of the tag")?;
@@ -1273,37 +1648,37 @@ fn package_group(
     })
 }
 
-/// Verifies the packaged lock of one package against the archives its sibling
-/// dependencies must name.
+/// Verifies the packaged lock of one package against the tag's own evidence.
 ///
-/// A path dependency is packaged as a registry dependency, so Cargo records the
-/// archive of the package it points at in the packaged lock, under the tag's
-/// version of that package. The archive this tag publishes for it is the only
-/// one that entry may name, so a lock that names another one is refused.
+/// The lock must name the archives the tag publishes for its sibling
+/// dependencies, and every registry package it records must be the one the
+/// tag's workspace lock records, at the same source and checksum.
 ///
 /// # Errors
 ///
-/// Returns an error for an unreadable or malformed packaged lock, a lock without
-/// exactly one entry for a sibling at the tag's version, or an entry whose
-/// checksum is not the expected archive.
-fn verify_sibling_archives(
+/// Returns an error for a packaged lock that cannot be read or parsed, a
+/// registry package the tag's lock does not record, one of another source or
+/// checksum, a sibling entry of another archive, or a missing sibling entry.
+fn verify_packaged_lock(
     package: &MetadataPackage,
     archive_bytes: &[u8],
     archives: &BTreeMap<String, String>,
+    siblings: &Siblings,
+    workspace_lock: &LockFile,
     tag_version: &Version,
 ) -> Result<()> {
-    let mut siblings = Vec::new();
-    for dependency in &package.dependencies {
-        if dependency.source.is_some() {
-            continue;
-        }
-        if let Some(archive_sha256) = archives.get(&dependency.name) {
-            siblings.push((dependency.name.as_str(), archive_sha256.as_str()));
-        }
-    }
-    if siblings.is_empty() {
-        return Ok(());
-    }
+    let lock = packaged_lock(package, archive_bytes)?;
+    verify_sibling_archives(&lock, package, archives, tag_version)?;
+    verify_locked_versions(&lock, package, siblings, workspace_lock)
+}
+
+/// Returns the lock file Cargo wrote into one packaged archive.
+///
+/// # Errors
+///
+/// Returns an error for an archive that cannot be read, holds no lock file, or
+/// holds one that cannot be parsed.
+fn packaged_lock(package: &MetadataPackage, archive_bytes: &[u8]) -> Result<LockFile> {
     let archive = crate::update::read_crate_archive(
         &package.name,
         &package.version,
@@ -1323,12 +1698,41 @@ fn verify_sibling_archives(
         )
     })?;
     let lock = std::str::from_utf8(lock).context("parse the packaged lock as UTF-8")?;
-    let lock: PackagedLock = toml::from_str(lock).with_context(|| {
+    toml::from_str(lock).with_context(|| {
         format!(
             "parse the packaged lock of {} {}",
             package.name, package.version
         )
-    })?;
+    })
+}
+
+/// Verifies the packaged lock of one package against the archives its sibling
+/// dependencies must name.
+///
+/// A path dependency is packaged as a registry dependency, so Cargo records the
+/// archive of the package it points at in the packaged lock, under the tag's
+/// version of that package. The archive this tag publishes for it is the only
+/// one that entry may name, so a lock that names another one is refused.
+///
+/// # Errors
+///
+/// Returns an error for a lock without exactly one entry for a sibling at the
+/// tag's version, or an entry whose checksum is not the expected archive.
+fn verify_sibling_archives(
+    lock: &LockFile,
+    package: &MetadataPackage,
+    archives: &BTreeMap<String, String>,
+    tag_version: &Version,
+) -> Result<()> {
+    let mut siblings = Vec::new();
+    for dependency in &package.dependencies {
+        if dependency.source.is_some() {
+            continue;
+        }
+        if let Some(archive_sha256) = archives.get(&dependency.name) {
+            siblings.push((dependency.name.as_str(), archive_sha256.as_str()));
+        }
+    }
     for (name, archive_sha256) in siblings {
         // The lock may hold another version of the same name, so the entry this
         // tag publishes is the one of the tag's version.
@@ -1359,6 +1763,93 @@ fn verify_sibling_archives(
     Ok(())
 }
 
+/// Verifies that every registry package of one packaged lock is the one the
+/// tag's workspace lock records.
+///
+/// `cargo package --locked` binds the versions of the tag's own lock, but the
+/// archive is packaged from a resolution of its own: a workspace root below the
+/// checkout root, or a `[patch]` that Cargo drops, can make it take a version
+/// the tag never recorded. Comparing each registry entry with the workspace
+/// lock closes that, since a registry dependency the tag's lock records at
+/// another version, source, or checksum is refused.
+///
+/// A path dependency of the tag becomes a registry dependency in the packaged
+/// lock, and the tag's lock records no archive for it: such an entry is accepted
+/// only for a sibling of the tag, whose archive this run binds.
+///
+/// # Errors
+///
+/// Returns an error for a registry package the tag's lock does not record at
+/// that version, one of another source or checksum, or a path package of the
+/// tag that is not a sibling.
+fn verify_locked_versions(
+    lock: &LockFile,
+    package: &MetadataPackage,
+    siblings: &Siblings,
+    workspace_lock: &LockFile,
+) -> Result<()> {
+    for entry in &lock.packages {
+        if entry.source.is_none() {
+            continue;
+        }
+        let recorded = workspace_lock
+            .packages
+            .iter()
+            .filter(|locked| locked.name == entry.name);
+        let Some(locked) = recorded
+            .clone()
+            .find(|locked| locked.version == entry.version)
+        else {
+            let versions = recorded
+                .map(|locked| locked.version.to_string())
+                .collect::<Vec<_>>();
+            bail!(
+                "the packaged lock of {} {} records {} {} from {}, which the tag's workspace lock does not record; a published tag is packaged at the versions its lock records{}",
+                package.name,
+                package.version,
+                entry.name,
+                entry.version,
+                entry.source.as_deref().unwrap_or("nothing"),
+                if versions.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({}, which it records instead)", versions.join(", "))
+                }
+            );
+        };
+        let Some(checksum) = &locked.checksum else {
+            ensure!(
+                siblings.contains_key(&entry.name),
+                "the packaged lock of {} {} records {} {} from {}, but the tag's workspace lock records it as a path package that is not a sibling the catalog publishes from this tag",
+                package.name,
+                package.version,
+                entry.name,
+                entry.version,
+                entry.source.as_deref().unwrap_or("nothing")
+            );
+            continue;
+        };
+        let source = locked.source.as_deref().with_context(|| {
+            format!(
+                "the workspace lock records a checksum for {} {} without a source",
+                locked.name, locked.version
+            )
+        })?;
+        ensure!(
+            entry.checksum.as_deref() == Some(checksum.as_str())
+                && entry.source.as_deref() == Some(source),
+            "the packaged lock of {} {} records {} {} from {} at checksum {}, but the tag's workspace lock records it from {source} at checksum {checksum}",
+            package.name,
+            package.version,
+            entry.name,
+            entry.version,
+            entry.source.as_deref().unwrap_or("nothing"),
+            entry.checksum.as_deref().unwrap_or("none")
+        );
+    }
+    Ok(())
+}
+
 /// Returns whether two directories are the same directory, resolving symbolic
 /// links in both.
 ///
@@ -1373,21 +1864,26 @@ fn same_directory(left: &Path, right: &Path) -> Result<bool> {
     Ok(left == right)
 }
 
-/// The lock file Cargo writes into every packaged archive.
+/// The lock file Cargo writes into every packaged archive, and the one a tagged
+/// workspace commits at its root.
 const PACKAGED_LOCK: &str = "Cargo.lock";
 
-/// The lock file Cargo writes into one packaged archive.
+/// One Cargo lock file: the workspace lock a tag commits, or the lock Cargo
+/// writes into one packaged archive.
 #[derive(Debug, Deserialize)]
-struct PackagedLock {
+struct LockFile {
     #[serde(default, rename = "package")]
-    packages: Vec<PackagedLockPackage>,
+    packages: Vec<LockedPackage>,
 }
 
-/// One package entry of a packaged lock file.
+/// One package entry of a lock file.
 #[derive(Debug, Deserialize)]
-struct PackagedLockPackage {
+struct LockedPackage {
     name: String,
     version: Version,
+    /// Registry or Git source of the package; a path package has none.
+    source: Option<String>,
+    /// SHA-256 of the archive the source serves, which a path package has not.
     checksum: Option<String>,
 }
 
@@ -1728,6 +2224,524 @@ mod tests {
         );
     }
 
+    #[test]
+    fn git_tag_packaging_refuses_a_tag_without_a_committed_lock_file() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-lock").unwrap();
+        let source = create_test_release_with_lock(&temporary, false);
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let error = resolve_git_tag_from_file_in(
+            &root,
+            "https://example.invalid/pkgre-demo",
+            TEST_TAG,
+            "pkgre-demo",
+            &cargo_version,
+            source.to_str().unwrap(),
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("a published tag must commit its Cargo.lock"),
+            "the error says what the tag must hold: {message}"
+        );
+    }
+
+    #[test]
+    fn git_tag_packaging_refuses_a_lock_that_is_not_the_workspace_file() {
+        for layout in ["directory", "member"] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-lock-shape").unwrap();
+            let source = create_test_release_with_lock(&temporary, true);
+            match layout {
+                "directory" => {
+                    fs::remove_file(source.join("Cargo.lock")).unwrap();
+                    fs::create_dir(source.join("Cargo.lock")).unwrap();
+                    fs::write(source.join("Cargo.lock/entry"), "x").unwrap();
+                }
+                "member" => {
+                    fs::rename(
+                        source.join("Cargo.lock"),
+                        source.join("crates/demo/Cargo.lock"),
+                    )
+                    .unwrap();
+                }
+                other => panic!("unknown lock layout {other:?}"),
+            }
+            test_git(&source, &["add", "--all"]);
+            test_git(&source, &["commit", "--quiet", "-m", "move the lock"]);
+            retag(&source);
+            let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+            let error = resolve_git_tag_from_file_in(
+                &root,
+                "https://example.invalid/pkgre-demo",
+                TEST_TAG,
+                "pkgre-demo",
+                &cargo_version,
+                source.to_str().unwrap(),
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("a published tag must commit its Cargo.lock"),
+                "a {layout} lock is refused: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_tag_packaging_reads_the_lock_of_the_workspace_root_cargo_uses() {
+        for keep_lock_at_the_workspace_root in [true, false] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-workspace-below").unwrap();
+            let index = create_test_index(&temporary);
+            publish_test_index_versions(&index, "pkgre-dep", &["1.0.0"]);
+            let source = create_workspace_below_release(&temporary, &index);
+            // A newer version reaches the index after the tag's lock pinned
+            // 1.0.0, so a packaging that resolves for itself takes 1.0.1.
+            publish_test_index_versions(&index, "pkgre-dep", &["1.0.0", "1.0.1"]);
+            // Moving the lock to the checkout root leaves the workspace root
+            // without one, which a check of the checkout root would accept
+            // while Cargo resolved 1.0.1 at packaging time.
+            if !keep_lock_at_the_workspace_root {
+                fs::rename(source.join("ws/Cargo.lock"), source.join("Cargo.lock")).unwrap();
+                test_git(&source, &["add", "--all"]);
+                test_git(&source, &["commit", "--quiet", "-m", "move the lock"]);
+                retag(&source);
+            }
+            let published = ["pkgre-demo"];
+            let result = resolve_test_group(&root, &source, &index, &published, &published);
+            if !keep_lock_at_the_workspace_root {
+                let error = result.unwrap_err();
+                let message = format!("{error:#}");
+                assert!(
+                    message.contains("a published tag must commit its Cargo.lock"),
+                    "the lock of the checkout root does not stand in for the workspace lock: {message}"
+                );
+                continue;
+            }
+            let materialization = result.unwrap().remove(0);
+            let packaged = crate::update::read_crate_archive(
+                "pkgre-demo",
+                &materialization.version,
+                &materialization.archive_bytes,
+                &["Cargo.lock"],
+            )
+            .unwrap();
+            let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).unwrap();
+            assert!(
+                lock.contains("name = \"pkgre-dep\"") && lock.contains("version = \"1.0.0\""),
+                "the packaged lock records the version the workspace lock pins: {lock}"
+            );
+            assert!(
+                !lock.contains("1.0.1"),
+                "the packaged lock does not take the newer version the index serves: {lock}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_tag_packaging_refuses_a_patch_or_replace_section() {
+        for section in ["patch", "replace"] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-patch").unwrap();
+            let index = create_test_index(&temporary);
+            publish_test_index_versions(&index, "pkgre-dep", &["1.0.0", "1.0.1"]);
+            let patched = match section {
+                "patch" => "\n[patch.pkgre]\npkgre-dep = { path = \"vendor/dep\" }\n".to_owned(),
+                "replace" => {
+                    "\n[replace]\n\"pkgre-dep:1.0.0\" = { path = \"vendor/dep\" }\n".to_owned()
+                }
+                other => panic!("unknown section {other:?}"),
+            };
+            let source = create_dependency_release(
+                &temporary,
+                &index,
+                &patched,
+                &[
+                    (
+                        "vendor/dep/Cargo.toml",
+                        "[package]\nname = \"pkgre-dep\"\nversion = \"1.0.0\"\nedition = \"2024\"\n",
+                    ),
+                    ("vendor/dep/src/lib.rs", "pub fn vendored() {}\n"),
+                ],
+            );
+            let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+            let error = resolve_git_tag_from_file_in(
+                &root,
+                "https://example.invalid/pkgre-demo",
+                TEST_TAG,
+                "pkgre-demo",
+                &cargo_version,
+                source.to_str().unwrap(),
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("declares [patch] or [replace]"),
+                "the packaging drops a {section} section, so it refuses it: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn git_tag_packaging_refuses_a_patch_in_the_workspace_root_below_the_checkout() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-patch-below").unwrap();
+        let index = create_test_index(&temporary);
+        publish_test_index_versions(&index, "pkgre-dep", &["1.0.0", "1.0.1"]);
+        let source = create_workspace_below_patch_release(&temporary, &index);
+        let published = ["pkgre-demo"];
+        let error = resolve_test_group(&root, &source, &index, &published, &published).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("declares [patch] or [replace]") && message.contains("ws/Cargo.toml"),
+            "the workspace root manifest below the checkout is read too: {message}"
+        );
+    }
+
+    #[test]
+    fn a_workspace_root_outside_the_checkout_is_refused() {
+        let temporary = TemporaryDirectory::new("pkgre-workspace-root").unwrap();
+        let checkout = temporary.path().join("repository");
+        let inside = checkout.join("ws");
+        let outside = temporary.path().join("outside");
+        fs::create_dir_all(&inside).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        ensure_workspace_root_inside(&checkout, &inside).unwrap();
+        let error = ensure_workspace_root_inside(&checkout, &outside).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("outside the tag's checkout"),
+            "{error:#}"
+        );
+        let error = ensure_workspace_root_inside(&checkout, &checkout.join("missing")).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("canonicalize workspace root"),
+            "a workspace root that does not exist fails closed: {error:#}"
+        );
+    }
+
+    #[test]
+    fn a_new_publication_refuses_a_tag_that_names_a_retired_registry() {
+        for registry_name in ["core", "universe"] {
+            let root = uncovered_temporary_root();
+            let temporary =
+                TemporaryDirectory::new_in(&root, "pkgre-git-retired-admission").unwrap();
+            let index = create_test_index(&temporary);
+            publish_test_index_versions(&index, "pkgre-dep", &["1.0.0"]);
+            let source = create_retired_registry_release(&temporary, &index, registry_name);
+            let published = ["pkgre-demo"];
+            let error =
+                resolve_test_group(&root, &source, &index, &published, &published).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&format!("names the retired registry {registry_name:?}"))
+                    && message.contains("a new publication must name registry = \"pkgre\""),
+                "an admission refuses the retired name and says what to declare: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_publication_refuses_a_sibling_path_dependency_that_names_a_retired_registry() {
+        for registry_name in ["core", "universe"] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-retired-sibling").unwrap();
+            let index = create_test_index(&temporary);
+            let source = create_retired_sibling_release(&temporary, &index, registry_name);
+            let published = ["pkgre-demo", "pkgre-base"];
+            let error =
+                resolve_test_group(&root, &source, &index, &published, &published).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&format!("names the retired registry {registry_name:?}"))
+                    && message.contains("a new publication must name registry = \"pkgre\""),
+                "an admission refuses a retired name on a path dependency too: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reproduction_packages_a_sibling_path_dependency_that_names_a_retired_registry() {
+        let root = uncovered_temporary_root();
+        let temporary =
+            TemporaryDirectory::new_in(&root, "pkgre-git-retired-sibling-reproduce").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_retired_sibling_release(&temporary, &index, "core");
+        let retired = retired_registries()
+            .into_iter()
+            .find(|(name, _)| *name == "core")
+            .unwrap()
+            .1;
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let published = [
+            PublishedPackage {
+                name: "pkgre-demo",
+                locked_sha256: None,
+            },
+            PublishedPackage {
+                name: "pkgre-base",
+                locked_sha256: None,
+            },
+        ];
+        let mut materializations = resolve_git_tag_group_from_file(&FileTagRequest {
+            root: &root,
+            repository: "https://example.invalid/pkgre-demo",
+            tag: TEST_TAG,
+            packages: &["pkgre-demo", "pkgre-base"],
+            published: Some(&published),
+            cargo_version: &cargo_version,
+            fetch_repository: source.to_str().unwrap(),
+            registry_index: &index,
+            allow_retired_registries: true,
+        })
+        .unwrap();
+        let base = materializations.remove(1);
+        let demo = materializations.remove(0);
+        let row: Value = serde_json::from_slice(&demo.source_row_bytes).unwrap();
+        assert_eq!(
+            row["deps"][0]["registry"], retired,
+            "the path dependency keeps the retired name in the source row"
+        );
+        let packaged = crate::update::read_crate_archive(
+            "pkgre-demo",
+            &demo.version,
+            &demo.archive_bytes,
+            &["Cargo.lock"],
+        )
+        .unwrap();
+        let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).unwrap();
+        assert!(
+            lock.contains(&format!("source = \"{retired}\""))
+                && lock.contains(&format!("checksum = \"{}\"", base.archive_sha256)),
+            "the packaged lock records the sibling from the retired source at its archive: {lock}"
+        );
+
+        let approval = test_approval(&demo, &cargo_version);
+        // The reproduction packages the dependent alone, so Cargo takes the
+        // sibling from the index, which must serve the archive this tag
+        // publishes for it.
+        publish_test_index_entry(&index, "pkgre-base", &base.version, &base.archive_sha256);
+        let reproduced =
+            reproduce_approved_git_from_file_in(&root, &approval, source.to_str().unwrap(), &index)
+                .unwrap();
+        assert_eq!(reproduced.archive_sha256, demo.archive_sha256);
+    }
+
+    #[test]
+    fn a_reproduction_packages_a_tag_that_names_a_retired_registry() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-retired-reproduce").unwrap();
+        let index = create_test_index(&temporary);
+        publish_test_index_versions(&index, "pkgre-dep", &["1.0.0"]);
+        let source = create_retired_registry_release(&temporary, &index, "core");
+        let retired = retired_registries()
+            .into_iter()
+            .find(|(name, _)| *name == "core")
+            .unwrap()
+            .1;
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let mut materializations = resolve_git_tag_group_from_file(&FileTagRequest {
+            root: &root,
+            repository: "https://example.invalid/pkgre-demo",
+            tag: TEST_TAG,
+            packages: &["pkgre-demo"],
+            published: None,
+            cargo_version: &cargo_version,
+            fetch_repository: source.to_str().unwrap(),
+            registry_index: &index,
+            allow_retired_registries: true,
+        })
+        .unwrap();
+        let materialization = materializations.remove(0);
+        let row: Value = serde_json::from_slice(&materialization.source_row_bytes).unwrap();
+        assert_eq!(
+            row["deps"][0]["registry"], retired,
+            "the tag names the retired registry in the source row the catalog would lock"
+        );
+
+        let approval = test_approval(&materialization, &cargo_version);
+        let reproduced =
+            reproduce_approved_git_from_file_in(&root, &approval, source.to_str().unwrap(), &index)
+                .unwrap();
+        assert_eq!(reproduced.archive_sha256, materialization.archive_sha256);
+        assert_eq!(
+            reproduced.source_row_sha256,
+            materialization.source_row_sha256
+        );
+
+        let mut tampered = approval.clone();
+        tampered.archive_sha256 = "00".repeat(32);
+        let error =
+            reproduce_approved_git_from_file_in(&root, &tampered, source.to_str().unwrap(), &index)
+                .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Git archive hash changed"),
+            "the reproduction compares the archive with the locked one: {message}"
+        );
+    }
+
+    #[test]
+    fn a_packaged_lock_must_take_the_versions_the_tag_lock_records() {
+        let lock = |entries: &[(&str, &str, Option<&str>, Option<&str>)]| LockFile {
+            packages: entries
+                .iter()
+                .map(|(name, version, source, checksum)| LockedPackage {
+                    name: (*name).to_owned(),
+                    version: Version::parse(version).unwrap(),
+                    source: source.map(str::to_owned),
+                    checksum: checksum.map(str::to_owned),
+                })
+                .collect(),
+        };
+        let package = MetadataPackage {
+            name: "pkgre-demo".to_owned(),
+            version: Version::parse("1.2.3").unwrap(),
+            manifest_path: PathBuf::from("Cargo.toml"),
+            dependencies: Vec::new(),
+            features: BTreeMap::new(),
+            links: None,
+            rust_version: None,
+            publish: Some(vec![CARGO_REGISTRY.to_owned()]),
+        };
+        let index = "sparse+https://rust.pkg.re/";
+        let workspace = lock(&[("pkgre-dep", "1.0.0", Some(index), Some(&"01".repeat(32)))]);
+        let siblings = BTreeMap::new();
+        verify_locked_versions(
+            &lock(&[("pkgre-dep", "1.0.0", Some(index), Some(&"01".repeat(32)))]),
+            &package,
+            &siblings,
+            &workspace,
+        )
+        .unwrap();
+
+        let error = verify_locked_versions(
+            &lock(&[("pkgre-dep", "1.0.1", Some(index), Some(&"02".repeat(32)))]),
+            &package,
+            &siblings,
+            &workspace,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("which the tag's workspace lock does not record"),
+            "a version the tag's lock does not record is refused: {error:#}"
+        );
+
+        let error = verify_locked_versions(
+            &lock(&[("pkgre-dep", "1.0.0", Some(index), Some(&"02".repeat(32)))]),
+            &package,
+            &siblings,
+            &workspace,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("but the tag's workspace lock records it from"),
+            "another checksum is refused: {error:#}"
+        );
+
+        let patched = lock(&[("pkgre-dep", "1.0.0", None, None)]);
+        let error = verify_locked_versions(
+            &lock(&[("pkgre-dep", "1.0.0", Some(index), Some(&"01".repeat(32)))]),
+            &package,
+            &siblings,
+            &patched,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("is not a sibling the catalog publishes from this tag"),
+            "a packaged registry package the tag records as a path package is refused: {error:#}"
+        );
+    }
+
+    #[test]
+    fn isolated_cargo_home_replaces_every_retired_registry_name() {
+        let temporary = TemporaryDirectory::new("pkgre-cargo-home").unwrap();
+        let cargo_home = temporary.path().join("cargo-home");
+        prepare_cargo_home(&cargo_home, REGISTRY_INDEX).unwrap();
+        let config: toml::Value =
+            toml::from_str(&fs::read_to_string(cargo_home.join("config.toml")).unwrap()).unwrap();
+        assert_eq!(
+            config["registries"][CARGO_REGISTRY]["index"].as_str(),
+            Some(REGISTRY_INDEX)
+        );
+        for (name, index) in retired_registries() {
+            assert_eq!(config["registries"][name]["index"].as_str(), Some(index));
+            assert_eq!(config["source"][index]["registry"].as_str(), Some(index));
+            assert_eq!(
+                config["source"][index]["replace-with"].as_str(),
+                Some(CARGO_REGISTRY)
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_reproduction_may_name_a_retired_registry() {
+        let version = Version::parse("0.3.0").unwrap();
+        let dependency = |index: &str| MetadataDependency {
+            name: "anyhow".to_owned(),
+            source: Some(index.to_owned()),
+            req: "^1.0".to_owned(),
+            kind: None,
+            rename: None,
+            optional: false,
+            uses_default_features: true,
+            features: Vec::new(),
+            target: None,
+            registry: Some(index.to_owned()),
+            path: None,
+        };
+        let package = |dependency| MetadataPackage {
+            name: "pkgre-indexer".to_owned(),
+            version: version.clone(),
+            manifest_path: PathBuf::from("Cargo.toml"),
+            dependencies: vec![dependency],
+            features: BTreeMap::new(),
+            links: None,
+            rust_version: None,
+            publish: Some(vec![CARGO_REGISTRY.to_owned()]),
+        };
+        let siblings = BTreeMap::new();
+        for (name, index) in retired_registries() {
+            validate_dependencies(
+                &package(dependency(index)),
+                &[],
+                &siblings,
+                &version,
+                REGISTRY_INDEX,
+                true,
+            )
+            .unwrap();
+            let error = validate_dependencies(
+                &package(dependency(index)),
+                &[],
+                &siblings,
+                &version,
+                REGISTRY_INDEX,
+                false,
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&format!("names the retired registry {name:?}"))
+                    && message.contains("must name registry = \"pkgre\""),
+                "an admission says which name it refuses and what to name instead: {message}"
+            );
+        }
+        let error = validate_dependencies(
+            &package(dependency("sparse+https://example.test/other/")),
+            &[],
+            &siblings,
+            &version,
+            REGISTRY_INDEX,
+            true,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("uses unsupported source"),
+            "{error:#}"
+        );
+    }
+
     /// Returns the first of `TMPDIR`, `/tmp`, and `/var/tmp` that no Cargo
     /// configuration covers.
     ///
@@ -1748,6 +2762,12 @@ mod tests {
     }
 
     fn create_test_release(temporary: &TemporaryDirectory) -> PathBuf {
+        create_test_release_with_lock(temporary, true)
+    }
+
+    /// Creates the same tagged release, either committing its lock file or
+    /// leaving the tag without one.
+    fn create_test_release_with_lock(temporary: &TemporaryDirectory, commit_lock: bool) -> PathBuf {
         let source = temporary.path().join("source");
         fs::create_dir_all(source.join("crates/demo/src")).unwrap();
         fs::write(
@@ -1768,14 +2788,16 @@ mod tests {
         run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
         test_git(&source, &["add", "."]);
         test_git(&source, &["commit", "--quiet", "-m", "release"]);
-        run_test_command(
-            Command::new("cargo")
-                .current_dir(&source)
-                .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
-                .arg("generate-lockfile"),
-        );
-        test_git(&source, &["add", "Cargo.lock"]);
-        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        if commit_lock {
+            run_test_command(
+                Command::new("cargo")
+                    .current_dir(&source)
+                    .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
+                    .arg("generate-lockfile"),
+            );
+            test_git(&source, &["add", "Cargo.lock"]);
+            test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        }
         test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
         source
     }
@@ -1826,6 +2848,258 @@ mod tests {
         );
     }
 
+    /// Adds several versions of one package to a test registry index, each with
+    /// its own checksum.
+    fn publish_test_index_versions(index: &str, name: &str, versions: &[&str]) {
+        use std::fmt::Write as _;
+
+        let root = Path::new(index.trim_start_matches("file://"));
+        let entry = root.join(crate::index::index_path(name));
+        fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        let mut lines = String::new();
+        for (position, version) in versions.iter().enumerate() {
+            let checksum = format!("{:064x}", position + 1);
+            writeln!(
+                lines,
+                "{{\"name\":{name:?},\"vers\":\"{version}\",\"deps\":[],\"cksum\":\"{checksum}\",\"features\":{{}},\"yanked\":false}}"
+            )
+            .unwrap();
+        }
+        fs::write(&entry, lines).unwrap();
+        test_git(root, &["add", "."]);
+        test_git(
+            root,
+            &["commit", "--quiet", "-m", &format!("{name} versions")],
+        );
+    }
+
+    /// Points the test release's tag at its latest commit again.
+    fn retag(repository: &Path) {
+        test_git(repository, &["tag", "-d", TEST_TAG]);
+        test_git(
+            repository,
+            &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"],
+        );
+    }
+
+    /// Generates the lock file of one fixture workspace through a Cargo home
+    /// that declares the test index, and commits it.
+    fn commit_test_lock(temporary: &TemporaryDirectory, source: &Path, configuration: &str) {
+        let lock_home = temporary.path().join("lock-cargo-home");
+        fs::create_dir_all(&lock_home).unwrap();
+        fs::write(lock_home.join("config.toml"), configuration).unwrap();
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(source)
+                .env("CARGO_HOME", &lock_home)
+                .arg("generate-lockfile"),
+        );
+        test_git(source, &["add", "--all"]);
+        test_git(source, &["commit", "--quiet", "-m", "lock"]);
+    }
+
+    /// Creates a tagged release whose root manifest joins a workspace one
+    /// directory below it, and whose dependency the served index holds in two
+    /// versions, and returns the repository.
+    ///
+    /// Cargo takes the lock of that layout from `ws`, not from the checkout
+    /// root, and resolves the newest version the index serves when it finds
+    /// none there.
+    fn create_workspace_below_release(temporary: &TemporaryDirectory, index: &str) -> PathBuf {
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("src")).unwrap();
+        fs::create_dir_all(source.join("ws")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = [\"pkgre\"]\nworkspace = \"ws\"\n\n[dependencies]\npkgre-dep = { version = \"1\", registry = \"pkgre\" }\n",
+        )
+        .unwrap();
+        fs::write(source.join("src/lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+        fs::write(
+            source.join("ws/Cargo.toml"),
+            "[workspace]\nmembers = [\"..\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        commit_test_lock(
+            temporary,
+            &source,
+            &format!("[registries.pkgre]\nindex = {index:?}\n"),
+        );
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    /// Creates a tagged single-crate release that depends on `pkgre-dep` 1
+    /// through the curated registry, with `extra_root` appended to the root
+    /// manifest and `files` written beside it, and returns the repository.
+    fn create_dependency_release(
+        temporary: &TemporaryDirectory,
+        index: &str,
+        extra_root: &str,
+        files: &[(&str, &str)],
+    ) -> PathBuf {
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            format!("[workspace]\nmembers = [\"crates/demo\"]\nresolver = \"3\"\n{extra_root}"),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/Cargo.toml"),
+            member_manifest(
+                "pkgre-demo",
+                "publish = [\"pkgre\"]",
+                "\n[dependencies]\npkgre-dep = { version = \"1\", registry = \"pkgre\" }\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        for (path, contents) in files {
+            let file = source.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, contents).unwrap();
+        }
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        commit_test_lock(
+            temporary,
+            &source,
+            &format!("[registries.pkgre]\nindex = {index:?}\n"),
+        );
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    /// Creates a tagged release whose dependency names one retired registry of
+    /// the curated index, and whose lock Cargo generated through the same
+    /// replacement the packaging declares, and returns the repository.
+    fn create_retired_registry_release(
+        temporary: &TemporaryDirectory,
+        index: &str,
+        registry_name: &str,
+    ) -> PathBuf {
+        let retired = retired_registries()
+            .into_iter()
+            .find(|(name, _)| *name == registry_name)
+            .unwrap_or_else(|| panic!("no retired registry is named {registry_name:?}"))
+            .1;
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/demo\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/Cargo.toml"),
+            member_manifest(
+                "pkgre-demo",
+                "publish = [\"pkgre\"]",
+                &format!(
+                    "\n[dependencies]\npkgre-dep = {{ version = \"1\", registry = \"{registry_name}\" }}\n"
+                ),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        commit_test_lock(
+            temporary,
+            &source,
+            &format!(
+                "[registries.pkgre]\nindex = {index:?}\n\n[registries.{registry_name}]\nindex = {retired:?}\n\n[source.{registry_name}]\nregistry = {retired:?}\nreplace-with = \"pkgre\"\n"
+            ),
+        );
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    /// Creates the sibling fixture whose path dependency names one retired
+    /// registry of the curated index, with the lock Cargo generated through the
+    /// same replacement the packaging declares, and returns the repository.
+    fn create_retired_sibling_release(
+        temporary: &TemporaryDirectory,
+        index: &str,
+        registry_name: &str,
+    ) -> PathBuf {
+        let retired = retired_registries()
+            .into_iter()
+            .find(|(name, _)| *name == registry_name)
+            .unwrap_or_else(|| panic!("no retired registry is named {registry_name:?}"))
+            .1;
+        let dependency = format!(
+            "pkgre-base = {{ path = \"../base\", version = \"=1.2.3\", registry = \"{registry_name}\" }}"
+        );
+        create_sibling_release(
+            temporary,
+            index,
+            "publish = [\"pkgre\"]",
+            &dependency,
+            &format!(
+                "\n[registries.{registry_name}]\nindex = {retired:?}\n\n[source.{registry_name}]\nregistry = {retired:?}\nreplace-with = \"pkgre\"\n"
+            ),
+        )
+    }
+
+    /// Creates a tagged release whose root manifest joins a workspace one
+    /// directory below it, whose workspace root is a virtual manifest, and whose
+    /// workspace root manifest carries `[patch]` with a path.
+    fn create_workspace_below_patch_release(
+        temporary: &TemporaryDirectory,
+        index: &str,
+    ) -> PathBuf {
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("src")).unwrap();
+        fs::create_dir_all(source.join("ws")).unwrap();
+        fs::create_dir_all(source.join("vendor/dep/src")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = [\"pkgre\"]\nworkspace = \"ws\"\n\n[dependencies]\npkgre-dep = { version = \"1\", registry = \"pkgre\" }\n",
+        )
+        .unwrap();
+        fs::write(source.join("src/lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+        fs::write(
+            source.join("ws/Cargo.toml"),
+            "[workspace]\nmembers = [\"..\"]\nresolver = \"3\"\n\n[patch.pkgre]\npkgre-dep = { path = \"../vendor/dep\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("vendor/dep/Cargo.toml"),
+            "[package]\nname = \"pkgre-dep\"\nversion = \"1.0.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("vendor/dep/src/lib.rs"),
+            "pub fn vendored() {}\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        commit_test_lock(
+            temporary,
+            &source,
+            &format!("[registries.pkgre]\nindex = {index:?}\n"),
+        );
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
     /// Creates a tagged two-crate workspace where `pkgre-demo` depends on
     /// `pkgre-base` through `dependency`, and returns the repository.
     fn create_test_sibling_release(
@@ -1833,6 +3107,19 @@ mod tests {
         index: &str,
         base_publish: &str,
         dependency: &str,
+    ) -> PathBuf {
+        create_sibling_release(temporary, index, base_publish, dependency, "")
+    }
+
+    /// Creates the sibling fixture with extra Cargo configuration in the home
+    /// that generates its lock, such as the replacement a retired registry
+    /// needs.
+    fn create_sibling_release(
+        temporary: &TemporaryDirectory,
+        index: &str,
+        base_publish: &str,
+        dependency: &str,
+        extra_configuration: &str,
     ) -> PathBuf {
         let source = temporary.path().join("source");
         fs::create_dir_all(source.join("crates/demo/src")).unwrap();
@@ -1873,7 +3160,7 @@ mod tests {
         fs::create_dir_all(&lock_home).unwrap();
         fs::write(
             lock_home.join("config.toml"),
-            format!("[registries.pkgre]\nindex = {index:?}\n"),
+            format!("[registries.pkgre]\nindex = {index:?}\n{extra_configuration}"),
         )
         .unwrap();
         run_test_command(
@@ -1926,6 +3213,7 @@ mod tests {
             cargo_version: &cargo_version,
             fetch_repository: source.to_str().unwrap(),
             registry_index: index,
+            allow_retired_registries: false,
         })
     }
 
@@ -2629,6 +3917,82 @@ mod tests {
             assert_eq!(
                 alone.source_row_sha256, source_row_sha256,
                 "{name} generates the source row the catalog locked on its own"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs the network and the released tags indexer/v0.1.1, indexer/v0.2.0 and indexer/v0.3.0"]
+    fn live_retired_registry_tags_reproduce_the_locked_bytes() {
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let repository = "https://github.com/pkgre/pkgre";
+        // Tag object, commit, archive, and source row the production catalog
+        // locks for `pkgre-indexer`, whose tags name the retired `core`
+        // (0.1.1, 0.2.0) or `universe` (0.3.0) registry.
+        let locked = [
+            (
+                "indexer/v0.1.1",
+                "0.1.1",
+                "71cc5c5ad8f2b03c1b8bd984944f13593efb1ed3",
+                "27d4cf7c657ef72283f9c61ec0c8ea572ed548d3",
+                "3257df14bc1ae9d6f2eb99d5db90e5d2a9fbc13c870044c9db5ba89bcc0b96a2",
+                "b12f0350b65d153f4073d2090dadbbfd497e5746315872d1230d530fc8e46f92",
+            ),
+            (
+                "indexer/v0.2.0",
+                "0.2.0",
+                "a13d63c2ace403f8d9e079411407323522028036",
+                "0c09d95f5debf9f3475c4828e5fb836f9f1cc22b",
+                "9292cd7e7248ea3ee2a65184a492f107ae6af4a1186c41f57383973bc7686568",
+                "22a932799227a0e62387095572fa0b3a40508b4d0f238c5d62796891bf84250f",
+            ),
+            (
+                "indexer/v0.3.0",
+                "0.3.0",
+                "b47ccfda09ecf5a11d229037d58b5f320d783e58",
+                "b08d2b9f7f486b0e0ec9c138730b241478f775f3",
+                "467be746eb89eb14da496a5d95a2cf13d20652644cf4ef18355be0723d95a755",
+                "f0a80df4bf810cb3a8f1b300e7637499f4dae72e2fb5f3bdbec636a59b30b28f",
+            ),
+        ];
+        for (tag, version, tag_oid, commit, archive_sha256, source_row_sha256) in locked {
+            let approval = Approval {
+                registry: "main".to_owned(),
+                category: "main/pkgre".parse().unwrap(),
+                name: "pkgre-indexer".to_owned(),
+                version: Version::parse(version).unwrap(),
+                archive_sha256: archive_sha256.to_owned(),
+                index_record_sha256: source_row_sha256.to_owned(),
+                index_row_sha256: "01".repeat(32),
+                admission_sha256: None,
+                admitted_at: UtcTimestamp::parse("2026-08-22T17:57:02Z").unwrap(),
+                state: PackageState::Active,
+                source: Source::GitTag {
+                    repository: repository.to_owned(),
+                    tag: tag.to_owned(),
+                    tag_oid: tag_oid.to_owned(),
+                    commit: commit.to_owned(),
+                    package: "pkgre-indexer".to_owned(),
+                    subdir: PathBuf::from("indexer"),
+                    cargo_version: cargo_version.clone(),
+                },
+                declared_in: PathBuf::from("main.lock"),
+            };
+            let materialization = reproduce_approved_git(&approval).unwrap();
+            println!(
+                "live: {} {} {} {}",
+                tag,
+                materialization.version,
+                materialization.archive_sha256,
+                materialization.source_row_sha256
+            );
+            assert_eq!(
+                materialization.archive_sha256, archive_sha256,
+                "{tag} reproduces the archive the catalog locked while its manifest names a retired registry"
+            );
+            assert_eq!(
+                materialization.source_row_sha256, source_row_sha256,
+                "{tag} reproduces the source row the catalog locked"
             );
         }
     }
