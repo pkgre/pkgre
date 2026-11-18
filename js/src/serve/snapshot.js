@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { verifyPackageArchive } from "../archive.js";
 import { validateCatalog } from "../catalog.js";
 import { prepareResponse } from "../http-response.js";
 import { jsArchiveRoute, jsRedirectDestination } from "../marker.js";
@@ -46,6 +47,23 @@ function storeArchive(storePath, sha256, label) {
   return bytes;
 }
 
+/**
+ * Reads one content-addressed archive body, digest-verifies it, and holds it to
+ * the archive contract. Any absence, mismatch or contract violation refuses the
+ * whole snapshot, naming the package, its version and the rule it breaks.
+ */
+function storeVerifiedArchive(storePath, entry, record) {
+  const label = `${entry.name}@${record.version}`;
+  const bytes = storeArchive(storePath, record.source.sha256, label);
+  try {
+    verifyPackageArchive(bytes, entry.name, record);
+  } catch (error) {
+    const rule = error instanceof Error ? error.message : String(error);
+    throw new Error(`serving snapshot refuses ${label}: ${rule}`);
+  }
+  return bytes;
+}
+
 function frozenArchiveBody(bytes) {
   return Object.freeze(new Blob([bytes]));
 }
@@ -57,6 +75,9 @@ function frozenArchiveBody(bytes) {
  * first-party /packages/<sha>.tgz archive bodies read from the store.
  * body: every /v1/js/main/<sha> redirect converts to a local digest-verified
  * archive body; ANY missing or mismatched body fails the whole snapshot.
+ * Every archive body the snapshot carries, first-party bodies in redirect mode
+ * and every body in body mode, is also held to the archive contract, so one
+ * archive that breaks it refuses the whole snapshot.
  * @param {object} catalog validated catalog
  * @param {string | null} storePath content-addressed archive-store directory
  * @param {"redirect" | "body"} delivery
@@ -84,19 +105,18 @@ export async function buildServeSnapshot(catalog, storePath, delivery, sourceCom
     });
     for (const record of entry.versions) {
       const { sha256 } = record.source;
-      const label = `${entry.name}@${record.version}`;
       if (delivery === "redirect") {
         add(jsArchiveRoute(sha256), Object.freeze({ ...jsRedirectDestination(entry.name, record), type: "redirect" }));
         if (record.source.kind === "first-party") {
           add(`/packages/${sha256}.tgz`, {
-            body: frozenArchiveBody(storeArchive(storePath, sha256, label)),
+            body: frozenArchiveBody(storeVerifiedArchive(storePath, entry, record)),
             representation: "archive",
             sha256,
             type: "archive",
           });
         }
       } else {
-        const bytes = storeArchive(storePath, sha256, label);
+        const bytes = storeVerifiedArchive(storePath, entry, record);
         add(jsArchiveRoute(sha256), {
           body: frozenArchiveBody(bytes),
           representation: "archive",
