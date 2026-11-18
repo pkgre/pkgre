@@ -98,7 +98,7 @@ export function createShared({ delivery, maxConcurrency }) {
 }
 
 /**
- * Atomically publishes one snapshot; later swaps replace it wholesale (D4 watcher).
+ * Atomically publishes one snapshot; later swaps replace it wholesale.
  * @param {object} shared
  * @param {object | null} snapshot
  */

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// D5 offline-export versus live-server equivalence harness (rollout plan §D5).
+// Offline-export versus live-server equivalence harness.
 //
 // For each runtime (Rust sparse registry, JS npm registry):
 //   1. render the current catalog offline into a temporary static tree,
