@@ -212,12 +212,12 @@ Preconditions:
 - credential-free HTTPS repository + immutable reviewed tag;
 - selected package version = tag final component, optional `v` prefix;
 - source manifest exactly `publish = ["pkgre"]`;
-- every dependency explicitly `registry = "pkgre"`, or the retired alias `core`/`universe` of the same index from a tag of an earlier catalog, including optional/dev/build/target-specific; Git/crates.io/unknown sources fail; a `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, at that package's own directory, required as exactly `=X.Y.Z` of that tag's version, and every other path dependency fails;
+- every dependency explicitly `registry = "pkgre"`, including optional/dev/build/target-specific; Git/crates.io/unknown sources fail; the retired alias `core`/`universe` of the same index is accepted only when reproducing an identity the catalog locked, never for a new publication; a `path` dependency is accepted only on a package the catalog publishes from the same repository and tag, at that package's own directory, required as exactly `=X.Y.Z` of that tag's version, and every other path dependency fails;
 - a `path` dependency on a package the catalog locked already is taken from the registry index, which must serve that identity while the dependent is locked, and the packaged `Cargo.lock` must name its locked archive;
 - catalog home:use `main/pkgre` for a new first-party/standalone-fork name; an existing mirrored-name fork stays in that name's original category, retains its `[mirror]` declaration, and adds a same-name `[publish]` declaration there;
 - fork Cargo version must be unique across every locked mirror/publish identity for that name; never reuse `name + version` for different bytes/source;
 - after the first published identity, retain the `[publish]` key + exact Git URL forever; removal empties `tags` rather than deleting/changing the declaration;
-- the tag commits the `Cargo.lock` of its workspace root; `cargo package --locked` accepts a workspace without one and resolves the dependency versions from the served index while it packages, so a tag that does not commit its lock is refused; no submodules, symlinks, unsafe/special paths, ambiguity, or generated dirty state;
+- the tag commits the `Cargo.lock` of the workspace root Cargo reports for it, which may sit below the checkout root; `cargo package --locked` accepts a workspace without one and resolves the dependency versions from the served index while it packages, so a tag that does not commit that lock is refused, and every registry package of each packaged `Cargo.lock` must then be the one it records, at the same source and checksum; no manifest declares `[patch]` or `[replace]`; no submodules, symlinks, unsafe/special paths, ambiguity, or generated dirty state;
 - reproducible archive under Cargo `1.95.0`.
 
 Workflow:
