@@ -430,8 +430,10 @@ For one release, a run:
    crates it depends on, and name order decides among crates that do not depend on each other,
    so a release whose crates do not depend on each other uploads in name order, as it always
    did. `--no-verify` keeps package code from
-   running while the token is present, and no package code runs between the comparison and the
-   upload, so the bytes that reach crates.io are the ones the run compared.
+   running while the token is present, and the routine starts no package code between the
+   comparison and the upload. A process that step 5's package code detached could still change
+   the workspace before `cargo publish` packages it again (see the residual risk below); step 7
+   then finds crates.io's checksum differing from the record, after the upload.
 7. waits, with a bound, until crates.io's index shows each uploaded crate with the recorded
    checksum, and reports every crate version of the release.
 
@@ -487,8 +489,11 @@ any output of the upload process that the routine relays has every occurrence of
 it is dropped once the uploads finish.
 
 The residual risk is package code: the dry run and step 5 run the crates' build scripts and proc
-macros as the same user, and a process that such code detaches from its process group can still
-read the environment of the upload process, which holds the token. The prompt keeps the token
+macros as the same user, and a process that such code detaches from its process group survives
+it. Such a process can read the environment of the upload process, which holds the token, and
+it can change the rewritten workspace or the upload's Cargo home after step 6's comparison, so
+that `cargo publish` uploads other bytes than the recorded ones, which step 7 detects only after
+the upload. The prompt keeps the token
 out of that reach until the uploads begin. An interrupt during step 5 ends the routine without
 unwinding, so Cargo and the package code it started keep running until they finish, in the
 derivation's temporary directory, which stays behind; the next run compares the packages again
