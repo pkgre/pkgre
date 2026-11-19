@@ -6,11 +6,13 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail, ensure};
 use pkgre_rust::artifact::ArtifactMap;
 use pkgre_rust::policy::validate_catalog;
+use pkgre_rust::projection::{FirstPartyOrigin, ProjectionLimits};
 use pkgre_rust::render;
 use pkgre_rust::schema::Catalog;
+use pkgre_rust::serve::{DeliveryMode, build_snapshot};
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
+const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust check-serve <catalog> --delivery=<body|redirect> [--archive-store=<directory>] [--first-party-origin=<url>]\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
   pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time=<registry>/<name>@<tag>=<timestamp>]...
   pkgre-rust migrate-retained-delivery <catalog-root>
   pkgre-rust archive-inventory <catalog> <output.json>
@@ -41,6 +43,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
     match command.to_str() {
         Some("lock") => lock_catalog(&values),
         Some("check") => check(&values),
+        Some("check-serve") => check_serve(&values),
         Some("render") => render_site(&values),
         Some("verify") => verify_site(&values),
         Some("verify-monotonic") => verify_monotonic(&values),
@@ -84,6 +87,86 @@ fn check(arguments: &[OsString]) -> Result<()> {
         packages = summary.usage.approvals,
         margins = %summary.margins(),
         "catalog is valid"
+    );
+    Ok(())
+}
+
+fn check_serve(arguments: &[OsString]) -> Result<()> {
+    let mut positional = Vec::new();
+    let mut delivery: Option<DeliveryMode> = None;
+    let mut archive_store: Option<&Path> = None;
+    let mut first_party_origin: Option<&str> = None;
+    for argument in arguments {
+        let value = argument.to_str().context("argument is not valid UTF-8")?;
+        if let Some(mode) = value.strip_prefix("--delivery=") {
+            ensure!(
+                delivery.is_none(),
+                "--delivery is given more than once\n{USAGE}"
+            );
+            delivery = Some(DeliveryMode::parse(mode)?);
+        } else if let Some(store) = value.strip_prefix("--archive-store=") {
+            ensure!(
+                archive_store.is_none(),
+                "--archive-store is given more than once\n{USAGE}"
+            );
+            ensure!(
+                !store.is_empty(),
+                "--archive-store needs the directory holding the archive store\n{USAGE}"
+            );
+            archive_store = Some(Path::new(store));
+        } else if let Some(origin) = value.strip_prefix("--first-party-origin=") {
+            ensure!(
+                first_party_origin.is_none(),
+                "--first-party-origin is given more than once\n{USAGE}"
+            );
+            ensure!(
+                !origin.is_empty(),
+                "--first-party-origin needs the origin of first-party archive redirects\n{USAGE}"
+            );
+            first_party_origin = Some(origin);
+        } else {
+            ensure!(
+                !value.starts_with('-') || value == "-",
+                "unknown argument {value:?}\n{USAGE}"
+            );
+            positional.push(argument.clone());
+        }
+    }
+    ensure_arity(&positional, 1)?;
+    let Some(mode) = delivery else {
+        bail!("--delivery is required\n{USAGE}");
+    };
+    // An option that the selected mode never consults is refused instead of silently ignored.
+    match mode {
+        DeliveryMode::Body => ensure!(
+            first_party_origin.is_none(),
+            "--first-party-origin is only valid with --delivery=redirect\n{USAGE}"
+        ),
+        DeliveryMode::Redirect => ensure!(
+            archive_store.is_none(),
+            "--archive-store is only valid with --delivery=body\n{USAGE}"
+        ),
+    }
+    let first_party_origin = first_party_origin
+        .map(FirstPartyOrigin::parse)
+        .transpose()?;
+    // A mode whose required option is absent reaches `build_snapshot` without it, so the
+    // command fails with the library's own message exactly where the service would.
+    let snapshot = build_snapshot(
+        Path::new(&positional[0]),
+        mode,
+        archive_store,
+        first_party_origin.as_ref(),
+        ProjectionLimits::default(),
+    )?;
+    let (inline_routes, archive_routes, redirect_routes) = snapshot.counts();
+    info!(
+        mode = mode.as_str(),
+        inline_routes,
+        archive_routes,
+        redirect_routes,
+        routes = snapshot.routes.len(),
+        "catalog builds a valid serving snapshot"
     );
     Ok(())
 }
