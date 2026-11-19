@@ -18,6 +18,7 @@ const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <ca
   pkgre-rust archive-inventory <catalog> <output.json>
   pkgre-rust archive-import <archive-store> <catalog>
   pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
+  pkgre-rust reproduce-git-tags <accepted-catalog> <candidate-catalog>
   pkgre-rust self-publish-check <repository> [<accepted-repository>]
   pkgre-rust self-publish-lock <repository>
   pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]";
@@ -56,6 +57,7 @@ fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
         Some("archive-inventory") => archive_inventory(&values),
         Some("archive-import") => archive_import_command(&values),
         Some("check-transition") => check_transition_command(&values),
+        Some("reproduce-git-tags") => reproduce_git_tags_command(&values),
         Some("self-publish-check") => self_publish_check(&values),
         Some("self-publish-lock") => self_publish_lock(&values),
         Some("self-publish") => self_publish(&values),
@@ -353,6 +355,28 @@ fn check_transition_command(arguments: &[OsString]) -> Result<()> {
         accepted = %accepted.display(),
         candidate = %candidate.display(),
         "candidate is a valid accepted-to-candidate transition"
+    );
+    Ok(())
+}
+
+fn reproduce_git_tags_command(arguments: &[OsString]) -> Result<()> {
+    ensure_arity(arguments, 2)?;
+    let accepted = Path::new(&arguments[0]);
+    let candidate = Path::new(&arguments[1]);
+    let summary = pkgre_rust::reproduce::reproduce_added_git_tags(accepted, candidate)?;
+    if summary.reproduced == 0 {
+        info!(
+            accepted = %accepted.display(),
+            candidate = %candidate.display(),
+            "no Git-tag identity is new since the accepted catalog; nothing to reproduce"
+        );
+        return Ok(());
+    }
+    info!(
+        reproduced = summary.reproduced,
+        accepted = %accepted.display(),
+        candidate = %candidate.display(),
+        "reproduced the Git-tag identities the candidate adds"
     );
     Ok(())
 }

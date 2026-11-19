@@ -2584,6 +2584,49 @@ mod tests {
     }
 
     #[test]
+    fn a_reproduction_of_an_added_git_tag_identity_passes_and_refuses_a_tampered_one() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-added-reproduce").unwrap();
+        let index = create_test_index(&temporary);
+        publish_test_index_versions(&index, "pkgre-dep", &["1.0.0"]);
+        let source = create_retired_registry_release(&temporary, &index, "core");
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let mut materializations = resolve_git_tag_group_from_file(&FileTagRequest {
+            root: &root,
+            repository: "https://example.invalid/pkgre-demo",
+            tag: TEST_TAG,
+            packages: &["pkgre-demo"],
+            published: None,
+            cargo_version: &cargo_version,
+            fetch_repository: source.to_str().unwrap(),
+            registry_index: &index,
+            allow_retired_registries: true,
+        })
+        .unwrap();
+        let approval = test_approval(&materializations.remove(0), &cargo_version);
+        let reproduce = |approval: &Approval| {
+            reproduce_approved_git_from_file_in(&root, approval, source.to_str().unwrap(), &index)
+                .map(|_| ())
+        };
+
+        let reproduced = crate::reproduce::reproduce_selected(&[&approval], reproduce).unwrap();
+        assert_eq!(
+            reproduced, 1,
+            "one added identity is packaged again and matched against the locked archive and row"
+        );
+
+        let mut tampered = approval.clone();
+        tampered.archive_sha256 = "00".repeat(32);
+        let error = crate::reproduce::reproduce_selected(&[&tampered], reproduce).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("reproduce added main/pkgre-demo/1.2.3")
+                && message.contains("Git archive hash changed"),
+            "a tampered identity is reported with its identity and its cause: {message}"
+        );
+    }
+
+    #[test]
     fn a_packaged_lock_must_take_the_versions_the_tag_lock_records() {
         let lock = |entries: &[(&str, &str, Option<&str>, Option<&str>)]| LockFile {
             packages: entries
