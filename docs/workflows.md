@@ -18,6 +18,7 @@ pkgre-rust migrate-retained-delivery <catalog-root>
 pkgre-rust archive-inventory <catalog> <output.json>
 pkgre-rust archive-import <archive-store> <catalog>
 pkgre-rust check-transition <accepted-catalog> <candidate-catalog>
+pkgre-rust reproduce-git-tags <accepted-catalog> <candidate-catalog>
 pkgre-rust self-publish-check <repository> [<accepted-repository>]
 pkgre-rust self-publish-lock <repository>
 pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]
@@ -119,7 +120,7 @@ $ pkgre-rust lock registry
 $ git diff --check
 ```
 
-Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, `verify-monotonic`, `check-serve` in the delivery mode of the serving origin, and `check-transition` from the pull request's base catalog to its head; this enforces that a PR cannot merge a manifest/template without fully applied state. Reapplying identical installed manifest no-ops; same filename/different content fails.
+Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, `verify-monotonic`, `check-serve` in the delivery mode of the serving origin, and `check-transition` from the pull request's base catalog to its head; this enforces that a PR cannot merge a manifest/template without fully applied state. It must also run `reproduce-git-tags` between those two catalogs, which re-fetches the Git-tag identities the change adds and proves each archive and source row against the locked ones, so that a tag this repository locked without its first-publication rules cannot merge. Reapplying identical installed manifest no-ops; same filename/different content fails.
 
 ### Exact admission templates
 

@@ -16,6 +16,7 @@ pub mod package;
 pub mod policy;
 pub mod projection;
 pub mod render;
+pub mod reproduce;
 pub mod request_target;
 pub mod schema;
 pub mod self_publish;
