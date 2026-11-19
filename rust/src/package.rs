@@ -1300,10 +1300,12 @@ fn describe_dependency(dependency: &MetadataDependency) -> String {
 /// archive reproduces the bytes the catalog locked. A new publication must name
 /// [`CARGO_REGISTRY`].
 ///
-/// [`crate::policy::SCHEMA3_REGISTRIES`] records the index URL of every
-/// schema-3 registry, one of which is the current registry; `core` is the
-/// schema-2 registry that [`crate::category::category_for_v2_home`] maps, and
-/// no table records its URL.
+/// [`crate::policy::SCHEMA3_REGISTRIES`] records the name and index URL of
+/// every schema-3 registry, `pkgre` among them at its schema-3 URL, which is
+/// not today's [`REGISTRY_INDEX`]; that entry is filtered out here by name,
+/// since `pkgre` is the curated registry's name and it now serves
+/// [`REGISTRY_INDEX`]. `core` is the schema-2 registry that
+/// [`crate::category::category_for_v2_home`] maps, and no table records its URL.
 fn retired_registries() -> Vec<(&'static str, &'static str)> {
     let mut retired = vec![("core", "sparse+https://rust.pkg.re/core/")];
     retired.extend(
@@ -2637,6 +2639,20 @@ mod tests {
         assert!(
             format!("{error:#}").contains("but the tag's workspace lock records it from"),
             "another checksum is refused: {error:#}"
+        );
+
+        let other = "sparse+https://other.invalid/";
+        let error = verify_locked_versions(
+            &lock(&[("pkgre-dep", "1.0.0", Some(other), Some(&"01".repeat(32)))]),
+            &package,
+            &siblings,
+            &workspace,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(other) && message.contains(index),
+            "another source is refused even at the recorded checksum: {message}"
         );
 
         let patched = lock(&[("pkgre-dep", "1.0.0", None, None)]);
