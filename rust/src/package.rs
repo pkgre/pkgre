@@ -18,7 +18,7 @@ use crate::policy::{
     validate_git_object_id, validate_git_tag, validate_https_repository, validate_package_name,
     validate_relative_path, validate_tag_version,
 };
-use crate::schema::{Approval, Source};
+use crate::schema::{Approval, PackageState, Source};
 use crate::update::time::UtcTimestamp;
 
 const CARGO_REGISTRY: &str = "pkgre";
@@ -153,7 +153,7 @@ struct GeneratedDependency {
 ///
 /// A path dependency is accepted only on another package that the tagged workspace publishes, because this entry point knows no catalog: the set is every member of the tag whose manifest sets exactly `publish = ["pkgre"]`, which is the widest set the catalog can publish from that tag, and no identity is admitted from here. [`resolve_git_tag_group`] takes the catalog's own set, with the archive it locked for each package, and the callers that admit an identity use it. A sibling this entry point accepts is bound to the archive its own packaging produces, or, when Cargo takes it from the registry, to the archive that registry serves, so a caller that verifies the archive hash, as [`reproduce_approved_git`] does, binds the result end to end.
 ///
-/// A tag that names a registry the catalog retired is refused here, since this entry point admits an identity without comparing it with a locked one; [`reproduce_approved_git`] is the entry point that may package such a tag.
+/// A tag that names a registry the catalog retired is refused here, since this entry point admits an identity without comparing it with a locked one. [`reproduce_approved_git`] is the only reproduction that may package such a tag, because it compares the archive and source row it produces with the ones the catalog locked; [`reproduce_approved_git_group`] reproduces the identities a change adds, which are new publications, so it refuses one.
 ///
 /// # Errors
 ///
@@ -218,10 +218,207 @@ pub fn resolve_git_tag_group(
 /// registry the catalog retired, since it is the only one that compares the
 /// archive and source row it produces with the ones the catalog locked.
 ///
+/// This entry point knows no catalog, so it packages one package and Cargo takes
+/// a sibling that package depends on from the curated index.
+/// [`reproduce_approved_git_group`] takes the catalog's own set and packages the
+/// identities of one tag together, as `lock` does.
+///
 /// # Errors
 ///
 /// Returns an error for a non-Git approval or any source, tag, package, toolchain, path, archive, or source-row mismatch.
 pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterialization> {
+    let git = approved_git_tag(approval)?;
+    let materialization = resolve_approved_git_tag(
+        &std::env::temp_dir(),
+        &git,
+        &PackagingSource::live(git.repository),
+    )?;
+    verify_approved_materialization(
+        approval,
+        git.tag_oid,
+        git.commit,
+        git.subdir,
+        &materialization,
+    )?;
+    Ok(materialization)
+}
+
+/// Reproduces every locked Git publication of one tag together, as
+/// [`resolve_git_tag_group`] packages them.
+///
+/// `lock` resolves the declarations of one repository and tag in one resolution,
+/// so that a package of the tag may depend on another one. A reproduction of one
+/// identity alone cannot: Cargo takes a sibling that the resolution does not
+/// package from the curated index, which serves no identity that the candidate
+/// adds. This entry point reproduces a group as `lock` resolved it.
+///
+/// `catalog` holds every approval of the catalog that the group belongs to. Every
+/// package it publishes from the group's registry, repository, and tag is passed
+/// with the archive it locked, so that the packaged lock of a dependent must name
+/// exactly its sibling's locked archive, and a package of the group must package
+/// to the archive the catalog locked.
+///
+/// The identities a change adds are new publications, so a group follows the
+/// first-publication rules: a tag that names a registry the catalog retired is
+/// refused, as [`resolve_git_tag_group`] refuses it, and only
+/// [`reproduce_approved_git`], which compares the archive and source row with a
+/// locked identity, may package such a tag.
+///
+/// Every approval must be a Git-tag publication of the same repository and tag,
+/// in the same registry, with one Cargo version, and the group must name every
+/// package once. The materializations are returned in the order of `approvals`,
+/// each verified against its approval as [`reproduce_approved_git`] verifies one.
+///
+/// # Errors
+///
+/// Returns an error for an empty group, an approval that is not a Git-tag
+/// publication, approvals that disagree on the registry, repository, tag, or
+/// Cargo version, a package the group names twice, a retired registry a new
+/// publication may not name, or any source, tag, package, toolchain, path,
+/// archive, or source-row mismatch.
+pub fn reproduce_approved_git_group(
+    catalog: &[Approval],
+    approvals: &[&Approval],
+) -> Result<Vec<GitTagMaterialization>> {
+    reproduce_approved_git_group_in(
+        &std::env::temp_dir(),
+        catalog,
+        approvals,
+        PackagingSource::live,
+    )
+}
+
+/// Reproduces the given group below `root`, fetching and resolving from the
+/// packaging source that `packaging` names for the group's repository.
+fn reproduce_approved_git_group_in<'a>(
+    root: &Path,
+    catalog: &'a [Approval],
+    approvals: &[&'a Approval],
+    packaging: impl FnOnce(&'a str) -> PackagingSource<'a>,
+) -> Result<Vec<GitTagMaterialization>> {
+    let first = *approvals
+        .first()
+        .context("a Git-tag group names no identity to reproduce")?;
+    let first_git = approved_git_tag(first)?;
+    let mut names = BTreeSet::new();
+    let mut members = Vec::with_capacity(approvals.len());
+    for &approval in approvals {
+        let git = approved_git_tag(approval)?;
+        ensure!(
+            approval.registry == first.registry
+                && git.repository == first_git.repository
+                && git.tag == first_git.tag,
+            "{} {} is not a Git-tag publication of tag {:?} in {}; one reproduction packages the identities of one tag together",
+            approval.name,
+            approval.version,
+            first_git.tag,
+            first.registry
+        );
+        ensure!(
+            git.cargo_version == first_git.cargo_version,
+            "{} {} pins Cargo {}, but {} of tag {:?} pins Cargo {}; one reproduction packages the tag with one Cargo version",
+            approval.name,
+            approval.version,
+            git.cargo_version,
+            first.name,
+            first_git.tag,
+            first_git.cargo_version
+        );
+        ensure!(
+            names.insert(approval.name.as_str()),
+            "Git tag {:?} names package {:?} twice in one reproduction",
+            first_git.tag,
+            approval.name
+        );
+        members.push((approval, git));
+    }
+    let packages = names.into_iter().collect::<Vec<_>>();
+    let published = catalog
+        .iter()
+        .filter(|candidate| {
+            candidate.state == PackageState::Active
+                && candidate.registry == first.registry
+                && matches!(
+                    &candidate.source,
+                    Source::GitTag {
+                        repository: other_repository,
+                        tag: other_tag,
+                        ..
+                    } if other_repository.as_str() == first_git.repository
+                        && other_tag.as_str() == first_git.tag
+                )
+        })
+        .map(|candidate| PublishedPackage {
+            name: candidate.name.as_str(),
+            locked_sha256: Some(candidate.archive_sha256.as_str()),
+        })
+        .collect::<Vec<_>>();
+    let mut materializations = resolve_tag(
+        root,
+        &TagRequest {
+            repository: first_git.repository,
+            tag: first_git.tag,
+            packages: &packages,
+            published: Some(&published),
+            allow_retired_registries: false,
+        },
+        &packaging(first_git.repository),
+        first_git.cargo_version,
+    )?;
+    let mut by_name = BTreeMap::new();
+    for materialization in materializations.drain(..) {
+        let name = materialization.name.clone();
+        ensure!(
+            by_name.insert(name.clone(), materialization).is_none(),
+            "tag {:?} reproduced package {name:?} more than once",
+            first_git.tag
+        );
+    }
+    let mut verified = Vec::with_capacity(members.len());
+    for (approval, git) in members {
+        let materialization = by_name.remove(&approval.name).with_context(|| {
+            format!(
+                "tag {:?} reproduced no package {:?} for {} {}",
+                first_git.tag, approval.name, approval.name, approval.version
+            )
+        })?;
+        verify_approved_materialization(
+            approval,
+            git.tag_oid,
+            git.commit,
+            git.subdir,
+            &materialization,
+        )?;
+        verified.push(materialization);
+    }
+    Ok(verified)
+}
+
+/// The Git-tag evidence one approval records, which a reproduction packages and
+/// verifies.
+struct ApprovedGitTag<'a> {
+    /// Credential-free HTTPS repository the tag belongs to.
+    repository: &'a str,
+    /// Immutable tag the approval locks.
+    tag: &'a str,
+    /// Exact tag object ID.
+    tag_oid: &'a str,
+    /// Peeled commit object ID.
+    commit: &'a str,
+    /// Cargo package name the approval locks.
+    package: &'a str,
+    /// Repository-relative package directory.
+    subdir: &'a Path,
+    /// Pinned Cargo version of the tag.
+    cargo_version: &'a Version,
+}
+
+/// Returns the Git-tag evidence of one approval.
+///
+/// # Errors
+///
+/// Returns an error for an approval that is not a Git-tag publication.
+fn approved_git_tag(approval: &Approval) -> Result<ApprovedGitTag<'_>> {
     let Source::GitTag {
         repository,
         tag,
@@ -238,16 +435,15 @@ pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterializati
             approval.version
         );
     };
-    let materialization = resolve_approved_git_tag(
-        &std::env::temp_dir(),
+    Ok(ApprovedGitTag {
         repository,
         tag,
+        tag_oid,
+        commit,
         package,
-        &PackagingSource::live(repository),
+        subdir,
         cargo_version,
-    )?;
-    verify_approved_materialization(approval, tag_oid, commit, subdir, &materialization)?;
-    Ok(materialization)
+    })
 }
 
 /// Resolves and reproducibly packages the package of one locked Git publication.
@@ -256,24 +452,21 @@ pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterializati
 /// because it is bound to the archive and source row the catalog locked.
 fn resolve_approved_git_tag(
     root: &Path,
-    repository: &str,
-    tag: &str,
-    package: &str,
+    git: &ApprovedGitTag<'_>,
     source: &PackagingSource<'_>,
-    cargo_version: &Version,
 ) -> Result<GitTagMaterialization> {
-    let packages = [package];
+    let packages = [git.package];
     let mut materializations = resolve_tag(
         root,
         &TagRequest {
-            repository,
-            tag,
+            repository: git.repository,
+            tag: git.tag,
             packages: &packages,
             published: None,
             allow_retired_registries: true,
         },
         source,
-        cargo_version,
+        git.cargo_version,
     )?;
     single_materialization(&mut materializations)
 }
@@ -431,36 +624,48 @@ pub(crate) fn reproduce_approved_git_from_file_in(
     fetch_repository: &str,
     registry_index: &str,
 ) -> Result<GitTagMaterialization> {
-    let Source::GitTag {
-        repository,
-        tag,
-        tag_oid,
-        commit,
-        package,
-        subdir,
-        cargo_version,
-    } = &approval.source
-    else {
-        bail!(
-            "{} {} is not a Git-tag publication",
-            approval.name,
-            approval.version
-        );
-    };
+    let git = approved_git_tag(approval)?;
     let materialization = resolve_approved_git_tag(
         root,
-        repository,
-        tag,
-        package,
+        &git,
         &PackagingSource {
             fetch_repository,
             allow_file: true,
             registry_index,
         },
-        cargo_version,
     )?;
-    verify_approved_materialization(approval, tag_oid, commit, subdir, &materialization)?;
+    verify_approved_materialization(
+        approval,
+        git.tag_oid,
+        git.commit,
+        git.subdir,
+        &materialization,
+    )?;
     Ok(materialization)
+}
+
+/// Reproduces the given group of one locked tag from a local repository and a
+/// local registry index, as [`reproduce_approved_git_group`] does over the
+/// network.
+///
+/// # Errors
+///
+/// Returns an error for a group that the entry point refuses, or for the source,
+/// tag, package, toolchain, path, archive, or source-row mismatch that
+/// [`reproduce_approved_git_group`] reports.
+#[cfg(test)]
+pub(crate) fn reproduce_approved_git_group_from_file_in(
+    root: &Path,
+    catalog: &[Approval],
+    approvals: &[&Approval],
+    fetch_repository: &str,
+    registry_index: &str,
+) -> Result<Vec<GitTagMaterialization>> {
+    reproduce_approved_git_group_in(root, catalog, approvals, |_| PackagingSource {
+        fetch_repository,
+        allow_file: true,
+        registry_index,
+    })
 }
 
 /// One tagged workspace that a test resolves from a local repository and a
@@ -2588,8 +2793,7 @@ mod tests {
         let root = uncovered_temporary_root();
         let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-added-reproduce").unwrap();
         let index = create_test_index(&temporary);
-        publish_test_index_versions(&index, "pkgre-dep", &["1.0.0"]);
-        let source = create_retired_registry_release(&temporary, &index, "core");
+        let source = create_test_release(&temporary);
         let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
         let mut materializations = resolve_git_tag_group_from_file(&FileTagRequest {
             root: &root,
@@ -2604,12 +2808,20 @@ mod tests {
         })
         .unwrap();
         let approval = test_approval(&materializations.remove(0), &cargo_version);
-        let reproduce = |approval: &Approval| {
-            reproduce_approved_git_from_file_in(&root, approval, source.to_str().unwrap(), &index)
-                .map(|_| ())
+        let catalog = [approval.clone()];
+        let mut reproduce = |group: &[&Approval]| {
+            reproduce_approved_git_group_from_file_in(
+                &root,
+                &catalog,
+                group,
+                source.to_str().unwrap(),
+                &index,
+            )
+            .map(|_| ())
         };
 
-        let reproduced = crate::reproduce::reproduce_selected(&[&approval], reproduce).unwrap();
+        let reproduced =
+            crate::reproduce::reproduce_groups(&[vec![&approval]], &mut reproduce).unwrap();
         assert_eq!(
             reproduced, 1,
             "one added identity is packaged again and matched against the locked archive and row"
@@ -2617,12 +2829,280 @@ mod tests {
 
         let mut tampered = approval.clone();
         tampered.archive_sha256 = "00".repeat(32);
-        let error = crate::reproduce::reproduce_selected(&[&tampered], reproduce).unwrap_err();
+        let error =
+            crate::reproduce::reproduce_groups(&[vec![&tampered]], &mut reproduce).unwrap_err();
         let message = format!("{error:#}");
         assert!(
             message.contains("reproduce added main/pkgre-demo/1.2.3")
                 && message.contains("Git archive hash changed"),
             "a tampered identity is reported with its identity and its cause: {message}"
+        );
+    }
+
+    #[test]
+    fn a_reproduction_of_one_tag_packages_its_identities_together() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-group-reproduce").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_sibling_release(
+            &temporary,
+            &index,
+            "publish = [\"pkgre\"]",
+            SIBLING_DEPENDENCY,
+        );
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let published = ["pkgre-demo", "pkgre-base"];
+        // The tag publishes both crates, and the index serves neither of them.
+        let mut materializations =
+            resolve_test_group(&root, &source, &index, &published, &published).unwrap();
+        let base = materializations.remove(1);
+        let demo = materializations.remove(0);
+        let catalog = vec![
+            test_approval(&demo, &cargo_version),
+            test_approval(&base, &cargo_version),
+        ];
+
+        // The reproduction of one identity knows no catalog, so Cargo takes the
+        // sibling it depends on from the index, which serves no added identity.
+        let error = reproduce_approved_git_from_file_in(
+            &root,
+            &catalog[0],
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("no matching package named `pkgre-base` found"),
+            "the dependent alone needs its sibling from the index: {message}"
+        );
+
+        // One resolution packages the identities of the tag together, so the
+        // dependent needs no index entry for its sibling.
+        let group = catalog.iter().collect::<Vec<_>>();
+        let reproduced = reproduce_approved_git_group_from_file_in(
+            &root,
+            &catalog,
+            &group,
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap();
+        let [reproduced_demo, reproduced_base] = reproduced.as_slice() else {
+            panic!(
+                "one group of two identities reproduced {} materializations",
+                reproduced.len()
+            );
+        };
+        assert_eq!(reproduced_demo.name, "pkgre-demo");
+        assert_eq!(reproduced_demo.archive_sha256, demo.archive_sha256);
+        assert_eq!(reproduced_demo.source_row_sha256, demo.source_row_sha256);
+        assert_eq!(reproduced_base.name, "pkgre-base");
+        assert_eq!(reproduced_base.archive_sha256, base.archive_sha256);
+        assert_eq!(reproduced_base.source_row_sha256, base.source_row_sha256);
+        let packaged = crate::update::read_crate_archive(
+            "pkgre-demo",
+            &reproduced_demo.version,
+            &reproduced_demo.archive_bytes,
+            &["Cargo.lock"],
+        )
+        .unwrap();
+        let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).unwrap();
+        assert!(
+            lock.contains(&format!("checksum = \"{}\"", base.archive_sha256)),
+            "the packaged lock names the sibling's locked archive: {lock}"
+        );
+    }
+
+    #[test]
+    fn a_reproduction_of_a_group_refuses_a_sibling_archive_the_index_serves_another_way() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-group-sibling").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_sibling_release(
+            &temporary,
+            &index,
+            "publish = [\"pkgre\"]",
+            SIBLING_DEPENDENCY,
+        );
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let published = ["pkgre-demo", "pkgre-base"];
+        let mut materializations =
+            resolve_test_group(&root, &source, &index, &published, &published).unwrap();
+        let base = materializations.remove(1);
+        let demo = materializations.remove(0);
+        let catalog = vec![
+            test_approval(&demo, &cargo_version),
+            test_approval(&base, &cargo_version),
+        ];
+        // The accepted catalog locks the sibling already, so the group packages
+        // the dependent alone and Cargo takes the sibling from the index.
+        let group = [&catalog[0]];
+        publish_test_index_entry(&index, "pkgre-base", &base.version, &base.archive_sha256);
+        let reproduced = reproduce_approved_git_group_from_file_in(
+            &root,
+            &catalog,
+            &group,
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap();
+        assert_eq!(reproduced.len(), 1);
+        assert_eq!(reproduced[0].archive_sha256, demo.archive_sha256);
+
+        let other = "00".repeat(32);
+        publish_test_index_entry(&index, "pkgre-base", &base.version, &other);
+        let error = reproduce_approved_git_group_from_file_in(
+            &root,
+            &catalog,
+            &group,
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!(
+                "records checksum {other} for pkgre-base {}; this tag publishes pkgre-base as {}, so a dependency on another archive is refused",
+                base.version, base.archive_sha256
+            )),
+            "the packaged lock must name the archive the candidate locks: {message}"
+        );
+    }
+
+    #[test]
+    fn a_group_reproduction_refuses_a_tag_that_names_a_retired_registry() {
+        for registry_name in ["core", "universe"] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-group-retired").unwrap();
+            let index = create_test_index(&temporary);
+            publish_test_index_versions(&index, "pkgre-dep", &["1.0.0"]);
+            let source = create_retired_registry_release(&temporary, &index, registry_name);
+            let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+            let mut materializations = resolve_git_tag_group_from_file(&FileTagRequest {
+                root: &root,
+                repository: "https://example.invalid/pkgre-demo",
+                tag: TEST_TAG,
+                packages: &["pkgre-demo"],
+                published: None,
+                cargo_version: &cargo_version,
+                fetch_repository: source.to_str().unwrap(),
+                registry_index: &index,
+                allow_retired_registries: true,
+            })
+            .unwrap();
+            let catalog = [test_approval(&materializations.remove(0), &cargo_version)];
+            let group = [&catalog[0]];
+
+            let error = reproduce_approved_git_group_from_file_in(
+                &root,
+                &catalog,
+                &group,
+                source.to_str().unwrap(),
+                &index,
+            )
+            .unwrap_err();
+            let message = format!("{error:#}");
+            assert!(
+                message.contains(&format!("names the retired registry {registry_name:?}"))
+                    && message.contains("a new publication must name registry = \"pkgre\""),
+                "an identity a change adds follows the first-publication rules: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_group_reproduction_publishes_only_the_packages_of_its_own_tag_and_registry() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-group-published").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_sibling_release(
+            &temporary,
+            &index,
+            "publish = [\"pkgre\"]",
+            SIBLING_DEPENDENCY,
+        );
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let published = ["pkgre-demo", "pkgre-base"];
+        let mut materializations =
+            resolve_test_group(&root, &source, &index, &published, &published).unwrap();
+        let demo = test_approval(&materializations.remove(0), &cargo_version);
+        let base = test_approval(&materializations.remove(0), &cargo_version);
+        let repository = "https://example.invalid/pkgre-demo";
+        // The catalog holds the sibling's name under another tag, the tag under
+        // another registry, and the sibling as a removed identity of the tag.
+        let other_tag_archive = "11".repeat(32);
+        let other_registry_archive = "22".repeat(32);
+        let removed_archive = "33".repeat(32);
+        let mut other_tag = at(
+            base.clone(),
+            "main",
+            repository,
+            "release/pkgre-base/v1.2.3",
+        );
+        other_tag.archive_sha256 = other_tag_archive.clone();
+        let mut other_registry = at(base.clone(), "staging", repository, TEST_TAG);
+        other_registry.archive_sha256 = other_registry_archive.clone();
+        let mut removed = at(base.clone(), "main", repository, TEST_TAG);
+        removed.state = PackageState::Removed;
+        removed.archive_sha256 = removed_archive.clone();
+        let catalog = vec![
+            demo.clone(),
+            base.clone(),
+            other_tag,
+            other_registry,
+            removed,
+        ];
+        // The accepted catalog locks the sibling already, so the group packages
+        // the dependent alone and Cargo takes the sibling from the index, which
+        // serves the archive the sibling's own identity locks.
+        let group = [&catalog[0]];
+        publish_test_index_entry(&index, "pkgre-base", &base.version, &base.archive_sha256);
+        let reproduced = reproduce_approved_git_group_from_file_in(
+            &root,
+            &catalog,
+            &group,
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap();
+        assert_eq!(reproduced.len(), 1);
+        assert_eq!(reproduced[0].archive_sha256, demo.archive_sha256);
+        let packaged = crate::update::read_crate_archive(
+            "pkgre-demo",
+            &reproduced[0].version,
+            &reproduced[0].archive_bytes,
+            &["Cargo.lock"],
+        )
+        .unwrap();
+        let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).unwrap();
+        assert!(
+            lock.contains(&format!("checksum = \"{}\"", base.archive_sha256))
+                && !lock.contains(&other_tag_archive)
+                && !lock.contains(&other_registry_archive)
+                && !lock.contains(&removed_archive),
+            "the group binds the sibling to the archive its own identity locks: {lock}"
+        );
+
+        // A removed identity of the tag is no package the tag publishes, so a
+        // path dependency on it is refused.
+        let mut removed_catalog = vec![demo, base];
+        removed_catalog[1].state = PackageState::Removed;
+        let group = [&removed_catalog[0]];
+        let error = reproduce_approved_git_group_from_file_in(
+            &root,
+            &removed_catalog,
+            &group,
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(
+                "is a path dependency on pkgre-base, which the catalog does not publish from this tag"
+            ),
+            "a removed sibling is not a package the tag publishes: {message}"
         );
     }
 
@@ -3872,6 +4352,23 @@ mod tests {
             },
             declared_in: PathBuf::from("main.lock"),
         }
+    }
+
+    /// Points one approval at another registry, repository, and tag.
+    fn at(mut approval: Approval, registry: &str, repository: &str, tag: &str) -> Approval {
+        approval.registry = registry.to_owned();
+        approval.category = format!("{registry}/pkgre").parse().unwrap();
+        let Source::GitTag {
+            repository: current_repository,
+            tag: current_tag,
+            ..
+        } = &mut approval.source
+        else {
+            panic!("the fixture approval is a Git tag");
+        };
+        *current_repository = repository.to_owned();
+        *current_tag = tag.to_owned();
+        approval
     }
 
     fn test_git(repository: &Path, arguments: &[&str]) -> String {
