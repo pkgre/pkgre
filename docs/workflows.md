@@ -9,6 +9,7 @@ pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <ne
 pkgre-rust update-apply <catalog> <admission-manifest>
 pkgre-rust lock <catalog>
 pkgre-rust check <catalog>
+pkgre-rust check-serve <catalog> --delivery=<body|redirect> [--archive-store=<directory>] [--first-party-origin=<url>]
 pkgre-rust render <catalog> <new-output>
 pkgre-rust verify <catalog> <existing-output>
 pkgre-rust verify-monotonic <previous-site> <next-site>
@@ -118,7 +119,7 @@ $ pkgre-rust lock registry
 $ git diff --check
 ```
 
-Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, and `verify-monotonic`; this enforces that a PR cannot merge a manifest/template without fully applied state. Reapplying identical installed manifest no-ops; same filename/different content fails.
+Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, `verify-monotonic`, `check-serve` in the delivery mode of the serving origin, and `check-transition` from the pull request's base catalog to its head; this enforces that a PR cannot merge a manifest/template without fully applied state. Reapplying identical installed manifest no-ops; same filename/different content fails.
 
 ### Exact admission templates
 

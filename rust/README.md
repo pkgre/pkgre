@@ -11,6 +11,7 @@ pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <ne
 pkgre-rust update-apply <catalog> <admission-manifest>
 pkgre-rust lock <catalog>
 pkgre-rust check <catalog>
+pkgre-rust check-serve <catalog> --delivery=<body|redirect> [--archive-store=<directory>] [--first-party-origin=<url>]
 pkgre-rust render <catalog> <output>
 pkgre-rust verify <catalog> <output>
 pkgre-rust verify-monotonic <previous-site> <next-site>
@@ -30,6 +31,7 @@ pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]
 - `update-apply`:recompute every exact request at current time; reject young/yanked/blocked/invalid candidates; atomically install declaration additions, source rows, registry locks, canonical download catalog, and one immutable human-manifest/generated-lock admission pair.
 - `lock`:preflight locally, refusing a lock whose recorded `audience` or mirror `admitted-at` no longer matches the declaration or the retained source row; reconcile initial bootstrap, empty reservations, removals, new first-party Git tags, and canonical `downloads.json`; direct new-mirror admission fails once registry locks exist.
 - `check`:local-only strict schema/category/registry/audience/admission/download/object/hash/row validation that re-derives every mirror `admitted-at` from its retained source row, routed-row hash + dependency-edge validation, and a serving projection under the production limits; reports each limit it has half spent as `name=usage/limit`; never fetch crates.io or reproduce Git tags.
+- `check-serve`:build the immutable serving snapshot of `<catalog>` exactly as the serving origin builds it, without serving or writing anything: the same delivery-mode spellings, first-party-origin rules and production projection limits, and body delivery's hash-verified archive bodies, so it fails exactly where a reload would fail (body delivery without `--archive-store`, redirect delivery without `--first-party-origin`, an invalid catalog, a failed limit, a missing or mismatched body); an option the selected mode does not use, a repeated option and an unknown option are refused; on success it logs the snapshot's inline, archive and redirect route counts.
 - `render`:write a new complete site tree. Catalog registry `main` renders at the site root; other registry aliases render below `/r/<alias>/`; output must be absent.
 - `verify`:re-render + require exact entry/byte equality with an existing site.
 - `verify-monotonic`:permit registries/categories/package identities to be added, `active→removed`, and exactly the one-way `dl` migrations `check`, `lock` and `check-transition` allow (publish→mirror, source-specific→exact-router, exact-router→same-host native); reject removal/mutation/reactivation; authenticate exact release-manifest schema-2→3 + schema-3→4 migrations.
