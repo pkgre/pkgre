@@ -41,6 +41,21 @@ fn mirror(registry: &str, name: &str, version: &str) -> Approval {
     }
 }
 
+/// Points one approval at another repository and tag.
+fn at_tag(mut approval: Approval, repository: &str, tag: &str) -> Approval {
+    let Source::GitTag {
+        repository: current_repository,
+        tag: current_tag,
+        ..
+    } = &mut approval.source
+    else {
+        panic!("the fixture approval is a Git tag");
+    };
+    *current_repository = repository.to_owned();
+    *current_tag = tag.to_owned();
+    approval
+}
+
 /// Returns the identities of a selection, as `registry/name/version`.
 fn selected(selection: &[&Approval]) -> Vec<String> {
     selection.iter().map(|value| identity_name(value)).collect()
@@ -116,17 +131,67 @@ fn refuses_a_removed_git_tag_identity_the_accepted_catalog_does_not_lock() {
 }
 
 #[test]
-fn a_reproduction_of_several_identities_stops_at_the_first_failure_and_names_it() {
+fn groups_the_selected_identities_by_the_registry_repository_and_tag_of_one_resolution() {
+    let repository = "https://example.invalid/pkgre";
+    let tag = "rust/v0.5.0";
+    let approvals = [
+        at_tag(
+            git_tag("main", "pkgre-rust", "0.5.0", PackageState::Active),
+            repository,
+            tag,
+        ),
+        at_tag(
+            git_tag("main", "pkgre", "0.5.0", PackageState::Active),
+            repository,
+            tag,
+        ),
+        at_tag(
+            git_tag("main", "pkgre-indexer", "0.5.0", PackageState::Active),
+            repository,
+            "indexer/v0.5.0",
+        ),
+        at_tag(
+            git_tag("staging", "pkgre", "0.5.0", PackageState::Active),
+            repository,
+            tag,
+        ),
+    ];
+    let references = approvals.iter().collect::<Vec<_>>();
+
+    let groups = git_tag_groups(&references).unwrap();
+    let grouped = groups
+        .iter()
+        .map(|group| selected(group))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        grouped,
+        [
+            vec!["main/pkgre-indexer/0.5.0".to_owned()],
+            vec![
+                "main/pkgre-rust/0.5.0".to_owned(),
+                "main/pkgre/0.5.0".to_owned()
+            ],
+            vec!["staging/pkgre/0.5.0".to_owned()],
+        ],
+        "the two packages of one tag form one group, and the groups are ordered \
+         by registry, repository, then tag"
+    );
+}
+
+#[test]
+fn a_reproduction_of_several_groups_stops_at_the_first_failure_and_names_it() {
     let approvals = [
         git_tag("main", "pkgre-indexer", "0.1.0", PackageState::Active),
         git_tag("main", "pkgre-indexer", "0.2.0", PackageState::Active),
         git_tag("main", "pkgre-indexer", "0.3.0", PackageState::Active),
     ];
     let references = approvals.iter().collect::<Vec<_>>();
+    let groups = git_tag_groups(&references).unwrap();
     let mut reproduced = Vec::new();
-    let error = reproduce_selected(&references, |approval| {
-        reproduced.push(identity_name(approval));
-        if approval.version == Version::parse("0.2.0").unwrap() {
+    let error = reproduce_groups(&groups, |group| {
+        reproduced.push(group_name(group));
+        if group[0].version == Version::parse("0.2.0").unwrap() {
             anyhow::bail!("the tag names another commit");
         }
         Ok(())
@@ -136,15 +201,19 @@ fn a_reproduction_of_several_identities_stops_at_the_first_failure_and_names_it(
 
     assert_eq!(
         reproduced,
-        ["main/pkgre-indexer/0.1.0", "main/pkgre-indexer/0.2.0"],
-        "a failure stops the run instead of reproducing the identities after it"
+        [
+            "reproduce added main/pkgre-indexer/0.1.0 of tag \"pkgre-indexer/v0.1.0\"",
+            "reproduce added main/pkgre-indexer/0.2.0 of tag \"pkgre-indexer/v0.2.0\"",
+        ],
+        "a failure stops the run instead of reproducing the groups after it"
     );
     assert!(
-        message.contains("reproduce added main/pkgre-indexer/0.2.0")
+        message
+            .contains("reproduce added main/pkgre-indexer/0.2.0 of tag \"pkgre-indexer/v0.2.0\"")
             && message.contains("the tag names another commit"),
         "{message}"
     );
 
-    let reproduced = reproduce_selected(&references, |_| Ok(())).unwrap();
+    let reproduced = reproduce_groups(&groups, |_| Ok(())).unwrap();
     assert_eq!(reproduced, 3, "a run reports every identity it reproduced");
 }

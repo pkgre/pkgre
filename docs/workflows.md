@@ -120,7 +120,7 @@ $ pkgre-rust lock registry
 $ git diff --check
 ```
 
-Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, `verify-monotonic`, `check-serve` in the delivery mode of the serving origin, and `check-transition` from the pull request's base catalog to its head; this enforces that a PR cannot merge a manifest/template without fully applied state. It must also run `reproduce-git-tags` between those two catalogs, which re-fetches the Git-tag identities the change adds and proves each archive and source row against the locked ones, so that a tag this repository locked without its first-publication rules cannot merge. Reapplying identical installed manifest no-ops; same filename/different content fails.
+Second `lock` must report `changed=false` + preserve exact diff. CI must run `check`, no-op `lock`, render, `verify`, `verify-monotonic`, `check-serve` in the delivery mode of the serving origin, and `check-transition` from the pull request's base catalog to its head; this enforces that a PR cannot merge a manifest/template without fully applied state. It must also run `reproduce-git-tags` between those two catalogs, which re-fetches the Git-tag identities the change adds, one resolution per tag, as `lock` packages it, and proves each archive and source row against the locked ones and each dependent's packaged lock against the sibling archives the candidate locks, so that a tag this repository locked without its first-publication rules cannot merge. Reapplying identical installed manifest no-ops; same filename/different content fails.
 
 ### Exact admission templates
 
