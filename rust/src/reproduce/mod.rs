@@ -5,9 +5,10 @@
 //! [`crate::check`] never fetches a tag. A Git-tag identity that an older tool locked, or that a
 //! hand edit wrote, therefore passes both. [`reproduce_added_git_tags`] fetches every Git-tag
 //! identity the candidate adds, packages the identities of one tag again in one resolution as
-//! `lock` packages them, and proves each against the archive and the source row the candidate
-//! locks, so that a repository's CI applies the rules to just those identities the way a first
-//! `lock` would.
+//! `lock` first packages a tag, and proves each against the archive and the source row the
+//! candidate locks, so that a repository's CI applies the rules to just those identities the way a
+//! first `lock` would. What a change adds is a new publication, so a tag that names a registry the
+//! catalog retired is refused, as `lock` refuses it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -74,6 +75,9 @@ pub fn added_git_tag_identities<'a>(
 /// `lock` packages them, so that a package of the tag may depend on another one; the groups run in
 /// registry, repository, and tag order. The first failure stops the run and names the group, as the
 /// other commands report the first thing that makes a catalog invalid.
+///
+/// An identity a change adds is a new publication, so a group follows the first-publication rules,
+/// and a tag that names a registry the catalog retired is refused, as `lock` refuses it.
 ///
 /// A change that adds no Git-tag identity reads no network and succeeds.
 ///

@@ -133,6 +133,7 @@ fn refuses_a_removed_git_tag_identity_the_accepted_catalog_does_not_lock() {
 #[test]
 fn groups_the_selected_identities_by_the_registry_repository_and_tag_of_one_resolution() {
     let repository = "https://example.invalid/pkgre";
+    let other_repository = "https://example.invalid/other";
     let tag = "rust/v0.5.0";
     let approvals = [
         at_tag(
@@ -155,6 +156,11 @@ fn groups_the_selected_identities_by_the_registry_repository_and_tag_of_one_reso
             repository,
             tag,
         ),
+        at_tag(
+            git_tag("main", "pkgre-other", "0.5.0", PackageState::Active),
+            other_repository,
+            tag,
+        ),
     ];
     let references = approvals.iter().collect::<Vec<_>>();
 
@@ -167,6 +173,7 @@ fn groups_the_selected_identities_by_the_registry_repository_and_tag_of_one_reso
     assert_eq!(
         grouped,
         [
+            vec!["main/pkgre-other/0.5.0".to_owned()],
             vec!["main/pkgre-indexer/0.5.0".to_owned()],
             vec![
                 "main/pkgre-rust/0.5.0".to_owned(),
