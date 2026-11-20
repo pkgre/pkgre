@@ -79,6 +79,11 @@ pub fn added_git_tag_identities<'a>(
 /// An identity a change adds is a new publication, so a group follows the first-publication rules,
 /// and a tag that names a registry the catalog retired is refused, as `lock` refuses it.
 ///
+/// `self-publish/crates-io.toml` beside the candidate decides the mode. A group whose repository
+/// it declares `manifests = "crates-io"` is a crates.io-native tag: it is reproduced offline, crate
+/// by crate in dependency order, from a local registry of the rows in the candidate's own objects,
+/// and every archive and source row must equal the ones the candidate locks.
+///
 /// A change that adds no Git-tag identity reads no network and succeeds.
 ///
 /// # Errors
@@ -99,9 +104,9 @@ pub fn reproduce_added_git_tags(
 /// `reproduce` in place of [`crate::package::reproduce_approved_git_group`].
 ///
 /// The body of [`reproduce_added_git_tags`] is here, so that a test supplies its own
-/// reproducer: `reproduce` receives the candidate catalog's approvals with each group, which
-/// lets a test drive the load, the policy checks, the selection, and the report without a
-/// network, and pin that the command reproduces the candidate's own approvals.
+/// reproducer: `reproduce` receives the candidate catalog with each group, which lets a test
+/// drive the load, the policy checks, the selection, and the report without a network, and pin
+/// that the command reproduces the candidate's own approvals.
 ///
 /// # Errors
 ///
@@ -110,7 +115,7 @@ pub fn reproduce_added_git_tags(
 pub(crate) fn reproduce_added_git_tags_with(
     accepted_root: &Path,
     candidate_root: &Path,
-    mut reproduce: impl FnMut(&[Approval], &[&Approval]) -> Result<()>,
+    mut reproduce: impl FnMut(&Catalog, &[&Approval]) -> Result<()>,
 ) -> Result<ReproduceSummary> {
     let accepted = Catalog::load(accepted_root)
         .with_context(|| format!("load accepted catalog {}", accepted_root.display()))?;
@@ -122,7 +127,7 @@ pub(crate) fn reproduce_added_git_tags_with(
         .with_context(|| format!("validate candidate catalog {}", candidate_root.display()))?;
     let added = added_git_tag_identities(&accepted.approvals, &candidate.approvals)?;
     let groups = git_tag_groups(&added)?;
-    let reproduced = reproduce_groups(&groups, |group| reproduce(&candidate.approvals, group))?;
+    let reproduced = reproduce_groups(&groups, |group| reproduce(&candidate, group))?;
     Ok(ReproduceSummary { reproduced })
 }
 

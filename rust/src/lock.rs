@@ -162,6 +162,12 @@ pub(crate) trait Resolver {
     /// dependency on such a package to exactly that archive and refuse another,
     /// and a resolver that packages each package on its own cannot do so.
     ///
+    /// `native` holds the catalog facts of a repository whose release tags
+    /// keep crates.io manifests, so that the resolver applies the native
+    /// contract and the lock rule and packages offline from the catalog's own
+    /// rows. A group without it is packaged as every Git tag of a `pkgre`-mode
+    /// repository is.
+    ///
     /// # Errors
     ///
     /// Returns an error for any package the resolver cannot resolve, or for a
@@ -174,6 +180,7 @@ pub(crate) trait Resolver {
         packages: &[&str],
         published: &[package::PublishedPackage<'_>],
         cargo_version: &Version,
+        native: Option<&package::NativeCatalog<'_>>,
     ) -> Result<Vec<ResolvedPackage>>;
 }
 
@@ -207,13 +214,21 @@ impl Resolver for LiveResolver {
         packages: &[&str],
         published: &[package::PublishedPackage<'_>],
         cargo_version: &Version,
+        native: Option<&package::NativeCatalog<'_>>,
     ) -> Result<Vec<ResolvedPackage>> {
-        package::resolve_git_tag_group(repository, tag, packages, published, cargo_version)?
-            .into_iter()
-            .map(|materialization| {
-                resolved_git_package(repository, tag, cargo_version, materialization)
-            })
-            .collect()
+        package::resolve_git_tag_group(
+            repository,
+            tag,
+            packages,
+            published,
+            cargo_version,
+            native.cloned(),
+        )?
+        .into_iter()
+        .map(|materialization| {
+            resolved_git_package(repository, tag, cargo_version, materialization)
+        })
+        .collect()
     }
 }
 
@@ -328,6 +343,10 @@ fn reconcile_with_mode<R: Resolver, N: Renamer>(
 ) -> Result<ReconcileSummary> {
     let root = canonical_catalog_root(root)?;
     let _guard = CatalogGuard::acquire(&root)?;
+    // A repository whose release tags keep crates.io manifests declares that
+    // beside the catalog, and a malformed file fails the run before any
+    // declaration is read.
+    let native = crate::self_publish::NativeRepositories::load_beside(&root)?;
     let inputs = load_registry_inputs(&root)?;
     ensure!(!inputs.is_empty(), "catalog has no registry declarations");
 
@@ -353,6 +372,7 @@ fn reconcile_with_mode<R: Resolver, N: Renamer>(
         &old,
         &preflight_catalog,
         &policy,
+        &native,
         mode,
         &mut next_locks,
         &mut summary,
@@ -399,6 +419,7 @@ fn resolve_new_packages<R: Resolver>(
     old: &OldPackages,
     catalog: &Catalog,
     policy: &Policy,
+    native: &crate::self_publish::NativeRepositories,
     mode: ReconciliationMode<'_>,
     next_locks: &mut BTreeMap<String, RegistryLock>,
     summary: &mut ReconcileSummary,
@@ -489,6 +510,7 @@ fn resolve_new_packages<R: Resolver>(
             &locked_archives,
             catalog,
             policy,
+            native,
             next_locks,
             summary,
             &mut identities,
@@ -520,6 +542,7 @@ fn resolve_new_git_tag<R: Resolver>(
     locked_archives: &BTreeMap<GitIdentity, String>,
     catalog: &Catalog,
     policy: &Policy,
+    native: &crate::self_publish::NativeRepositories,
     next_locks: &mut BTreeMap<String, RegistryLock>,
     summary: &mut ReconcileSummary,
     identities: &mut BTreeSet<Identity>,
@@ -551,8 +574,27 @@ fn resolve_new_git_tag<R: Resolver>(
         .context("a Git-tag group holds no declaration")?
         .cargo_version
         .clone();
+    let native_catalog =
+        native.catalog(&catalog.root, &catalog.approvals, registry, repository, tag);
+    if native_catalog.is_some() {
+        ensure!(
+            !locked_archives
+                .keys()
+                .any(|(other_registry, _, other_repository, other_tag)| {
+                    other_registry == registry && other_repository == repository && other_tag == tag
+                }),
+            "Git tag {tag:?} of {repository} already locks a crate in {registry}; a crates.io-native release tag locks all of its released crates in one run, so a crate added to the tag later is refused"
+        );
+    }
     let resolved = source_resolver
-        .resolve_git_tag_group(repository, tag, &packages, &published, &cargo_version)
+        .resolve_git_tag_group(
+            repository,
+            tag,
+            &packages,
+            &published,
+            &cargo_version,
+            native_catalog.as_ref(),
+        )
         .with_context(|| {
             format!(
                 "resolve new Git tag {tag:?} for {} in {registry}",
@@ -3053,6 +3095,7 @@ mod tests {
             packages: &[&str],
             published: &[package::PublishedPackage<'_>],
             cargo_version: &Version,
+            _native: Option<&package::NativeCatalog<'_>>,
         ) -> Result<Vec<ResolvedPackage>> {
             self.groups.borrow_mut().push(GroupCall {
                 repository: repository.to_owned(),

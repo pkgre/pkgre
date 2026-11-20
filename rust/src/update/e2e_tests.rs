@@ -1063,6 +1063,7 @@ impl Resolver for FixtureResolver {
         _: &[&str],
         _: &[crate::package::PublishedPackage<'_>],
         _: &Version,
+        _: Option<&crate::package::NativeCatalog<'_>>,
     ) -> Result<Vec<ResolvedPackage>> {
         bail!("fixture does not resolve Git tags")
     }
