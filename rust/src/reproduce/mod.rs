@@ -90,6 +90,28 @@ pub fn reproduce_added_git_tags(
     accepted_root: &Path,
     candidate_root: &Path,
 ) -> Result<ReproduceSummary> {
+    reproduce_added_git_tags_with(accepted_root, candidate_root, |catalog, group| {
+        crate::package::reproduce_approved_git_group(catalog, group).map(|_| ())
+    })
+}
+
+/// Reproduces every Git-tag identity that `candidate_root` adds to `accepted_root`, with
+/// `reproduce` in place of [`crate::package::reproduce_approved_git_group`].
+///
+/// The body of [`reproduce_added_git_tags`] is here, so that a test supplies its own
+/// reproducer: `reproduce` receives the candidate catalog's approvals with each group, which
+/// lets a test drive the load, the policy checks, the selection, and the report without a
+/// network, and pin that the command reproduces the candidate's own approvals.
+///
+/// # Errors
+///
+/// Returns the errors [`reproduce_added_git_tags`] returns, and the first failure of
+/// `reproduce`, named with the group it belongs to.
+pub(crate) fn reproduce_added_git_tags_with(
+    accepted_root: &Path,
+    candidate_root: &Path,
+    mut reproduce: impl FnMut(&[Approval], &[&Approval]) -> Result<()>,
+) -> Result<ReproduceSummary> {
     let accepted = Catalog::load(accepted_root)
         .with_context(|| format!("load accepted catalog {}", accepted_root.display()))?;
     crate::policy::validate_catalog(&accepted)
@@ -100,9 +122,7 @@ pub fn reproduce_added_git_tags(
         .with_context(|| format!("validate candidate catalog {}", candidate_root.display()))?;
     let added = added_git_tag_identities(&accepted.approvals, &candidate.approvals)?;
     let groups = git_tag_groups(&added)?;
-    let reproduced = reproduce_groups(&groups, |group| {
-        crate::package::reproduce_approved_git_group(&candidate.approvals, group).map(|_| ())
-    })?;
+    let reproduced = reproduce_groups(&groups, |group| reproduce(&candidate.approvals, group))?;
     Ok(ReproduceSummary { reproduced })
 }
 
