@@ -201,9 +201,10 @@ fn check_transition_accepts_identity_and_rejects_mutations() {
     fs::write(&lock_path, truncated).unwrap();
     let reason = check_transition(&accepted, &removed_identity).unwrap_err();
     assert!(
-        matches!(reason, RejectReason::MissingRetainedBody(_)),
-        "truncated lock must be rejected, got {reason:?}"
+        matches!(reason, RejectReason::InvalidCandidate(_)),
+        "a truncated lock is the candidate's own content, got {reason:?}"
     );
+    assert_eq!(reason.code(), "candidate-catalog-invalid");
 
     // Changing the serving audience is a topology change.
     let audience = copy_tree(&accepted, &temporary.path().join("audience"));
@@ -439,4 +440,108 @@ impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
     }
+}
+
+/// A load failure of the accepted side is local and gets its own reason, as does a host read
+/// error of the candidate; a body the candidate itself lacks stays a retained-body failure.
+#[test]
+fn check_transition_separates_local_failures_from_the_candidates_content() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-transition-local");
+    let accepted = migrated_catalog(temporary.path(), "accepted");
+
+    let truncated_accepted = copy_tree(&accepted, &temporary.path().join("truncated-accepted"));
+    let lock_path = truncated_accepted.join("main.lock");
+    let lock_text = fs::read_to_string(&lock_path).unwrap();
+    let start = lock_text
+        .find("[[packages]]")
+        .expect("the generated lock holds packages");
+    fs::write(&lock_path, &lock_text[..start]).unwrap();
+    let reason = check_transition(&truncated_accepted, &accepted).unwrap_err();
+    assert!(
+        matches!(reason, RejectReason::AcceptedUnloadable(_)),
+        "a truncated accepted lock refuses to load, got {reason:?}"
+    );
+    assert_eq!(reason.code(), "accepted-catalog-unloadable");
+    assert!(reason.is_local());
+
+    // An unreadable candidate file is a host read failure, unless the process can read past
+    // the mode (root, or CAP_DAC_OVERRIDE), in which case the case cannot be exercised.
+    let unreadable = copy_tree(&accepted, &temporary.path().join("unreadable-candidate"));
+    let manifest = unreadable.join("main.toml");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&manifest).is_ok() {
+            fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644)).unwrap();
+            return;
+        }
+        let reason = check_transition(&accepted, &unreadable).unwrap_err();
+        fs::set_permissions(&manifest, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(
+            matches!(reason, RejectReason::CatalogUnreadable(_)),
+            "an unreadable candidate file is a host failure, got {reason:?}"
+        );
+        assert_eq!(reason.code(), "catalog-unreadable");
+        assert!(reason.is_local());
+    }
+}
+
+/// Runs the release command and returns its output.
+fn run_check_transition(accepted: &Path, candidate: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_pkgre-rust"))
+        .arg("check-transition")
+        .arg(accepted)
+        .arg(candidate)
+        .output()
+        .expect("the pkgre-rust binary runs")
+}
+
+/// Returns the failure the binary logged in `error=...` on stderr.
+fn logged_failure(output: &std::process::Output) -> String {
+    assert!(!output.status.success(), "the command must fail");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr
+        .lines()
+        .find_map(|line| {
+            line.split_once("error=")
+                .map(|(_, message)| message.to_owned())
+        })
+        .unwrap_or_else(|| panic!("no logged failure in {stderr}"))
+}
+
+#[test]
+fn check_transition_cli_names_a_refusal_and_a_local_failure() {
+    let temporary = TemporaryDirectory::new("pkgre-rust-transition-cli");
+    let accepted = migrated_catalog(temporary.path(), "accepted");
+    check_transition(&accepted, &accepted).unwrap();
+    let output = run_check_transition(&accepted, &accepted);
+    assert!(output.status.success(), "an identical catalog is accepted");
+
+    let refused = copy_tree(&accepted, &temporary.path().join("cli-refused"));
+    let lock_path = refused.join("main.lock");
+    let lock_text = fs::read_to_string(&lock_path).unwrap();
+    let start = lock_text
+        .find("[[packages]]")
+        .expect("the generated lock holds packages");
+    fs::write(&lock_path, &lock_text[..start]).unwrap();
+    let failure = logged_failure(&run_check_transition(&accepted, &refused));
+    assert!(
+        failure.starts_with("candidate rejected: candidate catalog failed to load:"),
+        "{failure}"
+    );
+
+    let local = copy_tree(&accepted, &temporary.path().join("cli-local-accepted"));
+    let lock_path = local.join("main.lock");
+    let lock_text = fs::read_to_string(&lock_path).unwrap();
+    let start = lock_text
+        .find("[[packages]]")
+        .expect("the generated lock holds packages");
+    fs::write(&lock_path, &lock_text[..start]).unwrap();
+    let failure = logged_failure(&run_check_transition(&local, &accepted));
+    assert!(
+        failure.starts_with("candidate not checked: accepted catalog failed to load:"),
+        "{failure}"
+    );
 }

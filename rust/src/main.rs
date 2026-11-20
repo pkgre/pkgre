@@ -387,8 +387,14 @@ fn check_transition_command(arguments: &[OsString]) -> Result<()> {
     ensure_arity(arguments, 2)?;
     let accepted = Path::new(&arguments[0]);
     let candidate = Path::new(&arguments[1]);
-    pkgre_rust::transition::check_transition(accepted, candidate)
-        .map_err(|reason| anyhow::anyhow!("candidate rejected: {reason}"))?;
+    pkgre_rust::transition::check_transition(accepted, candidate).map_err(|reason| {
+        let outcome = if reason.is_local() {
+            "not checked"
+        } else {
+            "rejected"
+        };
+        anyhow::anyhow!("candidate {outcome}: {reason}")
+    })?;
     info!(
         accepted = %accepted.display(),
         candidate = %candidate.display(),

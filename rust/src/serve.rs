@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 
 use crate::artifact::{ArtifactMap, sha256_file};
 use crate::http_response::PreparedRoute;
@@ -88,7 +88,9 @@ impl Snapshot {
 ///
 /// Returns an error for any invalid catalog, failed projection limit, missing retained
 /// body, an incomplete or hash-mismatched body-mode archive store, or redirect delivery without
-/// a configured first-party origin.
+/// a configured first-party origin. An error of the archive store itself, absent, unreadable or
+/// of another digest, carries [`ArchiveStoreError`] in its chain, so the origin can classify it
+/// without reading the message.
 pub fn build_snapshot(
     root: &Path,
     mode: DeliveryMode,
@@ -194,17 +196,34 @@ fn body_bytes(
             .with_context(|| format!("snapshot lacks retained body {first_party_path}"));
     }
     let source = store.join(format!("{sha256}.crate"));
-    let digest =
-        sha256_file(&source).with_context(|| format!("read body-mode archive for {path}"))?;
-    ensure!(
-        digest == *sha256,
-        "body-mode archive {} does not match its digest {sha256}",
-        source.display()
-    );
+    let digest = sha256_file(&source)
+        .context(ArchiveStoreError)
+        .with_context(|| format!("read body-mode archive for {path}"))?;
+    if digest != *sha256 {
+        return Err(anyhow::Error::new(ArchiveStoreError).context(format!(
+            "body-mode archive {} does not match its digest {sha256}",
+            source.display()
+        )));
+    }
     let body = std::fs::read(&source)
+        .context(ArchiveStoreError)
         .with_context(|| format!("read body-mode archive {}", source.display()))?;
     Ok(Arc::new(body))
 }
+
+/// Marks an absent, unreadable or corrupt body in the local archive store.
+///
+/// Callers can downcast snapshot errors to this type without parsing diagnostics.
+#[derive(Debug)]
+pub struct ArchiveStoreError;
+
+impl std::fmt::Display for ArchiveStoreError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("archive store")
+    }
+}
+
+impl std::error::Error for ArchiveStoreError {}
 
 /// Extracts and validates the content-addressed hash of one crates.io `/v1/...` redirect route.
 ///
@@ -511,10 +530,18 @@ mod tests {
             ProjectionLimits::default(),
         )
         .unwrap_err();
+        assert!(
+            error.downcast_ref::<ArchiveStoreError>().is_some(),
+            "a missing store body must carry the archive-store marker, got: {error:#}"
+        );
         let rendered = format!("{error:#}");
         assert!(
-            rendered.contains("read body-mode archive for"),
+            rendered.starts_with("read body-mode archive for"),
             "missing bodies must fail with the first missing route, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("archive store"),
+            "the marker text stays below the first line, got: {rendered}"
         );
 
         // Body mode replaces every redirect with a body and never resolves a `Location`, so a
@@ -529,6 +556,45 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(format!("{with_origin:#}"), rendered);
+    }
+
+    #[test]
+    fn body_mode_marks_a_mismatched_store_body_as_an_archive_store_failure() {
+        let temp = TempDir::new("pkgre-serve-body-mismatch");
+        let root = fixture_root(&temp);
+        let store = temp.path().join("store");
+        fs::create_dir(&store).unwrap();
+        let downloads = crate::download::DownloadCatalog::load_from_root(&root).unwrap();
+        for route in &downloads.routes {
+            fs::write(
+                store.join(format!("{}.crate", route.sha256)),
+                b"wrong bytes",
+            )
+            .unwrap();
+        }
+
+        let error = build_snapshot(
+            &root,
+            DeliveryMode::Body,
+            Some(&store),
+            None,
+            ProjectionLimits::default(),
+        )
+        .unwrap_err();
+        assert!(
+            error.downcast_ref::<ArchiveStoreError>().is_some(),
+            "a mismatched store body must carry the archive-store marker, got: {error:#}"
+        );
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered
+                .lines()
+                .next()
+                .is_some_and(|line| line.starts_with("body-mode archive ")
+                    && line.contains("does not match its digest")),
+            "the first line stays the digest mismatch, got: {rendered}"
+        );
+        assert!(rendered.contains("archive store"), "got: {rendered}");
     }
 
     #[test]

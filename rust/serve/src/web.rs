@@ -31,6 +31,7 @@ const MAX_LOGGED_TARGET_BYTES: usize = 160;
 /// Shared readiness and dispatch state for the public and admin applications.
 pub struct Shared {
     snapshot: RwLock<Option<Arc<Snapshot>>>,
+    watcher: RwLock<Option<crate::watcher::WatcherView>>,
     started: Instant,
     delivery: DeliveryMode,
     semaphore: Arc<Semaphore>,
@@ -42,12 +43,18 @@ impl Shared {
     pub fn new(delivery: DeliveryMode, max_concurrency: NonZeroU32) -> Self {
         Self {
             snapshot: RwLock::new(None),
+            watcher: RwLock::new(None),
             started: Instant::now(),
             delivery,
             semaphore: Arc::new(Semaphore::new(
                 usize::try_from(max_concurrency.get()).unwrap_or(usize::MAX),
             )),
         }
+    }
+
+    /// Publishes the watcher's view of the accepted commit, tip and last refusal.
+    pub(crate) async fn install_watcher_view(&self, view: crate::watcher::WatcherView) {
+        *self.watcher.write().await = Some(view);
     }
 
     /// Atomically installs the current serving snapshot.
@@ -147,6 +154,12 @@ async fn status_response(shared: &Shared) -> Response {
         mode: shared.delivery.as_str(),
         counts,
         uptime_seconds: shared.uptime_seconds(),
+        watcher: shared
+            .watcher
+            .read()
+            .await
+            .as_ref()
+            .map(crate::watcher::WatcherView::status),
     };
     let Ok(body) = serde_json::to_vec(&report) else {
         return empty_response(StatusCode::INTERNAL_SERVER_ERROR);
@@ -299,6 +312,8 @@ struct StatusResponse {
     mode: &'static str,
     counts: Option<StatusCounts>,
     uptime_seconds: u64,
+    /// Additive member of a dynamic catalog source; absent for a static catalog.
+    watcher: Option<crate::watcher::WatcherStatus>,
 }
 
 #[derive(Serialize)]
@@ -703,6 +718,11 @@ mod tests {
             json!({"inline": 558, "archive": 3, "redirect": 747})
         );
         assert!(report["uptimeSeconds"].is_u64());
+        assert_eq!(
+            report["watcher"],
+            Value::Null,
+            "a static catalog has no watcher"
+        );
         let snapshot = fixture_snapshot();
         assert_eq!(snapshot.counts(), (558, 3, 747));
         assert_eq!(snapshot.routes.len(), 1_308);
