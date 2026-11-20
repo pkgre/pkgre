@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result, bail, ensure};
 use semver::Version;
 
-use super::super::catalog::CatalogSnapshot;
+use super::super::catalog::{CatalogIdentity, CatalogSnapshot, GitRelease};
 use super::super::config::CratesIoConfig;
 use super::super::lock::CratesIoLock;
 use super::cargo_lock::LockIndex;
@@ -255,6 +255,17 @@ fn resolve_package(
             member: false,
         });
     };
+    first_party_package(catalog, config, earlier, identity, release)
+}
+
+/// Resolves the crates.io package of an identity of an earlier release.
+fn first_party_package(
+    catalog: &CatalogSnapshot,
+    config: &CratesIoConfig,
+    earlier: &CratesIoLock,
+    identity: &CatalogIdentity,
+    release: &GitRelease,
+) -> Result<ExpectedPackage> {
     if catalog.is_mirror(&identity.name) {
         bail!(
             "registry/main mirrors {}, but the package is a Git publication of the same name, so the crates.io name belongs to someone else",
@@ -292,8 +303,18 @@ fn resolve_package(
         entry.pkgre_crate_sha256,
         identity.crate_sha256
     );
+    // A crate of a crates.io-native repository keeps its own name on crates.io,
+    // and an entry may only record the name that the repository's mode gives.
+    let crates_io_name = config.effective_name(&identity.name, &release.git);
+    ensure!(
+        entry.crates_io_name == crates_io_name,
+        "entry {} {} records crates.io name {:?}, but the repository's mode gives {crates_io_name:?}",
+        identity.name,
+        identity.version,
+        entry.crates_io_name
+    );
     Ok(ExpectedPackage {
-        crates_io_name: entry.crates_io_name.clone(),
+        crates_io_name,
         curated_checksum: Some(identity.crate_sha256.clone()),
         derived_checksum: Some(entry.crate_sha256.clone()),
         member: false,

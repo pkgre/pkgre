@@ -121,6 +121,14 @@ fn lock_with(packages: Vec<CratesIoPackage>) -> CratesIoLock {
     }
 }
 
+/// Returns the entry of a crate whose release tag keeps its manifest: its archive
+/// is both registries' package, so both checksums are the same.
+fn native_entry(identity: &CatalogIdentity) -> CratesIoPackage {
+    let mut entry = entry(identity, &identity.name);
+    entry.crate_sha256 = entry.pkgre_crate_sha256.clone();
+    entry
+}
+
 #[derive(Clone)]
 struct State {
     config: String,
@@ -161,6 +169,19 @@ impl State {
         }
     }
 
+    /// A repository whose release tags keep crates.io manifests, releasing
+    /// `example-lib` and `example-bin` under their own names, at `rust/v1.0.0`.
+    fn native() -> Self {
+        let lib = identity("example-lib", "1.0.0", "rust/v1.0.0", '3');
+        let bin = identity("example-bin", "1.0.0", "rust/v1.0.0", '4');
+        let mut state = Self::base();
+        state.lock = lock_with(vec![native_entry(&bin), native_entry(&lib)]);
+        state.identities = vec![bin, lib];
+        state.set_names(&[]);
+        state.set_manifests("crates-io");
+        state
+    }
+
     fn snapshot(&self) -> CatalogSnapshot {
         CatalogSnapshot {
             registry_index: "sparse+https://rust.pkg.re/".to_owned(),
@@ -181,6 +202,23 @@ impl State {
             &[("example-lib", "example-lib")],
             abandoned,
         );
+    }
+
+    /// Declares the registry that the repository's release tags keep their
+    /// manifests for, keeping the rest of the declaration as it is.
+    fn set_manifests(&mut self, manifests: &str) {
+        let anchor = format!("tag-prefix = {PREFIX:?}\n");
+        let declared = format!("{anchor}manifests = {manifests:?}\n");
+        let without = self
+            .config
+            .lines()
+            .filter(|line| !line.starts_with("manifests = "))
+            .fold(String::new(), |mut text, line| {
+                text.push_str(line);
+                text.push('\n');
+                text
+            });
+        self.config = without.replace(&anchor, &declared);
     }
 
     fn add_release(
@@ -834,4 +872,107 @@ fn an_accepted_catalog_without_self_publishing_state_still_bounds_versions() {
         error.contains("does not increase the version of the crate"),
         "{error}"
     );
+}
+
+#[test]
+fn accepts_a_repository_whose_release_tags_keep_crates_io_manifests() {
+    let state = State::native();
+    let summary = run_checks(&state, None).unwrap();
+    assert_eq!(summary.repositories, 1);
+    assert_eq!(summary.names, 0);
+    assert_eq!(summary.entries, 2);
+    assert_eq!(summary.identities, 2);
+    run_checks(&state, Some(&state)).unwrap();
+
+    // Spelling the default value explicitly is no change: a declaration that had
+    // no `manifests` key and now has `manifests = "pkgre"` is accepted.
+    let accepted = State::base();
+    let mut candidate = State::base();
+    candidate.set_manifests("pkgre");
+    run_checks(&candidate, Some(&accepted)).unwrap();
+}
+
+#[test]
+fn refuses_a_changed_or_removed_manifests_value() {
+    let accepted = State::native();
+
+    let mut candidate = State::native();
+    candidate.set_manifests("pkgre");
+    assert_refused(&candidate, Some(&accepted), "changed manifests");
+
+    let mut candidate = State::native();
+    candidate.config = config_text(&[(REPOSITORY, PREFIX)], &[], &[]);
+    assert_refused(&candidate, Some(&accepted), "changed manifests");
+
+    let accepted = State::base();
+    let candidate = State::native();
+    assert_refused(&candidate, Some(&accepted), "changed manifests");
+}
+
+#[test]
+fn refuses_a_names_key_for_a_crate_of_a_native_repository() {
+    let mut state = State::native();
+    state.set_names(&[("example-lib", "example-lib")]);
+    state.set_manifests("crates-io");
+    let error = assert_refused(&state, None, "its crates.io name is its package name");
+    assert!(
+        error.contains("[names] maps crate \"example-lib\""),
+        "{error}"
+    );
+
+    // The same holds when the key would rename the crate.
+    let mut state = State::native();
+    state.set_names(&[("example-lib", "example-renamed")]);
+    state.set_manifests("crates-io");
+    assert_refused(&state, None, "its crates.io name is its package name");
+}
+
+#[test]
+fn refuses_a_native_name_in_the_default_namespace() {
+    let mut state = State::native();
+    let crate_name = "pkgre-pkgs-example";
+    let release = identity(crate_name, "1.0.0", "rust/v1.0.0", '5');
+    state.lock.packages.push(native_entry(&release));
+    state.identities.push(release);
+    state.publish_names.push(crate_name.to_owned());
+    state
+        .publish_declarations
+        .push((crate_name.to_owned(), REPOSITORY.to_owned()));
+    assert_refused(&state, None, "pkgre-pkgs- namespace");
+}
+
+#[test]
+fn refuses_a_native_name_that_is_a_mirror() {
+    let mut state = State::native();
+    let release = identity("serde", "1.0.0", "rust/v1.0.0", '5');
+    state.lock.packages.push(native_entry(&release));
+    state.identities.push(release);
+    state.publish_names.push("serde".to_owned());
+    state
+        .publish_declarations
+        .push(("serde".to_owned(), REPOSITORY.to_owned()));
+    assert_refused(&state, None, "registry/main mirrors");
+}
+
+#[test]
+fn refuses_a_native_entry_whose_name_or_checksums_differ() {
+    let mut state = State::native();
+    let target = state
+        .lock
+        .packages
+        .iter_mut()
+        .find(|entry| entry.name == "example-lib")
+        .unwrap();
+    target.crates_io_name = "example-renamed".to_owned();
+    assert_refused(&state, None, "but the mapping gives");
+
+    let mut state = State::native();
+    let target = state
+        .lock
+        .packages
+        .iter_mut()
+        .find(|entry| entry.name == "example-lib")
+        .unwrap();
+    target.crate_sha256 = "0".repeat(64);
+    assert_refused(&state, None, "its archive is both registries' package");
 }
