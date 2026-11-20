@@ -12,7 +12,7 @@ use pkgre_rust::schema::Catalog;
 use pkgre_rust::serve::{DeliveryMode, build_snapshot};
 use tracing::{error, info};
 
-const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust check-serve <catalog> --delivery=<body|redirect> [--archive-store=<directory>] [--first-party-origin=<url>]\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
+const USAGE: &str = "usage:\n  pkgre-rust lock <catalog>\n  pkgre-rust check <catalog>\n  pkgre-rust check-serve <catalog> --delivery=<body|redirect> [--archive-store=<directory>] [--first-party-origin=<url>]\n  pkgre-rust render <catalog> <output>\n  pkgre-rust verify <catalog> <output>\n  pkgre-rust verify-monotonic <previous-site> <next-site>\n  pkgre-rust update-plan <catalog> <admission-manifest>\n  pkgre-rust update-plan-exact <catalog> <package> <version> [<package> <version>]... <admission-manifest>\n  pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <output-directory>\n  pkgre-rust update-apply <catalog> <admission-manifest>
   pkgre-rust migrate-v4-to-v5 <input-catalog> <output-catalog> [--git-tag-time=<registry>/<name>@<tag>=<timestamp>]...
   pkgre-rust migrate-retained-delivery <catalog-root>
   pkgre-rust archive-inventory <catalog> <output.json>
@@ -212,20 +212,58 @@ fn update_plan(arguments: &[OsString]) -> Result<()> {
 }
 
 fn update_plan_exact(arguments: &[OsString]) -> Result<()> {
-    ensure_arity(arguments, 4)?;
-    let catalog = Path::new(&arguments[0]);
-    let name = arguments[1]
-        .to_str()
-        .context("package name is not valid UTF-8")?;
-    let version = arguments[2]
-        .to_str()
-        .context("package version is not valid UTF-8")?
-        .parse()
-        .context("package version is not valid SemVer")?;
-    let output = Path::new(&arguments[3]);
-    let plan = pkgre_rust::update::plan_exact_update(catalog, name, &version, output)?;
+    let (catalog, requests, output) = split_exact_arguments(arguments)?;
+    let plan = pkgre_rust::update::plan_exact_updates(catalog, &requests, output)?;
     log_update_plan(&plan, output);
     Ok(())
+}
+
+fn split_exact_arguments(
+    arguments: &[OsString],
+) -> Result<(&Path, Vec<pkgre_rust::update::ExactRequest>, &Path)> {
+    ensure!(
+        arguments.len() >= 4 && arguments.len() % 2 == 0,
+        "wrong number of arguments\n{USAGE}"
+    );
+    let mut requests = Vec::new();
+    let mut failures = Vec::new();
+    for (index, pair) in arguments[1..arguments.len() - 1]
+        .chunks_exact(2)
+        .enumerate()
+    {
+        let parsed = (|| {
+            let name = pair[0]
+                .to_str()
+                .context("package name is not valid UTF-8")?
+                .to_owned();
+            let version = pair[1]
+                .to_str()
+                .context("package version is not valid UTF-8")?
+                .parse()
+                .context("package version is not valid SemVer")?;
+            Ok(pkgre_rust::update::ExactRequest { name, version })
+        })();
+        match parsed {
+            Ok(request) => requests.push(request),
+            Err(error) if arguments.len() == 4 => return Err(error),
+            Err(error) => failures.push(format!(
+                "pair {} ({:?} {:?}): {error:#}",
+                index + 1,
+                pair[0],
+                pair[1]
+            )),
+        }
+    }
+    ensure!(
+        failures.is_empty(),
+        "unreadable exact requests: {}",
+        failures.join("; ")
+    );
+    Ok((
+        Path::new(&arguments[0]),
+        requests,
+        Path::new(&arguments[arguments.len() - 1]),
+    ))
 }
 
 fn update_inspect(arguments: &[OsString]) -> Result<()> {
@@ -528,4 +566,97 @@ fn migrate_retained_delivery(arguments: &[OsString]) -> Result<()> {
         "declared retained delivery and recomputed the download catalog"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arguments(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn exact_arguments_split_into_one_request_per_pair_in_order() {
+        let given = arguments(&[
+            "registry",
+            "uint",
+            "0.10.2",
+            "alpha",
+            "1.0.0",
+            "2026-08-24-batch.toml",
+        ]);
+        let (catalog, requests, output) = split_exact_arguments(&given).unwrap();
+        assert_eq!(catalog, Path::new("registry"));
+        assert_eq!(output, Path::new("2026-08-24-batch.toml"));
+        assert_eq!(
+            requests,
+            [
+                pkgre_rust::update::ExactRequest {
+                    name: "uint".to_owned(),
+                    version: "0.10.2".parse().unwrap(),
+                },
+                pkgre_rust::update::ExactRequest {
+                    name: "alpha".to_owned(),
+                    version: "1.0.0".parse().unwrap(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn exact_arguments_refuse_an_odd_count_and_too_few() {
+        for given in [
+            arguments(&["registry", "alpha", "2026-08-24-batch.toml"]),
+            arguments(&[
+                "registry",
+                "alpha",
+                "1.0.0",
+                "beta",
+                "2026-08-24-batch.toml",
+            ]),
+            Vec::new(),
+        ] {
+            let error = split_exact_arguments(&given).unwrap_err();
+            assert!(
+                format!("{error:#}").starts_with("wrong number of arguments"),
+                "{error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn exact_arguments_name_every_unreadable_pair_of_a_batch() {
+        let given = arguments(&[
+            "registry",
+            "alpha",
+            "1.0",
+            "beta",
+            "2.x",
+            "2026-08-24-batch.toml",
+        ]);
+        let error = split_exact_arguments(&given).unwrap_err();
+        let message = format!("{error:#}");
+        let first = message
+            .find("pair 1 (\"alpha\" \"1.0\"): package version is not valid SemVer")
+            .expect("the first pair is named by position and value");
+        let second = message
+            .find("pair 2 (\"beta\" \"2.x\"): package version is not valid SemVer")
+            .expect("the second pair is named by position and value");
+        assert!(first < second, "{message}");
+        assert!(
+            message.starts_with("unreadable exact requests: "),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn exact_arguments_keep_the_single_pair_message() {
+        let given = arguments(&["registry", "alpha", "1.0", "2026-08-24-batch.toml"]);
+        let error = split_exact_arguments(&given).unwrap_err();
+        assert!(
+            format!("{error:#}").starts_with("package version is not valid SemVer"),
+            "{error:#}"
+        );
+    }
 }

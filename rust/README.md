@@ -6,7 +6,7 @@ Transactional declarative reconciler + deterministic renderer for schema-5 pkg.r
 
 ```text
 pkgre-rust update-plan <catalog> <new-admission-manifest>
-pkgre-rust update-plan-exact <catalog> <package> <version> <new-admission-manifest>
+pkgre-rust update-plan-exact <catalog> <package> <version> [<package> <version>]... <new-admission-manifest>
 pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <new-review-directory>
 pkgre-rust update-apply <catalog> <admission-manifest>
 pkgre-rust lock <catalog>
@@ -27,7 +27,7 @@ pkgre-rust self-publish <repository> <tag> [--upload] [--git=<url>]
 ```
 
 - `update-plan`:evaluate all active mirror compatibility lanes; create an absent compact canonical manifest containing every nonblocked exact request.
-- `update-plan-exact`:evaluate one reserved mirror name/version, including new/inactive names, prereleases, and stable `0.0.x`; create an absent one-request manifest.
+- `update-plan-exact`:evaluate one or more reserved mirror name/version requests, including new/inactive names, prereleases, and stable `0.0.x`; create an absent canonical manifest, planning every request as if it ran alone and refusing the whole batch when any request fails.
 - `update-inspect`:recompute one manifest request + materialize checksum-verified candidate/base archives and bounded inert evidence without executing package code.
 - `update-apply`:recompute every exact request at current time; reject young/yanked/blocked/invalid candidates; atomically install declaration additions, source rows, registry locks, canonical download catalog, and one immutable human-manifest/generated-lock admission pair.
 - `lock`:preflight locally, refusing a lock whose recorded `audience` or mirror `admitted-at` no longer matches the declaration or the retained source row; reconcile initial bootstrap, empty reservations, removals, new first-party Git tags, and canonical `downloads.json`; direct new-mirror admission fails once registry locks exist.
