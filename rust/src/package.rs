@@ -3400,6 +3400,8 @@ mod tests {
         EscapingLicenseFile,
         /// A readme inherited from `[workspace.package]`, which stays inside.
         InheritedReadme,
+        /// A readme inside the checkout's own `.git` directory.
+        GitDirectoryReadme,
     }
 
     /// Creates one tagged fixture of the manifest-path rule and returns the
@@ -3437,6 +3439,9 @@ mod tests {
                 workspace_package = "[workspace.package]\nreadme = \"README.md\"\n\n";
                 readme = "readme.workspace = true\n".to_owned();
                 fs::write(source.join("README.md"), "# the workspace readme\n").unwrap();
+            }
+            ManifestPathFixture::GitDirectoryReadme => {
+                readme = "readme = \"../../.git/logs/HEAD\"\n".to_owned();
             }
         }
         fs::write(
@@ -3500,6 +3505,11 @@ mod tests {
                 ManifestPathFixture::EscapingLicenseFile,
                 "license-file",
                 "../../../outside/LICENSE",
+            ),
+            (
+                ManifestPathFixture::GitDirectoryReadme,
+                "readme",
+                ".git/logs/HEAD",
             ),
         ] {
             let root = uncovered_temporary_root();

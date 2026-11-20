@@ -154,6 +154,8 @@ pub(crate) enum Readme {
     Absolute,
     /// The manifest inherits `[workspace.package] readme`, which stays inside.
     Inherited,
+    /// The manifest names a readme inside the checkout's own `.git` directory.
+    GitDirectory,
 }
 
 /// The license file that one fixture's released library names.
@@ -190,6 +192,9 @@ pub(crate) struct Variant {
     pub(crate) library_readme: Readme,
     /// The license file that the released library's manifest names.
     pub(crate) library_license_file: LicenseFile,
+    /// The `[lib] path` that the released library's manifest names, when it
+    /// names one.
+    pub(crate) library_target_path: Option<&'static str>,
 }
 
 /// A local registry that stands in for crates.io and the curated registry, so
@@ -508,6 +513,7 @@ fn library_path_fields(root: &Path, variant: Variant) -> (String, String) {
             )
         }
         Readme::Inherited => "readme.workspace = true\n".to_owned(),
+        Readme::GitDirectory => "readme = \"../.git/logs/HEAD\"\n".to_owned(),
     };
     let license = match variant.library_license_file {
         LicenseFile::None => "license.workspace = true\n".to_owned(),
@@ -568,10 +574,14 @@ fn write_manifests(root: &Path, variant: Variant) {
         None => String::new(),
     };
     let (license, readme) = library_path_fields(root, variant);
+    let target = match variant.library_target_path {
+        Some(path) => format!("\n[lib]\npath = {path:?}\n"),
+        None => String::new(),
+    };
     fs::write(
         root.join("lib/Cargo.toml"),
         format!(
-            "[package]\nname = \"example-lib\"\ndescription = \"An example library\"\nversion.workspace = true\nedition.workspace = true\n{license}repository.workspace = true\npublish = [\"pkgre\"]\n{categories}{readme}\n[dependencies]\nmirrored-dep.workspace = true\n\n[dev-dependencies]\nmirrored-dev = {{ version = \"0.1\", registry = \"pkgre\" }}\n\n[target.'cfg(unix)'.dependencies]\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n"
+            "[package]\nname = \"example-lib\"\ndescription = \"An example library\"\nversion.workspace = true\nedition.workspace = true\n{license}repository.workspace = true\npublish = [\"pkgre\"]\n{categories}{readme}{target}\n[dependencies]\nmirrored-dep.workspace = true\n\n[dev-dependencies]\nmirrored-dev = {{ version = \"0.1\", registry = \"pkgre\" }}\n\n[target.'cfg(unix)'.dependencies]\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n"
         ),
     )
     .expect("write the library manifest");

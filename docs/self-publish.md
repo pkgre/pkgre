@@ -164,9 +164,9 @@ that the catalog publishes from it:
    is refused otherwise, naming the Gitlink and the crate; a released crate's `readme`,
    `license-file`, `build` or target `path` that resolves at or below a Gitlink is
    refused; and no derived archive may hold a path at or below one. A path that a released
-   crate's manifest names must resolve inside the tag's checkout: an absolute `readme` or
-   `license-file`, or one that `..` components take outside the checkout, is refused.
-   Submodules are never initialized or fetched.
+   crate's manifest names must resolve inside the tag's checkout and outside its `.git`
+   directory: an absolute `readme` or `license-file`, or one that `..` components take outside
+   the checkout, is refused. Submodules are never initialized or fetched.
 3. It rewrites every manifest of the workspace with `toml_edit`, the released members' and
    the others' alike, since Cargo loads the whole workspace:
    - for each released crate, its crates.io name and `publish = ["crates-io"]`, and

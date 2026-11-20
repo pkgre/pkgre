@@ -117,21 +117,25 @@ pub(crate) fn gitlinks_in_index(staged: &str) -> Vec<PathBuf> {
 ///
 /// Two rules apply. A Gitlink is accepted when the innermost member whose
 /// directory contains it is not a released crate, or when no member's directory
-/// contains it. And a path that a released crate's manifest names is relative
-/// and resolves inside the tag's checkout: an absolute path, one that `..`
-/// components take outside the checkout, or one at or below a Gitlink is
-/// refused, naming the crate, the field and the path. The checkout, not the
-/// workspace root, is the boundary, because a workspace root may sit below the
-/// checkout while a member sits above it, and the checkout is the tag's whole
-/// tree either way.
+/// contains it. And a path that a released crate's manifest names resolves
+/// inside the tag's checkout and outside the checkout's own `.git` directory,
+/// which Git writes on the host: a path that `..` components take outside the
+/// checkout, one whose first component under the checkout is `.git`, or one at
+/// or below a Gitlink is refused, naming the crate, the field and the path. An
+/// absolute `readme` or `license-file` is refused as well, since Cargo copies
+/// it into the archive; a target's path is held to the containment rule alone,
+/// because `cargo metadata` reports it resolved and absolute. The checkout, not
+/// the workspace root, is the boundary, because a workspace root may sit below
+/// the checkout while a member sits above it, and the checkout is the tag's
+/// whole tree either way.
 ///
 /// # Errors
 ///
 /// Returns an error for a Gitlink path that is not a safe repository-relative
 /// path, a Gitlink whose innermost member is a released crate, a released
 /// crate's manifest path that is absolute, that resolves outside the checkout,
-/// or that resolves at or below a Gitlink, or a checkout or member directory
-/// that cannot be resolved.
+/// that resolves inside the checkout's `.git` directory, or that resolves at or
+/// below a Gitlink, or a checkout or member directory that cannot be resolved.
 pub(crate) fn ensure_release_tag_paths(
     checkout: &Path,
     gitlinks: &[PathBuf],
@@ -159,7 +163,7 @@ pub(crate) fn ensure_release_tag_paths(
         for manifest_path in &member.manifest_paths {
             ensure!(
                 !manifest_path.copied || !manifest_path.path.is_absolute(),
-                "the released package \"{}\" names its {} with the absolute path \"{}\"; a release tag's manifests name every path inside its workspace, relative to the package's directory",
+                "the released package \"{}\" names its {} with the absolute path \"{}\"; a release tag's manifests name every path inside its checkout, relative to the package's directory",
                 member.name,
                 manifest_path.field,
                 manifest_path.path.display()
@@ -173,6 +177,14 @@ pub(crate) fn ensure_release_tag_paths(
                 manifest_path.path.display(),
                 resolved.display(),
                 checkout.display()
+            );
+            ensure!(
+                !inside_git_directory(&checkout, &resolved),
+                "the released package \"{}\" names its {} at \"{}\", which resolves to \"{}\" inside the checkout's own .git directory; Git writes that directory on the host, so a release tag's manifests name no path in it",
+                member.name,
+                manifest_path.field,
+                manifest_path.path.display(),
+                resolved.display()
             );
             let Some(gitlink) = gitlinks
                 .iter()
@@ -219,6 +231,24 @@ pub(crate) fn ensure_release_tag_paths(
         }
     }
     Ok(())
+}
+
+/// Returns whether a resolved path lies in the checkout's own `.git` directory.
+///
+/// Git writes that directory on the host, so it holds the host's identity, its
+/// timestamps and the fetch's own state, and no release tag may publish it. The
+/// name is compared case-insensitively, as the checkout's own path rules compare
+/// it, since a case-insensitive filesystem reaches the same directory through
+/// any spelling.
+fn inside_git_directory(checkout: &Path, resolved: &Path) -> bool {
+    let Ok(relative) = resolved.strip_prefix(checkout) else {
+        return false;
+    };
+    relative
+        .components()
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(".git"))
 }
 
 /// Refuses an archive that holds a path at or below a Gitlink.
@@ -476,6 +506,28 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("license-file"), "{message}");
         assert!(message.contains("outside the checkout"), "{message}");
+    }
+
+    #[test]
+    fn refuses_a_manifest_path_inside_the_checkouts_git_directory() {
+        for path in [
+            "../../.git/logs/HEAD",
+            "../../.git/config",
+            "../../.GIT/index",
+        ] {
+            let temporary = TemporaryDirectory::new("pkgre-gitlinks-git-directory").unwrap();
+            let workspace = temporary.path().join("workspace");
+            let mut members = vec![member("demo", &workspace.join("crates/demo"), true)];
+            directories(&workspace, &members, &[]);
+            members[0].manifest_paths = vec![ManifestPath {
+                field: "readme",
+                path: PathBuf::from(path),
+                copied: true,
+            }];
+            let error = ensure_release_tag_paths(&workspace, &[], &members).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(".git directory"), "{path}: {message}");
+        }
     }
 
     #[test]

@@ -246,6 +246,18 @@ fn derive_from_memory(
     state: &MemoryState,
     source: &Path,
 ) -> Result<Vec<super::DerivedPackage>> {
+    let working = fixtures::Temp::new("pkgre-derive-work");
+    derive_from_memory_in(release, state, source, working.path())
+}
+
+/// Derives the fixture release from catalog facts, below a working root a test
+/// chooses.
+fn derive_from_memory_in(
+    release: &Release,
+    state: &MemoryState,
+    source: &Path,
+    working: &Path,
+) -> Result<Vec<super::DerivedPackage>> {
     let version = Version::parse(fixtures::VERSION).expect("parse the fixture version");
     let facts = state
         .catalog
@@ -261,14 +273,13 @@ fn derive_from_memory(
             archive: Vec::new(),
         })
         .collect::<Vec<_>>();
-    let working = fixtures::Temp::new("pkgre-derive-work");
     derive_release_with(
         &facts,
         &released,
         &state.catalog,
         &state.config,
         &state.lock,
-        Sources::local(&release.root, Some(source), working.path()),
+        Sources::local(&release.root, Some(source), working),
     )
 }
 
@@ -1468,6 +1479,48 @@ fn refuses_a_license_file_that_leaves_the_checkout() {
     let error = format!("{error:#}");
     assert!(error.contains("license-file"), "{error}");
     assert!(error.contains("outside the checkout"), "{error}");
+}
+
+#[test]
+fn refuses_a_readme_inside_the_checkouts_git_directory() {
+    let temporary = fixtures::Temp::new("pkgre-derive-readme-git");
+    let variant = Variant {
+        library_readme: Readme::GitDirectory,
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a readme inside the checkout's .git directory is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains(".git directory"), "{error}");
+    assert!(error.contains("readme"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn refuses_a_target_path_below_a_gitlink_below_a_symlinked_working_root() {
+    let temporary = fixtures::Temp::new("pkgre-derive-gitlink-target");
+    let variant = Variant {
+        gitlink: Some("serve/data"),
+        library_target_path: Some("../serve/data/lib.rs"),
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let real = temporary.path().join("real");
+    fs::create_dir_all(&real).expect("create the real working directory");
+    let link = temporary.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("create the symlinked working root");
+    // The derivation works below the symlinked root, and Cargo reports a
+    // target's path resolved against the root it was started with, so the rule
+    // only sees one form of the path when the root is resolved once.
+    let error = derive_from_memory_in(&release, &state, &source.root, &link)
+        .expect_err("a target path below a Gitlink is refused below a symlinked root");
+    let error = format!("{error:#}");
+    assert!(error.contains("target path"), "{error}");
+    assert!(error.contains("serve/data/lib.rs"), "{error}");
+    assert!(error.contains("at or below the Gitlink"), "{error}");
 }
 
 #[test]
