@@ -158,7 +158,13 @@ that the catalog publishes from it:
    `registry/main.lock` records.
 2. It reads the workspace with `cargo metadata --no-deps --locked` and requires the crates
    the catalog publishes from the tag to be exactly its publishable members, whose
-   `publish` is exactly `["pkgre"]`.
+   `publish` is exactly `["pkgre"]`. It applies the Gitlink rule of `docs/catalog.md` to
+   that workspace: a Gitlink is accepted when the innermost member whose directory
+   contains it is not a released crate, or when no member's directory contains it, and
+   is refused otherwise, naming the Gitlink and the crate; a released crate's `readme`,
+   `license-file`, `build` or target `path` that resolves at or below a Gitlink is
+   refused; and no derived archive may hold a path at or below one. Submodules are never
+   initialized or fetched.
 3. It rewrites every manifest of the workspace with `toml_edit`, the released members' and
    the others' alike, since Cargo loads the whole workspace:
    - for each released crate, its crates.io name and `publish = ["crates-io"]`, and

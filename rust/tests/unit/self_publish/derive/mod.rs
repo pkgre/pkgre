@@ -962,6 +962,7 @@ fn refuses_a_sibling_dependency_declared_through_the_registry() {
         manifest_path: root.join("bin/Cargo.toml"),
         dependencies: Vec::new(),
         released: true,
+        manifest_paths: Vec::new(),
         library: None,
         main_binary: Some("example-bin".to_owned()),
         facts: super::MemberFacts::default(),
@@ -972,6 +973,7 @@ fn refuses_a_sibling_dependency_declared_through_the_registry() {
         manifest_path: root.join("lib/Cargo.toml"),
         dependencies: Vec::new(),
         released: true,
+        manifest_paths: Vec::new(),
         library: Some("example_lib".to_owned()),
         main_binary: None,
         facts: super::MemberFacts::default(),
@@ -1387,6 +1389,70 @@ fn refuses_patch_and_replace_tables() {
         let error = format!("{error:#}");
         assert!(error.contains(label), "{error}");
     }
+}
+
+#[test]
+fn accepts_a_gitlink_below_a_member_the_tag_does_not_release() {
+    let temporary = fixtures::Temp::new("pkgre-derive-gitlink-accepted");
+    let variant = Variant {
+        gitlink: Some("serve/data"),
+        ..Variant::default()
+    };
+    let (source, release, catalog) = fixture(temporary.path(), variant);
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    let packages = derive_from_catalog(&release, &state, &catalog.curated, &source.root)
+        .expect("a Gitlink below a member the tag does not release is accepted");
+    assert_eq!(packages.len(), 2);
+    for package in &packages {
+        let files = read_crate_archive(
+            &package.entry.crates_io_name,
+            &package.entry.version,
+            &package.archive,
+            &[],
+        )
+        .expect("read the derived archive")
+        .files;
+        assert!(
+            !files.keys().any(|path| path.starts_with("serve/")),
+            "no archive of {} holds a path below the Gitlink: {:?}",
+            package.entry.name,
+            files.keys().collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn refuses_a_gitlink_inside_a_released_package() {
+    let temporary = fixtures::Temp::new("pkgre-derive-gitlink-released");
+    let variant = Variant {
+        gitlink: Some("lib/vendor"),
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a Gitlink inside a released package is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains("lib/vendor"), "{error}");
+    assert!(error.contains("\"example-lib\""), "{error}");
+}
+
+#[test]
+fn refuses_a_released_packages_readme_below_a_gitlink() {
+    let temporary = fixtures::Temp::new("pkgre-derive-gitlink-readme");
+    let variant = Variant {
+        gitlink: Some("serve/data"),
+        library_readme: Some("../serve/data/README.md"),
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a readme at or below a Gitlink is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains("readme"), "{error}");
+    assert!(error.contains("../serve/data/README.md"), "{error}");
+    assert!(error.contains("serve/data"), "{error}");
 }
 
 #[test]

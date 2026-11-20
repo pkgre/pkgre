@@ -159,6 +159,10 @@ pub(crate) struct Variant {
     pub(crate) server_needs_first_party: bool,
     /// The categories that the released library declares, when it declares any.
     pub(crate) library_categories: Option<&'static str>,
+    /// The repository-relative Gitlink that the tag records, when it records one.
+    pub(crate) gitlink: Option<&'static str>,
+    /// The readme that the released library's manifest names, when it names one.
+    pub(crate) library_readme: Option<&'static str>,
 }
 
 /// A local registry that stands in for crates.io and the curated registry, so
@@ -423,7 +427,7 @@ pub(crate) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
     )
     .expect("write the server source");
     generate_lockfile(&root, &source.root);
-    commit_and_tag(&root);
+    commit_and_tag(&root, variant);
     let tag_oid = git(&root, &["rev-parse", &format!("refs/tags/{}", tag())]);
     let commit = git(
         &root,
@@ -488,10 +492,14 @@ fn write_manifests(root: &Path, variant: Variant) {
         Some(categories) => format!("categories = [{categories:?}]\n"),
         None => String::new(),
     };
+    let readme = match variant.library_readme {
+        Some(readme) => format!("readme = {readme:?}\n"),
+        None => String::new(),
+    };
     fs::write(
         root.join("lib/Cargo.toml"),
         format!(
-            "[package]\nname = \"example-lib\"\ndescription = \"An example library\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n{categories}\n[dependencies]\nmirrored-dep.workspace = true\n\n[dev-dependencies]\nmirrored-dev = {{ version = \"0.1\", registry = \"pkgre\" }}\n\n[target.'cfg(unix)'.dependencies]\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n"
+            "[package]\nname = \"example-lib\"\ndescription = \"An example library\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n{categories}{readme}\n[dependencies]\nmirrored-dep.workspace = true\n\n[dev-dependencies]\nmirrored-dev = {{ version = \"0.1\", registry = \"pkgre\" }}\n\n[target.'cfg(unix)'.dependencies]\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n"
         ),
     )
     .expect("write the library manifest");
@@ -607,10 +615,24 @@ pub(crate) fn curated_archives(
 
 /// Initialises the fixture repository and puts the annotated release tag on its
 /// only commit.
-fn commit_and_tag(root: &Path) {
+fn commit_and_tag(root: &Path, variant: Variant) {
     git(root, &["init", "--quiet"]);
     git(root, &["add", "."]);
     git(root, &["commit", "--quiet", "-m", "release"]);
+    if let Some(gitlink) = variant.gitlink {
+        // A Gitlink that is never initialized, recorded in the tag's own tree.
+        let linked = git(root, &["rev-parse", "HEAD"]).trim().to_owned();
+        git(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{linked},{gitlink}"),
+            ],
+        );
+        git(root, &["commit", "--quiet", "-m", "gitlink"]);
+    }
     git(root, &["tag", "-a", &tag(), "-m", "example 1.0.0"]);
 }
 

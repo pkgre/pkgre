@@ -6,6 +6,7 @@ pub mod artifact;
 pub mod category;
 pub mod check;
 pub mod download;
+mod gitlinks;
 pub mod http_response;
 pub mod import;
 pub mod index;
