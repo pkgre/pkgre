@@ -408,9 +408,16 @@ pub(super) fn derive_release_in(
         release.tag
     );
     let cargo = pinned_cargo(&release.cargo_version)?;
+    // Cargo reports every absolute path of its metadata as it sees it, and the
+    // checkout is resolved here, so the temporary root is resolved once: Git,
+    // Cargo and the path rules then see one form of every path, even below a
+    // temporary directory that a symbolic link reaches.
     let temporary = match sources.root() {
-        Some(root) => TemporaryDirectory::new_in(root, "pkgre-self-publish")?,
-        None => TemporaryDirectory::new("pkgre-self-publish")?,
+        Some(root) => TemporaryDirectory::new_in(&temporary_root(root)?, "pkgre-self-publish")?,
+        None => TemporaryDirectory::new_in(
+            &temporary_root(&std::env::temp_dir())?,
+            "pkgre-self-publish",
+        )?,
     };
     let root = temporary.path();
     let cargo_home = cargo::cargo_home(root);
@@ -460,6 +467,11 @@ pub(super) fn derive_release_in(
     );
 
     let workspace = workspace::Workspace::load(&cargo, &environment, &work, &checkout.root)?;
+    crate::gitlinks::ensure_release_tag_paths(
+        &checkout.root,
+        &checkout.gitlinks,
+        &workspace.tag_members(),
+    )?;
     ensure_release_members(&workspace, released, &release.tag)?;
     let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
     let published = published_crates(&workspace, released, config, &release.tag)?;
@@ -529,6 +541,13 @@ pub(super) fn derive_release_in(
             sha256_bytes(&package.archive),
             package.crate_sha256
         );
+        crate::gitlinks::ensure_archive_outside_gitlinks(
+            &checkout.gitlinks,
+            &package_directory(&checkout.root, &workspace, &package.name)?,
+            &crates_io_name,
+            &package.version,
+            archive,
+        )?;
         compare::compare_archives(
             &package.version,
             &compare::ArchiveToCompare {
@@ -621,6 +640,53 @@ fn sibling_dependencies(
         siblings.insert(member.name.clone(), dependencies);
     }
     siblings
+}
+
+/// Returns the canonical form of the temporary root the derivation works below.
+///
+/// # Errors
+///
+/// Returns an error for a root that cannot be resolved.
+fn temporary_root(root: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(root)
+        .with_context(|| format!("canonicalize the temporary root {}", root.display()))
+}
+
+/// Returns the repository-relative directory of one released crate.
+///
+/// # Errors
+///
+/// Returns an error for a crate that is not a member of the tag's workspace, for
+/// a member manifest without a directory, or for a directory outside the
+/// checkout.
+fn package_directory(
+    checkout: &Path,
+    workspace: &workspace::Workspace,
+    name: &str,
+) -> Result<PathBuf> {
+    let member = workspace.member(name).with_context(|| {
+        format!("the tag's workspace does not hold {name}, which registry/main.lock publishes")
+    })?;
+    let directory = member
+        .manifest_path
+        .parent()
+        .with_context(|| format!("the manifest of {name} has no directory"))?;
+    let checkout = std::fs::canonicalize(checkout)
+        .with_context(|| format!("canonicalize checkout {}", checkout.display()))?;
+    let directory = std::fs::canonicalize(directory)
+        .with_context(|| format!("canonicalize the directory of {name}"))?;
+    let relative = directory.strip_prefix(&checkout).with_context(|| {
+        format!(
+            "the directory {} of {name} lies outside the checkout {}",
+            directory.display(),
+            checkout.display()
+        )
+    })?;
+    Ok(if relative.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        relative.to_path_buf()
+    })
 }
 
 /// Requires the crates that the catalog publishes from the tag to be exactly

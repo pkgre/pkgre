@@ -19,6 +19,9 @@ pub(super) struct TagCheckout {
     pub(super) tag_oid: String,
     /// Full peeled commit object ID.
     pub(super) commit: String,
+    /// Repository-relative paths that the tag's index records as Gitlinks,
+    /// which no submodule fetch initializes.
+    pub(super) gitlinks: Vec<PathBuf>,
 }
 
 /// Fetches one tag into a fresh checkout and returns its exact object IDs.
@@ -30,8 +33,8 @@ pub(super) struct TagCheckout {
 /// # Errors
 ///
 /// Returns an error for an unsafe repository or tag, a fetch that fails, a tag
-/// that is not an object ID, a checkout with submodules, symlinks, or unsafe
-/// paths, or a checkout that is not clean.
+/// that is not an object ID, a checkout with symlinks or unsafe paths, or a
+/// checkout that is not clean.
 pub(super) fn fetch_tag(
     repository: &str,
     tag: &str,
@@ -111,16 +114,12 @@ pub(super) fn fetch_tag(
         environment,
         allow_file,
     )?;
-    let gitlinks = git::stdout(
+    let gitlinks = crate::gitlinks::gitlinks_in_index(&git::stdout(
         checkout,
         [OsString::from("ls-files"), OsString::from("--stage")],
         environment,
         allow_file,
-    )?;
-    ensure!(
-        !gitlinks.lines().any(|line| line.starts_with("160000 ")),
-        "release tag checkout contains unsupported submodules"
-    );
+    )?);
     ensure_safe_checkout_tree(checkout)?;
     ensure_clean_checkout(checkout, environment, allow_file)?;
     let root_manifest = checkout.join("Cargo.toml");
@@ -135,6 +134,7 @@ pub(super) fn fetch_tag(
         root: checkout.to_path_buf(),
         tag_oid,
         commit,
+        gitlinks,
     })
 }
 

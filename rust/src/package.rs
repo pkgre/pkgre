@@ -77,6 +77,15 @@ struct MetadataPackage {
     links: Option<String>,
     rust_version: Option<String>,
     publish: Option<Vec<String>>,
+    readme: Option<PathBuf>,
+    license_file: Option<PathBuf>,
+    #[serde(default)]
+    targets: Vec<MetadataTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetadataTarget {
+    src_path: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -749,7 +758,13 @@ fn resolve_tag(
         }
     }
 
-    let temporary = TemporaryDirectory::new_in(root, "pkgre-git-package")?;
+    // Cargo reports every absolute path of its metadata as it sees it, and the
+    // checkout is resolved here, so the temporary root is resolved once: Git,
+    // Cargo and the path rules then see one form of every path, even below a
+    // temporary directory that a symbolic link reaches.
+    let root = fs::canonicalize(root)
+        .with_context(|| format!("canonicalize the temporary root {}", root.display()))?;
+    let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-package")?;
     let checkout = temporary.path().join("repository");
     let cargo_home = temporary.path().join("cargo-home");
     ensure_no_cargo_configuration(&cargo_home)?;
@@ -757,7 +772,7 @@ fn resolve_tag(
     prepare_cargo_home(&cargo_home, source.registry_index)?;
     let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
 
-    let (tag_oid, commit) = fetch_tag(
+    let (tag_oid, commit, gitlinks) = fetch_tag(
         &environment,
         request.tag,
         &checkout,
@@ -778,6 +793,7 @@ fn resolve_tag(
     let metadata = cargo_metadata(&cargo, &cargo_home, &environment, &root_manifest)?;
     ensure_workspace_root_inside(&checkout, &metadata.root)?;
     ensure_no_patch_or_replace(&metadata, &root_manifest)?;
+    ensure_tag_gitlinks(&checkout, &gitlinks, &metadata.packages)?;
     let packages = select_packages(&metadata.packages, request.packages)?;
     let tag_version = packages
         .first()
@@ -806,6 +822,7 @@ fn resolve_tag(
         request.tag,
         &siblings,
     )?;
+    ensure_archives_outside_gitlinks(&gitlinks, &packages, &paths, &archives)?;
     ensure_clean_checkout(&environment, &checkout)?;
 
     let mut expected = siblings
@@ -978,7 +995,7 @@ fn fetch_tag(
     repository: &Path,
     fetch_repository: &str,
     allow_file: bool,
-) -> Result<(String, String)> {
+) -> Result<(String, String, Vec<PathBuf>)> {
     run_git(
         None,
         [
@@ -1047,19 +1064,15 @@ fn fetch_tag(
         ],
         environment,
     )?;
-    let gitlinks = command_stdout(
+    let gitlinks = crate::gitlinks::gitlinks_in_index(&command_stdout(
         git_command(
             Some(repository),
             [OsString::from("ls-files"), OsString::from("--stage")],
             environment,
         ),
         "list checked-out Git files",
-    )?;
-    ensure!(
-        !gitlinks.lines().any(|line| line.starts_with("160000 ")),
-        "Git-tag checkout contains unsupported submodules"
-    );
-    Ok((tag_oid, commit))
+    )?);
+    Ok((tag_oid, commit, gitlinks))
 }
 
 pub(crate) fn ensure_safe_checkout_tree(repository: &Path) -> Result<()> {
@@ -1482,6 +1495,91 @@ fn published_packages(metadata: &[MetadataPackage]) -> BTreeSet<String> {
         .filter(|package| package.publish.as_deref() == Some(&[CARGO_REGISTRY.to_owned()]))
         .map(|package| package.name.clone())
         .collect()
+}
+
+/// Applies the Gitlink and manifest-path rules to one tag whose workspace Cargo
+/// named.
+///
+/// # Errors
+///
+/// Returns an error for a Gitlink inside a released package, or for a path of a
+/// released package's manifest that is absolute, that resolves outside the
+/// checkout, or that resolves at or below a Gitlink.
+fn ensure_tag_gitlinks(
+    checkout: &Path,
+    gitlinks: &[PathBuf],
+    packages: &[MetadataPackage],
+) -> Result<()> {
+    crate::gitlinks::ensure_release_tag_paths(checkout, gitlinks, &tag_members(packages)?)
+}
+
+/// Requires that no packaged archive of the tag holds a path at or below a
+/// Gitlink.
+///
+/// # Errors
+///
+/// Returns an error for an archive that holds such a path.
+fn ensure_archives_outside_gitlinks(
+    gitlinks: &[PathBuf],
+    packages: &[&MetadataPackage],
+    paths: &[PathBuf],
+    archives: &[Vec<u8>],
+) -> Result<()> {
+    for ((package, path), archive) in packages.iter().zip(paths).zip(archives) {
+        crate::gitlinks::ensure_archive_outside_gitlinks(
+            gitlinks,
+            path,
+            &package.name,
+            &package.version,
+            archive,
+        )?;
+    }
+    Ok(())
+}
+
+/// Returns the workspace members of one tagged checkout, as the Gitlink rule
+/// reads them.
+///
+/// A member is released when its manifest declares exactly `publish =
+/// ["pkgre"]`, which is the widest set the catalog can publish from the tag: a
+/// Gitlink inside a member that another resolution of the same tag packages is
+/// refused here too.
+///
+/// # Errors
+///
+/// Returns an error for a member manifest without a directory.
+fn tag_members(packages: &[MetadataPackage]) -> Result<Vec<crate::gitlinks::Member>> {
+    let mut members = Vec::with_capacity(packages.len());
+    for package in packages {
+        let directory = package.manifest_path.parent().with_context(|| {
+            format!(
+                "the manifest of package {:?} has no directory",
+                package.name
+            )
+        })?;
+        let released = package.publish.as_deref() == Some(&[CARGO_REGISTRY.to_owned()]);
+        let manifest_paths = if released {
+            let target_paths = package
+                .targets
+                .iter()
+                .map(|target| target.src_path.clone())
+                .collect::<Vec<_>>();
+            crate::gitlinks::manifest_paths(
+                package.readme.as_deref(),
+                package.license_file.as_deref(),
+                &target_paths,
+            )
+        } else {
+            Vec::new()
+        };
+        members.push(crate::gitlinks::Member {
+            name: package.name.clone(),
+            directory: directory.to_path_buf(),
+            released,
+            manifest_paths,
+        });
+    }
+    Ok(members)
 }
 
 /// Returns the dependency key that a manifest wrote, with the package it points
@@ -2351,6 +2449,9 @@ mod tests {
             links: None,
             rust_version: Some("1.85".to_owned()),
             publish: Some(vec![CARGO_REGISTRY.to_owned()]),
+            readme: None,
+            license_file: None,
+            targets: Vec::new(),
         };
         let record = generated_index_record(&package, &"01".repeat(32)).unwrap();
         let value: Value = serde_json::from_slice(&record).unwrap();
@@ -3129,6 +3230,9 @@ mod tests {
             links: None,
             rust_version: None,
             publish: Some(vec![CARGO_REGISTRY.to_owned()]),
+            readme: None,
+            license_file: None,
+            targets: Vec::new(),
         };
         let index = "sparse+https://rust.pkg.re/";
         let workspace = lock(&[("pkgre-dep", "1.0.0", Some(index), Some(&"01".repeat(32)))]);
@@ -3239,6 +3343,9 @@ mod tests {
             links: None,
             rust_version: None,
             publish: Some(vec![CARGO_REGISTRY.to_owned()]),
+            readme: None,
+            license_file: None,
+            targets: Vec::new(),
         };
         let siblings = BTreeMap::new();
         for (name, index) in retired_registries() {
@@ -3280,6 +3387,466 @@ mod tests {
             format!("{error:#}").contains("uses unsupported source"),
             "{error:#}"
         );
+    }
+
+    /// The manifest path that one fixture of the manifest-path rule names.
+    #[derive(Clone, Copy, Debug)]
+    enum ManifestPathFixture {
+        /// A readme that the released crate names by an absolute path.
+        AbsoluteReadme,
+        /// A readme that walks out of the checkout.
+        EscapingReadme,
+        /// A license file that walks out of the checkout.
+        EscapingLicenseFile,
+        /// A readme inherited from `[workspace.package]`, which stays inside.
+        InheritedReadme,
+        /// A readme inside the checkout's own `.git` directory.
+        GitDirectoryReadme,
+    }
+
+    /// Creates one tagged fixture of the manifest-path rule and returns the
+    /// repository.
+    ///
+    /// The file that an escaping or absolute path names is written into the
+    /// test's own temporary directory, outside the checkout.
+    fn create_manifest_path_release(
+        temporary: &TemporaryDirectory,
+        layout: ManifestPathFixture,
+    ) -> PathBuf {
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+        fs::create_dir_all(source.join("tools/src")).unwrap();
+        let outside = temporary.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("README.md"), "# outside the checkout\n").unwrap();
+        fs::write(outside.join("LICENSE"), "an outside license\n").unwrap();
+        let mut workspace_package = "";
+        let mut readme = String::new();
+        let mut license_file = String::new();
+        let mut license = "license = \"MIT\"\n";
+        match layout {
+            ManifestPathFixture::AbsoluteReadme => {
+                readme = format!("readme = \"{}\"\n", outside.join("README.md").display());
+            }
+            ManifestPathFixture::EscapingReadme => {
+                readme = "readme = \"../../../outside/README.md\"\n".to_owned();
+            }
+            ManifestPathFixture::EscapingLicenseFile => {
+                license = "";
+                license_file = "license-file = \"../../../outside/LICENSE\"\n".to_owned();
+            }
+            ManifestPathFixture::InheritedReadme => {
+                workspace_package = "[workspace.package]\nreadme = \"README.md\"\n\n";
+                readme = "readme.workspace = true\n".to_owned();
+                fs::write(source.join("README.md"), "# the workspace readme\n").unwrap();
+            }
+            ManifestPathFixture::GitDirectoryReadme => {
+                readme = "readme = \"../../.git/logs/HEAD\"\n".to_owned();
+            }
+        }
+        fs::write(
+            source.join("Cargo.toml"),
+            format!(
+                "[workspace]\nmembers = [\"crates/demo\", \"tools\"]\nresolver = \"3\"\n\n{workspace_package}"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/Cargo.toml"),
+            format!(
+                "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\n{license}publish = [\"pkgre\"]\n{readme}{license_file}"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("tools/Cargo.toml"),
+            "[package]\nname = \"pkgre-tools\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = false\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("tools/src/lib.rs"),
+            "pub fn tool() -> u32 { 1 }\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(&source)
+                .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
+                .arg("generate-lockfile"),
+        );
+        test_git(&source, &["add", "Cargo.lock"]);
+        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    #[test]
+    fn refuses_a_manifest_path_of_a_released_crate_outside_the_checkout() {
+        for (layout, field, path) in [
+            (
+                ManifestPathFixture::AbsoluteReadme,
+                "readme",
+                "outside/README.md",
+            ),
+            (
+                ManifestPathFixture::EscapingReadme,
+                "readme",
+                "../../../outside/README.md",
+            ),
+            (
+                ManifestPathFixture::EscapingLicenseFile,
+                "license-file",
+                "../../../outside/LICENSE",
+            ),
+            (
+                ManifestPathFixture::GitDirectoryReadme,
+                "readme",
+                ".git/logs/HEAD",
+            ),
+        ] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-manifest-path").unwrap();
+            let source = create_manifest_path_release(&temporary, layout);
+            let error = resolve_gitlink_fixture(&root, &source).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("\"pkgre-demo\""), "{layout:?}: {message}");
+            assert!(message.contains(field), "{layout:?}: {message}");
+            assert!(message.contains(path), "{layout:?}: {message}");
+        }
+    }
+
+    #[test]
+    fn accepts_an_inherited_readme_inside_the_workspace() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-manifest-readme").unwrap();
+        let source = create_manifest_path_release(&temporary, ManifestPathFixture::InheritedReadme);
+        let materialization = resolve_gitlink_fixture(&root, &source)
+            .expect("a readme inherited from the workspace, inside it, is accepted");
+        let files = crate::update::read_crate_archive(
+            "pkgre-demo",
+            &materialization.version,
+            &materialization.archive_bytes,
+            &[],
+        )
+        .unwrap()
+        .files;
+        assert!(
+            files.contains_key("README.md"),
+            "the archive holds the inherited readme: {:?}",
+            files.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// Where one fixture of the Gitlink rule records its Gitlink.
+    #[derive(Clone, Copy, Debug)]
+    enum GitlinkFixture {
+        /// Inside a member that the release does not publish.
+        NotReleasedMember,
+        /// Inside the released crate's own directory.
+        ReleasedPackage,
+        /// Inside the root package, outside every nested member.
+        RootPackage,
+        /// Below a nested member of the root package, which the release does
+        /// not publish.
+        BelowNestedMember,
+        /// Outside every member of a virtual workspace root.
+        OutsideEveryMember,
+        /// Below a Gitlink of a member that is not released, named by the
+        /// released crate's readme.
+        ReadmeBelowGitlink,
+        /// Below a Gitlink of a member that is not released, named by the
+        /// released crate's license-file.
+        LicenseFileBelowGitlink,
+        /// Below a Gitlink of a member that is not released, named by a target
+        /// of the released crate.
+        TargetPathBelowGitlink,
+    }
+
+    impl GitlinkFixture {
+        /// Returns the repository-relative Gitlink that the fixture records.
+        fn path(self) -> &'static str {
+            match self {
+                Self::NotReleasedMember
+                | Self::ReadmeBelowGitlink
+                | Self::LicenseFileBelowGitlink
+                | Self::TargetPathBelowGitlink => "tools/vendor",
+                Self::ReleasedPackage => "crates/demo/vendor",
+                Self::RootPackage | Self::OutsideEveryMember => "vendor/sub",
+                Self::BelowNestedMember => "tests/res/data",
+            }
+        }
+
+        /// Returns whether the released crate is a root package at `.`.
+        fn root_package(self) -> bool {
+            matches!(self, Self::RootPackage | Self::BelowNestedMember)
+        }
+    }
+
+    /// Creates one tagged fixture of the Gitlink rule, with or without its
+    /// Gitlink, and returns the repository.
+    ///
+    /// Every fixture commits the lock of its workspace root and tags one commit
+    /// that the pin is put on, so that the two forms of one fixture differ in
+    /// that commit alone.
+    fn create_gitlink_release(
+        temporary: &TemporaryDirectory,
+        layout: GitlinkFixture,
+        with_gitlink: bool,
+    ) -> PathBuf {
+        let name = if with_gitlink { "gitlink" } else { "plain" };
+        let source = temporary.path().join(name);
+        if layout.root_package() {
+            fs::create_dir_all(source.join("src")).unwrap();
+            fs::create_dir_all(source.join("tests/res/src")).unwrap();
+            fs::write(
+                source.join("Cargo.toml"),
+                "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = [\"pkgre\"]\n\n[workspace]\nmembers = [\"tests/res\"]\nresolver = \"3\"\n",
+            )
+            .unwrap();
+            fs::write(source.join("src/lib.rs"), "pub fn answer() -> u32 { 42 }\n").unwrap();
+            fs::write(
+                source.join("tests/res/Cargo.toml"),
+                "[package]\nname = \"pkgre-fixtures\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = false\n",
+            )
+            .unwrap();
+            fs::write(
+                source.join("tests/res/src/lib.rs"),
+                "pub fn fixture() -> u32 { 1 }\n",
+            )
+            .unwrap();
+        } else {
+            fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+            fs::create_dir_all(source.join("tools/src")).unwrap();
+            fs::write(
+                source.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"crates/demo\", \"tools\"]\nresolver = \"3\"\n",
+            )
+            .unwrap();
+            let mut manifest = String::from(
+                "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\n",
+            );
+            if matches!(layout, GitlinkFixture::LicenseFileBelowGitlink) {
+                manifest.push_str("license-file = \"../../tools/vendor/LICENSE\"\n");
+            } else {
+                manifest.push_str("license = \"MIT\"\n");
+            }
+            manifest.push_str("publish = [\"pkgre\"]\n");
+            if matches!(layout, GitlinkFixture::ReadmeBelowGitlink) {
+                manifest.push_str("readme = \"../../tools/vendor/README.md\"\n");
+            }
+            if matches!(layout, GitlinkFixture::TargetPathBelowGitlink) {
+                manifest.push_str(
+                    "\n[[bin]]\nname = \"tool\"\npath = \"../../tools/vendor/tool.rs\"\n",
+                );
+            }
+            fs::write(source.join("crates/demo/Cargo.toml"), manifest).unwrap();
+            fs::write(
+                source.join("crates/demo/src/lib.rs"),
+                "pub fn answer() -> u32 { 42 }\n",
+            )
+            .unwrap();
+            fs::write(
+                source.join("tools/Cargo.toml"),
+                "[package]\nname = \"pkgre-tools\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = false\n",
+            )
+            .unwrap();
+            fs::write(
+                source.join("tools/src/lib.rs"),
+                "pub fn tool() -> u32 { 1 }\n",
+            )
+            .unwrap();
+        }
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        let lock_home = temporary.path().join(format!("lock-cargo-home-{name}"));
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(&source)
+                .env("CARGO_HOME", &lock_home)
+                .arg("generate-lockfile"),
+        );
+        test_git(&source, &["add", "Cargo.lock"]);
+        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        if with_gitlink {
+            let linked = test_git(&source, &["rev-parse", "HEAD"]).trim().to_owned();
+            test_git(
+                &source,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("160000,{linked},{}", layout.path()),
+                ],
+            );
+            test_git(&source, &["commit", "--quiet", "-m", "gitlink"]);
+        }
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    /// Resolves the fixture's released crate from its local repository.
+    fn resolve_gitlink_fixture(root: &Path, source: &Path) -> Result<GitTagMaterialization> {
+        resolve_git_tag_from_file_in(
+            root,
+            "https://example.invalid/pkgre-demo",
+            TEST_TAG,
+            "pkgre-demo",
+            &Version::parse(crate::policy::CARGO_VERSION).unwrap(),
+            source.to_str().unwrap(),
+        )
+    }
+
+    /// Returns the digest of every file of one archive by its repository-relative
+    /// path.
+    fn archive_digests(
+        package_path: &Path,
+        version: &Version,
+        archive: &[u8],
+    ) -> BTreeMap<PathBuf, String> {
+        let files = crate::update::read_crate_archive("pkgre-demo", version, archive, &[])
+            .unwrap()
+            .files;
+        files
+            .into_iter()
+            .map(|(path, file)| {
+                let relative = package_path
+                    .components()
+                    .chain(Path::new(&path).components())
+                    .filter(|component| !matches!(component, std::path::Component::CurDir))
+                    .map(|component| component.as_os_str().to_owned())
+                    .collect::<PathBuf>();
+                (relative, file.sha256)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn accepts_a_gitlink_that_is_outside_the_released_packages() {
+        for layout in [
+            GitlinkFixture::NotReleasedMember,
+            GitlinkFixture::BelowNestedMember,
+            GitlinkFixture::OutsideEveryMember,
+        ] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-gitlink-accepted").unwrap();
+            let source = create_gitlink_release(&temporary, layout, true);
+            let materialization = resolve_gitlink_fixture(&root, &source).unwrap();
+            let digests = archive_digests(
+                &materialization.path,
+                &materialization.version,
+                &materialization.archive_bytes,
+            );
+            assert!(
+                !digests
+                    .keys()
+                    .any(|path| path.starts_with(Path::new(layout.path()))),
+                "{layout:?} leaves no archive path at or below its Gitlink: {digests:?}"
+            );
+
+            // A Gitlink outside the released packages leaves the archive alone:
+            // the same tree without the Gitlink packages the same files, and only
+            // the commit it names differs.
+            if matches!(layout, GitlinkFixture::NotReleasedMember) {
+                let plain = create_gitlink_release(&temporary, layout, false);
+                let plain_materialization = resolve_gitlink_fixture(&root, &plain).unwrap();
+                let mut plain_digests = archive_digests(
+                    &plain_materialization.path,
+                    &plain_materialization.version,
+                    &plain_materialization.archive_bytes,
+                );
+                let mut digests = digests;
+                digests.remove(Path::new("crates/demo/.cargo_vcs_info.json"));
+                plain_digests.remove(Path::new("crates/demo/.cargo_vcs_info.json"));
+                assert_eq!(digests, plain_digests);
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_a_gitlink_that_is_inside_a_released_package() {
+        for (layout, gitlink, package) in [
+            (
+                GitlinkFixture::ReleasedPackage,
+                "crates/demo/vendor",
+                "\"pkgre-demo\"",
+            ),
+            (GitlinkFixture::RootPackage, "vendor/sub", "\"pkgre-demo\""),
+        ] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-gitlink-refused").unwrap();
+            let source = create_gitlink_release(&temporary, layout, true);
+            let error = resolve_gitlink_fixture(&root, &source).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(gitlink), "{message}");
+            assert!(message.contains(package), "{message}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_license_file_or_a_target_path_below_a_gitlink() {
+        for (layout, field, path, consequence) in [
+            (
+                GitlinkFixture::LicenseFileBelowGitlink,
+                "license-file",
+                "tools/vendor/LICENSE",
+                "Cargo copies such a file into the archive",
+            ),
+            (
+                GitlinkFixture::TargetPathBelowGitlink,
+                "target path",
+                "tools/vendor/tool.rs",
+                "stricter than Cargo",
+            ),
+        ] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-gitlink-path").unwrap();
+            let source = create_gitlink_release(&temporary, layout, true);
+            let error = resolve_gitlink_fixture(&root, &source).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(field), "{layout:?}: {message}");
+            assert!(message.contains(path), "{layout:?}: {message}");
+            assert!(message.contains("tools/vendor"), "{layout:?}: {message}");
+            assert!(message.contains(consequence), "{layout:?}: {message}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_target_path_below_a_gitlink_below_a_symlinked_temporary_root() {
+        let real = TemporaryDirectory::new_in(&uncovered_temporary_root(), "pkgre-gitlink-symlink")
+            .unwrap();
+        let link = real.path().join("link");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+        let temporary = TemporaryDirectory::new_in(&link, "pkgre-gitlink-target").unwrap();
+        let source =
+            create_gitlink_release(&temporary, GitlinkFixture::TargetPathBelowGitlink, true);
+        // The checkout is fetched below the symlinked root, and Cargo reports a
+        // target's path resolved against the root it was started with, so the
+        // rule only sees one form of the path when the root is resolved once.
+        let error = resolve_gitlink_fixture(&link, &source).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("target path"), "{message}");
+        assert!(message.contains("tools/vendor/tool.rs"), "{message}");
+    }
+
+    #[test]
+    fn refuses_a_released_crates_readme_below_a_gitlink() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-gitlink-readme").unwrap();
+        let source = create_gitlink_release(&temporary, GitlinkFixture::ReadmeBelowGitlink, true);
+        let error = resolve_gitlink_fixture(&root, &source).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("readme"), "{message}");
+        assert!(message.contains("tools/vendor"), "{message}");
     }
 
     /// Returns the first of `TMPDIR`, `/tmp`, and `/var/tmp` that no Cargo

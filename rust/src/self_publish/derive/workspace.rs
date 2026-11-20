@@ -45,6 +45,9 @@ pub(super) struct Member {
     /// Whether `publish` is exactly `[`pkgre`]`, which makes the member part of
     /// its repository's releases.
     pub(super) released: bool,
+    /// The paths the member's manifest names, which Cargo copies into the
+    /// member's archive; empty for a member the release does not publish.
+    pub(super) manifest_paths: Vec<crate::gitlinks::ManifestPath>,
     /// Library target name, when the member has a library.
     pub(super) library: Option<String>,
     /// Binary target name of `src/main.rs`, when the member has one.
@@ -94,6 +97,7 @@ struct MetadataPackage {
     description: Option<String>,
     license: Option<String>,
     license_file: Option<PathBuf>,
+    readme: Option<PathBuf>,
     homepage: Option<String>,
     documentation: Option<String>,
     repository: Option<String>,
@@ -152,35 +156,52 @@ impl Workspace {
         let members = metadata
             .packages
             .into_iter()
-            .map(|package| Member {
-                library: library_target(&package),
-                main_binary: main_binary_target(&package),
-                facts: super::MemberFacts {
-                    description: package.description,
-                    license: package.license,
-                    license_file: package.license_file,
-                    homepage: package.homepage,
-                    documentation: package.documentation,
-                    repository: package.repository,
-                    keywords: package.keywords.unwrap_or_default(),
-                    categories: package.categories.unwrap_or_default(),
-                },
-                dependencies: package
-                    .dependencies
-                    .into_iter()
-                    .map(|dependency| MemberDependency {
-                        package: dependency.name,
-                        source: dependency.source,
-                        registry: dependency.registry,
-                        req: dependency.req,
-                        path: dependency.path,
-                        rename: dependency.rename,
-                    })
-                    .collect(),
-                released: package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]),
-                name: package.name,
-                version: package.version,
-                manifest_path: package.manifest_path,
+            .map(|package| {
+                let released = package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]);
+                let manifest_paths = if released {
+                    crate::gitlinks::manifest_paths(
+                        package.readme.as_deref(),
+                        package.license_file.as_deref(),
+                        &package
+                            .targets
+                            .iter()
+                            .map(|target| target.src_path.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    Vec::new()
+                };
+                Member {
+                    library: library_target(&package),
+                    main_binary: main_binary_target(&package),
+                    facts: super::MemberFacts {
+                        description: package.description,
+                        license: package.license,
+                        license_file: package.license_file,
+                        homepage: package.homepage,
+                        documentation: package.documentation,
+                        repository: package.repository,
+                        keywords: package.keywords.unwrap_or_default(),
+                        categories: package.categories.unwrap_or_default(),
+                    },
+                    dependencies: package
+                        .dependencies
+                        .into_iter()
+                        .map(|dependency| MemberDependency {
+                            package: dependency.name,
+                            source: dependency.source,
+                            registry: dependency.registry,
+                            req: dependency.req,
+                            path: dependency.path,
+                            rename: dependency.rename,
+                        })
+                        .collect(),
+                    released,
+                    manifest_paths,
+                    name: package.name,
+                    version: package.version,
+                    manifest_path: package.manifest_path,
+                }
             })
             .collect();
         Ok(Self { root, members })
@@ -189,6 +210,30 @@ impl Workspace {
     /// Returns one member by its Cargo package name.
     pub(super) fn member(&self, name: &str) -> Option<&Member> {
         self.members.iter().find(|member| member.name == name)
+    }
+
+    /// Returns the members as the Gitlink rule reads them.
+    pub(super) fn tag_members(&self) -> Vec<crate::gitlinks::Member> {
+        self.members
+            .iter()
+            .map(|member| crate::gitlinks::Member {
+                name: member.name.clone(),
+                directory: member
+                    .manifest_path
+                    .parent()
+                    .map_or_else(|| self.root.clone(), Path::to_path_buf),
+                released: member.released,
+                manifest_paths: member
+                    .manifest_paths
+                    .iter()
+                    .map(|path| crate::gitlinks::ManifestPath {
+                        field: path.field,
+                        path: path.path.clone(),
+                        copied: path.copied,
+                    })
+                    .collect(),
+            })
+            .collect()
     }
 
     /// Returns the members that the tag publishes, which are exactly the crates

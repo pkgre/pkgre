@@ -141,6 +141,33 @@ pub(crate) enum Sibling {
     OtherTag,
 }
 
+/// The readme that one fixture's released library names.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum Readme {
+    /// The manifest names no readme.
+    #[default]
+    None,
+    /// The manifest names this path, relative to the package's directory.
+    Relative(&'static str),
+    /// The manifest names an absolute path below the fixture's own temporary
+    /// directory, outside the checkout.
+    Absolute,
+    /// The manifest inherits `[workspace.package] readme`, which stays inside.
+    Inherited,
+    /// The manifest names a readme inside the checkout's own `.git` directory.
+    GitDirectory,
+}
+
+/// The license file that one fixture's released library names.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum LicenseFile {
+    /// The manifest names a license identifier instead.
+    #[default]
+    None,
+    /// The manifest names this license-file, relative to the package's directory.
+    Relative(&'static str),
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Variant {
@@ -159,6 +186,15 @@ pub(crate) struct Variant {
     pub(crate) server_needs_first_party: bool,
     /// The categories that the released library declares, when it declares any.
     pub(crate) library_categories: Option<&'static str>,
+    /// The repository-relative Gitlink that the tag records, when it records one.
+    pub(crate) gitlink: Option<&'static str>,
+    /// The readme that the released library's manifest names.
+    pub(crate) library_readme: Readme,
+    /// The license file that the released library's manifest names.
+    pub(crate) library_license_file: LicenseFile,
+    /// The `[lib] path` that the released library's manifest names, when it
+    /// names one.
+    pub(crate) library_target_path: Option<&'static str>,
 }
 
 /// A local registry that stands in for crates.io and the curated registry, so
@@ -423,7 +459,7 @@ pub(crate) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
     )
     .expect("write the server source");
     generate_lockfile(&root, &source.root);
-    commit_and_tag(&root);
+    commit_and_tag(&root, variant);
     let tag_oid = git(&root, &["rev-parse", &format!("refs/tags/{}", tag())]);
     let commit = git(
         &root,
@@ -442,6 +478,54 @@ pub(crate) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
     }
 }
 
+/// Returns the `readme` line of `[workspace.package]`, and writes the readme
+/// that the workspace inherits when the fixture inherits one.
+fn workspace_readme(root: &Path, variant: Variant) -> &'static str {
+    if variant.library_readme == Readme::Inherited {
+        fs::write(root.join("README.md"), "# the workspace readme\n")
+            .expect("write the workspace readme");
+        "readme = \"README.md\"\n"
+    } else {
+        ""
+    }
+}
+
+/// Returns the `license-file` and `readme` lines of the released library's
+/// manifest, and writes the file that a path outside the checkout names.
+fn library_path_fields(root: &Path, variant: Variant) -> (String, String) {
+    let outside = || {
+        let directory = root
+            .parent()
+            .expect("the fixture repository has a parent")
+            .join("outside");
+        fs::create_dir_all(&directory).expect("create the directory outside the checkout");
+        directory
+    };
+    let readme = match variant.library_readme {
+        Readme::None => String::new(),
+        Readme::Relative(path) => format!("readme = {path:?}\n"),
+        Readme::Absolute => {
+            let path = outside().join("README.md");
+            fs::write(&path, "# outside the checkout\n").expect("write the readme outside");
+            format!(
+                "readme = {:?}\n",
+                path.to_str().expect("the fixture path is UTF-8")
+            )
+        }
+        Readme::Inherited => "readme.workspace = true\n".to_owned(),
+        Readme::GitDirectory => "readme = \"../.git/logs/HEAD\"\n".to_owned(),
+    };
+    let license = match variant.library_license_file {
+        LicenseFile::None => "license.workspace = true\n".to_owned(),
+        LicenseFile::Relative(path) => {
+            fs::write(outside().join("LICENSE"), "an outside license\n")
+                .expect("write the license outside");
+            format!("license-file = {path:?}\n")
+        }
+    };
+    (license, readme)
+}
+
 /// Writes the workspace manifests of one fixture release.
 fn write_manifests(root: &Path, variant: Variant) {
     let mirror = if variant.stale_package {
@@ -449,8 +533,9 @@ fn write_manifests(root: &Path, variant: Variant) {
     } else {
         "mirrored-dep = { version = \"0.3\", registry = \"pkgre\" }\n"
     };
+    let workspace_readme = workspace_readme(root, variant);
     let mut workspace = format!(
-        "[workspace]\nmembers = [\"lib\", \"bin\", \"serve\"]\nresolver = \"3\"\n\n[workspace.package]\nversion = \"1.0.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n\n[workspace.dependencies]\n{mirror}"
+        "[workspace]\nmembers = [\"lib\", \"bin\", \"serve\"]\nresolver = \"3\"\n\n[workspace.package]\nversion = \"1.0.0\"\nedition = \"2021\"\nlicense = \"MIT\"\n{workspace_readme}repository = \"https://git.example.invalid/example/project\"\n\n[workspace.dependencies]\n{mirror}"
     );
     if variant.stale_package {
         workspace.push_str(
@@ -488,10 +573,15 @@ fn write_manifests(root: &Path, variant: Variant) {
         Some(categories) => format!("categories = [{categories:?}]\n"),
         None => String::new(),
     };
+    let (license, readme) = library_path_fields(root, variant);
+    let target = match variant.library_target_path {
+        Some(path) => format!("\n[lib]\npath = {path:?}\n"),
+        None => String::new(),
+    };
     fs::write(
         root.join("lib/Cargo.toml"),
         format!(
-            "[package]\nname = \"example-lib\"\ndescription = \"An example library\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\nrepository.workspace = true\npublish = [\"pkgre\"]\n{categories}\n[dependencies]\nmirrored-dep.workspace = true\n\n[dev-dependencies]\nmirrored-dev = {{ version = \"0.1\", registry = \"pkgre\" }}\n\n[target.'cfg(unix)'.dependencies]\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n"
+            "[package]\nname = \"example-lib\"\ndescription = \"An example library\"\nversion.workspace = true\nedition.workspace = true\n{license}repository.workspace = true\npublish = [\"pkgre\"]\n{categories}{readme}{target}\n[dependencies]\nmirrored-dep.workspace = true\n\n[dev-dependencies]\nmirrored-dev = {{ version = \"0.1\", registry = \"pkgre\" }}\n\n[target.'cfg(unix)'.dependencies]\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n"
         ),
     )
     .expect("write the library manifest");
@@ -607,10 +697,24 @@ pub(crate) fn curated_archives(
 
 /// Initialises the fixture repository and puts the annotated release tag on its
 /// only commit.
-fn commit_and_tag(root: &Path) {
+fn commit_and_tag(root: &Path, variant: Variant) {
     git(root, &["init", "--quiet"]);
     git(root, &["add", "."]);
     git(root, &["commit", "--quiet", "-m", "release"]);
+    if let Some(gitlink) = variant.gitlink {
+        // A Gitlink that is never initialized, recorded in the tag's own tree.
+        let linked = git(root, &["rev-parse", "HEAD"]).trim().to_owned();
+        git(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{linked},{gitlink}"),
+            ],
+        );
+        git(root, &["commit", "--quiet", "-m", "gitlink"]);
+    }
     git(root, &["tag", "-a", &tag(), "-m", "example 1.0.0"]);
 }
 
