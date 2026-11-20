@@ -13,7 +13,7 @@ use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::import::{self, CratesIoHistory, SparseIndexRow};
 use crate::index::IndexDependency;
 use crate::policy::{Policy, validate_catalog};
-use crate::schema::{Catalog, PackageKey, PackageState, Source, version_identity};
+use crate::schema::{Catalog, PackageHome, PackageKey, PackageState, Source, version_identity};
 
 use super::{
     ApiEvidence, ArchiveAnalysis, ArchiveLineEndings, ArchiveSummary, CompatibilityLane,
@@ -48,10 +48,20 @@ pub(crate) fn plan_updates_with<R: PlannerResolver>(
     plan_with(root, output, resolver, evaluated_at, &PlanRequest::Implicit)
 }
 
+/// One exact crates.io identity requested by `update-plan-exact`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExactRequest {
+    /// Cargo package name, as the catalog reserves it.
+    pub name: String,
+    /// Exact requested version.
+    pub version: Version,
+}
+
 /// Creates a canonical read-only plan for one exact age-eligible crates.io identity.
 ///
-/// Exact requests support prereleases and stable `0.0.x` versions, while retaining every routine
-/// update guardrail and adding an explicit-candidate evidence marker.
+/// This is the one-request form of [`plan_exact_updates`]. Exact requests support prereleases and
+/// stable `0.0.x` versions, while retaining every routine update guardrail and adding an
+/// explicit-candidate evidence marker.
 ///
 /// # Errors
 ///
@@ -63,16 +73,41 @@ pub fn plan_exact_update(
     version: &Version,
     output: &Path,
 ) -> Result<UpdatePlan> {
-    plan_exact_update_with(
+    plan_exact_updates(
         root,
-        name,
-        version,
+        &[ExactRequest {
+            name: name.to_owned(),
+            version: version.clone(),
+        }],
+        output,
+    )
+}
+
+/// Creates one canonical read-only plan for a batch of exact age-eligible crates.io identities.
+///
+/// Every identity is planned exactly as a one-identity run plans it, against one catalog state, and
+/// the template holds every nonblocked candidate in canonical manifest order. A failing identity
+/// fails the run, which writes nothing, after reporting every failure of the stage it failed in.
+///
+/// # Errors
+///
+/// Returns an error for an empty or repeated request, any failing identity, catalog drift, or an
+/// existing output path.
+pub fn plan_exact_updates(
+    root: &Path,
+    requests: &[ExactRequest],
+    output: &Path,
+) -> Result<UpdatePlan> {
+    plan_exact_updates_with(
+        root,
+        requests,
         output,
         &LivePlannerResolver,
         UtcTimestamp::now()?,
     )
 }
 
+#[cfg(test)]
 pub(crate) fn plan_exact_update_with<R: PlannerResolver>(
     root: &Path,
     name: &str,
@@ -81,17 +116,95 @@ pub(crate) fn plan_exact_update_with<R: PlannerResolver>(
     resolver: &R,
     evaluated_at: UtcTimestamp,
 ) -> Result<UpdatePlan> {
-    crate::policy::validate_package_name(name).context("invalid exact update package name")?;
-    plan_with(
+    plan_exact_updates_with(
         root,
+        &[ExactRequest {
+            name: name.to_owned(),
+            version: version.clone(),
+        }],
         output,
         resolver,
         evaluated_at,
-        &PlanRequest::Exact {
-            name: name.to_owned(),
-            version: version.clone(),
-        },
     )
+}
+
+pub(crate) fn plan_exact_updates_with<R: PlannerResolver>(
+    root: &Path,
+    requests: &[ExactRequest],
+    output: &Path,
+    resolver: &R,
+    evaluated_at: UtcTimestamp,
+) -> Result<UpdatePlan> {
+    ensure!(
+        !requests.is_empty(),
+        "exact planning needs at least one identity"
+    );
+    let mut failures = ExactFailures::new(requests);
+    for (index, request) in requests.iter().enumerate() {
+        if let Err(error) = crate::policy::validate_package_name(&request.name)
+            .context("invalid exact update package name")
+        {
+            failures.push(index, error);
+        }
+    }
+    failures.finish()?;
+    validate_manifest_output(root, output)?;
+    crate::artifact::require_absent(output)?;
+    let selected_at = evaluated_at.clone();
+    let plan = build_plan(root, evaluated_at, |catalog, policy, artifacts| {
+        build_exact_candidates(resolver, catalog, policy, artifacts, &selected_at, requests)
+    })?;
+    write_plan_template(root, output, &plan)?;
+    Ok(plan)
+}
+
+/// Failures of one stage of exact batch planning, reported together when the stage ends.
+struct ExactFailures<'a> {
+    requests: &'a [ExactRequest],
+    failures: Vec<(usize, anyhow::Error)>,
+}
+
+impl<'a> ExactFailures<'a> {
+    fn new(requests: &'a [ExactRequest]) -> Self {
+        Self {
+            requests,
+            failures: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, index: usize, error: anyhow::Error) {
+        self.failures.push((index, error));
+    }
+
+    /// Preserves single-request errors, and reports batch failures in argument order.
+    fn finish(&mut self) -> Result<()> {
+        if self.failures.is_empty() {
+            return Ok(());
+        }
+        let mut failures = std::mem::take(&mut self.failures);
+        if self.requests.len() == 1 {
+            let (_, error) = failures.remove(0);
+            return Err(error);
+        }
+        failures.sort_by_key(|(index, _)| *index);
+        let mut listed = Vec::with_capacity(failures.len());
+        for (index, error) in &failures {
+            let request = &self.requests[*index];
+            warn!(
+                package = request.name,
+                version = %request.version,
+                error = %format_args!("{error:#}"),
+                "exact request failed"
+            );
+            listed.push(format!("{} {}: {error:#}", request.name, request.version));
+        }
+        anyhow::bail!(
+            "{} of {} exact requests failed: {}",
+            failures.len(),
+            self.requests.len(),
+            listed.join("; ")
+        )
+    }
 }
 
 pub(crate) trait PlannerResolver {
@@ -144,7 +257,6 @@ impl PlannerResolver for LivePlannerResolver {
 #[derive(Clone, Debug)]
 enum PlanRequest {
     Implicit,
-    Exact { name: String, version: Version },
     Revalidate(Vec<RevalidationTarget>),
 }
 
@@ -177,13 +289,17 @@ fn plan_with<R: PlannerResolver>(
 ) -> Result<UpdatePlan> {
     validate_manifest_output(root, output)?;
     let plan = build_plan_with(root, resolver, evaluated_at, request)?;
+    write_plan_template(root, output, &plan)?;
+    Ok(plan)
+}
+
+fn write_plan_template(root: &Path, output: &Path, plan: &UpdatePlan) -> Result<()> {
     let manifest = super::manifest::manifest_from_candidates(&plan.candidates);
     ensure!(
         catalog_fingerprint(root)? == plan.catalog_sha256,
         "catalog changed before the admission template could be emitted"
     );
-    super::manifest::write_admission_manifest(output, &manifest)?;
-    Ok(plan)
+    super::manifest::write_admission_manifest(output, &manifest)
 }
 
 /// Recomputes complete current machine facts for every exact request in a human manifest.
@@ -277,6 +393,50 @@ fn build_plan_with<R: PlannerResolver>(
     evaluated_at: UtcTimestamp,
     request: &PlanRequest,
 ) -> Result<UpdatePlan> {
+    let selected_at = evaluated_at.clone();
+    build_plan(root, evaluated_at, |catalog, policy, artifacts| {
+        let mut candidates = Vec::new();
+        for (key, home) in planning_targets(catalog, request)? {
+            let history = resolver.history(&key.name).with_context(|| {
+                format!(
+                    "fetch complete crates.io history for {}/{}",
+                    key.registry, key.name
+                )
+            })?;
+            let policy_history = policy_history(&history)?;
+            let locked = locked_releases(catalog, artifacts, &history, &key.registry, &key.name)?;
+            let activity = classify_package(&locked);
+            let selections = select_candidates(
+                request,
+                &key.registry,
+                &key.name,
+                &selected_at,
+                &policy_history,
+                &locked,
+                activity,
+            )?;
+            for selection in selections {
+                candidates.push(build_candidate(
+                    resolver,
+                    catalog,
+                    policy,
+                    &history,
+                    &key.name,
+                    &key.registry,
+                    &home.category.to_string(),
+                    selection,
+                )?);
+            }
+        }
+        Ok(candidates)
+    })
+}
+
+fn build_plan(
+    root: &Path,
+    evaluated_at: UtcTimestamp,
+    build_candidates: impl FnOnce(&Catalog, &Policy, &ArtifactMap) -> Result<Vec<UpdateCandidate>>,
+) -> Result<UpdatePlan> {
     let initial_fingerprint = catalog_fingerprint(root)?;
     let catalog = Catalog::load(root).context("strictly load catalog for update planning")?;
     let policy = validate_catalog(&catalog).context("validate catalog update policy")?;
@@ -285,49 +445,8 @@ fn build_plan_with<R: PlannerResolver>(
         catalog_fingerprint(root)? == initial_fingerprint,
         "catalog changed while update planning initialized"
     );
-
-    let targets = planning_targets(&catalog, request)?;
-    if let PlanRequest::Exact { version, .. } = request {
-        let (key, _) = targets
-            .first()
-            .expect("exact planning selected exactly one package");
-        ensure_exact_request_is_newer_than_active_lane_maximum(&catalog, key, version)?;
-    }
-    let mut candidates = Vec::new();
-    for (key, home) in targets {
-        let history = resolver.history(&key.name).with_context(|| {
-            format!(
-                "fetch complete crates.io history for {}/{}",
-                key.registry, key.name
-            )
-        })?;
-        let policy_history = policy_history(&history)?;
-        let locked = locked_releases(&catalog, &artifacts, &history, &key.registry, &key.name)?;
-        let activity = classify_package(&locked);
-        let selections = select_candidates(
-            request,
-            &key.registry,
-            &key.name,
-            &evaluated_at,
-            &policy_history,
-            &locked,
-            activity,
-        )?;
-        for selection in selections {
-            candidates.push(build_candidate(
-                resolver,
-                &catalog,
-                &policy,
-                &history,
-                &key.name,
-                &key.registry,
-                &home.category.to_string(),
-                selection,
-            )?);
-        }
-    }
+    let mut candidates = build_candidates(&catalog, &policy, &artifacts)?;
     candidates.sort_by_key(candidate_order);
-
     let plan = UpdatePlan {
         schema: UPDATE_PLAN_SCHEMA,
         indexer_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -347,7 +466,7 @@ fn build_plan_with<R: PlannerResolver>(
 fn planning_targets(
     catalog: &Catalog,
     request: &PlanRequest,
-) -> Result<Vec<(PackageKey, crate::schema::PackageHome)>> {
+) -> Result<Vec<(PackageKey, PackageHome)>> {
     let mut targets = catalog
         .homes
         .homes
@@ -361,7 +480,6 @@ fn planning_targets(
                     && matches!(&approval.source, Source::CratesIo)
                     && super::implicit_lane(&approval.version).is_some()
             }),
-            PlanRequest::Exact { name, .. } => key.name == *name,
             PlanRequest::Revalidate(requested) => requested
                 .iter()
                 .any(|target| target.registry == key.registry && target.name == key.name),
@@ -371,18 +489,6 @@ fn planning_targets(
 
     match request {
         PlanRequest::Implicit => {}
-        PlanRequest::Exact { name, .. } => ensure!(
-            targets.len() == 1,
-            if targets.is_empty() {
-                format!(
-                    "requested update package {name:?} is not a permanently reserved crates.io mirror name"
-                )
-            } else {
-                format!(
-                    "requested update package {name:?} exists in multiple registries; use an admission manifest with a category-qualified target"
-                )
-            }
-        ),
         PlanRequest::Revalidate(requested) => {
             let expected = requested
                 .iter()
@@ -400,6 +506,159 @@ fn planning_targets(
     }
     targets.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(targets)
+}
+
+/// Resolves the permanent home of one exact request's name, as one-identity planning always has.
+fn exact_home(catalog: &Catalog, name: &str) -> Result<(PackageKey, PackageHome)> {
+    let targets = catalog
+        .homes
+        .homes
+        .iter()
+        .filter(|(key, _)| catalog.mirror_names.contains(*key) && key.name == name)
+        .map(|(key, home)| (key.clone(), home.clone()))
+        .collect::<Vec<_>>();
+    ensure!(
+        targets.len() == 1,
+        if targets.is_empty() {
+            format!(
+                "requested update package {name:?} is not a permanently reserved crates.io mirror name"
+            )
+        } else {
+            format!(
+                "requested update package {name:?} exists in multiple registries; use an admission manifest with a category-qualified target"
+            )
+        }
+    );
+    Ok(targets.into_iter().next().expect("one exact home"))
+}
+
+/// Fetches the crates.io history, policy releases and locked releases of one exact request's name.
+fn exact_name_facts<R: PlannerResolver>(
+    resolver: &R,
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    key: &PackageKey,
+) -> Result<(CratesIoHistory, Vec<PolicyRelease>, Vec<LockedRelease>)> {
+    let history = resolver.history(&key.name).with_context(|| {
+        format!(
+            "fetch complete crates.io history for {}/{}",
+            key.registry, key.name
+        )
+    })?;
+    let releases = policy_history(&history)?;
+    let locked = locked_releases(catalog, artifacts, &history, &key.registry, &key.name)?;
+    Ok((history, releases, locked))
+}
+
+/// Plans every identity of an exact batch in three stages, each run for every identity first.
+///
+/// The catalog-only checks come first, so a batch that the catalog alone refuses fetches nothing;
+/// then each name's history and each identity's selection; then each identity's evidence. A stage
+/// with any failure ends the run after reporting all of its failures.
+fn build_exact_candidates<R: PlannerResolver>(
+    resolver: &R,
+    catalog: &Catalog,
+    policy: &Policy,
+    artifacts: &ArtifactMap,
+    evaluated_at: &UtcTimestamp,
+    requests: &[ExactRequest],
+) -> Result<Vec<UpdateCandidate>> {
+    let mut failures = ExactFailures::new(requests);
+
+    let mut targets = BTreeMap::<PackageKey, (PackageHome, Vec<(usize, Version)>)>::new();
+    let mut identities = BTreeSet::new();
+    for (index, request) in requests.iter().enumerate() {
+        let target = exact_home(catalog, &request.name).and_then(|(key, home)| {
+            ensure!(
+                identities.insert((
+                    key.registry.clone(),
+                    request.name.to_ascii_lowercase().replace('-', "_"),
+                    version_identity(&request.version),
+                )),
+                "exact requests repeat Cargo identity {} {}",
+                request.name,
+                request.version
+            );
+            ensure_exact_request_is_newer_than_active_lane_maximum(
+                catalog,
+                &key,
+                &request.version,
+            )?;
+            Ok((key, home))
+        });
+        match target {
+            Ok((key, home)) => targets
+                .entry(key)
+                .or_insert_with(|| (home, Vec::new()))
+                .1
+                .push((index, request.version.clone())),
+            Err(error) => failures.push(index, error),
+        }
+    }
+    failures.finish()?;
+
+    let mut histories = Vec::with_capacity(targets.len());
+    let mut selected = Vec::new();
+    for (key, (home, versions)) in &targets {
+        let (history, policy_history, locked) =
+            match exact_name_facts(resolver, catalog, artifacts, key) {
+                Ok(facts) => facts,
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    let (last, earlier) = versions
+                        .split_last()
+                        .expect("every target holds at least one identity");
+                    for (index, _) in earlier {
+                        failures.push(*index, anyhow::anyhow!("{message}"));
+                    }
+                    failures.push(last.0, error);
+                    continue;
+                }
+            };
+        let activity = classify_package(&locked);
+        histories.push(history);
+        for (index, version) in versions {
+            match select_exact_candidate(evaluated_at, &policy_history, &locked, version) {
+                Ok(exact) => selected.push((
+                    *index,
+                    key,
+                    home,
+                    histories.len() - 1,
+                    CandidateSelection {
+                        activity,
+                        lane: None,
+                        base: exact.base,
+                        predates_locked_releases: exact.predates_locked_releases,
+                        candidate: exact.candidate,
+                        age_seconds: exact.age_seconds,
+                        dormant_gap: exact.dormant_gap,
+                        explicit: true,
+                    },
+                )),
+                Err(error) => failures.push(*index, error),
+            }
+        }
+    }
+    failures.finish()?;
+
+    let mut candidates = Vec::with_capacity(selected.len());
+    for (index, key, home, history, selection) in selected {
+        match build_candidate(
+            resolver,
+            catalog,
+            policy,
+            &histories[history],
+            &key.name,
+            &key.registry,
+            &home.category.to_string(),
+            selection,
+        ) {
+            Ok(candidate) => candidates.push(candidate),
+            Err(error) => failures.push(index, error),
+        }
+    }
+    failures.finish()?;
+    Ok(candidates)
 }
 
 /// Refuses an exact request that one active compatibility lane already supersedes.
@@ -524,23 +783,6 @@ fn select_candidates(
                 explicit: false,
             })
             .collect()),
-        PlanRequest::Exact {
-            name: exact_name,
-            version,
-        } if exact_name == name => {
-            let selected = select_exact_candidate(evaluated_at, history, locked, version)?;
-            Ok(vec![CandidateSelection {
-                activity,
-                lane: None,
-                base: selected.base,
-                predates_locked_releases: selected.predates_locked_releases,
-                candidate: selected.candidate,
-                age_seconds: selected.age_seconds,
-                dormant_gap: selected.dormant_gap,
-                explicit: true,
-            }])
-        }
-        PlanRequest::Exact { .. } => Ok(Vec::new()),
         PlanRequest::Revalidate(targets) => targets
             .iter()
             .filter(|target| target.registry == registry && target.name == name)
@@ -1251,15 +1493,8 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(implicit, ["active"]);
 
-        let exact = planning_targets(
-            &catalog,
-            &PlanRequest::Exact {
-                name: "inactive".to_owned(),
-                version: Version::parse("2.0.0").unwrap(),
-            },
-        )
-        .unwrap();
-        assert_eq!(exact[0].0, PackageKey::new("universe", "inactive"));
+        let (exact, _) = exact_home(&catalog, "inactive").unwrap();
+        assert_eq!(exact, PackageKey::new("universe", "inactive"));
     }
 
     fn timestamp(value: &str) -> UtcTimestamp {

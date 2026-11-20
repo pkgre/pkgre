@@ -131,7 +131,7 @@ test "$EXPECTED_CANDIDATES" -eq "$((AUTOMATIC + REVIEW_REQUIRED))"
 printf 'automatic=%s\nreview-required=%s\nblocked=%s\nlogged=%s\nmanifest=%s\n' "$AUTOMATIC" "$REVIEW_REQUIRED" "$BLOCKED" "$TOTAL_LOGGED" "$EXPECTED_CANDIDATES" | tee "$ARTIFACTS/counts.txt"
 ```
 
-A one-identity batch may instead generate its template with `update-plan-exact <catalog> <package> <version> <manifest>`; the exact-form rules, including the merged-manifest order and filename rules, are in [`workflows.md`](workflows.md). The template filename names the batch:`update-apply` installs `admissions/<template-stem>.toml` + `admissions/<template-stem>.lock`, and that stem must be lowercase kebab-case.
+A batch of exact identities may instead generate its template in one run with `update-plan-exact <catalog> <package> <version> [<package> <version>]... <new-admission-manifest>`: every identity is planned exactly as a run with only that identity would plan it, and a failing identity fails the run, which writes nothing and names every failure of its stage in argument order. The exact-form rules, including the canonical order and filename rules, are in [`workflows.md`](workflows.md). The template filename names the batch:`update-apply` installs `admissions/<template-stem>.toml` + `admissions/<template-stem>.lock`, and that stem must be lowercase kebab-case.
 
 Selection/guardrails:
 

@@ -47,4 +47,4 @@ pub(crate) use source::FileComparison;
 pub use source::verify_source_correspondence;
 pub(crate) use source::{ComparisonReport, SourceCorrespondence};
 pub use time::UtcTimestamp;
-pub use workflow::{plan_exact_update, plan_updates};
+pub use workflow::{ExactRequest, plan_exact_update, plan_exact_updates, plan_updates};

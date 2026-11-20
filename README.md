@@ -93,7 +93,7 @@ The exact 30d catalog+archive policy,atomic filesystem boundary,serving origin+w
 
 ```console
 $ pkgre-rust update-plan registry batch-name.toml
-$ pkgre-rust update-plan-exact registry <package> <version> batch-name.toml
+$ pkgre-rust update-plan-exact registry <package> <version> [<package> <version>]... batch-name.toml
 $ pkgre-rust update-inspect registry batch-name.toml <package> <version> review
 $ pkgre-rust update-apply registry batch-name.toml
 $ pkgre-rust lock registry
