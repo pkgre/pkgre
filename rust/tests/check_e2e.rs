@@ -120,6 +120,24 @@ fn refuses_a_stale_routed_row_hash_exactly_as_lock_refuses_it() {
     assert_eq!(failure, failure_message(&locked));
 }
 
+/// A `.gitattributes` inside the catalog root is an unexpected catalog entry, so `check`
+/// refuses the checkout before a merge; the Rust origin additionally refuses one anywhere
+/// in the repository, because it reads a commit with `git archive`.
+#[test]
+fn refuses_a_gitattributes_file_in_the_catalog_root() {
+    let temporary = TemporaryDirectory::new("pkgre-check-gitattributes");
+    let root = extract_fixture(&temporary);
+    fs::write(root.join(".gitattributes"), b"*.toml -diff\n").unwrap();
+
+    let output = command().arg("check").arg(&root).output().unwrap();
+
+    let failure = failure_message(&output);
+    assert!(
+        failure.contains("unexpected entry in catalog root") && failure.contains(".gitattributes"),
+        "{failure}"
+    );
+}
+
 struct TemporaryDirectory(PathBuf);
 
 impl TemporaryDirectory {
