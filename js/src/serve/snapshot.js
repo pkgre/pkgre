@@ -12,6 +12,20 @@ import { packageMetadataRoute } from "../projection.js";
 export const SERVE_DELIVERY_MODES = ["redirect", "body"];
 
 /**
+ * A store body the snapshot needs is absent, unreadable or of another digest.
+ *
+ * The store is the host's, not the catalog's: the same commit passes once the body
+ * is there, so the watcher classes this failure as local and retries it. Every
+ * other refusal of the snapshot build keeps a plain `Error`.
+ */
+export class ArchiveStoreError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ArchiveStoreError";
+  }
+}
+
+/**
  * Reads and parses one catalog file for serving.
  * @param {string} catalogPath
  * @returns {object} parsed catalog (validated by buildServeSnapshot)
@@ -40,10 +54,12 @@ function storeArchive(storePath, sha256, label) {
   try {
     bytes = readFileSync(file);
   } catch {
-    throw new Error(`serving snapshot body is absent for ${label} at ${file}`);
+    throw new ArchiveStoreError(`serving snapshot body is absent for ${label} at ${file}`);
   }
   const digest = createHash("sha256").update(bytes).digest("hex");
-  if (digest !== sha256) throw new Error(`serving snapshot body digest mismatch for ${label} at ${file}`);
+  if (digest !== sha256) {
+    throw new ArchiveStoreError(`serving snapshot body digest mismatch for ${label} at ${file}`);
+  }
   return bytes;
 }
 
