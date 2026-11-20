@@ -14,9 +14,16 @@ use crate::schema::{Approval, Catalog, PackageState, Source};
 /// Catalog-relative directory holding immutable admission manifest/lock pairs.
 const ADMISSIONS_DIRECTORY: &str = "admissions";
 
-/// Exact semantic reason one candidate catalog must be rejected as an accepted successor.
+/// Reason a serving transition was refused, including local failures that permit a retry.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RejectReason {
+    /// The candidate catalog cannot load or validate because of its contents.
+    InvalidCandidate(String),
+    /// The previously accepted catalog could not load or validate locally.
+    AcceptedUnloadable(String),
+    /// A host I/O failure prevented reading the candidate or its retained bodies.
+    CatalogUnreadable(String),
     /// A candidate registry declaration changed topology relevant to serving.
     RegistryTopology(String),
     /// A package identity disappeared from the candidate locks.
@@ -25,7 +32,7 @@ pub enum RejectReason {
     MutatedIdentity(String),
     /// An accepted package identity, `registry/name/version`, changed its category.
     CategoryMove(String),
-    /// A retained body object is missing or does not match its content hash.
+    /// A candidate's retained body is absent, not a regular file, or of another digest.
     MissingRetainedBody(String),
     /// An accepted admission manifest or generated lock is missing or differs in the candidate.
     MutatedAdmissionFile(String),
@@ -47,6 +54,15 @@ pub enum RejectReason {
 impl fmt::Display for RejectReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidCandidate(detail) => {
+                write!(formatter, "candidate catalog failed to load: {detail}")
+            }
+            Self::AcceptedUnloadable(detail) => {
+                write!(formatter, "accepted catalog failed to load: {detail}")
+            }
+            Self::CatalogUnreadable(detail) => {
+                write!(formatter, "catalog could not be read: {detail}")
+            }
             Self::RegistryTopology(detail) => {
                 write!(formatter, "registry topology changed: {detail}")
             }
@@ -99,16 +115,16 @@ impl fmt::Display for RejectReason {
 ///
 /// # Errors
 ///
-/// Returns the first [`RejectReason`] violated by the candidate, or a load/validation error.
+/// Returns the first policy or load failure. [`RejectReason::is_local`] distinguishes
+/// local failures from refusals of the candidate itself.
 pub fn check_transition(accepted_root: &Path, candidate_root: &Path) -> Result<(), RejectReason> {
-    let accepted =
-        Catalog::load(accepted_root).map_err(|error| RejectReason::load("accepted", &error))?;
+    let accepted = Catalog::load(accepted_root)
+        .map_err(|error| RejectReason::AcceptedUnloadable(format!("{error:#}")))?;
     crate::policy::validate_catalog(&accepted)
-        .map_err(|error| RejectReason::load("accepted", &error))?;
+        .map_err(|error| RejectReason::AcceptedUnloadable(format!("{error:#}")))?;
     let candidate =
-        Catalog::load(candidate_root).map_err(|error| RejectReason::load("candidate", &error))?;
-    crate::policy::validate_catalog(&candidate)
-        .map_err(|error| RejectReason::load("candidate", &error))?;
+        Catalog::load(candidate_root).map_err(|error| candidate_load_failure(&error))?;
+    crate::policy::validate_catalog(&candidate).map_err(|error| candidate_load_failure(&error))?;
 
     for accepted_registry in &accepted.registries.registries {
         let candidate_registry = candidate
@@ -152,14 +168,76 @@ pub fn check_transition(accepted_root: &Path, candidate_root: &Path) -> Result<(
     verify_category_rules(&accepted, &candidate)?;
     verify_package_homes(&accepted, &candidate)?;
 
-    verify_retained_bodies(&candidate)
-        .map_err(|error| RejectReason::MissingRetainedBody(format!("{error:#}")))?;
+    verify_retained_bodies(&candidate).map_err(|error| {
+        if host_io_failure(&error) {
+            RejectReason::CatalogUnreadable(format!("{error:#}"))
+        } else {
+            RejectReason::MissingRetainedBody(format!("{error:#}"))
+        }
+    })?;
     Ok(())
 }
 
 impl RejectReason {
-    fn load(which: &str, error: &anyhow::Error) -> Self {
-        Self::MissingRetainedBody(format!("{which} catalog failed to load: {error:#}"))
+    /// Stable, path-free diagnostic code for this refusal.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::RegistryTopology(..) => "registry-topology-changed",
+            Self::MissingIdentity(..) => "identity-missing",
+            Self::MutatedIdentity(..) => "identity-mutated",
+            Self::CategoryMove(..) => "category-moved",
+            Self::MissingRetainedBody(..) => "retained-body-missing",
+            Self::MutatedAdmissionFile(..) => "admission-file-changed",
+            Self::AdmissionEvidenceUnreadable(..) => "admission-evidence-unreadable",
+            Self::MissingAdmissionEvidence(..) => "admission-evidence-missing",
+            Self::AdmissionBatchNotNew(..) => "admission-batch-not-new",
+            Self::CategoryRuleChanged(..) => "category-rule-changed",
+            Self::HomeMoved(..) => "home-moved",
+            Self::MissingHome(..) => "home-missing",
+            Self::InvalidCandidate(..) => "candidate-catalog-invalid",
+            Self::AcceptedUnloadable(..) => "accepted-catalog-unloadable",
+            Self::CatalogUnreadable(..) => "catalog-unreadable",
+        }
+    }
+
+    /// Whether this failure is local rather than a property of the candidate.
+    #[must_use]
+    pub const fn is_local(&self) -> bool {
+        matches!(
+            self,
+            Self::AcceptedUnloadable(_)
+                | Self::CatalogUnreadable(_)
+                | Self::AdmissionEvidenceUnreadable(_)
+        )
+    }
+}
+
+/// Whether the first I/O error in the chain describes a host failure rather than tree content.
+#[must_use]
+pub fn host_io_failure(error: &anyhow::Error) -> bool {
+    use std::io::{Error, ErrorKind};
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<Error>())
+        .is_some_and(|error| {
+            !matches!(
+                error.kind(),
+                ErrorKind::NotFound
+                    | ErrorKind::NotADirectory
+                    | ErrorKind::IsADirectory
+                    | ErrorKind::InvalidData
+                    | ErrorKind::InvalidInput
+                    | ErrorKind::InvalidFilename
+            )
+        })
+}
+
+fn candidate_load_failure(error: &anyhow::Error) -> RejectReason {
+    if host_io_failure(error) {
+        RejectReason::CatalogUnreadable(format!("{error:#}"))
+    } else {
+        RejectReason::InvalidCandidate(format!("{error:#}"))
     }
 }
 
@@ -1366,5 +1444,132 @@ mod tests {
                 "main/demo-tool/0.1.0".to_owned()
             ))
         );
+    }
+
+    #[test]
+    fn every_reject_reason_has_a_code_and_a_class() {
+        let cases = [
+            (
+                RejectReason::InvalidCandidate(String::new()),
+                "candidate-catalog-invalid",
+                false,
+            ),
+            (
+                RejectReason::AcceptedUnloadable(String::new()),
+                "accepted-catalog-unloadable",
+                true,
+            ),
+            (
+                RejectReason::CatalogUnreadable(String::new()),
+                "catalog-unreadable",
+                true,
+            ),
+            (
+                RejectReason::RegistryTopology(String::new()),
+                "registry-topology-changed",
+                false,
+            ),
+            (
+                RejectReason::MissingIdentity(String::new()),
+                "identity-missing",
+                false,
+            ),
+            (
+                RejectReason::MutatedIdentity(String::new()),
+                "identity-mutated",
+                false,
+            ),
+            (
+                RejectReason::CategoryMove(String::new()),
+                "category-moved",
+                false,
+            ),
+            (
+                RejectReason::MissingRetainedBody(String::new()),
+                "retained-body-missing",
+                false,
+            ),
+            (
+                RejectReason::MutatedAdmissionFile(String::new()),
+                "admission-file-changed",
+                false,
+            ),
+            (
+                RejectReason::AdmissionEvidenceUnreadable(String::new()),
+                "admission-evidence-unreadable",
+                true,
+            ),
+            (
+                RejectReason::MissingAdmissionEvidence(String::new()),
+                "admission-evidence-missing",
+                false,
+            ),
+            (
+                RejectReason::AdmissionBatchNotNew(String::new()),
+                "admission-batch-not-new",
+                false,
+            ),
+            (
+                RejectReason::CategoryRuleChanged(String::new()),
+                "category-rule-changed",
+                false,
+            ),
+            (RejectReason::HomeMoved(String::new()), "home-moved", false),
+            (
+                RejectReason::MissingHome(String::new()),
+                "home-missing",
+                false,
+            ),
+        ];
+        for (reason, code, local) in cases {
+            assert_eq!(reason.code(), code);
+            assert_eq!(reason.is_local(), local, "{reason}");
+        }
+        assert_eq!(
+            RejectReason::InvalidCandidate("bad lock".to_owned()).to_string(),
+            "candidate catalog failed to load: bad lock"
+        );
+        assert_eq!(
+            RejectReason::AcceptedUnloadable("bad lock".to_owned()).to_string(),
+            "accepted catalog failed to load: bad lock"
+        );
+        assert_eq!(
+            RejectReason::CatalogUnreadable("permission denied".to_owned()).to_string(),
+            "catalog could not be read: permission denied"
+        );
+    }
+
+    #[test]
+    fn host_io_failures_follow_the_error_kind_not_the_message() {
+        use std::io::{Error, ErrorKind};
+
+        let io = |kind| anyhow::Error::new(Error::new(kind, "injected"));
+        for kind in [
+            ErrorKind::NotFound,
+            ErrorKind::NotADirectory,
+            ErrorKind::IsADirectory,
+            ErrorKind::InvalidData,
+            ErrorKind::InvalidInput,
+            ErrorKind::InvalidFilename,
+        ] {
+            assert!(!host_io_failure(&io(kind)), "{kind:?} describes the tree");
+        }
+        for kind in [
+            ErrorKind::StorageFull,
+            ErrorKind::PermissionDenied,
+            ErrorKind::OutOfMemory,
+        ] {
+            assert!(host_io_failure(&io(kind)), "{kind:?} is the host's");
+        }
+        // An uncategorized error can only be named through its raw OS code; EIO is the host's.
+        let raw = Error::from_raw_os_error(5);
+        assert!(host_io_failure(&anyhow::Error::new(raw)));
+        // The first I/O error in the chain decides, however deeply it is wrapped.
+        let nested = anyhow::Error::new(Error::new(ErrorKind::StorageFull, "full"))
+            .context("read catalog file")
+            .context("load catalog");
+        assert!(host_io_failure(&nested));
+        // An error without an I/O cause is a parse, schema, policy or limit failure.
+        assert!(!host_io_failure(&anyhow::anyhow!("lock is stale")));
     }
 }

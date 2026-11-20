@@ -4,7 +4,7 @@
 
 ```text
 pkgre-rust update-plan <catalog> <new-admission-manifest>
-pkgre-rust update-plan-exact <catalog> <package> <version> <new-admission-manifest>
+pkgre-rust update-plan-exact <catalog> <package> <version> [<package> <version>]... <new-admission-manifest>
 pkgre-rust update-inspect <catalog> <admission-manifest> <package> <version> <new-review-directory>
 pkgre-rust update-apply <catalog> <admission-manifest>
 pkgre-rust lock <catalog>
@@ -32,7 +32,7 @@ Planning/inspection never mutates catalog; output must be absent + outside `regi
 
 - Release age:non-yanked + ≥30×24 hours at command UTC time; future timestamps fail.
 - Implicit lanes:`update-plan` scans active mirror names + selects at most latest eligible stable per compatibility lane:major for `major≥1`; minor for stable `0.minor.patch` where `minor>0`.
-- Exact mode:`update-plan-exact` supports reserved new/inactive names, prereleases, `0.0.x`; locked/yanked/young/history-inconsistent identity rejected; a request inside a compatibility lane that holds an active identity must be newer than that lane's active maximum and must have a locked release of that lane published no later than it, the rules `update-apply` applies, so the planner refuses what application would refuse with the same message; a request whose lane holds no active identity and which was published before every locked release of its name is planned without a review base as `review-required`, so its review covers the whole archive instead of a delta.
+- Exact mode:`update-plan-exact` takes one or more `<package> <version>` pairs and plans every identity as if it ran alone; it supports reserved new/inactive names, prereleases, `0.0.x`; locked/yanked/young/history-inconsistent identity rejected; a request inside a compatibility lane that holds an active identity must be newer than that lane's active maximum and must have a locked release of that lane published no later than it, the rules `update-apply` applies, so the planner refuses what application would refuse with the same message; a request whose lane holds no active identity and which was published before every locked release of its name is planned without a review base as `review-required`, so its review covers the whole archive instead of a delta; an existing template path is refused before any network work; a batch reports every failure of the stage it fails in, in argument order, and writes nothing.
 - Dormancy:≥365-day adjacent publication gap after locked base requires review; yanked/prerelease activity counts; gate persists until one post-gap identity admitted.
 - Evidence:complete sparse history; exact candidate row + checksum-verified archive, with the base row and archive beside it whenever the request has a review base; bounded path/type/size/mode/hash/build analysis; dependency/category delta; version-scoped publisher/repository/API facts; promoted source correspondence,which compares every archive member except Cargo's packaging-generated `.cargo_vcs_info.json`,`.cargo-ok`,normalized `Cargo.toml` + package root `Cargo.lock`.
 - Promotion triggers:new/inactive package, dormant wake-up, new dependency package, build-surface change, publisher/repository discontinuity, request older than every locked release of its name in a lane without an active identity.
@@ -64,7 +64,7 @@ $ pkgre-rust lock registry
 
 ```console
 $ pkgre-rust update-plan registry 2026-08-24-routine.toml
-$ pkgre-rust update-plan-exact registry new-package 1.2.3 2026-08-24-new-package.toml
+$ pkgre-rust update-plan-exact registry new-package 1.2.3 also-new 0.2.0 2026-08-24-new-packages.toml
 ```
 
 ```toml
@@ -72,7 +72,12 @@ schema = 2
 
 [[admit]]
 category = "main/general"
-name = "example"
+name = "also-new"
+version = "0.2.0"
+
+[[admit]]
+category = "main/general"
+name = "new-package"
 version = "1.2.3"
 ```
 
@@ -124,14 +129,24 @@ Second `lock` must report `changed=false` + preserve exact diff. CI must run `ch
 
 ### Exact admission templates
 
-A batch of exact identities takes one `update-plan-exact` run per identity, each writing one template outside the catalog, and the templates are merged by hand into one manifest; `update-apply` runs once on that merged file, so the whole batch shares one admission pair and one `admission-sha256` binding. A merge keeps one `schema = 2` header and concatenates the `[[admit]]` blocks with their evidence. The merged file's stem is the batch name:`update-apply` installs `admissions/<stem>.toml` + `admissions/<stem>.lock`.
+One `update-plan-exact` run takes one or more `<package> <version>` pairs and writes one template outside the catalog, so a batch of exact identities needs neither one run per identity nor a merge by hand; `update-apply` runs once on that file, so the whole batch shares one admission pair and one `admission-sha256` binding. The template's stem is the batch name:`update-apply` installs `admissions/<stem>.toml` + `admissions/<stem>.lock`. A file of `NAME VERSION` lines passes as `$(cat batch.txt)`; there is no list-file format.
+
+The run plans every identity exactly as a run with only that identity would plan it, against one catalog load and one evaluation time, in three stages, each run for every identity before the next begins:
+
+1. catalog only, without network: the name's permanent home, a repeated Cargo identity (registry, lowercased name with `-` as `_`, version without build metadata), and the compatibility-lane maximum. A batch the catalog alone refuses fetches nothing.
+2. each name's crates.io history once, the check of its locked releases against it, and each identity's selection, which refuses an absent, yanked, young, already locked or lane-less identity.
+3. each identity's evidence: archives, dependencies, API facts, source comparison and decision.
+
+A stage with any failure ends the run, which writes nothing and names every failure of that stage in argument order:`N of M exact requests failed: NAME VERSION: ERROR; ...`. A failure of a name's own facts, its history, their parse or the check of its locked releases fails each identity of that name. The one-identity form plans, writes and fails as before, except that an existing output path is refused with `refusing to overwrite existing path` before any network work.
+
+A repeat is one identical name requested twice with the same version up to build metadata; the catalog refuses two reserved names of one registry that collide under that normalization, so no variant reaches the repeat rule. A held identity is refused rather than skipped:a batch list that holds one is stale. A blocked candidate is not a failure: the run logs it as blocked, leaves it out of the template and succeeds, so a batch whose candidates are all blocked writes `admit = []` and `update-apply` refuses it. Automatic and review-required candidates both go into the template; the log tells them apart.
 
 Two rules are enforced by the tool, not only by convention:
 
 - filename:the stem is lowercase ASCII kebab-case:1–128 bytes of `a`–`z`, digits and `-`, starting and ending alphanumeric, and the extension is lowercase `.toml`. `update-plan`/`update-plan-exact` refuse to write any other template name, `update-apply` refuses any other input name, and `check` re-validates every installed pair:`rustc_version-0-3-3.toml` is refused (underscore), `rustc-version-0-3-3.toml` is accepted.
-- order:requests sort by category, then ASCII-lowercased name, then the exact name as a tie-break, then the target (`version`, or `tag`) compared as a string. The version comparison is lexical, not SemVer:`uint` `0.10.2` precedes `uint` `0.9.5` because `"0.10.2" < "0.9.5"`. `update-apply` and `update-inspect` refuse a manifest whose requests are not in strict canonical order or repeat an identity, so re-sort after every merge; an exact version carries no build metadata.
+- order:requests sort by category, then ASCII-lowercased name, then the exact name as a tie-break, then the target (`version`, or `tag`) compared as a string. The version comparison is lexical, not SemVer:`uint` `0.10.2` precedes `uint` `0.9.5` because `"0.10.2" < "0.9.5"`. `update-apply` and `update-inspect` refuse a manifest whose requests are not in strict canonical order or repeat an identity, so removing complete request blocks keeps the order and a merge by hand must re-sort; an exact version carries no build metadata.
 
-Merged manifest of two identities:
+The template of two identities, in canonical order:
 
 ```toml
 schema = 2
@@ -337,7 +352,7 @@ $ pkgre-rust verify-monotonic site-current site-next
 
 Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use their router or same-host native template; rendered inventory expected; protected CI passes; normal merge without force/bypass.
 
-Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only when it fast-forwards the accepted commit, passes `check-transition`, builds a snapshot, and persists its accepted-ref record; a rejected or interrupted candidate keeps the last-known-good snapshot. A catalog repository holds no `.gitattributes`:the origin materializes the commit with `git archive`, which would apply one, and refuses a commit that holds it at any path.
+Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only when it fast-forwards the accepted commit, passes `check-transition`, builds a snapshot, and persists its accepted-ref record; a candidate refused for its own content stays suppressed until the tip moves or the origin restarts, a local failure of the host is retried after 1 to 15 minutes, the last-known-good snapshot serves throughout, and `/status` names the last refusal with its class. A catalog repository holds no `.gitattributes`:the origin materializes the commit with `git archive`, which would apply one, and refuses a commit that holds it at any path.
 
 ## Post-deployment verification
 

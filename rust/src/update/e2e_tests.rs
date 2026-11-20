@@ -18,9 +18,10 @@ use super::workflow::PlannerResolver;
 use super::{
     AdmissionEvidence, AdmissionManifest, AdmissionRequest, DecisionReason, PackageActivity,
     SourceCorrespondence, SourceEvidence, UpdateDecision, UtcTimestamp,
-    apply::apply_admission_manifest_with, inspect::inspect_update_candidate_with,
+    apply::apply_admission_manifest_with,
+    inspect::inspect_update_candidate_with,
     load_admission_manifest, serialize_admission_manifest, validate_admission_inventory,
-    workflow::plan_exact_update_with,
+    workflow::{ExactRequest, plan_exact_update_with, plan_exact_updates_with, plan_updates_with},
 };
 use crate::artifact::{ArtifactMap, sha256_bytes};
 use crate::import::{CratesIoHistory, SparseIndexRow};
@@ -122,7 +123,12 @@ fn compact_manifest_lifecycle_is_inert_transactional_bound_and_convergent() {
         "plan, inspect, and apply must each recompute evidence"
     );
 
-    assert_admitted_catalog(&catalog_root, &fixture, &["demo"], "2026-08-24-demo");
+    assert_admitted_catalog(
+        &catalog_root,
+        &fixture,
+        &[("demo", "1.0.0", "main/general")],
+        "2026-08-24-demo",
+    );
     let applied_snapshot = snapshot_tree(&catalog_root).unwrap();
     assert_eq!(
         apply_admission_manifest_with(
@@ -268,7 +274,10 @@ fn one_generated_batch_binds_multiple_locks_to_its_complete_hash() {
     assert_admitted_catalog(
         &catalog_root,
         &fixture,
-        &["alpha", "beta"],
+        &[
+            ("alpha", "1.0.0", "main/general"),
+            ("beta", "1.0.0", "main/general"),
+        ],
         "2026-08-24-routine",
     );
 
@@ -709,49 +718,26 @@ fn prepare_manifest(
     names: &[&str],
     stem: &str,
 ) -> PathBuf {
-    let evaluated_at = UtcTimestamp::now().unwrap();
-    let version = Version::parse("1.0.0").unwrap();
-    let mut entries = Vec::new();
-    for name in names {
-        let path = temporary.join(format!("{stem}-{name}.toml"));
-        plan_exact_update_with(
-            catalog_root,
-            name,
-            &version,
-            &path,
-            resolver,
-            evaluated_at.clone(),
-        )
-        .unwrap();
-        entries.extend(load_admission_manifest(&path).unwrap().entries);
-    }
-    entries.sort_by(|left, right| {
-        (
-            left.category.to_string(),
-            left.name.to_ascii_lowercase(),
-            left.name.as_str(),
-            left.version.as_ref(),
-        )
-            .cmp(&(
-                right.category.to_string(),
-                right.name.to_ascii_lowercase(),
-                right.name.as_str(),
-                right.version.as_ref(),
-            ))
-    });
-    let manifest = AdmissionManifest {
-        schema: super::ADMISSION_MANIFEST_SCHEMA,
-        entries,
-    };
+    let requests = names
+        .iter()
+        .map(|name| exact(name, "1.0.0"))
+        .collect::<Vec<_>>();
     let path = temporary.join(format!("{stem}.toml"));
-    fs::write(&path, serialize_admission_manifest(&manifest).unwrap()).unwrap();
+    plan_exact_updates_with(
+        catalog_root,
+        &requests,
+        &path,
+        resolver,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
     path
 }
 
 fn assert_admitted_catalog(
     root: &Path,
     fixture: &FixtureResolver,
-    names: &[&str],
+    identities: &[(&str, &str, &str)],
     batch_stem: &str,
 ) {
     let catalog = Catalog::load(root).unwrap();
@@ -760,8 +746,8 @@ fn assert_admitted_catalog(
     validate_admission_inventory(&catalog).unwrap();
     let lock_path = root.join("admissions").join(format!("{batch_stem}.lock"));
     let batch_hash = sha256_bytes(&fs::read(&lock_path).unwrap());
-    for name in names {
-        let version = Version::parse("1.0.0").unwrap();
+    for (name, version, category) in identities {
+        let version = Version::parse(version).unwrap();
         let locked = catalog
             .approvals
             .iter()
@@ -769,7 +755,7 @@ fn assert_admitted_catalog(
             .unwrap();
         let package = fixture.package(name, &version).unwrap();
         assert_eq!(locked.registry, "main");
-        assert_eq!(locked.category.to_string(), "main/general");
+        assert_eq!(locked.category.to_string(), *category);
         assert_eq!(locked.archive_sha256, sha256_bytes(&package.archive));
         assert_eq!(
             locked.admission_sha256.as_deref(),
@@ -791,7 +777,10 @@ fn assert_admitted_catalog(
         assert!(
             fs::read_to_string(root.join("main.toml"))
                 .unwrap()
-                .contains(&format!("{name} = [\"1.0.0\"]"))
+                .lines()
+                .find(|line| line.starts_with(&format!("{name} = [")))
+                .is_some_and(|line| line.contains(&format!("\"{version}\""))),
+            "{name} declaration lacks {version}"
         );
     }
     assert_eq!(
@@ -865,6 +854,7 @@ struct FixturePackage {
     archive: Vec<u8>,
     published_at: String,
     yanked: bool,
+    dependencies: Vec<String>,
 }
 
 impl FixturePackage {
@@ -877,7 +867,13 @@ impl FixturePackage {
             archive,
             published_at: "2020-01-01T00:00:00Z".to_owned(),
             yanked: false,
+            dependencies: Vec::new(),
         }
+    }
+
+    fn with_dependency(mut self, package: &str) -> Self {
+        self.dependencies.push(package.to_owned());
+        self
     }
 
     fn with_yanked(mut self, yanked: bool) -> Self {
@@ -894,7 +890,15 @@ impl FixturePackage {
         let mut source_row = serde_json::to_vec(&json!({
             "name": self.name,
             "vers": self.version.to_string(),
-            "deps": [],
+            "deps": self.dependencies.iter().map(|package| json!({
+                "name": package,
+                "req": "^1",
+                "features": [],
+                "optional": false,
+                "default_features": true,
+                "target": null,
+                "kind": "normal",
+            })).collect::<Vec<_>>(),
             "cksum": sha256_bytes(&self.archive),
             "features": {},
             "yanked": self.yanked,
@@ -908,8 +912,12 @@ impl FixturePackage {
 
 struct FixtureResolver {
     packages: BTreeMap<(String, Version), FixturePackage>,
+    history_calls: Cell<usize>,
+    archive_calls: Cell<usize>,
     source_calls: Cell<usize>,
     lock_calls: Cell<usize>,
+    fail_history_for: Vec<String>,
+    fail_archive_for: Vec<(String, Version)>,
     fail_lock_for: Option<(String, Version)>,
 }
 
@@ -920,10 +928,25 @@ impl FixtureResolver {
                 .into_iter()
                 .map(|package| ((package.name.clone(), package.version.clone()), package))
                 .collect(),
+            history_calls: Cell::new(0),
+            archive_calls: Cell::new(0),
             source_calls: Cell::new(0),
             lock_calls: Cell::new(0),
+            fail_history_for: Vec::new(),
+            fail_archive_for: Vec::new(),
             fail_lock_for: None,
         }
+    }
+
+    fn with_history_failure(mut self, name: &str) -> Self {
+        self.fail_history_for.push(name.to_owned());
+        self
+    }
+
+    fn with_archive_failure(mut self, name: &str, version: &Version) -> Self {
+        self.fail_archive_for
+            .push((name.to_owned(), version.clone()));
+        self
     }
 
     fn with_lock_failure(mut self, name: &str, version: &Version) -> Self {
@@ -940,6 +963,10 @@ impl FixtureResolver {
 
 impl PlannerResolver for FixtureResolver {
     fn history(&self, name: &str) -> Result<CratesIoHistory> {
+        self.history_calls.set(self.history_calls.get() + 1);
+        if self.fail_history_for.iter().any(|failed| failed == name) {
+            bail!("injected history failure for {name}");
+        }
         let mut packages = self
             .packages
             .values()
@@ -968,6 +995,14 @@ impl PlannerResolver for FixtureResolver {
     }
 
     fn archive(&self, name: &str, version: &Version, checksum: &str) -> Result<Vec<u8>> {
+        self.archive_calls.set(self.archive_calls.get() + 1);
+        if self
+            .fail_archive_for
+            .iter()
+            .any(|identity| identity == &(name.to_owned(), version.clone()))
+        {
+            bail!("injected archive failure for {name} {version}");
+        }
         let package = self.package(name, version)?;
         ensure!(sha256_bytes(&package.archive) == checksum);
         Ok(package.archive.clone())
@@ -1034,6 +1069,11 @@ impl Resolver for FixtureResolver {
 }
 
 fn write_catalog(root: &Path, general_names: &[&str]) {
+    write_catalog_with(root, general_names, None);
+}
+
+/// Writes the fixture catalog, declaring `extra`'s names in that second category as well.
+fn write_catalog_with(root: &Path, general_names: &[&str], extra: Option<(&str, &[&str])>) {
     fs::create_dir_all(root).unwrap();
     let mut general_declarations = String::new();
     for name in general_names {
@@ -1054,10 +1094,18 @@ fn write_catalog(root: &Path, general_names: &[&str]) {
         ("terminal", &["main/terminal", "main/general"] as &[_]),
         ("yaml", &["main/yaml", "main/general"] as &[_]),
     ] {
+        let mut declarations = String::new();
+        if let Some((category, names)) = extra {
+            if category == local {
+                for name in names {
+                    writeln!(declarations, "{name} = []").unwrap();
+                }
+            }
+        }
         categories.push_str(&mirror_category(
             local,
             dependencies,
-            "",
+            &declarations,
             &format!("reserved-{local}"),
         ));
     }
@@ -1222,4 +1270,466 @@ impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.path).unwrap();
     }
+}
+
+fn exact(name: &str, version: &str) -> ExactRequest {
+    ExactRequest {
+        name: name.to_owned(),
+        version: Version::parse(version).unwrap(),
+    }
+}
+
+/// The canonical template of the batch in the merge test, in manifest key order.
+const EXACT_BATCH_TEMPLATE: &str = "\
+schema = 2
+
+[[admit]]
+category = \"main/general\"
+name = \"alpha\"
+version = \"1.0.0\"
+
+[[admit]]
+category = \"main/general\"
+name = \"beta\"
+version = \"1.0.0\"
+
+[[admit]]
+category = \"main/general\"
+name = \"uint\"
+version = \"0.10.2\"
+
+[[admit]]
+category = \"main/general\"
+name = \"uint\"
+version = \"0.9.5\"
+
+[[admit]]
+category = \"main/terminal\"
+name = \"tty\"
+version = \"1.0.0\"
+";
+
+#[test]
+fn exact_batch_template_equals_the_canonical_merge_of_single_templates() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-merge");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog_with(
+        &catalog_root,
+        &["alpha", "beta", "uint"],
+        Some(("terminal", &["tty"])),
+    );
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n"),
+        FixturePackage::new("tty", "1.0.0", "src/lib.rs", b"pub fn tty() {}\n"),
+        FixturePackage::new("uint", "0.9.5", "src/lib.rs", b"pub fn old() {}\n"),
+        FixturePackage::new("uint", "0.10.2", "src/lib.rs", b"pub fn new() {}\n"),
+    ]);
+    let requests = [
+        exact("uint", "0.9.5"),
+        exact("tty", "1.0.0"),
+        exact("uint", "0.10.2"),
+        exact("alpha", "1.0.0"),
+        exact("beta", "1.0.0"),
+    ];
+    let evaluated_at = UtcTimestamp::now().unwrap();
+    let batch = temporary.path().join("2026-08-24-batch.toml");
+    let plan = plan_exact_updates_with(
+        &catalog_root,
+        &requests,
+        &batch,
+        &fixture,
+        evaluated_at.clone(),
+    )
+    .unwrap();
+    assert_eq!(plan.candidates.len(), 5);
+    assert_eq!(
+        fixture.history_calls.get(),
+        4,
+        "uint's two identities share one history fetch"
+    );
+
+    let template = fs::read(&batch).unwrap();
+    assert_eq!(
+        String::from_utf8(template.clone()).unwrap(),
+        EXACT_BATCH_TEMPLATE
+    );
+    let text = String::from_utf8(template.clone()).unwrap();
+    assert!(text.find("\"0.10.2\"").unwrap() < text.find("\"0.9.5\"").unwrap());
+
+    let mut entries = Vec::new();
+    for (index, request) in requests.iter().enumerate() {
+        let single = temporary.path().join(format!("single-{index}.toml"));
+        plan_exact_update_with(
+            &catalog_root,
+            &request.name,
+            &request.version,
+            &single,
+            &fixture,
+            evaluated_at.clone(),
+        )
+        .unwrap();
+        entries.extend(load_admission_manifest(&single).unwrap().entries);
+    }
+    entries.sort_by_key(|entry| {
+        (
+            entry.category.to_string(),
+            entry.name.to_ascii_lowercase(),
+            entry.name.clone(),
+            entry.version.as_ref().unwrap().to_string(),
+        )
+    });
+    let merged = serialize_admission_manifest(&AdmissionManifest {
+        schema: super::ADMISSION_MANIFEST_SCHEMA,
+        entries,
+    })
+    .unwrap();
+    assert_eq!(template, merged);
+
+    let summary = apply_admission_manifest_with(
+        &catalog_root,
+        &batch,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(summary.packages_added, 5, "one admission per identity");
+    assert_admitted_catalog(
+        &catalog_root,
+        &fixture,
+        &[
+            ("alpha", "1.0.0", "main/general"),
+            ("beta", "1.0.0", "main/general"),
+            ("uint", "0.9.5", "main/general"),
+            ("uint", "0.10.2", "main/general"),
+            ("tty", "1.0.0", "main/terminal"),
+        ],
+        "2026-08-24-batch",
+    );
+}
+
+#[test]
+fn exact_batch_reports_every_catalog_stage_failure_before_any_fetch() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-offline");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "demo"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let seed = FixtureResolver::new(vec![FixturePackage::new(
+        "demo",
+        "1.2.0",
+        "src/lib.rs",
+        b"pub fn demo() {}\n",
+    )]);
+    let seeded = temporary.path().join("2026-08-23-demo.toml");
+    plan_exact_update_with(
+        &catalog_root,
+        "demo",
+        &Version::parse("1.2.0").unwrap(),
+        &seeded,
+        &seed,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    apply_admission_manifest_with(
+        &catalog_root,
+        &seeded,
+        &seed,
+        &seed,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+
+    let offline = FixtureResolver::new(Vec::new());
+    let output = temporary.path().join("2026-08-24-batch.toml");
+    let error = plan_exact_updates_with(
+        &catalog_root,
+        &[
+            exact("nowhere", "1.0.0"),
+            exact("alpha", "1.0.0"),
+            exact("demo", "1.1.0"),
+            exact("alpha", "1.0.0"),
+            exact("alpha", "1.0.0+build"),
+        ],
+        &output,
+        &offline,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "4 of 5 exact requests failed: nowhere 1.0.0: requested update package \"nowhere\" is not a permanently reserved crates.io mirror name; demo 1.1.0: requested identity 1.1.0 is not newer than active lane maximum 1.2.0; alpha 1.0.0: exact requests repeat Cargo identity alpha 1.0.0; alpha 1.0.0+build: exact requests repeat Cargo identity alpha 1.0.0+build"
+    );
+    assert_eq!(offline.history_calls.get(), 0);
+    assert!(!output.exists());
+}
+
+#[test]
+fn exact_batch_reports_every_selection_failure_and_fetches_no_archive() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-refused");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "beta", "delta", "gamma"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let seed = FixtureResolver::new(vec![FixturePackage::new(
+        "alpha",
+        "1.0.0",
+        "src/lib.rs",
+        b"pub fn alpha() {}\n",
+    )]);
+    let seeded = temporary.path().join("2026-08-23-alpha.toml");
+    plan_exact_update_with(
+        &catalog_root,
+        "alpha",
+        &Version::parse("1.0.0").unwrap(),
+        &seeded,
+        &seed,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    apply_admission_manifest_with(
+        &catalog_root,
+        &seeded,
+        &seed,
+        &seed,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n").with_yanked(true),
+        FixturePackage::new("delta", "1.0.0", "src/lib.rs", b"pub fn delta() {}\n"),
+        FixturePackage::new("gamma", "1.0.0", "src/lib.rs", b"pub fn gamma() {}\n"),
+    ]);
+    let output = temporary.path().join("2026-08-24-batch.toml");
+    let error = plan_exact_updates_with(
+        &catalog_root,
+        &[
+            exact("gamma", "2.0.0"),
+            exact("alpha", "1.0.0"),
+            exact("delta", "1.0.0"),
+            exact("beta", "1.0.0"),
+        ],
+        &output,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "3 of 4 exact requests failed: gamma 2.0.0: requested identity 2.0.0 is absent from upstream history; alpha 1.0.0: requested identity 1.0.0 is already locked; beta 1.0.0: requested identity 1.0.0 is yanked upstream"
+    );
+    assert_eq!(fixture.archive_calls.get(), 0);
+    assert!(!output.exists());
+}
+
+#[test]
+fn exact_batch_omits_blocked_candidates_from_its_template() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-blocked");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "beta"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n")
+            .with_dependency("unhomed"),
+    ]);
+    let output = temporary.path().join("2026-08-24-batch.toml");
+    let plan = plan_exact_updates_with(
+        &catalog_root,
+        &[exact("beta", "1.0.0"), exact("alpha", "1.0.0")],
+        &output,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    let decisions = plan
+        .candidates
+        .iter()
+        .map(|candidate| (candidate.name.as_str(), candidate.decision))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decisions,
+        [
+            ("alpha", UpdateDecision::ReviewRequired),
+            ("beta", UpdateDecision::Blocked)
+        ]
+    );
+    let manifest = load_admission_manifest(&output).unwrap();
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].name, "alpha");
+}
+
+#[test]
+fn exact_batch_reports_every_evidence_failure_in_argument_order() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-evidence");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "beta", "delta"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let failed = Version::parse("1.0.0").unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n"),
+        FixturePackage::new("delta", "1.0.0", "src/lib.rs", b"pub fn delta() {}\n"),
+    ])
+    .with_archive_failure("beta", &failed)
+    .with_archive_failure("delta", &failed);
+    let output = temporary.path().join("2026-08-24-batch.toml");
+    let error = plan_exact_updates_with(
+        &catalog_root,
+        &[
+            exact("delta", "1.0.0"),
+            exact("alpha", "1.0.0"),
+            exact("beta", "1.0.0"),
+        ],
+        &output,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "2 of 3 exact requests failed: delta 1.0.0: fetch candidate archive delta 1.0.0: injected archive failure for delta 1.0.0; beta 1.0.0: fetch candidate archive beta 1.0.0: injected archive failure for beta 1.0.0"
+    );
+    assert!(!output.exists());
+}
+
+#[test]
+fn exact_batch_reports_a_history_failure_for_every_identity_of_that_name() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-history");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "uint"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("uint", "0.9.5", "src/lib.rs", b"pub fn old() {}\n"),
+        FixturePackage::new("uint", "0.10.2", "src/lib.rs", b"pub fn new() {}\n"),
+    ])
+    .with_history_failure("uint");
+    let output = temporary.path().join("2026-08-24-batch.toml");
+    let error = plan_exact_updates_with(
+        &catalog_root,
+        &[
+            exact("uint", "0.9.5"),
+            exact("alpha", "1.0.0"),
+            exact("uint", "0.10.2"),
+        ],
+        &output,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        format!("{error:#}"),
+        "2 of 3 exact requests failed: uint 0.9.5: fetch complete crates.io history for main/uint: injected history failure for uint; uint 0.10.2: fetch complete crates.io history for main/uint: injected history failure for uint"
+    );
+    assert!(!output.exists());
+
+    let single = temporary.path().join("2026-08-24-single.toml");
+    let error = plan_exact_update_with(
+        &catalog_root,
+        "uint",
+        &Version::parse("0.9.5").unwrap(),
+        &single,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.chain().map(ToString::to_string).collect::<Vec<_>>(),
+        [
+            "fetch complete crates.io history for main/uint",
+            "injected history failure for uint",
+        ],
+        "one identity keeps the error chain of the failure, not a flattened copy"
+    );
+    assert!(!single.exists());
+}
+
+#[test]
+fn exact_planning_refuses_an_existing_template_path_before_any_fetch() {
+    let temporary = TemporaryDirectory::new("pkgre-exact-batch-existing");
+    let catalog_root = temporary.path().join("catalog");
+    write_catalog(&catalog_root, &["alpha", "beta"]);
+    lock::reconcile(&catalog_root).unwrap();
+    let fixture = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("beta", "1.0.0", "src/lib.rs", b"pub fn beta() {}\n"),
+    ]);
+    let version = Version::parse("1.0.0").unwrap();
+    let requests = [exact("beta", "1.0.0"), exact("alpha", "1.0.0")];
+    for kind in ["file", "directory", "symlink"] {
+        let output = temporary.path().join(format!("2026-08-24-{kind}.toml"));
+        match kind {
+            "directory" => fs::create_dir(&output).unwrap(),
+            "symlink" => std::os::unix::fs::symlink("absent-target", &output).unwrap(),
+            _ => fs::write(&output, b"existing\n").unwrap(),
+        }
+        let expected = format!("refusing to overwrite existing path {}", output.display());
+        let batch_error = plan_exact_updates_with(
+            &catalog_root,
+            &requests,
+            &output,
+            &fixture,
+            UtcTimestamp::now().unwrap(),
+        )
+        .unwrap_err();
+        assert_eq!(format!("{batch_error:#}"), expected);
+        let single_error = plan_exact_update_with(
+            &catalog_root,
+            "alpha",
+            &version,
+            &output,
+            &fixture,
+            UtcTimestamp::now().unwrap(),
+        )
+        .unwrap_err();
+        assert_eq!(format!("{single_error:#}"), expected);
+        assert_eq!(
+            fixture.history_calls.get(),
+            0,
+            "the output path is refused before any fetch"
+        );
+    }
+
+    let seeded = temporary.path().join("2026-08-23-alpha.toml");
+    plan_exact_update_with(
+        &catalog_root,
+        "alpha",
+        &version,
+        &seeded,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    apply_admission_manifest_with(
+        &catalog_root,
+        &seeded,
+        &fixture,
+        &fixture,
+        &UtcTimestamp::now().unwrap(),
+    )
+    .unwrap();
+    let runtime = FixtureResolver::new(vec![
+        FixturePackage::new("alpha", "1.0.0", "src/lib.rs", b"pub fn alpha() {}\n"),
+        FixturePackage::new("alpha", "1.1.0", "src/lib.rs", b"pub fn later() {}\n"),
+    ]);
+    let routine = temporary.path().join("2026-08-24-routine.toml");
+    fs::write(&routine, b"existing\n").unwrap();
+    let error = plan_updates_with(
+        &catalog_root,
+        &routine,
+        &runtime,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("create admission manifest"),
+        "update-plan keeps its refusal at creation: {error:#}"
+    );
+    assert!(
+        runtime.history_calls.get() > 0,
+        "update-plan fetches its evidence before refusing the existing path"
+    );
 }

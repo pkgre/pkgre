@@ -131,7 +131,7 @@ test "$EXPECTED_CANDIDATES" -eq "$((AUTOMATIC + REVIEW_REQUIRED))"
 printf 'automatic=%s\nreview-required=%s\nblocked=%s\nlogged=%s\nmanifest=%s\n' "$AUTOMATIC" "$REVIEW_REQUIRED" "$BLOCKED" "$TOTAL_LOGGED" "$EXPECTED_CANDIDATES" | tee "$ARTIFACTS/counts.txt"
 ```
 
-A one-identity batch may instead generate its template with `update-plan-exact <catalog> <package> <version> <manifest>`; the exact-form rules, including the merged-manifest order and filename rules, are in [`workflows.md`](workflows.md). The template filename names the batch:`update-apply` installs `admissions/<template-stem>.toml` + `admissions/<template-stem>.lock`, and that stem must be lowercase kebab-case.
+A batch of exact identities may instead generate its template in one run with `update-plan-exact <catalog> <package> <version> [<package> <version>]... <new-admission-manifest>`: every identity is planned exactly as a run with only that identity would plan it, and a failing identity fails the run, which writes nothing and names every failure of its stage in argument order. The exact-form rules, including the canonical order and filename rules, are in [`workflows.md`](workflows.md). The template filename names the batch:`update-apply` installs `admissions/<template-stem>.toml` + `admissions/<template-stem>.lock`, and that stem must be lowercase kebab-case.
 
 Selection/guardrails:
 
@@ -380,6 +380,8 @@ gh pr checks --watch "$PR_URL"
 ```
 
 After CI:inspect remote PR head/base/diff/checks one final time. Do **not** enable auto-merge; do **not** merge; do **not** bypass protection. Send the PR URL to the curator and request review. If main/upstream evidence/PR diff changes materially, rerun from a fresh base/template rather than force-updating trusted generated facts.
+
+After the curator merges, the serving origin takes the merge commit up at its next poll and its public index page shows the served commit. An operator reads `watcher.lastRefusal` in `/status`:a `candidate` class means the commit will not be served and needs a new pull request;a `local` class means the origin retries the same commit by itself once the host's fault clears;an `unclassified` class is not retried until the tip moves or the origin restarts, and should be reported.
 
 ## 13. Recovery + abort matrix
 
