@@ -46,6 +46,7 @@ async fn serve(config: Config) -> Result<()> {
                 config.archive_store.clone(),
                 config.first_party_origin.clone(),
                 Arc::clone(&shared),
+                Arc::new(std::time::Instant::now),
             ));
             watcher.startup().await.with_context(|| {
                 format!(
