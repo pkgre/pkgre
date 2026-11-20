@@ -98,7 +98,6 @@ struct MetadataPackage {
     license: Option<String>,
     license_file: Option<PathBuf>,
     readme: Option<PathBuf>,
-    build: Option<PathBuf>,
     homepage: Option<String>,
     documentation: Option<String>,
     repository: Option<String>,
@@ -160,10 +159,9 @@ impl Workspace {
             .map(|package| {
                 let released = package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]);
                 let manifest_paths = if released {
-                    crate::gitlinks::copied_manifest_paths(
+                    crate::gitlinks::manifest_paths(
                         package.readme.as_deref(),
                         package.license_file.as_deref(),
-                        package.build.as_deref(),
                         &package
                             .targets
                             .iter()

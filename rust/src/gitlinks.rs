@@ -1,13 +1,18 @@
-//! The rule on the Gitlinks of a release tag's checkout.
+//! The rule on the Gitlinks and the manifest paths of a release tag's checkout.
 //!
-//! A release tag may hold Gitlinks, which Cargo never fetches: a Gitlink is
-//! accepted when the innermost workspace member whose directory contains it is
-//! not a released crate, or when no member's directory contains it. Cargo
-//! leaves a Gitlink's own directory out of every archive, but it copies a file
-//! that a manifest names into the archive even from outside the package's
-//! directory, so a path of a released crate's manifest that resolves at or below
-//! a Gitlink is refused too. As a second line of defence, no archive may hold a
-//! path at or below a Gitlink.
+//! `pkgre` never initializes or fetches a submodule, so a Gitlink's directory
+//! stays empty and Cargo leaves it out of every archive: a Gitlink is accepted
+//! when the innermost workspace member whose directory contains it is not a
+//! released crate, or when no member's directory contains it. A path that a
+//! released crate's manifest names is another matter. Cargo copies `readme` and
+//! `license-file` into the archive even from outside the package's directory, so
+//! one that resolves at or below a Gitlink, outside the checkout, or by an
+//! absolute path is refused. Cargo refuses a build script outside the package
+//! and drops a library or binary target outside it, so a `build` or a target
+//! path that does either is refused too, which is stricter than Cargo: a release
+//! tag never publishes a path that only a submodule or a host file could hold.
+//! As a second line of defence, no archive may hold a path at or below a
+//! Gitlink.
 //!
 //! Both the catalog's Git-tag packaging and the derivation apply the same rule,
 //! from the members that `cargo metadata --no-deps` named, so that a Gitlink a
@@ -33,8 +38,8 @@ pub(crate) struct Member {
     pub(crate) directory: PathBuf,
     /// Whether the tag's release publishes this member.
     pub(crate) released: bool,
-    /// The paths the member's manifest names, which Cargo copies into the
-    /// member's archive.
+    /// The paths the member's manifest names, which a release tag holds to the
+    /// rule of [`ensure_release_tag_paths`].
     pub(crate) manifest_paths: Vec<ManifestPath>,
 }
 
@@ -43,27 +48,28 @@ pub(crate) struct Member {
 pub(crate) struct ManifestPath {
     /// The manifest field, as a refusal names it.
     pub(crate) field: &'static str,
-    /// The path: as the manifest writes it for a field that Cargo copies into
-    /// the archive, and absolute for a target, whose `src_path` Cargo reports
-    /// resolved.
+    /// The path: as the manifest writes it for `readme` and `license-file`, and
+    /// absolute for a target, whose `src_path` Cargo reports resolved.
     pub(crate) path: PathBuf,
-    /// Whether the path is a manifest field that Cargo copies into the archive,
-    /// `readme` or `license-file`, rather than a target's own `path`.
+    /// Whether the path is `readme` or `license-file`, which Cargo copies into
+    /// the archive, rather than a target's own `path`.
     pub(crate) copied: bool,
 }
 
-/// Returns the paths of one manifest that Cargo copies into its archive.
+/// Returns the paths that one released crate's manifest names.
 ///
-/// `readme`, `license-file` and `build` are manifest fields, and a target's own
-/// `path` is the manifest's `path` key of its `[[bin]]`, `[[test]]`, `[[bench]]`
-/// or `[[example]]` table; Cargo copies each of them into the archive even from
-/// outside the package's directory. `include` holds patterns, which cannot reach
-/// outside the package's directory, and Cargo's exclusion of a nested package
-/// wins over them, so neither can carry a Gitlink's files into an archive.
-pub(crate) fn copied_manifest_paths(
+/// `readme` and `license-file` are the manifest fields that Cargo copies into
+/// the archive, even from outside the package's directory. A target's own `path`
+/// is the manifest's `path` key of its `[[lib]]`, `[[bin]]`, `[[test]]`,
+/// `[[bench]]` or `[[example]]` table, and a build script is the `custom-build`
+/// target of the package, so Cargo reports both among the targets; it refuses a
+/// build script outside the package and drops a library or binary target
+/// outside it. `include` holds patterns, which cannot reach outside the
+/// package's directory, and Cargo's exclusion of a nested package wins over
+/// them, so neither can carry a Gitlink's files into an archive.
+pub(crate) fn manifest_paths(
     readme: Option<&Path>,
     license_file: Option<&Path>,
-    build: Option<&Path>,
     target_paths: &[PathBuf],
 ) -> Vec<ManifestPath> {
     let mut paths = Vec::new();
@@ -75,13 +81,6 @@ pub(crate) fn copied_manifest_paths(
                 copied: true,
             });
         }
-    }
-    if let Some(build) = build {
-        paths.push(ManifestPath {
-            field: "build",
-            path: build.to_path_buf(),
-            copied: false,
-        });
     }
     paths.extend(target_paths.iter().map(|path| ManifestPath {
         field: "target path",
@@ -183,8 +182,13 @@ pub(crate) fn ensure_release_tag_paths(
             else {
                 continue;
             };
+            let consequence = if manifest_path.copied {
+                "Cargo copies such a file into the archive"
+            } else {
+                "Cargo refuses or drops such a target, and this refusal is stricter than Cargo"
+            };
             bail!(
-                "the released package \"{}\" names its {} at \"{}\", which is at or below the Gitlink \"{}\"; Cargo copies such a path into the archive, and a release tag may hold a Gitlink only outside its released packages",
+                "the released package \"{}\" names its {} at \"{}\", which is at or below the Gitlink \"{}\"; {consequence}, and a release tag may hold a Gitlink only outside its released packages",
                 member.name,
                 manifest_path.field,
                 manifest_path.path.display(),

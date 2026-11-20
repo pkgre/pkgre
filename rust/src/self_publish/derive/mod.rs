@@ -408,9 +408,16 @@ pub(super) fn derive_release_in(
         release.tag
     );
     let cargo = pinned_cargo(&release.cargo_version)?;
+    // Cargo reports every absolute path of its metadata as it sees it, and the
+    // checkout is resolved here, so the temporary root is resolved once: Git,
+    // Cargo and the path rules then see one form of every path, even below a
+    // temporary directory that a symbolic link reaches.
     let temporary = match sources.root() {
-        Some(root) => TemporaryDirectory::new_in(root, "pkgre-self-publish")?,
-        None => TemporaryDirectory::new("pkgre-self-publish")?,
+        Some(root) => TemporaryDirectory::new_in(&temporary_root(root)?, "pkgre-self-publish")?,
+        None => TemporaryDirectory::new_in(
+            &temporary_root(&std::env::temp_dir())?,
+            "pkgre-self-publish",
+        )?,
     };
     let root = temporary.path();
     let cargo_home = cargo::cargo_home(root);
@@ -633,6 +640,16 @@ fn sibling_dependencies(
         siblings.insert(member.name.clone(), dependencies);
     }
     siblings
+}
+
+/// Returns the canonical form of the temporary root the derivation works below.
+///
+/// # Errors
+///
+/// Returns an error for a root that cannot be resolved.
+fn temporary_root(root: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(root)
+        .with_context(|| format!("canonicalize the temporary root {}", root.display()))
 }
 
 /// Returns the repository-relative directory of one released crate.

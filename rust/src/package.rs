@@ -79,7 +79,6 @@ struct MetadataPackage {
     publish: Option<Vec<String>>,
     readme: Option<PathBuf>,
     license_file: Option<PathBuf>,
-    build: Option<PathBuf>,
     #[serde(default)]
     targets: Vec<MetadataTarget>,
 }
@@ -759,7 +758,13 @@ fn resolve_tag(
         }
     }
 
-    let temporary = TemporaryDirectory::new_in(root, "pkgre-git-package")?;
+    // Cargo reports every absolute path of its metadata as it sees it, and the
+    // checkout is resolved here, so the temporary root is resolved once: Git,
+    // Cargo and the path rules then see one form of every path, even below a
+    // temporary directory that a symbolic link reaches.
+    let root = fs::canonicalize(root)
+        .with_context(|| format!("canonicalize the temporary root {}", root.display()))?;
+    let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-package")?;
     let checkout = temporary.path().join("repository");
     let cargo_home = temporary.path().join("cargo-home");
     ensure_no_cargo_configuration(&cargo_home)?;
@@ -1559,10 +1564,9 @@ fn tag_members(packages: &[MetadataPackage]) -> Result<Vec<crate::gitlinks::Memb
                 .iter()
                 .map(|target| target.src_path.clone())
                 .collect::<Vec<_>>();
-            crate::gitlinks::copied_manifest_paths(
+            crate::gitlinks::manifest_paths(
                 package.readme.as_deref(),
                 package.license_file.as_deref(),
-                package.build.as_deref(),
                 &target_paths,
             )
         } else {
@@ -2447,7 +2451,6 @@ mod tests {
             publish: Some(vec![CARGO_REGISTRY.to_owned()]),
             readme: None,
             license_file: None,
-            build: None,
             targets: Vec::new(),
         };
         let record = generated_index_record(&package, &"01".repeat(32)).unwrap();
@@ -3229,7 +3232,6 @@ mod tests {
             publish: Some(vec![CARGO_REGISTRY.to_owned()]),
             readme: None,
             license_file: None,
-            build: None,
             targets: Vec::new(),
         };
         let index = "sparse+https://rust.pkg.re/";
@@ -3343,7 +3345,6 @@ mod tests {
             publish: Some(vec![CARGO_REGISTRY.to_owned()]),
             readme: None,
             license_file: None,
-            build: None,
             targets: Vec::new(),
         };
         let siblings = BTreeMap::new();
@@ -3551,13 +3552,22 @@ mod tests {
         /// Below a Gitlink of a member that is not released, named by the
         /// released crate's readme.
         ReadmeBelowGitlink,
+        /// Below a Gitlink of a member that is not released, named by the
+        /// released crate's license-file.
+        LicenseFileBelowGitlink,
+        /// Below a Gitlink of a member that is not released, named by a target
+        /// of the released crate.
+        TargetPathBelowGitlink,
     }
 
     impl GitlinkFixture {
         /// Returns the repository-relative Gitlink that the fixture records.
         fn path(self) -> &'static str {
             match self {
-                Self::NotReleasedMember | Self::ReadmeBelowGitlink => "tools/vendor",
+                Self::NotReleasedMember
+                | Self::ReadmeBelowGitlink
+                | Self::LicenseFileBelowGitlink
+                | Self::TargetPathBelowGitlink => "tools/vendor",
                 Self::ReleasedPackage => "crates/demo/vendor",
                 Self::RootPackage | Self::OutsideEveryMember => "vendor/sub",
                 Self::BelowNestedMember => "tests/res/data",
@@ -3605,23 +3615,29 @@ mod tests {
         } else {
             fs::create_dir_all(source.join("crates/demo/src")).unwrap();
             fs::create_dir_all(source.join("tools/src")).unwrap();
-            let readme = if matches!(layout, GitlinkFixture::ReadmeBelowGitlink) {
-                "readme = \"../../tools/vendor/README.md\"\n"
-            } else {
-                ""
-            };
             fs::write(
                 source.join("Cargo.toml"),
                 "[workspace]\nmembers = [\"crates/demo\", \"tools\"]\nresolver = \"3\"\n",
             )
             .unwrap();
-            fs::write(
-                source.join("crates/demo/Cargo.toml"),
-                format!(
-                    "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = [\"pkgre\"]\n{readme}"
-                ),
-            )
-            .unwrap();
+            let mut manifest = String::from(
+                "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\n",
+            );
+            if matches!(layout, GitlinkFixture::LicenseFileBelowGitlink) {
+                manifest.push_str("license-file = \"../../tools/vendor/LICENSE\"\n");
+            } else {
+                manifest.push_str("license = \"MIT\"\n");
+            }
+            manifest.push_str("publish = [\"pkgre\"]\n");
+            if matches!(layout, GitlinkFixture::ReadmeBelowGitlink) {
+                manifest.push_str("readme = \"../../tools/vendor/README.md\"\n");
+            }
+            if matches!(layout, GitlinkFixture::TargetPathBelowGitlink) {
+                manifest.push_str(
+                    "\n[[bin]]\nname = \"tool\"\npath = \"../../tools/vendor/tool.rs\"\n",
+                );
+            }
+            fs::write(source.join("crates/demo/Cargo.toml"), manifest).unwrap();
             fs::write(
                 source.join("crates/demo/src/lib.rs"),
                 "pub fn answer() -> u32 { 42 }\n",
@@ -3763,6 +3779,53 @@ mod tests {
             assert!(message.contains(gitlink), "{message}");
             assert!(message.contains(package), "{message}");
         }
+    }
+
+    #[test]
+    fn refuses_a_license_file_or_a_target_path_below_a_gitlink() {
+        for (layout, field, path, consequence) in [
+            (
+                GitlinkFixture::LicenseFileBelowGitlink,
+                "license-file",
+                "tools/vendor/LICENSE",
+                "Cargo copies such a file into the archive",
+            ),
+            (
+                GitlinkFixture::TargetPathBelowGitlink,
+                "target path",
+                "tools/vendor/tool.rs",
+                "stricter than Cargo",
+            ),
+        ] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-gitlink-path").unwrap();
+            let source = create_gitlink_release(&temporary, layout, true);
+            let error = resolve_gitlink_fixture(&root, &source).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains(field), "{layout:?}: {message}");
+            assert!(message.contains(path), "{layout:?}: {message}");
+            assert!(message.contains("tools/vendor"), "{layout:?}: {message}");
+            assert!(message.contains(consequence), "{layout:?}: {message}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_target_path_below_a_gitlink_below_a_symlinked_temporary_root() {
+        let real = TemporaryDirectory::new_in(&uncovered_temporary_root(), "pkgre-gitlink-symlink")
+            .unwrap();
+        let link = real.path().join("link");
+        std::os::unix::fs::symlink(real.path(), &link).unwrap();
+        let temporary = TemporaryDirectory::new_in(&link, "pkgre-gitlink-target").unwrap();
+        let source =
+            create_gitlink_release(&temporary, GitlinkFixture::TargetPathBelowGitlink, true);
+        // The checkout is fetched below the symlinked root, and Cargo reports a
+        // target's path resolved against the root it was started with, so the
+        // rule only sees one form of the path when the root is resolved once.
+        let error = resolve_gitlink_fixture(&link, &source).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("target path"), "{message}");
+        assert!(message.contains("tools/vendor/tool.rs"), "{message}");
     }
 
     #[test]
