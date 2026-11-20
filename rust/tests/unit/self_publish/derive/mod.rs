@@ -21,7 +21,7 @@ use super::expectations::Expectations;
 use super::{ReleasedCrate, Sources, derive_release_in, derive_release_with};
 use crate::artifact::sha256_bytes;
 use crate::update::read_crate_archive;
-use fixtures::{LocalSource, Release, Sibling, Variant};
+use fixtures::{LicenseFile, LocalSource, Readme, Release, Sibling, Variant};
 
 /// The released crates of the fixture, by package name.
 const RELEASED: [&str; 2] = ["example-lib", "example-bin"];
@@ -1422,6 +1422,85 @@ fn accepts_a_gitlink_below_a_member_the_tag_does_not_release() {
 }
 
 #[test]
+fn refuses_an_absolute_readme_of_a_released_package() {
+    let temporary = fixtures::Temp::new("pkgre-derive-readme-absolute");
+    let variant = Variant {
+        library_readme: Readme::Absolute,
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a readme named by an absolute path is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains("absolute"), "{error}");
+    assert!(error.contains("readme"), "{error}");
+    assert!(error.contains("outside/README.md"), "{error}");
+}
+
+#[test]
+fn refuses_a_readme_that_leaves_the_checkout() {
+    let temporary = fixtures::Temp::new("pkgre-derive-readme-outside");
+    let variant = Variant {
+        library_readme: Readme::Relative("../../outside/README.md"),
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a readme that leaves the checkout is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains("readme"), "{error}");
+    assert!(error.contains("outside the checkout"), "{error}");
+}
+
+#[test]
+fn refuses_a_license_file_that_leaves_the_checkout() {
+    let temporary = fixtures::Temp::new("pkgre-derive-license-outside");
+    let variant = Variant {
+        library_license_file: LicenseFile::Relative("../../outside/LICENSE"),
+        ..Variant::default()
+    };
+    let (source, release) = release_only(temporary.path(), variant);
+    let state = memory_state(&release, variant);
+    let error = derive_from_memory(&release, &state, &source.root)
+        .expect_err("a license file that leaves the checkout is refused");
+    let error = format!("{error:#}");
+    assert!(error.contains("license-file"), "{error}");
+    assert!(error.contains("outside the checkout"), "{error}");
+}
+
+#[test]
+fn accepts_an_inherited_readme_inside_the_workspace() {
+    let temporary = fixtures::Temp::new("pkgre-derive-readme-inherited");
+    let variant = Variant {
+        library_readme: Readme::Inherited,
+        ..Variant::default()
+    };
+    let (source, release, catalog) = fixture(temporary.path(), variant);
+    let state = RepositoryState::load(&catalog.root).expect("load the fixture catalog");
+    let packages = derive_from_catalog(&release, &state, &catalog.curated, &source.root)
+        .expect("a readme inherited from the workspace, inside it, is accepted");
+    assert_eq!(packages.len(), 2);
+    let library = packages
+        .iter()
+        .find(|package| package.entry.name == "example-lib")
+        .expect("the library is derived");
+    let files = read_crate_archive(
+        &library.entry.crates_io_name,
+        &library.entry.version,
+        &library.archive,
+        &["README.md"],
+    )
+    .expect("read the derived archive");
+    assert!(
+        files.contents.contains_key("README.md"),
+        "the derived archive holds the inherited readme: {:?}",
+        files.files.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn refuses_a_gitlink_inside_a_released_package() {
     let temporary = fixtures::Temp::new("pkgre-derive-gitlink-released");
     let variant = Variant {
@@ -1442,7 +1521,7 @@ fn refuses_a_released_packages_readme_below_a_gitlink() {
     let temporary = fixtures::Temp::new("pkgre-derive-gitlink-readme");
     let variant = Variant {
         gitlink: Some("serve/data"),
-        library_readme: Some("../serve/data/README.md"),
+        library_readme: fixtures::Readme::Relative("../serve/data/README.md"),
         ..Variant::default()
     };
     let (source, release) = release_only(temporary.path(), variant);

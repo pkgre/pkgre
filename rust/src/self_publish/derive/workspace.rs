@@ -231,6 +231,7 @@ impl Workspace {
                     .map(|path| crate::gitlinks::ManifestPath {
                         field: path.field,
                         path: path.path.clone(),
+                        copied: path.copied,
                     })
                     .collect(),
             })

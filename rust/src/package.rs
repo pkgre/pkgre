@@ -1492,22 +1492,20 @@ fn published_packages(metadata: &[MetadataPackage]) -> BTreeSet<String> {
         .collect()
 }
 
-/// Applies the Gitlink rule to one tag whose workspace Cargo named.
+/// Applies the Gitlink and manifest-path rules to one tag whose workspace Cargo
+/// named.
 ///
 /// # Errors
 ///
 /// Returns an error for a Gitlink inside a released package, or for a path of a
-/// released package's manifest that resolves at or below a Gitlink.
+/// released package's manifest that is absolute, that resolves outside the
+/// checkout, or that resolves at or below a Gitlink.
 fn ensure_tag_gitlinks(
     checkout: &Path,
     gitlinks: &[PathBuf],
     packages: &[MetadataPackage],
 ) -> Result<()> {
-    crate::gitlinks::ensure_gitlinks_outside_released_packages(
-        checkout,
-        gitlinks,
-        &tag_members(packages)?,
-    )
+    crate::gitlinks::ensure_release_tag_paths(checkout, gitlinks, &tag_members(packages)?)
 }
 
 /// Requires that no packaged archive of the tag holds a path at or below a
@@ -3387,6 +3385,152 @@ mod tests {
         assert!(
             format!("{error:#}").contains("uses unsupported source"),
             "{error:#}"
+        );
+    }
+
+    /// The manifest path that one fixture of the manifest-path rule names.
+    #[derive(Clone, Copy, Debug)]
+    enum ManifestPathFixture {
+        /// A readme that the released crate names by an absolute path.
+        AbsoluteReadme,
+        /// A readme that walks out of the checkout.
+        EscapingReadme,
+        /// A license file that walks out of the checkout.
+        EscapingLicenseFile,
+        /// A readme inherited from `[workspace.package]`, which stays inside.
+        InheritedReadme,
+    }
+
+    /// Creates one tagged fixture of the manifest-path rule and returns the
+    /// repository.
+    ///
+    /// The file that an escaping or absolute path names is written into the
+    /// test's own temporary directory, outside the checkout.
+    fn create_manifest_path_release(
+        temporary: &TemporaryDirectory,
+        layout: ManifestPathFixture,
+    ) -> PathBuf {
+        let source = temporary.path().join("source");
+        fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+        fs::create_dir_all(source.join("tools/src")).unwrap();
+        let outside = temporary.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("README.md"), "# outside the checkout\n").unwrap();
+        fs::write(outside.join("LICENSE"), "an outside license\n").unwrap();
+        let mut workspace_package = "";
+        let mut readme = String::new();
+        let mut license_file = String::new();
+        let mut license = "license = \"MIT\"\n";
+        match layout {
+            ManifestPathFixture::AbsoluteReadme => {
+                readme = format!("readme = \"{}\"\n", outside.join("README.md").display());
+            }
+            ManifestPathFixture::EscapingReadme => {
+                readme = "readme = \"../../../outside/README.md\"\n".to_owned();
+            }
+            ManifestPathFixture::EscapingLicenseFile => {
+                license = "";
+                license_file = "license-file = \"../../../outside/LICENSE\"\n".to_owned();
+            }
+            ManifestPathFixture::InheritedReadme => {
+                workspace_package = "[workspace.package]\nreadme = \"README.md\"\n\n";
+                readme = "readme.workspace = true\n".to_owned();
+                fs::write(source.join("README.md"), "# the workspace readme\n").unwrap();
+            }
+        }
+        fs::write(
+            source.join("Cargo.toml"),
+            format!(
+                "[workspace]\nmembers = [\"crates/demo\", \"tools\"]\nresolver = \"3\"\n\n{workspace_package}"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/Cargo.toml"),
+            format!(
+                "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\n{license}publish = [\"pkgre\"]\n{readme}{license_file}"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/demo/src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("tools/Cargo.toml"),
+            "[package]\nname = \"pkgre-tools\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = false\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("tools/src/lib.rs"),
+            "pub fn tool() -> u32 { 1 }\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(&source)
+                .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
+                .arg("generate-lockfile"),
+        );
+        test_git(&source, &["add", "Cargo.lock"]);
+        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    #[test]
+    fn refuses_a_manifest_path_of_a_released_crate_outside_the_checkout() {
+        for (layout, field, path) in [
+            (
+                ManifestPathFixture::AbsoluteReadme,
+                "readme",
+                "outside/README.md",
+            ),
+            (
+                ManifestPathFixture::EscapingReadme,
+                "readme",
+                "../../../outside/README.md",
+            ),
+            (
+                ManifestPathFixture::EscapingLicenseFile,
+                "license-file",
+                "../../../outside/LICENSE",
+            ),
+        ] {
+            let root = uncovered_temporary_root();
+            let temporary = TemporaryDirectory::new_in(&root, "pkgre-manifest-path").unwrap();
+            let source = create_manifest_path_release(&temporary, layout);
+            let error = resolve_gitlink_fixture(&root, &source).unwrap_err();
+            let message = format!("{error:#}");
+            assert!(message.contains("\"pkgre-demo\""), "{layout:?}: {message}");
+            assert!(message.contains(field), "{layout:?}: {message}");
+            assert!(message.contains(path), "{layout:?}: {message}");
+        }
+    }
+
+    #[test]
+    fn accepts_an_inherited_readme_inside_the_workspace() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-manifest-readme").unwrap();
+        let source = create_manifest_path_release(&temporary, ManifestPathFixture::InheritedReadme);
+        let materialization = resolve_gitlink_fixture(&root, &source)
+            .expect("a readme inherited from the workspace, inside it, is accepted");
+        let files = crate::update::read_crate_archive(
+            "pkgre-demo",
+            &materialization.version,
+            &materialization.archive_bytes,
+            &[],
+        )
+        .unwrap()
+        .files;
+        assert!(
+            files.contains_key("README.md"),
+            "the archive holds the inherited readme: {:?}",
+            files.keys().collect::<Vec<_>>()
         );
     }
 

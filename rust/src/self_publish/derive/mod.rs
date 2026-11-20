@@ -460,7 +460,7 @@ pub(super) fn derive_release_in(
     );
 
     let workspace = workspace::Workspace::load(&cargo, &environment, &work, &checkout.root)?;
-    crate::gitlinks::ensure_gitlinks_outside_released_packages(
+    crate::gitlinks::ensure_release_tag_paths(
         &checkout.root,
         &checkout.gitlinks,
         &workspace.tag_members(),

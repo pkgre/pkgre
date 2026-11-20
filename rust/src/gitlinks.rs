@@ -43,8 +43,13 @@ pub(crate) struct Member {
 pub(crate) struct ManifestPath {
     /// The manifest field, as a refusal names it.
     pub(crate) field: &'static str,
-    /// The path, as the manifest writes it.
+    /// The path: as the manifest writes it for a field that Cargo copies into
+    /// the archive, and absolute for a target, whose `src_path` Cargo reports
+    /// resolved.
     pub(crate) path: PathBuf,
+    /// Whether the path is a manifest field that Cargo copies into the archive,
+    /// `readme` or `license-file`, rather than a target's own `path`.
+    pub(crate) copied: bool,
 }
 
 /// Returns the paths of one manifest that Cargo copies into its archive.
@@ -62,21 +67,26 @@ pub(crate) fn copied_manifest_paths(
     target_paths: &[PathBuf],
 ) -> Vec<ManifestPath> {
     let mut paths = Vec::new();
-    for (field, path) in [
-        ("readme", readme),
-        ("license-file", license_file),
-        ("build", build),
-    ] {
+    for (field, path) in [("readme", readme), ("license-file", license_file)] {
         if let Some(path) = path {
             paths.push(ManifestPath {
                 field,
                 path: path.to_path_buf(),
+                copied: true,
             });
         }
+    }
+    if let Some(build) = build {
+        paths.push(ManifestPath {
+            field: "build",
+            path: build.to_path_buf(),
+            copied: false,
+        });
     }
     paths.extend(target_paths.iter().map(|path| ManifestPath {
         field: "target path",
         path: path.clone(),
+        copied: false,
     }));
     paths
 }
@@ -100,27 +110,34 @@ pub(crate) fn gitlinks_in_index(staged: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Refuses a Gitlink inside a released package, and a path of a released
-/// package's manifest that resolves at or below a Gitlink.
+/// Refuses the paths and Gitlinks that a release tag's checkout may not hold.
 ///
 /// `gitlinks` are the repository-relative paths that Git's index records,
-/// `checkout` is the root they are relative to, and `members` are every workspace
-/// member that `cargo metadata --no-deps` named of the same checkout.
+/// `checkout` is the root they are relative to, and `members` are every
+/// workspace member that `cargo metadata --no-deps` named of the same checkout.
+///
+/// Two rules apply. A Gitlink is accepted when the innermost member whose
+/// directory contains it is not a released crate, or when no member's directory
+/// contains it. And a path that a released crate's manifest names is relative
+/// and resolves inside the tag's checkout: an absolute path, one that `..`
+/// components take outside the checkout, or one at or below a Gitlink is
+/// refused, naming the crate, the field and the path. The checkout, not the
+/// workspace root, is the boundary, because a workspace root may sit below the
+/// checkout while a member sits above it, and the checkout is the tag's whole
+/// tree either way.
 ///
 /// # Errors
 ///
 /// Returns an error for a Gitlink path that is not a safe repository-relative
 /// path, a Gitlink whose innermost member is a released crate, a released
-/// crate's manifest path that resolves at or below a Gitlink, or a checkout or
-/// member directory that cannot be resolved.
-pub(crate) fn ensure_gitlinks_outside_released_packages(
+/// crate's manifest path that is absolute, that resolves outside the checkout,
+/// or that resolves at or below a Gitlink, or a checkout or member directory
+/// that cannot be resolved.
+pub(crate) fn ensure_release_tag_paths(
     checkout: &Path,
     gitlinks: &[PathBuf],
     members: &[Member],
 ) -> Result<()> {
-    if gitlinks.is_empty() {
-        return Ok(());
-    }
     let checkout = fs::canonicalize(checkout)
         .with_context(|| format!("canonicalize release tag checkout {}", checkout.display()))?;
     let mut located = Vec::with_capacity(gitlinks.len());
@@ -136,6 +153,48 @@ pub(crate) fn ensure_gitlinks_outside_released_packages(
                 .with_context(|| format!("canonicalize the directory of package {}", member.name))
         })
         .collect::<Result<Vec<_>>>()?;
+    for (member, directory) in members.iter().zip(&directories) {
+        if !member.released {
+            continue;
+        }
+        for manifest_path in &member.manifest_paths {
+            ensure!(
+                !manifest_path.copied || !manifest_path.path.is_absolute(),
+                "the released package \"{}\" names its {} with the absolute path \"{}\"; a release tag's manifests name every path inside its workspace, relative to the package's directory",
+                member.name,
+                manifest_path.field,
+                manifest_path.path.display()
+            );
+            let resolved = resolve_lexically(directory, &manifest_path.path);
+            ensure!(
+                resolved.starts_with(&checkout),
+                "the released package \"{}\" names its {} at \"{}\", which resolves to \"{}\" outside the checkout \"{}\" of the release tag; a release tag's manifests name every path inside its checkout",
+                member.name,
+                manifest_path.field,
+                manifest_path.path.display(),
+                resolved.display(),
+                checkout.display()
+            );
+            let Some(gitlink) = gitlinks
+                .iter()
+                .zip(&located)
+                .find(|(_, absolute)| resolved.starts_with(absolute))
+                .map(|(gitlink, _)| gitlink)
+            else {
+                continue;
+            };
+            bail!(
+                "the released package \"{}\" names its {} at \"{}\", which is at or below the Gitlink \"{}\"; Cargo copies such a path into the archive, and a release tag may hold a Gitlink only outside its released packages",
+                member.name,
+                manifest_path.field,
+                manifest_path.path.display(),
+                gitlink.display()
+            );
+        }
+    }
+    if gitlinks.is_empty() {
+        return Ok(());
+    }
     for (gitlink, absolute) in gitlinks.iter().zip(&located) {
         let mut innermost: Option<(&Member, usize)> = None;
         for (member, directory) in members.iter().zip(&directories) {
@@ -152,29 +211,6 @@ pub(crate) fn ensure_gitlinks_outside_released_packages(
                 "release tag checkout holds a Gitlink at \"{}\" inside the released package \"{}\"; a release tag may hold a Gitlink only outside its released packages",
                 gitlink.display(),
                 member.name
-            );
-        }
-    }
-    for (member, directory) in members.iter().zip(&directories) {
-        if !member.released {
-            continue;
-        }
-        for manifest_path in &member.manifest_paths {
-            let resolved = resolve_lexically(directory, &manifest_path.path);
-            let Some(gitlink) = gitlinks
-                .iter()
-                .zip(&located)
-                .find(|(_, absolute)| resolved.starts_with(absolute))
-                .map(|(gitlink, _)| gitlink)
-            else {
-                continue;
-            };
-            bail!(
-                "the released package \"{}\" names its {} at \"{}\", which is at or below the Gitlink \"{}\"; Cargo copies such a path into the archive, and a release tag may hold a Gitlink only outside its released packages",
-                member.name,
-                manifest_path.field,
-                manifest_path.path.display(),
-                gitlink.display()
             );
         }
     }
@@ -325,12 +361,7 @@ mod tests {
             member("tools", &temporary.path().join("tools"), false),
         ];
         directories(temporary.path(), &members, &["tools/vendor"]);
-        ensure_gitlinks_outside_released_packages(
-            temporary.path(),
-            &gitlinks(&["tools/vendor"]),
-            &members,
-        )
-        .unwrap();
+        ensure_release_tag_paths(temporary.path(), &gitlinks(&["tools/vendor"]), &members).unwrap();
     }
 
     #[test]
@@ -338,7 +369,7 @@ mod tests {
         let temporary = TemporaryDirectory::new("pkgre-gitlinks-released").unwrap();
         let members = vec![member("demo", &temporary.path().join("crates/demo"), true)];
         directories(temporary.path(), &members, &["crates/demo/vendor"]);
-        let error = ensure_gitlinks_outside_released_packages(
+        let error = ensure_release_tag_paths(
             temporary.path(),
             &gitlinks(&["crates/demo/vendor"]),
             &members,
@@ -357,12 +388,9 @@ mod tests {
             member("tools", &temporary.path().join("tools"), false),
         ];
         directories(temporary.path(), &members, &["vendor/sub"]);
-        let error = ensure_gitlinks_outside_released_packages(
-            temporary.path(),
-            &gitlinks(&["vendor/sub"]),
-            &members,
-        )
-        .unwrap_err();
+        let error =
+            ensure_release_tag_paths(temporary.path(), &gitlinks(&["vendor/sub"]), &members)
+                .unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("vendor/sub"), "{message}");
         assert!(message.contains("\"demo\""), "{message}");
@@ -376,12 +404,8 @@ mod tests {
             member("res", &temporary.path().join("tests/res"), false),
         ];
         directories(temporary.path(), &members, &["tests/res/data"]);
-        ensure_gitlinks_outside_released_packages(
-            temporary.path(),
-            &gitlinks(&["tests/res/data"]),
-            &members,
-        )
-        .unwrap();
+        ensure_release_tag_paths(temporary.path(), &gitlinks(&["tests/res/data"]), &members)
+            .unwrap();
     }
 
     #[test]
@@ -389,12 +413,7 @@ mod tests {
         let temporary = TemporaryDirectory::new("pkgre-gitlinks-outside").unwrap();
         let members = vec![member("demo", &temporary.path().join("crates/demo"), true)];
         directories(temporary.path(), &members, &["vendor/data"]);
-        ensure_gitlinks_outside_released_packages(
-            temporary.path(),
-            &gitlinks(&["vendor/data"]),
-            &members,
-        )
-        .unwrap();
+        ensure_release_tag_paths(temporary.path(), &gitlinks(&["vendor/data"]), &members).unwrap();
     }
 
     #[test]
@@ -408,13 +427,11 @@ mod tests {
         members[0].manifest_paths = vec![ManifestPath {
             field: "readme",
             path: PathBuf::from("../../tools/vendor/README.md"),
+            copied: true,
         }];
-        let error = ensure_gitlinks_outside_released_packages(
-            temporary.path(),
-            &gitlinks(&["tools/vendor"]),
-            &members,
-        )
-        .unwrap_err();
+        let error =
+            ensure_release_tag_paths(temporary.path(), &gitlinks(&["tools/vendor"]), &members)
+                .unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("readme"), "{message}");
         assert!(
@@ -425,6 +442,60 @@ mod tests {
     }
 
     #[test]
+    fn refuses_an_absolute_manifest_path() {
+        let temporary = TemporaryDirectory::new("pkgre-gitlinks-absolute").unwrap();
+        let mut members = vec![member("demo", &temporary.path().join("crates/demo"), true)];
+        directories(temporary.path(), &members, &[]);
+        members[0].manifest_paths = vec![ManifestPath {
+            field: "readme",
+            path: temporary.path().join("outside/README.md"),
+            copied: true,
+        }];
+        let error = ensure_release_tag_paths(temporary.path(), &[], &members).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("absolute"), "{message}");
+        assert!(message.contains("outside/README.md"), "{message}");
+    }
+
+    #[test]
+    fn refuses_a_manifest_path_that_leaves_the_checkout() {
+        let temporary = TemporaryDirectory::new("pkgre-gitlinks-outside-checkout").unwrap();
+        let workspace = temporary.path().join("workspace");
+        let mut members = vec![member("demo", &workspace.join("crates/demo"), true)];
+        directories(&workspace, &members, &[]);
+        members[0].manifest_paths = vec![ManifestPath {
+            field: "license-file",
+            path: PathBuf::from("../../../LICENSE"),
+            copied: true,
+        }];
+        let error = ensure_release_tag_paths(&workspace, &[], &members).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("license-file"), "{message}");
+        assert!(message.contains("outside the checkout"), "{message}");
+    }
+
+    #[test]
+    fn accepts_a_manifest_path_that_stays_inside_the_checkout() {
+        let temporary = TemporaryDirectory::new("pkgre-gitlinks-inside-checkout").unwrap();
+        let workspace = temporary.path().join("workspace");
+        let mut members = vec![member("demo", &workspace.join("crates/demo"), true)];
+        directories(&workspace, &members, &[]);
+        members[0].manifest_paths = vec![
+            ManifestPath {
+                field: "readme",
+                path: PathBuf::from("../../README.md"),
+                copied: true,
+            },
+            ManifestPath {
+                field: "target path",
+                path: PathBuf::from("src/lib.rs"),
+                copied: false,
+            },
+        ];
+        ensure_release_tag_paths(&workspace, &[], &members).unwrap();
+    }
+
+    #[test]
     fn accepts_a_manifest_path_outside_every_gitlink() {
         let temporary = TemporaryDirectory::new("pkgre-gitlinks-readme-ok").unwrap();
         let mut members = vec![member("demo", &temporary.path().join("crates/demo"), true)];
@@ -432,13 +503,9 @@ mod tests {
         members[0].manifest_paths = vec![ManifestPath {
             field: "readme",
             path: PathBuf::from("README.md"),
+            copied: true,
         }];
-        ensure_gitlinks_outside_released_packages(
-            temporary.path(),
-            &gitlinks(&["vendor/data"]),
-            &members,
-        )
-        .unwrap();
+        ensure_release_tag_paths(temporary.path(), &gitlinks(&["vendor/data"]), &members).unwrap();
     }
 
     #[test]
