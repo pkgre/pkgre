@@ -890,6 +890,36 @@ fn accepts_a_repository_whose_release_tags_keep_crates_io_manifests() {
     let mut candidate = State::base();
     candidate.set_manifests("pkgre");
     run_checks(&candidate, Some(&accepted)).unwrap();
+
+    // Removing it again is no change either.
+    let mut accepted = State::base();
+    accepted.set_manifests("pkgre");
+    let candidate = State::base();
+    run_checks(&candidate, Some(&accepted)).unwrap();
+}
+
+#[test]
+fn refuses_a_renamed_abandoned_entry_of_a_native_repository() {
+    let mut state = State::native();
+    state.config = config_text(
+        &[(REPOSITORY, PREFIX)],
+        &[],
+        &[("example-lib", "1.0.0", "crates.io refused the upload")],
+    );
+    state.set_manifests("crates-io");
+    // The crate's own name is accepted, abandoned or not.
+    run_checks(&state, None).unwrap();
+
+    // An abandoned entry may keep another name only in the `pkgre` mode, where a
+    // mapping can have changed; nothing rewrites a native tag's manifest.
+    let target = state
+        .lock
+        .packages
+        .iter_mut()
+        .find(|entry| entry.name == "example-lib")
+        .unwrap();
+    target.crates_io_name = "example-renamed".to_owned();
+    assert_refused(&state, None, "is its package name");
 }
 
 #[test]
@@ -964,7 +994,7 @@ fn refuses_a_native_entry_whose_name_or_checksums_differ() {
         .find(|entry| entry.name == "example-lib")
         .unwrap();
     target.crates_io_name = "example-renamed".to_owned();
-    assert_refused(&state, None, "but the mapping gives");
+    assert_refused(&state, None, "is its package name");
 
     let mut state = State::native();
     let target = state

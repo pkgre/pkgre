@@ -111,7 +111,8 @@ Since an absent key means the default, a declaration that has no `manifests` kee
 meaning and the schema stays 1, and a strict parser of an older tool refuses the key. The
 value is permanent from the declaration, as the prefix is: the checks refuse a changed or
 removed value against the accepted state. Spelling the default, `manifests = "pkgre"`, is
-no change.
+no change, so adding that key to a declaration that omitted it, or removing it again, is
+accepted.
 
 ### Names
 

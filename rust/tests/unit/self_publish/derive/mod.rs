@@ -1715,6 +1715,106 @@ fn distinguishes_a_member_from_a_registry_package_of_its_name() {
 }
 
 #[test]
+fn resolves_a_dependency_of_a_crates_io_native_repository_under_its_own_name() {
+    const NATIVE_REPOSITORY: &str = "https://git.example.invalid/example/native";
+    const NATIVE_VERSION: &str = "1.0.0";
+    const NATIVE_CHECKSUM: &str =
+        "0222222222222222222222222222222222222222222222222222222222222222";
+    let lock = LockIndex::parse(
+        format!(
+            "version = 4\n\n[[package]]\nname = \"example-native\"\nversion = \"{NATIVE_VERSION}\"\nsource = \"sparse+https://rust.pkg.re/\"\nchecksum = \"{NATIVE_CHECKSUM}\"\n"
+        )
+        .as_bytes(),
+    )
+    .expect("parse a lock with a dependency of the native repository");
+    let version = Version::parse(NATIVE_VERSION).expect("parse the fixture version");
+    let catalog = CatalogSnapshot {
+        registry_index: String::new(),
+        identities: vec![CatalogIdentity {
+            name: "example-native".to_owned(),
+            version: version.clone(),
+            crate_sha256: NATIVE_CHECKSUM.to_owned(),
+            removed: false,
+            release: Some(GitRelease {
+                git: NATIVE_REPOSITORY.to_owned(),
+                tag: "v1.0.0".to_owned(),
+                tag_oid: "3".repeat(40),
+                commit: "4".repeat(40),
+                cargo_version: Version::parse("1.95.0").expect("parse the pinned version"),
+            }),
+            dependencies: Vec::new(),
+        }],
+        mirrors: Vec::new(),
+        publish_names: Vec::new(),
+        publish_declarations: Vec::new(),
+    };
+    let native_entry = CratesIoPackage {
+        name: "example-native".to_owned(),
+        version: version.clone(),
+        crates_io_name: "example-native".to_owned(),
+        crate_sha256: NATIVE_CHECKSUM.to_owned(),
+        pkgre_crate_sha256: NATIVE_CHECKSUM.to_owned(),
+        git: NATIVE_REPOSITORY.to_owned(),
+        tag: "v1.0.0".to_owned(),
+        commit: "4".repeat(40),
+        cargo_version: Version::parse("1.95.0").expect("parse the pinned version"),
+    };
+    let config = CratesIoConfig::parse(
+        format!(
+            "schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = {NATIVE_REPOSITORY:?}\ntag-prefix = \"v\"\nmanifests = \"crates-io\"\n"
+        )
+        .as_bytes(),
+        Path::new("crates-io.toml"),
+    )
+    .expect("parse a config that declares the native repository");
+    let published = BTreeMap::new();
+    let expectations = Expectations::build(
+        &lock,
+        &catalog,
+        &config,
+        &CratesIoLock {
+            schema: CRATES_IO_LOCK_SCHEMA,
+            packages: vec![native_entry.clone()],
+        },
+        &published,
+        super::cargo::CURATED_INDEX,
+    )
+    .expect("build the expectations");
+    let package = expectations
+        .package("example-native", &version)
+        .expect("the dependency is expected");
+    assert!(!package.member);
+    // The native crate keeps its own name, and one archive is both registries'.
+    assert_eq!(package.crates_io_name, "example-native");
+    assert_eq!(
+        expectations.crates_io_name("example-native").unwrap(),
+        "example-native"
+    );
+    assert_eq!(package.curated_checksum.as_deref(), Some(NATIVE_CHECKSUM));
+    assert_eq!(package.derived_checksum.as_deref(), Some(NATIVE_CHECKSUM));
+
+    // An entry that records another name is refused: nothing rewrites a native
+    // tag's manifest, so its crates.io name can only be its package name.
+    let mut renamed = native_entry;
+    renamed.crates_io_name = "example-renamed".to_owned();
+    let error = match Expectations::build(
+        &lock,
+        &catalog,
+        &config,
+        &CratesIoLock {
+            schema: CRATES_IO_LOCK_SCHEMA,
+            packages: vec![renamed],
+        },
+        &published,
+        super::cargo::CURATED_INDEX,
+    ) {
+        Ok(_) => panic!("an entry that records another name is refused"),
+        Err(error) => format!("{error:#}"),
+    };
+    assert!(error.contains("the repository's mode gives"), "{error}");
+}
+
+#[test]
 fn parses_lock_dependency_entries_with_a_source() {
     let lock = LockIndex::parse(
         b"version = 4\n\n[[package]]\nname = \"example-bin\"\nversion = \"1.0.0\"\ndependencies = [\n \"pinned 0.3.0\",\n \"qualified 0.2.0 (sparse+https://rust.pkg.re/)\",\n]\n\n[[package]]\nname = \"pinned\"\nversion = \"0.3.0\"\nsource = \"sparse+https://rust.pkg.re/\"\nchecksum = \"0111111111111111111111111111111111111111111111111111111111111111\"\n\n[[package]]\nname = \"qualified\"\nversion = \"0.2.0\"\nsource = \"sparse+https://rust.pkg.re/\"\nchecksum = \"0211111111111111111111111111111111111111111111111111111111111111\"\n",

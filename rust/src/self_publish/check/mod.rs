@@ -419,21 +419,28 @@ fn check_entries(
         // a version abandoned in the change that adds it.
         let exempt = config.abandoned_version(name, version).is_some()
             && accepted_lock.is_none_or(|lock| lock.entry(name, version).is_some());
-        if !exempt {
-            let effective = config.effective_name(name, &release.git);
+        if config.is_native(&release.git) {
+            // Nothing rewrites a native tag's manifest, so its crates.io name is
+            // the package name, abandoned version or not.
             ensure!(
-                entry.crates_io_name == effective,
-                "entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}; only an abandoned entry that was released may keep another name",
+                entry.crates_io_name == *name,
+                "entry {name} {version} of the crates.io-native repository {:?} records crates.io name {:?}; a release tag of that repository keeps its manifest, so the crate's crates.io name is its package name {name:?}",
+                release.git,
                 entry.crates_io_name
             );
-        }
-        if config.is_native(&release.git) {
             ensure!(
                 entry.crate_sha256 == entry.pkgre_crate_sha256,
                 "entry {name} {version} of the crates.io-native repository {:?} records crates.io archive checksum {:?} but pkgre archive checksum {:?}; a release tag of that repository keeps its manifests, so its archive is both registries' package",
                 release.git,
                 entry.crate_sha256,
                 entry.pkgre_crate_sha256
+            );
+        } else if !exempt {
+            let effective = config.effective_name(name, &release.git);
+            ensure!(
+                entry.crates_io_name == effective,
+                "entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}; only an abandoned entry that was released may keep another name",
+                entry.crates_io_name
             );
         }
     }
