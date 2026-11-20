@@ -14,7 +14,8 @@
 //!
 //! End-to-end tests below cover every rejection reachable through real Git
 //! orchestration (remote outages, persistence failure, suppression, ancestry,
-//! semantic validation, object corruption). The remaining transition reasons —
+//! semantic validation, a commit that holds `.gitattributes`, object
+//! corruption). The remaining transition reasons —
 //! repository-identity mismatch, full-ref mismatch, malformed commits, unknown
 //! ancestry, and candidate object unavailability on reload — are enforced by
 //! [`evaluate_reload`] and covered by the shared transition-policy fixture tests
@@ -572,7 +573,39 @@ impl Watcher {
         })
     }
 
+    /// Refuses a commit whose tree holds `.gitattributes` at any path.
+    ///
+    /// `git archive` applies the archived commit's own attribute files, unlike a
+    /// plain checkout: `export-ignore` drops paths, `export-subst` rewrites
+    /// placeholders, and `text`, `eol` and `ident` change content. A catalog
+    /// repository's CI validates a checkout, so the origin refuses a commit the
+    /// checkout cannot vouch for instead of serving a different tree.
+    async fn refuse_git_attributes(&self, commit: &str) -> Result<()> {
+        let output = git_output(
+            Some(&self.repository_dir()),
+            ["ls-tree", "-r", "-z", "--name-only", commit],
+            "list commit tree",
+        )
+        .await?;
+        ensure!(
+            output.status.success(),
+            "git list commit tree exited with {}\nstderr:\n{}",
+            output.status,
+            bounded_lossy(&output.stderr)
+        );
+        for path in output.stdout.split(|byte| *byte == 0) {
+            let name = path.rsplit(|byte| *byte == b'/').next().unwrap_or(path);
+            ensure!(
+                name != b".gitattributes",
+                "catalog commit {commit} holds .gitattributes at {}; git archive would apply it to the catalog tree, so a catalog repository must hold none",
+                String::from_utf8_lossy(path)
+            );
+        }
+        Ok(())
+    }
+
     async fn materialize_tree(&self, commit: &str, label: &str) -> Result<TempTree> {
+        self.refuse_git_attributes(commit).await?;
         let directory = TempDirectory::create(self.next_temp(label)).await?;
         let archive = directory.path().join("catalog.tar");
         git_stdout(
@@ -1065,6 +1098,43 @@ mod tests {
             rev_parse(&self.path(), "HEAD")
         }
 
+        /// Adds a `.gitattributes` at `path` whose one rule `git archive` ignores, so
+        /// only the watcher's rule against the file itself can refuse the commit.
+        fn advance_adding_gitattributes(&self, path: &str) -> String {
+            let path = self.path().join(path);
+            assert!(
+                !path.exists(),
+                "fixture origin already holds {}",
+                path.display()
+            );
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "registry/main.lock -diff\n").unwrap();
+            git(&self.path(), &["add", "."]);
+            git(
+                &self.path(),
+                &[
+                    GIT_IDENTITY.as_slice(),
+                    &["commit", "--quiet", "-m", "add .gitattributes"],
+                ]
+                .concat(),
+            );
+            rev_parse(&self.path(), "HEAD")
+        }
+
+        /// Removes the `.gitattributes` at `path` again, restoring the bootstrap tree.
+        fn advance_removing_gitattributes(&self, path: &str) -> String {
+            git(&self.path(), &["rm", "--quiet", path]);
+            git(
+                &self.path(),
+                &[
+                    GIT_IDENTITY.as_slice(),
+                    &["commit", "--quiet", "-m", "drop .gitattributes"],
+                ]
+                .concat(),
+            );
+            rev_parse(&self.path(), "HEAD")
+        }
+
         fn move_remote(&self, commit: &str) {
             git(&self.path(), &["update-ref", "refs/heads/main", commit]);
         }
@@ -1345,6 +1415,27 @@ poll-interval-secs = 1
         assert!(!shared.is_ready().await);
     }
 
+    /// A bootstrap commit that holds a `.gitattributes` above the catalog path cannot be
+    /// materialized as the startup snapshot, and the failure names the path and the reason.
+    #[tokio::test]
+    async fn bootstrap_commit_holding_gitattributes_fails_startup() {
+        let directory = TempDir::new("pkgre-watch-gitattributes-bootstrap");
+        let origin = Origin::new("pkgre-watch-gitattributes-bootstrap-origin");
+        let bootstrap = origin.advance_adding_gitattributes("tools/.gitattributes");
+        let config = watcher_config(&directory, &origin, &bootstrap);
+        let shared = shared_for(&config);
+        let watcher = watcher_for(&config, &shared);
+        let error = watcher.startup().await.unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("holds .gitattributes at tools/.gitattributes")
+                && message.contains("must hold none"),
+            "got: {message}"
+        );
+        assert!(!shared.is_ready().await);
+        assert!(!record_path(&directory).exists());
+    }
+
     #[tokio::test]
     async fn corrupt_accepted_object_fails_startup() {
         let directory = TempDir::new("pkgre-watch-corrupt");
@@ -1398,6 +1489,40 @@ poll-interval-secs = 1
         let report = watcher.poll_once().await;
         assert_eq!(report.reason, TransitionReason::RejectedHashSuppressed);
         assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+    }
+
+    /// A commit that adds only a root `.gitattributes` is refused before `git archive`
+    /// reads it and suppressed by hash; the forward descendant that removes it again
+    /// carries the accepted tree, so the origin serves it.
+    #[tokio::test]
+    async fn commit_holding_gitattributes_is_refused_then_suppressed() {
+        let directory = TempDir::new("pkgre-watch-gitattributes");
+        let origin = Origin::new("pkgre-watch-gitattributes-origin");
+        let config = watcher_config(&directory, &origin, &origin.root);
+        let shared = shared_for(&config);
+        let watcher = watcher_for(&config, &shared);
+        watcher.startup().await.unwrap();
+        let before = shared.snapshot().await.unwrap();
+
+        let refused = origin.advance_adding_gitattributes(".gitattributes");
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::SemanticValidationFailed);
+        assert_eq!(stored_commit(&directory), origin.root);
+        assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::RejectedHashSuppressed);
+        assert_eq!(stored_commit(&directory), origin.root);
+        assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+
+        let restored = origin.advance_removing_gitattributes(".gitattributes");
+        assert_ne!(restored, refused);
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::AcceptForward);
+        assert_eq!(report.reason, TransitionReason::ValidForwardCandidate);
+        assert_eq!(stored_commit(&directory), restored);
+        assert_eq!(shared.snapshot().await.unwrap().source_commit, restored);
     }
 
     /// A merged removal needs no fresh baseline: the watcher reloads the removal commit and

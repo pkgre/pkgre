@@ -337,7 +337,7 @@ $ pkgre-rust verify-monotonic site-current site-next
 
 Require:`git diff --check`; tool format/test/lint/Nix checks; prior registries/categories/homes/packages retained; additions/removals intentional; active routes exact; mixed registries use their router or same-host native template; rendered inventory expected; protected CI passes; normal merge without force/bypass.
 
-Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only when it fast-forwards the accepted commit, passes `check-transition`, builds a snapshot, and persists its accepted-ref record; a rejected or interrupted candidate keeps the last-known-good snapshot.
+Serving reads the catalog directly:`pkgre-rust-serve` serves a validated in-memory snapshot from a static catalog path or the accepted Git ref it watches,so no rendered site is deployed. CI checks/renders/verifies and compares monotonicity;the serving origin accepts a new commit only when it fast-forwards the accepted commit, passes `check-transition`, builds a snapshot, and persists its accepted-ref record; a rejected or interrupted candidate keeps the last-known-good snapshot. A catalog repository holds no `.gitattributes`:the origin materializes the commit with `git archive`, which would apply one, and refuses a commit that holds it at any path.
 
 ## Post-deployment verification
 
