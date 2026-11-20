@@ -381,7 +381,7 @@ gh pr checks --watch "$PR_URL"
 
 After CI:inspect remote PR head/base/diff/checks one final time. Do **not** enable auto-merge; do **not** merge; do **not** bypass protection. Send the PR URL to the curator and request review. If main/upstream evidence/PR diff changes materially, rerun from a fresh base/template rather than force-updating trusted generated facts.
 
-After the curator merges,the serving origin takes the merge commit up at its next poll and its public index page shows the served commit. An operator reads `watcher.lastRefusal` in `/status`:a `candidate` class means the commit will not be served and needs a new pull request;a `local` class means the origin retries the same commit by itself once the host's fault clears.
+After the curator merges, the serving origin takes the merge commit up at its next poll and its public index page shows the served commit. An operator reads `watcher.lastRefusal` in `/status`:a `candidate` class means the commit will not be served and needs a new pull request;a `local` class means the origin retries the same commit by itself once the host's fault clears;an `unclassified` class is not retried until the tip moves or the origin restarts, and should be reported.
 
 ## 13. Recovery + abort matrix
 

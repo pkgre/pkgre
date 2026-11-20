@@ -734,6 +734,55 @@ impl Watcher {
         }
     }
 
+    /// Records one failed evaluation of a commit: counts the attempt, schedules the retry of a
+    /// local failure and logs the refusal line.
+    fn record_refusal(
+        state: &mut WatchState,
+        commit: &str,
+        reason: TransitionReason,
+        failure: Failure,
+        now: Instant,
+    ) -> Refusal {
+        let attempts = state
+            .entries
+            .get(commit)
+            .map_or(1, |entry| entry.attempts.saturating_add(1));
+        let entry = Refusal {
+            reason,
+            failure,
+            attempts,
+            ended: now,
+            retry_at: failure
+                .class
+                .is_retryable()
+                .then(|| now + retry_delay(attempts)),
+        };
+        let detail = entry.report(now);
+        if failure.class == FailureClass::Candidate {
+            info!(
+                commit = %commit,
+                reason = ?entry.reason,
+                failure = failure.code,
+                class = failure.class.code(),
+                attempts,
+                retry_in_seconds = ?detail.retry_in_seconds,
+                "watcher refused candidate"
+            );
+        } else {
+            warn!(
+                commit = %commit,
+                reason = ?entry.reason,
+                failure = failure.code,
+                class = failure.class.code(),
+                attempts,
+                retry_in_seconds = ?detail.retry_in_seconds,
+                "watcher refused candidate"
+            );
+        }
+        state.entries.insert(commit.to_owned(), entry);
+        entry
+    }
+
     /// Applies one evaluated candidate through the shared transition policy, recording how a
     /// refusal is handled and publishing the watcher's view for `/status`.
     async fn apply(
@@ -768,52 +817,28 @@ impl Watcher {
             TransitionDecision::RetainAccepted => {
                 if let Some(candidate) = candidate {
                     let mut state = self.state.lock().await;
-                    let entry = if candidate.suppressed {
-                        *state
-                            .entries
-                            .get(&candidate.commit)
-                            .expect("a skipped candidate was refused before this poll")
+                    let stored = if candidate.suppressed {
+                        state.entries.get(&candidate.commit).copied()
                     } else {
-                        let failure = failure.unwrap_or_else(Failure::internal);
-                        let attempts = state
-                            .entries
-                            .get(&candidate.commit)
-                            .map_or(1, |entry| entry.attempts.saturating_add(1));
-                        let entry = Refusal {
-                            reason: outcome.reason(),
-                            failure,
-                            attempts,
-                            ended: now,
-                            retry_at: failure
-                                .class
-                                .is_retryable()
-                                .then(|| now + retry_delay(attempts)),
-                        };
-                        let detail = entry.report(now);
-                        if failure.class == FailureClass::Candidate {
-                            info!(
-                                commit = %candidate.commit,
-                                reason = ?entry.reason,
-                                failure = failure.code,
-                                class = failure.class.code(),
-                                attempts,
-                                retry_in_seconds = ?detail.retry_in_seconds,
-                                "watcher refused candidate"
-                            );
-                        } else {
-                            warn!(
-                                commit = %candidate.commit,
-                                reason = ?entry.reason,
-                                failure = failure.code,
-                                class = failure.class.code(),
-                                attempts,
-                                retry_in_seconds = ?detail.retry_in_seconds,
-                                "watcher refused candidate"
-                            );
-                        }
-                        state.entries.insert(candidate.commit.clone(), entry);
-                        entry
+                        None
                     };
+                    if candidate.suppressed && stored.is_none() {
+                        // A concurrent poll dropped this retry entry after the skip was
+                        // observed. Evaluate the commit normally instead of reporting a stale
+                        // skip; `reload` observes the tip again and will not skip it a second
+                        // time unless another poll refused it meanwhile.
+                        drop(state);
+                        return Box::pin(self.reload(accepted)).await;
+                    }
+                    let entry = stored.unwrap_or_else(|| {
+                        Self::record_refusal(
+                            &mut state,
+                            &candidate.commit,
+                            outcome.reason(),
+                            failure.unwrap_or_else(Failure::internal),
+                            now,
+                        )
+                    });
                     refusal = Some(entry.report(now));
                     state.last_refusal = Some((candidate.commit, entry));
                 }
@@ -1606,6 +1631,50 @@ mod tests {
                 &[
                     GIT_IDENTITY.as_slice(),
                     &["commit", "--quiet", "-m", "change the audience"],
+                ]
+                .concat(),
+            );
+            rev_parse(&self.path(), "HEAD")
+        }
+
+        /// Replaces the catalog path with a regular file, so the commit holds a blob there.
+        fn advance_replacing_catalog_with_a_blob(&self) -> String {
+            git(&self.path(), &["rm", "--quiet", "-r", "registry"]);
+            std::fs::write(self.path().join("registry"), b"not a catalog\n").unwrap();
+            git(&self.path(), &["add", "registry"]);
+            git(
+                &self.path(),
+                &[
+                    GIT_IDENTITY.as_slice(),
+                    &[
+                        "commit",
+                        "--quiet",
+                        "-m",
+                        "replace the catalog path with a file",
+                    ],
+                ]
+                .concat(),
+            );
+            rev_parse(&self.path(), "HEAD")
+        }
+
+        /// Replaces the catalog path with a symbolic link to the extraction root, so the commit
+        /// holds a link there that materializes and that the loader refuses.
+        #[cfg(unix)]
+        fn advance_replacing_catalog_with_a_link(&self) -> String {
+            git(&self.path(), &["rm", "--quiet", "-r", "registry"]);
+            std::os::unix::fs::symlink(".", self.path().join("registry")).unwrap();
+            git(&self.path(), &["add", "registry"]);
+            git(
+                &self.path(),
+                &[
+                    GIT_IDENTITY.as_slice(),
+                    &[
+                        "commit",
+                        "--quiet",
+                        "-m",
+                        "replace the catalog path with a link",
+                    ],
                 ]
                 .concat(),
             );
@@ -2564,6 +2633,8 @@ poll-interval-secs = 1
 
     #[tokio::test]
     async fn newer_commit_while_a_retry_waits_is_accepted() {
+        use serde_json::json;
+
         let directory = TempDir::new("pkgre-watch-newer");
         let origin = Origin::new("pkgre-watch-newer-origin");
         let config = watcher_config(&directory, &origin, &origin.root);
@@ -2571,7 +2642,7 @@ poll-interval-secs = 1
         let clock = ManualClock::new();
         let watcher = watcher_for_clock(&config, &shared, clock.clock());
         watcher.startup().await.unwrap();
-        origin.advance_empty("waiting commit");
+        let waiting = origin.advance_empty("waiting commit");
         break_temp_directory(&directory);
         let report = watcher.poll_once().await;
         assert_eq!(report.reason, TransitionReason::SemanticValidationFailed);
@@ -2582,6 +2653,10 @@ poll-interval-secs = 1
                 .class,
             FailureClass::Local
         );
+        assert_eq!(
+            status_json(&shared).await["watcher"]["lastRefusal"]["commit"],
+            json!(waiting)
+        );
 
         repair_temp_directory(&directory);
         let newer = origin.advance_empty("newer commit");
@@ -2590,6 +2665,17 @@ poll-interval-secs = 1
         assert_eq!(report.reason, TransitionReason::ValidForwardCandidate);
         assert!(report.refusal.is_none());
         assert_eq!(stored_commit(&directory), newer);
+        // The acceptance drops the waiting entry, and the last refusal keeps no retry.
+        assert!(
+            watcher.state.lock().await.entries.is_empty(),
+            "an acceptance must drop every retrying entry"
+        );
+        let status = status_json(&shared).await;
+        assert_eq!(status["watcher"]["lastRefusal"]["commit"], json!(waiting));
+        assert_eq!(
+            status["watcher"]["lastRefusal"]["retryInSeconds"],
+            json!(null)
+        );
     }
 
     #[tokio::test]
@@ -3062,5 +3148,127 @@ poll-interval-secs = 1
             .map(|attempts| retry_delay(attempts).as_secs())
             .collect::<Vec<_>>();
         assert_eq!(waits, [60, 120, 240, 480, 900, 900, 900]);
+    }
+
+    /// A retry whose next evaluation refuses the commit's own content becomes suppressed for
+    /// good, and the following poll reports it without evaluating again.
+    #[tokio::test]
+    async fn a_retried_commit_refused_for_its_content_is_suppressed_for_good() {
+        let directory = TempDir::new("pkgre-watch-retry-content");
+        let origin = Origin::new("pkgre-watch-retry-content-origin");
+        let config = watcher_config(&directory, &origin, &origin.root);
+        let shared = shared_for(&config);
+        let clock = ManualClock::new();
+        let watcher = watcher_for_clock(&config, &shared, clock.clock());
+        watcher.startup().await.unwrap();
+        let before = shared.snapshot().await.unwrap();
+
+        // The commit's own content is refused, but the first evaluation fails locally before
+        // the transition check reads it.
+        let refused = origin.advance_removing_main_lock();
+        break_temp_directory(&directory);
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::SemanticValidationFailed);
+        let refusal = report
+            .refusal
+            .expect("a refused candidate carries its refusal");
+        assert_eq!(refusal.failure, "materialization-failed");
+        assert_eq!(refusal.class, FailureClass::Local);
+        assert_eq!(refusal.attempts, 1);
+        assert_eq!(refusal.retry_in_seconds, Some(60));
+
+        // At the due time the content decides: the commit is refused for good.
+        repair_temp_directory(&directory);
+        clock.advance(Duration::from_secs(60));
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::SemanticValidationFailed);
+        let refusal = report
+            .refusal
+            .expect("a refused candidate carries its refusal");
+        assert_eq!(refusal.failure, "candidate-catalog-invalid");
+        assert_eq!(refusal.class, FailureClass::Candidate);
+        assert_eq!(refusal.attempts, 2);
+        assert_eq!(refusal.retry_in_seconds, None);
+        assert_eq!(stored_commit(&directory), origin.root);
+        assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+        assert_eq!(
+            watcher
+                .state
+                .lock()
+                .await
+                .entries
+                .get(&refused)
+                .map(|entry| entry.retry_at),
+            Some(None)
+        );
+
+        // A later poll reports the same suppression without evaluating the commit again.
+        clock.advance(Duration::from_secs(3600));
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::RejectedHashSuppressed);
+        let refusal = report
+            .refusal
+            .expect("a skipped candidate carries its refusal");
+        assert_eq!(refusal.failure, "candidate-catalog-invalid");
+        assert_eq!(refusal.class, FailureClass::Candidate);
+        assert_eq!(refusal.attempts, 2);
+        assert_eq!(refusal.retry_in_seconds, None);
+    }
+
+    /// A blob and a symbolic link at the catalog path are probed as non-trees and refused: the
+    /// blob is a catalog-path failure and the link materializes into a loader refusal.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_blob_and_a_symbolic_link_at_the_catalog_path_are_refused() {
+        let directory = TempDir::new("pkgre-watch-catalog-entries");
+        let origin = Origin::new("pkgre-watch-catalog-entries-origin");
+        let config = watcher_config(&directory, &origin, &origin.root);
+        let shared = shared_for(&config);
+        let watcher = watcher_for(&config, &shared);
+        watcher.startup().await.unwrap();
+        assert_eq!(
+            watcher.catalog_entry(&origin.root).await.unwrap(),
+            CatalogEntry::Tree,
+            "a tree at the catalog path is the one answer that materializes"
+        );
+        let before = shared.snapshot().await.unwrap();
+
+        let blob = origin.advance_replacing_catalog_with_a_blob();
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::SemanticValidationFailed);
+        let refusal = report
+            .refusal
+            .expect("a refused candidate carries its refusal");
+        assert_eq!(refusal.failure, "catalog-path-invalid");
+        assert_eq!(refusal.class, FailureClass::Candidate);
+        assert_eq!(refusal.retry_in_seconds, None);
+        assert_eq!(stored_commit(&directory), origin.root);
+        assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+        // The poll fetched the commit, so the probe reads its entry directly.
+        assert_eq!(
+            watcher.catalog_entry(&blob).await.unwrap(),
+            CatalogEntry::NotTree
+        );
+
+        let link = origin.advance_replacing_catalog_with_a_link();
+        let report = watcher.poll_once().await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::SemanticValidationFailed);
+        let refusal = report
+            .refusal
+            .expect("a refused candidate carries its refusal");
+        assert_eq!(refusal.failure, "candidate-catalog-invalid");
+        assert_eq!(refusal.class, FailureClass::Candidate);
+        assert_eq!(refusal.retry_in_seconds, None);
+        assert_eq!(stored_commit(&directory), origin.root);
+        assert!(Arc::ptr_eq(&shared.snapshot().await.unwrap(), &before));
+        assert_eq!(
+            watcher.catalog_entry(&link).await.unwrap(),
+            CatalogEntry::NotTree
+        );
     }
 }
