@@ -823,12 +823,17 @@ impl Watcher {
                         None
                     };
                     if candidate.suppressed && stored.is_none() {
-                        // A concurrent poll dropped this retry entry after the skip was
-                        // observed. Evaluate the commit normally instead of reporting a stale
-                        // skip; `reload` observes the tip again and will not skip it a second
-                        // time unless another poll refused it meanwhile.
+                        // Another poll dropped the retry entry after the skip was observed,
+                        // which only an acceptance does. Report the retain without a refusal
+                        // and leave the commit to the next poll: this poll's accepted commit
+                        // is the older one, so evaluating the commit here would check it
+                        // against that one and could replace a newer acceptance.
                         drop(state);
-                        return Box::pin(self.reload(accepted)).await;
+                        return PollReport {
+                            decision: outcome.decision(),
+                            reason: outcome.reason(),
+                            refusal: None,
+                        };
                     }
                     let entry = stored.unwrap_or_else(|| {
                         Self::record_refusal(
@@ -2910,6 +2915,55 @@ poll-interval-secs = 1
             json!(1),
             "a skipped poll does not count an attempt"
         );
+    }
+
+    /// A skipping poll whose retry entry another poll dropped reports a retain without a
+    /// refusal, counts no attempt, and leaves the commit to the next poll.
+    #[tokio::test]
+    async fn a_skipped_candidate_whose_entry_vanished_is_left_to_the_next_poll() {
+        let directory = TempDir::new("pkgre-watch-skip-race");
+        let origin = Origin::new("pkgre-watch-skip-race-origin");
+        let config = watcher_config(&directory, &origin, &origin.root);
+        let shared = shared_for(&config);
+        let clock = ManualClock::new();
+        let watcher = watcher_for_clock(&config, &shared, clock.clock());
+        let accepted =
+            AcceptedRef::new(&origin.root, "refs/heads/main", origin.identity()).unwrap();
+        let commit = "c".repeat(40);
+        let now = (clock.clock())();
+        {
+            let mut state = watcher.state.lock().await;
+            state.entries.insert(
+                commit.clone(),
+                Refusal {
+                    reason: TransitionReason::SemanticValidationFailed,
+                    failure: Failure::new("materialization-failed", FailureClass::Local),
+                    attempts: 1,
+                    ended: now,
+                    retry_at: Some(now + retry_delay(1)),
+                },
+            );
+            // An acceptance drops every retrying entry before this poll applies its skip.
+            state.entries.clear();
+        }
+
+        let report = watcher
+            .apply(
+                &accepted,
+                Some(watcher.rejected_candidate(&commit)),
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(report.decision, TransitionDecision::RetainAccepted);
+        assert_eq!(report.reason, TransitionReason::RejectedHashSuppressed);
+        assert!(report.refusal.is_none(), "the dropped entry has no report");
+        let state = watcher.state.lock().await;
+        assert!(
+            !state.entries.contains_key(&commit),
+            "a commit left to the next poll must not count an attempt"
+        );
+        assert!(state.last_refusal.is_none());
     }
 
     #[test]
