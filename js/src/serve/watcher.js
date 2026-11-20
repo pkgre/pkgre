@@ -4,9 +4,25 @@
 // watched origin, and the shared serving snapshot. Every poll observes the
 // remote tip once and applies the shared transition policy (accepted-ref.js):
 // only strictly forward, semantically valid, durably persisted candidates are
-// published, and every fresh-tip rejection is suppressed by hash until the tip
-// changes or the process restarts. A failed reload never changes the active
-// snapshot or the accepted ref.
+// published, and a failed reload never changes the active snapshot or the
+// accepted ref.
+//
+// Every refusal is classified by what failed. A refusal of the candidate's own
+// content, or of its relation to the accepted commit, is suppressed by hash
+// until the tip changes or the process restarts. A local failure, such as a
+// full temporary disk, a Git time-out, a failed fsync, a host read error or an
+// incomplete archive store, is retried after 1, 2, 4 and 8 minutes and then
+// every 15 minutes while the last-known-good snapshot keeps serving. A failure
+// that cannot be classified is suppressed like the candidate's and reported as
+// unclassified. Remote failures are not refusals: they report
+// remote-unavailable and are tried again at every poll, without a backoff.
+//
+// Polls run one at a time: a poll requested while another runs returns the
+// running poll's promise instead of starting a second evaluation.
+//
+// The watcher publishes its view of the accepted commit, the observed tip, the
+// last poll and the last refusal for /status after startup and after each poll;
+// the admin listener renders their ages with the same injected clock.
 //
 // Startup authority is the accepted record alone. A record bootstraps only when
 // the record path is absent; any present malformed or mismatched record forbids
@@ -35,6 +51,7 @@ import {
   fsyncSync,
 } from "node:fs";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { promisify } from "node:util";
 
@@ -46,8 +63,22 @@ import {
   parseAcceptedRef,
 } from "../accepted-ref.js";
 import { validateCatalog } from "../catalog.js";
+import {
+  ACCEPTED_CATALOG_UNLOADABLE,
+  CATALOG_PATH_INVALID,
+  failureForAncestry,
+  failureForCatalogParse,
+  failureForObjectState,
+  failureForShowFailure,
+  failureForSnapshotError,
+  INTERNAL_ERROR,
+  isRetryable,
+  MATERIALIZATION_FAILED,
+  PERSISTENCE_FAILED,
+  retryDelaySeconds,
+} from "./refusal.js";
 import { buildServeSnapshot } from "./snapshot.js";
-import { installSnapshot } from "./web.js";
+import { installSnapshot, installWatcherView } from "./web.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -141,6 +172,59 @@ function stdoutText(bytes) {
   return bytes.toString("utf8").trim();
 }
 
+/** Whole seconds from one monotonic reading to a later one, never negative. */
+function secondsBetween(from, to) {
+  return Math.max(0, Math.floor((to - from) / 1000));
+}
+
+/**
+ * Attaches the classified failure to the error a materialization throws, so the
+ * caller reports the class that its stage observed.
+ * @param {unknown} error
+ * @param {{class: string, code: string}} failure
+ * @returns {Error}
+ */
+function classified(error, failure) {
+  if (error instanceof Error) {
+    error.failure = failure;
+    return error;
+  }
+  const wrapped = new Error(String(error));
+  wrapped.failure = failure;
+  return wrapped;
+}
+
+/**
+ * Renders one refusal for a report or /status, without paths, error text or
+ * wall-clock times: the time to the next attempt is 0 once it is due and null when
+ * the commit is suppressed for good.
+ * @param {object} entry refusal entry
+ * @param {number} now monotonic milliseconds
+ * @returns {{attempts: number, class: string, failure: string, retryInSeconds: number | null}}
+ */
+function refusalReport(entry, now) {
+  return {
+    attempts: entry.attempts,
+    class: entry.class,
+    failure: entry.failure,
+    retryInSeconds: entry.retryAt === null ? null : Math.max(0, Math.floor((entry.retryAt - now) / 1000)),
+  };
+}
+
+/**
+ * Normalizes the configured catalog path to its plain components joined with
+ * `/`, so that `git ls-tree` answers the entry itself rather than a directory's
+ * contents: `registry/` names the entry `registry`, not the directory's listing.
+ * @param {string} catalogPath configured relative catalog path
+ * @returns {string} normalized path
+ */
+export function normalizedCatalogPath(catalogPath) {
+  return catalogPath
+    .split("/")
+    .filter((component) => component !== "" && component !== ".")
+    .join("/");
+}
+
 /**
  * Fixed-ref accepted-ref watcher with last-known-good snapshot publication.
  * The shared state comes from createShared(); installSnapshot publishes every
@@ -150,9 +234,11 @@ export class AcceptedRefWatcher {
   /**
    * Creates the watcher without performing any I/O.
    * @param {object} watcherConfig frozen [watcher] configuration
-   * @param {{archiveStore: string | null, delivery: "redirect" | "body", shared: object}} options
+   * @param {{archiveStore: string | null, delivery: "redirect" | "body",
+   *   shared: object, clock?: () => number}} options
+   *   `clock` is a monotonic source in milliseconds, `performance.now` by default
    */
-  constructor(watcherConfig, { archiveStore, delivery, shared }) {
+  constructor(watcherConfig, { archiveStore, delivery, shared, clock }) {
     this.origin = watcherConfig.origin;
     this.catalogPath = watcherConfig.catalogPath;
     this.bootstrapCommit = watcherConfig.bootstrapCommit;
@@ -162,8 +248,18 @@ export class AcceptedRefWatcher {
     this.archiveStore = archiveStore;
     this.delivery = delivery;
     this.shared = shared;
+    this.clock = clock ?? (() => performance.now());
     this.accepted = null;
-    this.suppressed = new Set();
+    /** Refused commits by hash: refused for good, or waiting for a retry. */
+    this.refusals = new Map();
+    /** Last tip any poll observed, or null before the first observation. */
+    this.tip = null;
+    /** Last poll's decision, reason and end time. */
+    this.lastPoll = null;
+    /** Last refused or skipped commit and its entry. */
+    this.lastRefusal = null;
+    /** The poll in flight, whose promise every poll requested meanwhile returns. */
+    this.running = null;
     this.tempCounter = 0;
   }
 
@@ -231,17 +327,69 @@ export class AcceptedRefWatcher {
         throw new Error(`watcher startup produced unexpected decision ${outcome.decision}`);
     }
     this.emit("info", "watcher startup complete", { decision: outcome.decision, reason: outcome.reason });
+    this.publishView();
   }
 
-  /** Observes the remote once and applies the transition policy. */
-  async pollOnce() {
+  /**
+   * Observes the remote once and applies the transition policy.
+   *
+   * Polls run one at a time: a poll requested while another runs returns the
+   * running poll's promise, so a timer that fires during a slow evaluation starts
+   * no second one.
+   * @returns {Promise<object>} this poll's report
+   */
+  pollOnce() {
+    if (this.running !== null) return this.running;
+    this.running = this.pollAndRecord().finally(() => {
+      this.running = null;
+    });
+    return this.running;
+  }
+
+  async pollAndRecord() {
+    let report;
     if (this.accepted === null) {
       this.emit("error", "watcher poll reached without an accepted record; retaining");
-      return { decision: "retain-accepted", reason: "remote-unavailable" };
+      report = { decision: "retain-accepted", reason: "remote-unavailable", refusal: null };
+    } else {
+      report = await this.reload(this.accepted);
     }
-    const report = await this.reload(this.accepted);
+    this.lastPoll = { decision: report.decision, ended: this.clock(), reason: report.reason };
+    this.publishView();
     this.emit("info", "watcher poll complete", report);
     return report;
+  }
+
+  /**
+   * Publishes the accepted commit, the observed tip, the last poll and the last
+   * refusal for the admin listener, which renders the ages with this clock.
+   */
+  publishView() {
+    installWatcherView(this.shared, { status: () => this.watcherStatus() });
+  }
+
+  /** Renders the /status member: codes only, no error text, paths or wall-clock times. */
+  watcherStatus() {
+    const now = this.clock();
+    return {
+      acceptedCommit: this.accepted === null ? "" : this.accepted.acceptedCommit,
+      tip: this.tip,
+      lastPoll: this.lastPoll === null
+        ? null
+        : {
+          decision: this.lastPoll.decision,
+          reason: this.lastPoll.reason,
+          secondsAgo: secondsBetween(this.lastPoll.ended, now),
+        },
+      lastRefusal: this.lastRefusal === null
+        ? null
+        : {
+          commit: this.lastRefusal.commit,
+          reason: this.lastRefusal.entry.reason,
+          ...refusalReport(this.lastRefusal.entry, now),
+          secondsAgo: secondsBetween(this.lastRefusal.entry.ended, now),
+        },
+    };
   }
 
   async reload(accepted) {
@@ -250,41 +398,43 @@ export class AcceptedRefWatcher {
       tip = await this.remoteTip();
     } catch (error) {
       this.warn("watcher remote observation failed", error);
-      return this.apply(accepted, null, null);
+      return this.apply(accepted, null, null, null);
     }
     if (tip === null) {
+      this.tip = null;
       this.emit("debug", "watched ref is absent upstream");
-      return this.apply(accepted, null, null);
+      return this.apply(accepted, null, null, null);
     }
+    this.tip = tip;
     if (tip === accepted.acceptedCommit) {
-      return { decision: "unchanged", reason: "candidate-equals-accepted" };
+      return { decision: "unchanged", reason: "candidate-equals-accepted", refusal: null };
     }
-    if (this.suppressed.has(tip)) {
-      return this.apply(accepted, this.rejectedCandidate(tip), null);
+    if (this.isWaiting(tip)) {
+      return this.apply(accepted, this.rejectedCandidate(tip), null, null);
     }
     try {
       await this.fetchWatchedRef();
     } catch (error) {
       this.warn("watcher fetch failed", error);
-      return this.apply(accepted, null, null);
+      return this.apply(accepted, null, null, null);
     }
     let observed;
     try {
       observed = await this.watchRefCommit();
     } catch (error) {
       this.warn("watcher fetch resolution failed", error);
-      return this.apply(accepted, null, null);
+      return this.apply(accepted, null, null, null);
     }
     if (observed !== tip) {
       this.emit("debug", "watched ref moved during reload; retrying next poll");
-      return this.apply(accepted, null, null);
+      return this.apply(accepted, null, null, null);
     }
     let objectState;
     try {
       objectState = await this.objectState(tip);
     } catch (error) {
       this.warn("watcher object probe failed", error);
-      return this.apply(accepted, null, null);
+      return this.apply(accepted, null, null, null);
     }
     let ancestry = "not-evaluated";
     if (objectState === "valid") {
@@ -305,41 +455,118 @@ export class AcceptedRefWatcher {
       semanticValidity: "not-evaluated",
       suppressed: false,
     };
+    let failure = failureForObjectState(objectState) ?? failureForAncestry(ancestry);
     let pending = null;
     if (objectState === "valid" && ancestry === "descendant") {
-      const { snapshot, validity } = await this.semanticValidation(accepted.acceptedCommit, tip);
-      candidate.semanticValidity = validity;
-      if (validity === "valid") {
+      const validation = await this.semanticValidation(accepted.acceptedCommit, tip);
+      candidate.semanticValidity = validation.validity;
+      failure = failure ?? validation.failure;
+      if (validation.validity === "valid") {
+        let record;
         try {
-          const record = this.buildRecord(tip);
-          this.persistRecord(record);
-          candidate.persistence = "success";
-          pending = snapshot;
+          record = this.buildRecord(tip);
         } catch (error) {
-          this.warn("watcher accepted-ref persistence failed", error);
+          this.warn("watcher accepted-ref record encoding failed", error);
+          failure = INTERNAL_ERROR;
           candidate.persistence = "interrupted-before-rename";
+        }
+        if (record !== undefined) {
+          try {
+            this.persistRecord(record);
+            candidate.persistence = "success";
+            pending = validation.snapshot;
+          } catch (error) {
+            this.warn("watcher accepted-ref persistence failed", error);
+            failure = PERSISTENCE_FAILED;
+            candidate.persistence = "interrupted-before-rename";
+          }
         }
       }
     }
-    return this.apply(accepted, candidate, pending);
+    return this.apply(accepted, candidate, pending, failure);
   }
 
-  apply(accepted, candidate, pending) {
+  /**
+   * Applies one evaluated candidate through the shared transition policy and
+   * records how a refusal is handled: a retrying entry with its next attempt, or
+   * an entry refused for good.
+   * @param {object} accepted accepted-ref record
+   * @param {object | null} candidate evaluated candidate, or null for a poll that observed none
+   * @param {object | null} pending snapshot of an accepted candidate
+   * @param {{class: string, code: string} | null} failure classified failure of a refused candidate
+   * @returns {{decision: string, reason: string, refusal: object | null}} this poll's report
+   */
+  apply(accepted, candidate, pending, failure) {
     const outcome = evaluateAcceptedRefReload(accepted, candidate ?? null, this.repository);
+    const now = this.clock();
+    let refusal = null;
     switch (outcome.decision) {
       case "accept-forward": {
         const record = this.buildRecord(outcome.activeCommit);
         this.accepted = record;
         installSnapshot(this.shared, pending);
+        this.dropRetrying();
         break;
       }
       case "retain-accepted":
-        if (candidate !== null && !candidate.suppressed) this.suppressed.add(candidate.commit);
+        if (candidate !== null) {
+          const entry = candidate.suppressed
+            ? this.refusals.get(candidate.commit)
+            : this.recordRefusal(candidate.commit, outcome.reason, failure, now);
+          refusal = refusalReport(entry, now);
+          this.lastRefusal = { commit: candidate.commit, entry };
+        }
         break;
       default:
         break;
     }
-    return { decision: outcome.decision, reason: outcome.reason };
+    return { decision: outcome.decision, reason: outcome.reason, refusal };
+  }
+
+  /**
+   * Records one failed evaluation of a commit and logs it: one more attempt than
+   * the commit's entry, a retry due after the schedule for a local failure, and no
+   * retry at all for a candidate's or an unclassified one.
+   */
+  recordRefusal(commit, reason, failure, now) {
+    const failed = failure ?? INTERNAL_ERROR;
+    const previous = this.refusals.get(commit);
+    const attempts = previous === undefined ? 1 : previous.attempts + 1;
+    const entry = {
+      attempts,
+      class: failed.class,
+      ended: now,
+      failure: failed.code,
+      reason,
+      retryAt: isRetryable(failed) ? now + retryDelaySeconds(attempts) * 1000 : null,
+    };
+    const detail = refusalReport(entry, now);
+    this.emit(failed.class === "candidate" ? "info" : "warn", "watcher refused candidate", {
+      attempts,
+      class: failed.class,
+      commit,
+      failure: failed.code,
+      reason,
+      retryInSeconds: detail.retryInSeconds,
+    });
+    this.refusals.set(commit, entry);
+    return entry;
+  }
+
+  /** Whether this commit is suppressed: refused for good, or waiting for its retry. */
+  isWaiting(commit) {
+    const entry = this.refusals.get(commit);
+    return entry !== undefined && (entry.retryAt === null || this.clock() < entry.retryAt);
+  }
+
+  /** Drops every retrying entry after an acceptance; refused ones stay for the process. */
+  dropRetrying() {
+    for (const [commit, entry] of this.refusals) {
+      if (entry.retryAt !== null) this.refusals.delete(commit);
+    }
+    if (this.lastRefusal !== null && this.lastRefusal.entry.retryAt !== null) {
+      this.lastRefusal = { commit: this.lastRefusal.commit, entry: { ...this.lastRefusal.entry, retryAt: null } };
+    }
   }
 
   rejectedCandidate(commit) {
@@ -491,37 +718,112 @@ export class AcceptedRefWatcher {
     return "unknown";
   }
 
-  /** `git show <commit>:<catalogPath>` — the JS catalog is a single file, no tar. */
-  async materializeCatalog(commit) {
-    const bytes = await gitRun(["show", `${commit}:${this.catalogPath}`], {
-      action: "materialize catalog",
+  /**
+   * Probes the entry at the normalized catalog path of one commit.
+   *
+   * `git ls-tree` answers no entry for an absent path, expands no wildcard and
+   * fails only when Git fails, so it tells "the commit has no catalog file" from
+   * "Git failed". The JS catalog is a single file, so only a regular blob of mode
+   * `100644` or `100755` is one.
+   * @param {string} commit
+   * @returns {Promise<"blob" | "missing" | "other">} the entry's kind
+   */
+  async catalogEntry(commit) {
+    const normalized = normalizedCatalogPath(this.catalogPath);
+    const output = await gitRun(["ls-tree", "-z", commit, "--", normalized], {
+      action: "probe catalog path",
       cwd: this.repositoryDir(),
     });
-    return JSON.parse(bytes.toString("utf8"));
+    for (const entry of output.toString("utf8").split("\0")) {
+      const tab = entry.indexOf("\t");
+      if (tab < 0 || entry.slice(tab + 1) !== normalized) continue;
+      const [mode, type] = entry.slice(0, tab).split(" ");
+      return type === "blob" && (mode === "100644" || mode === "100755") ? "blob" : "other";
+    }
+    return "missing";
   }
 
+  /**
+   * Reads and parses the catalog file of one commit, classifying a failure.
+   *
+   * A thrown error carries its classified failure as `failure`. Every failure on
+   * the accepted side is local, since this process loaded that catalog before; the
+   * candidate's side is the commit's own unless Git could not show a regular blob.
+   * @param {string} commit
+   * @param {{accepted: boolean}} side whether the accepted or the candidate side reads
+   * @returns {Promise<object>} parsed catalog
+   */
+  async materializeCatalog(commit, { accepted }) {
+    let entry = "blob";
+    if (!accepted) {
+      try {
+        entry = await this.catalogEntry(commit);
+      } catch (error) {
+        throw classified(error, MATERIALIZATION_FAILED);
+      }
+      if (entry === "missing") {
+        throw classified(
+          new Error(`commit ${commit} holds no catalog file at ${normalizedCatalogPath(this.catalogPath)}`),
+          CATALOG_PATH_INVALID,
+        );
+      }
+    }
+    let bytes;
+    try {
+      bytes = await gitRun(["show", `${commit}:${this.catalogPath}`], {
+        action: "materialize catalog",
+        cwd: this.repositoryDir(),
+      });
+    } catch (error) {
+      throw classified(error, failureForShowFailure({ accepted, entry, error }));
+    }
+    try {
+      return JSON.parse(bytes.toString("utf8"));
+    } catch (error) {
+      throw classified(error, failureForCatalogParse(accepted));
+    }
+  }
+
+  /**
+   * Materializes both catalogs and builds the candidate's snapshot.
+   * @param {string} acceptedCommit
+   * @param {string} candidateCommit
+   * @returns {Promise<{failure: object | null, snapshot: object | null, validity: string}>}
+   *   the validity, the candidate snapshot when valid, and the classified failure
+   *   whenever the validity is invalid
+   */
   async semanticValidation(acceptedCommit, candidateCommit) {
     let acceptedCatalog;
+    try {
+      acceptedCatalog = await this.materializeCatalog(acceptedCommit, { accepted: true });
+    } catch (error) {
+      this.warn("watcher accepted catalog materialization failed", error);
+      return { failure: error?.failure ?? MATERIALIZATION_FAILED, snapshot: null, validity: "invalid" };
+    }
     let candidateCatalog;
     try {
-      acceptedCatalog = await this.materializeCatalog(acceptedCommit);
-      candidateCatalog = await this.materializeCatalog(candidateCommit);
+      candidateCatalog = await this.materializeCatalog(candidateCommit, { accepted: false });
     } catch (error) {
-      this.warn("watcher catalog materialization failed", error);
-      return { snapshot: null, validity: "invalid" };
+      this.warn("watcher candidate catalog materialization failed", error);
+      return { failure: error?.failure ?? MATERIALIZATION_FAILED, snapshot: null, validity: "invalid" };
     }
     try {
       validateCatalog(acceptedCatalog);
+    } catch (error) {
+      this.emit("info", "watcher rejected accepted catalog", { error: errorMessage(error) });
+      return { failure: ACCEPTED_CATALOG_UNLOADABLE, snapshot: null, validity: "invalid" };
+    }
+    try {
       const snapshot = await buildServeSnapshot(candidateCatalog, this.archiveStore, this.delivery, candidateCommit);
-      return { snapshot, validity: "valid" };
+      return { failure: null, snapshot, validity: "valid" };
     } catch (error) {
       this.emit("info", "watcher rejected candidate snapshot", { error: errorMessage(error) });
-      return { snapshot: null, validity: "invalid" };
+      return { failure: failureForSnapshotError(error), snapshot: null, validity: "invalid" };
     }
   }
 
   async initialSnapshot(commit) {
-    const catalog = await this.materializeCatalog(commit);
+    const catalog = await this.materializeCatalog(commit, { accepted: true });
     return buildServeSnapshot(catalog, this.archiveStore, this.delivery, commit);
   }
 }

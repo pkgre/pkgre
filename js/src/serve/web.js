@@ -94,7 +94,17 @@ export function createShared({ delivery, maxConcurrency }) {
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
     throw new Error("shared serving state requires a positive integer maxConcurrency");
   }
-  return { delivery, semaphore: new Semaphore(maxConcurrency), snapshot: null, startedAt: Date.now() };
+  return { delivery, semaphore: new Semaphore(maxConcurrency), snapshot: null, startedAt: Date.now(), watcher: null };
+}
+
+/**
+ * Publishes the watcher's view of the accepted commit, the tip, the last poll and
+ * the last refusal, which the admin listener renders with the watcher's clock.
+ * @param {object} shared
+ * @param {{status: () => object} | null} view
+ */
+export function installWatcherView(shared, view) {
+  shared.watcher = view;
 }
 
 /**
@@ -117,6 +127,9 @@ export function uptimeSeconds(shared) {
 
 /**
  * Frozen admin /status document: counts stay null until the snapshot is ready.
+ *
+ * The `watcher` member is null for a static catalog and carries codes only for a
+ * watched one: no error text, paths or wall-clock times.
  * @param {object} shared
  * @returns {object}
  */
@@ -128,6 +141,7 @@ export function statusReport(shared) {
     ready: snapshot !== null,
     schema: 1,
     uptimeSeconds: uptimeSeconds(shared),
+    watcher: shared.watcher === null ? null : shared.watcher.status(),
   });
 }
 
