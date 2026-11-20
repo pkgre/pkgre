@@ -532,6 +532,24 @@ fn exact_home(catalog: &Catalog, name: &str) -> Result<(PackageKey, PackageHome)
     Ok(targets.into_iter().next().expect("one exact home"))
 }
 
+/// Fetches the crates.io history, policy releases and locked releases of one exact request's name.
+fn exact_name_facts<R: PlannerResolver>(
+    resolver: &R,
+    catalog: &Catalog,
+    artifacts: &ArtifactMap,
+    key: &PackageKey,
+) -> Result<(CratesIoHistory, Vec<PolicyRelease>, Vec<LockedRelease>)> {
+    let history = resolver.history(&key.name).with_context(|| {
+        format!(
+            "fetch complete crates.io history for {}/{}",
+            key.registry, key.name
+        )
+    })?;
+    let releases = policy_history(&history)?;
+    let locked = locked_releases(catalog, artifacts, &history, &key.registry, &key.name)?;
+    Ok((history, releases, locked))
+}
+
 /// Plans every identity of an exact batch in three stages, each run for every identity first.
 ///
 /// The catalog-only checks come first, so a batch that the catalog alone refuses fetches nothing;
@@ -582,27 +600,21 @@ fn build_exact_candidates<R: PlannerResolver>(
     let mut histories = Vec::with_capacity(targets.len());
     let mut selected = Vec::new();
     for (key, (home, versions)) in &targets {
-        let name_facts = (|| {
-            let history = resolver.history(&key.name).with_context(|| {
-                format!(
-                    "fetch complete crates.io history for {}/{}",
-                    key.registry, key.name
-                )
-            })?;
-            let policy_history = policy_history(&history)?;
-            let locked = locked_releases(catalog, artifacts, &history, &key.registry, &key.name)?;
-            Ok::<_, anyhow::Error>((history, policy_history, locked))
-        })();
-        let (history, policy_history, locked) = match name_facts {
-            Ok(facts) => facts,
-            Err(error) => {
-                let message = format!("{error:#}");
-                for (index, _) in versions {
-                    failures.push(*index, anyhow::anyhow!("{message}"));
+        let (history, policy_history, locked) =
+            match exact_name_facts(resolver, catalog, artifacts, key) {
+                Ok(facts) => facts,
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    let (last, earlier) = versions
+                        .split_last()
+                        .expect("every target holds at least one identity");
+                    for (index, _) in earlier {
+                        failures.push(*index, anyhow::anyhow!("{message}"));
+                    }
+                    failures.push(last.0, error);
+                    continue;
                 }
-                continue;
-            }
-        };
+            };
         let activity = classify_package(&locked);
         histories.push(history);
         for (index, version) in versions {

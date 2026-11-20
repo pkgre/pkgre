@@ -1449,6 +1449,7 @@ fn exact_batch_reports_every_catalog_stage_failure_before_any_fetch() {
             exact("nowhere", "1.0.0"),
             exact("alpha", "1.0.0"),
             exact("demo", "1.1.0"),
+            exact("alpha", "1.0.0"),
             exact("alpha", "1.0.0+build"),
         ],
         &output,
@@ -1458,7 +1459,7 @@ fn exact_batch_reports_every_catalog_stage_failure_before_any_fetch() {
     .unwrap_err();
     assert_eq!(
         format!("{error:#}"),
-        "3 of 4 exact requests failed: nowhere 1.0.0: requested update package \"nowhere\" is not a permanently reserved crates.io mirror name; demo 1.1.0: requested identity 1.1.0 is not newer than active lane maximum 1.2.0; alpha 1.0.0+build: exact requests repeat Cargo identity alpha 1.0.0+build"
+        "4 of 5 exact requests failed: nowhere 1.0.0: requested update package \"nowhere\" is not a permanently reserved crates.io mirror name; demo 1.1.0: requested identity 1.1.0 is not newer than active lane maximum 1.2.0; alpha 1.0.0: exact requests repeat Cargo identity alpha 1.0.0; alpha 1.0.0+build: exact requests repeat Cargo identity alpha 1.0.0+build"
     );
     assert_eq!(offline.history_calls.get(), 0);
     assert!(!output.exists());
@@ -1624,6 +1625,26 @@ fn exact_batch_reports_a_history_failure_for_every_identity_of_that_name() {
         "2 of 3 exact requests failed: uint 0.9.5: fetch complete crates.io history for main/uint: injected history failure for uint; uint 0.10.2: fetch complete crates.io history for main/uint: injected history failure for uint"
     );
     assert!(!output.exists());
+
+    let single = temporary.path().join("2026-08-24-single.toml");
+    let error = plan_exact_update_with(
+        &catalog_root,
+        "uint",
+        &Version::parse("0.9.5").unwrap(),
+        &single,
+        &fixture,
+        UtcTimestamp::now().unwrap(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.chain().map(ToString::to_string).collect::<Vec<_>>(),
+        [
+            "fetch complete crates.io history for main/uint",
+            "injected history failure for uint",
+        ],
+        "one identity keeps the error chain of the failure, not a flattened copy"
+    );
+    assert!(!single.exists());
 }
 
 #[test]
