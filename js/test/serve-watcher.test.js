@@ -885,4 +885,39 @@ test("status reports the watcher with the watcher's clock", async (t) => {
   assert.equal(later.lastPoll.secondsAgo, 20);
   assert.equal(later.lastRefusal.secondsAgo, 20);
   assert.equal(later.lastRefusal.retryInSeconds, 40);
+
+  // At the due time the repaired host accepts the same commit, and the entry that
+  // was retrying loses its wait; the refusal stays as history.
+  rmSync(recordPath(directory), { recursive: true });
+  clock.advance(40);
+  const accepted = await watcher.pollOnce();
+  assert.equal(accepted.decision, "accept-forward");
+  assert.deepEqual(statusReport(shared).watcher, {
+    acceptedCommit: child,
+    tip: child,
+    lastPoll: { decision: "accept-forward", reason: "valid-forward-candidate", secondsAgo: 0 },
+    lastRefusal: {
+      commit: child,
+      reason: "durable-persistence-failed",
+      failure: "persistence-failed",
+      class: "local",
+      attempts: 1,
+      secondsAgo: 60,
+      retryInSeconds: null,
+    },
+  });
+
+  // A refusal of the candidate's own content has no retry either.
+  const invalid = origin.advanceInvalid();
+  const refused = await watcher.pollOnce();
+  assert.equal(refused.refusal.retryInSeconds, null);
+  assert.deepEqual(statusReport(shared).watcher.lastRefusal, {
+    commit: invalid,
+    reason: "semantic-validation-failed",
+    failure: "snapshot-invalid",
+    class: "candidate",
+    attempts: 1,
+    secondsAgo: 0,
+    retryInSeconds: null,
+  });
 });

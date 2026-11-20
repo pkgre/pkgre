@@ -10,7 +10,7 @@
 // Every refusal is classified by what failed. A refusal of the candidate's own
 // content, or of its relation to the accepted commit, is suppressed by hash
 // until the tip changes or the process restarts. A local failure, such as a
-// full temporary disk, a Git time-out, a failed fsync, a host read error or an
+// full disk, a Git time-out, a failed fsync, a host read error or an
 // incomplete archive store, is retried after 1, 2, 4 and 8 minutes and then
 // every 15 minutes while the last-known-good snapshot keeps serving. A failure
 // that cannot be classified is suppressed like the candidate's and reported as
@@ -223,6 +223,27 @@ export function normalizedCatalogPath(catalogPath) {
     .split("/")
     .filter((component) => component !== "" && component !== ".")
     .join("/");
+}
+
+/**
+ * Classifies the entry at the catalog path from one `git ls-tree -z` answer.
+ *
+ * `git ls-tree` answers no entry for an absent path and expands no wildcard, so an
+ * answer with no entry for the path means the commit holds no catalog file. The JS
+ * catalog is a single file, so only a regular blob is one: a tree, a symbolic link
+ * or a gitlink at the path is refused once Git cannot show it as a file.
+ * @param {Buffer | string} output `git ls-tree -z` output
+ * @param {string} normalizedPath the normalized catalog path
+ * @returns {"blob" | "missing" | "other"} the entry's kind
+ */
+export function catalogEntryKind(output, normalizedPath) {
+  for (const entry of output.toString("utf8").split("\0")) {
+    const tab = entry.indexOf("\t");
+    if (tab < 0 || entry.slice(tab + 1) !== normalizedPath) continue;
+    const [mode, type] = entry.slice(0, tab).split(" ");
+    return type === "blob" && (mode === "100644" || mode === "100755") ? "blob" : "other";
+  }
+  return "missing";
 }
 
 /**
@@ -723,8 +744,7 @@ export class AcceptedRefWatcher {
    *
    * `git ls-tree` answers no entry for an absent path, expands no wildcard and
    * fails only when Git fails, so it tells "the commit has no catalog file" from
-   * "Git failed". The JS catalog is a single file, so only a regular blob of mode
-   * `100644` or `100755` is one.
+   * "Git failed".
    * @param {string} commit
    * @returns {Promise<"blob" | "missing" | "other">} the entry's kind
    */
@@ -734,13 +754,7 @@ export class AcceptedRefWatcher {
       action: "probe catalog path",
       cwd: this.repositoryDir(),
     });
-    for (const entry of output.toString("utf8").split("\0")) {
-      const tab = entry.indexOf("\t");
-      if (tab < 0 || entry.slice(tab + 1) !== normalized) continue;
-      const [mode, type] = entry.slice(0, tab).split(" ");
-      return type === "blob" && (mode === "100644" || mode === "100755") ? "blob" : "other";
-    }
-    return "missing";
+    return catalogEntryKind(output, normalized);
   }
 
   /**
@@ -810,15 +824,20 @@ export class AcceptedRefWatcher {
     try {
       validateCatalog(acceptedCatalog);
     } catch (error) {
-      this.emit("info", "watcher rejected accepted catalog", { error: errorMessage(error) });
+      this.warn("watcher rejected accepted catalog", error);
       return { failure: ACCEPTED_CATALOG_UNLOADABLE, snapshot: null, validity: "invalid" };
     }
     try {
       const snapshot = await buildServeSnapshot(candidateCatalog, this.archiveStore, this.delivery, candidateCommit);
       return { failure: null, snapshot, validity: "valid" };
     } catch (error) {
-      this.emit("info", "watcher rejected candidate snapshot", { error: errorMessage(error) });
-      return { failure: failureForSnapshotError(error), snapshot: null, validity: "invalid" };
+      const failure = failureForSnapshotError(error);
+      if (failure.class === "candidate") {
+        this.emit("info", "watcher rejected candidate snapshot", { error: errorMessage(error) });
+      } else {
+        this.warn("watcher rejected candidate snapshot", error);
+      }
+      return { failure, snapshot: null, validity: "invalid" };
     }
   }
 

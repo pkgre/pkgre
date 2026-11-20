@@ -11,7 +11,7 @@ import {
   retryDelaySeconds,
 } from "../src/serve/refusal.js";
 import { ArchiveStoreError } from "../src/serve/snapshot.js";
-import { normalizedCatalogPath } from "../src/serve/watcher.js";
+import { catalogEntryKind, normalizedCatalogPath } from "../src/serve/watcher.js";
 
 /** The shapes `execFile` fails with, as recorded from Node. */
 const exitCode = Object.assign(new Error("Command failed: git show"), { code: 1 });
@@ -60,7 +60,7 @@ test("every failed materialization is classified by its side and its entry", () 
     { class: "candidate", code: "candidate-catalog-invalid" },
     "a blob above the output bound is the commit's own",
   );
-  for (const entry of ["other", "tree", "link", "submodule"]) {
+  for (const entry of ["other"]) {
     assert.deepEqual(
       failureForShowFailure({ accepted: false, entry, error: exitCode }),
       { class: "candidate", code: "catalog-path-invalid" },
@@ -114,4 +114,21 @@ test("the catalog path probe reads plain components", () => {
   assert.equal(normalizedCatalogPath("registry/"), "registry");
   assert.equal(normalizedCatalogPath("registry//sub"), "registry/sub");
   assert.equal(normalizedCatalogPath("registry/./sub"), "registry/sub");
+});
+
+test("each catalog entry mode is classified from the ls-tree answer", () => {
+  const path = "registry/catalog.json";
+  const listed = (mode, type, entryPath) => `${mode} ${type} ${"a".repeat(40)}\t${entryPath}\0`;
+  assert.equal(catalogEntryKind(listed("100644", "blob", path), path), "blob");
+  assert.equal(catalogEntryKind(listed("100755", "blob", path), path), "blob");
+  assert.equal(catalogEntryKind(listed("120000", "blob", path), path), "other", "a symbolic link");
+  assert.equal(catalogEntryKind(listed("160000", "commit", path), path), "other", "a gitlink");
+  assert.equal(catalogEntryKind(listed("040000", "tree", path), path), "other", "a tree");
+  assert.equal(catalogEntryKind("", path), "missing", "no entry");
+  assert.equal(catalogEntryKind(listed("100644", "blob", "registry/other.json"), path), "missing", "another path");
+  assert.equal(
+    catalogEntryKind(`${listed("100644", "blob", "registry/other.json")}${listed("100644", "blob", path)}`, path),
+    "blob",
+    "the entry at the path among others",
+  );
 });
