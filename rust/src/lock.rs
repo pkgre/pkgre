@@ -335,6 +335,18 @@ fn reconcile_with<R: Resolver, N: Renamer>(
     reconcile_with_mode(root, source_resolver, renamer, ReconciliationMode::Direct)
 }
 
+/// Reconciles a catalog without update-admission evidence, as `lock` does.
+///
+/// A test outside this module drives the reconciliation with a resolver of its
+/// own; the command itself calls [`reconcile_with`] directly.
+#[cfg(test)]
+pub(crate) fn reconcile_direct_with<R: Resolver>(
+    root: &Path,
+    resolver: &R,
+) -> Result<ReconcileSummary> {
+    reconcile_with(root, resolver, &FilesystemRenamer)
+}
+
 fn reconcile_with_mode<R: Resolver, N: Renamer>(
     root: &Path,
     source_resolver: &R,

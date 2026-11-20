@@ -36,14 +36,19 @@ impl NativeRepositories {
     ///
     /// # Errors
     ///
-    /// Returns an error for a catalog root without a parent directory, for a
-    /// self-publishing directory or file that is not one, or for a malformed
-    /// declaration.
+    /// Returns an error for a catalog root that cannot be resolved, for one
+    /// without a parent directory, for a self-publishing directory or file that
+    /// is not one, or for a malformed declaration.
     pub(crate) fn load_beside(catalog_root: &Path) -> Result<Self> {
-        let repository = catalog_root.parent().with_context(|| {
+        // A caller may name the catalog by a path such as `.`, or one with a
+        // trailing `.`; resolving it first makes its parent the repository that
+        // holds `self-publish/`, which is what the declarations stand beside.
+        let catalog = fs::canonicalize(catalog_root)
+            .with_context(|| format!("resolve catalog root {}", catalog_root.display()))?;
+        let repository = catalog.parent().with_context(|| {
             format!(
                 "catalog root {} has no parent directory to hold self-publish/",
-                catalog_root.display()
+                catalog.display()
             )
         })?;
         let directory = repository.join(STATE_DIRECTORY);
@@ -97,12 +102,28 @@ impl NativeRepositories {
         for approval in approvals.iter().filter(|approval| {
             approval.registry == registry && approval.state == PackageState::Active
         }) {
-            match &approval.source {
-                Source::CratesIo => {}
-                Source::GitTag {
-                    repository: origin, ..
-                } if config.is_native(origin) => {}
-                Source::GitTag { .. } => continue,
+            if let Source::GitTag {
+                repository: origin,
+                tag: origin_tag,
+                ..
+            } = &approval.source
+            {
+                if origin.as_str() == repository && origin_tag.as_str() == tag {
+                    // A crate of the tag being reproduced is bound by the
+                    // archive the catalog locked for it alone: `lock` never lets
+                    // a native tag name one of its own crates from crates.io, so
+                    // it is not an identity the tag's lock rule may admit.
+                    locked.push(NativeLocked {
+                        name: &approval.name,
+                        version: &approval.version,
+                        archive_sha256: &approval.archive_sha256,
+                        source_row_sha256: &approval.index_record_sha256,
+                    });
+                    continue;
+                }
+                if !config.is_native(origin) {
+                    continue;
+                }
             }
             identities.push(NativeIdentity {
                 name: &approval.name,
@@ -110,22 +131,6 @@ impl NativeRepositories {
                 crate_sha256: &approval.archive_sha256,
                 source_row_sha256: &approval.index_record_sha256,
             });
-            let Source::GitTag {
-                repository: origin,
-                tag: origin_tag,
-                ..
-            } = &approval.source
-            else {
-                continue;
-            };
-            if origin.as_str() == repository && origin_tag.as_str() == tag {
-                locked.push(NativeLocked {
-                    name: &approval.name,
-                    version: &approval.version,
-                    archive_sha256: &approval.archive_sha256,
-                    source_row_sha256: &approval.index_record_sha256,
-                });
-            }
         }
         Some(NativeCatalog {
             root,
@@ -195,6 +200,50 @@ mod tests {
         assert!(
             message.contains("must declare at least one crates.io owner"),
             "{message}"
+        );
+    }
+
+    #[test]
+    fn a_catalog_named_by_a_dotted_path_finds_the_declarations() {
+        let temporary = TemporaryDirectory::new("pkgre-native-dotted").unwrap();
+        let catalog = temporary.path().join("catalog");
+        fs::create_dir_all(&catalog).unwrap();
+        write_config(
+            &catalog,
+            &format!(
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = {REPOSITORY:?}\ntag-prefix = \"v\"\nmanifests = \"crates-io\"\n"
+            ),
+        );
+
+        let repositories = NativeRepositories::load_beside(&catalog.join(".")).unwrap();
+
+        assert!(
+            repositories
+                .catalog(&catalog, &[], "main", REPOSITORY, "v1.0.0")
+                .is_some(),
+            "a catalog named with a trailing dot resolves to the directory whose parent holds self-publish/"
+        );
+    }
+
+    #[test]
+    fn a_pkgre_mode_repository_declares_no_native_catalog() {
+        let temporary = TemporaryDirectory::new("pkgre-native-pkgre-mode").unwrap();
+        let catalog = temporary.path().join("catalog");
+        fs::create_dir_all(&catalog).unwrap();
+        write_config(
+            &catalog,
+            &format!(
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = {REPOSITORY:?}\ntag-prefix = \"v\"\n"
+            ),
+        );
+
+        let repositories = NativeRepositories::load_beside(&catalog).unwrap();
+
+        assert!(
+            repositories
+                .catalog(&catalog, &[], "main", REPOSITORY, "v1.0.0")
+                .is_none(),
+            "a repository without manifests = \"crates-io\" keeps pkgre manifests"
         );
     }
 }
