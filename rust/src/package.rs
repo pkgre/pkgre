@@ -2310,7 +2310,8 @@ impl Drop for TemporaryDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::PackageState;
+    use crate::lock::{ResolvedPackage, Resolver};
+    use crate::schema::{LockedSource, PackageState};
     use serde_json::Value;
 
     #[test]
@@ -4561,5 +4562,579 @@ mod tests {
         std::os::unix::fs::symlink("real", temporary.path().join("link")).unwrap();
         let error = ensure_safe_checkout_tree(temporary.path()).unwrap_err();
         assert!(format!("{error:#}").contains("symlink or special file"));
+    }
+
+    /// The repository every test catalog publishes its Git tags from.
+    const TEST_REPOSITORY: &str = "https://example.invalid/pkgre-demo";
+
+    #[test]
+    fn the_command_reproduces_the_added_identity_with_the_candidates_own_approvals() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-command-reproduce").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_release(&temporary);
+        let added = tag_another_release(&temporary, &source, "1.2.4");
+        let accepted_path = temporary.path().join("accepted");
+        let candidate_path = temporary.path().join("candidate");
+        write_test_catalog(
+            &accepted_path,
+            &root,
+            &[TEST_TAG],
+            source.to_str().unwrap(),
+            &index,
+        );
+        copy_tree(&accepted_path, &candidate_path);
+        write_test_catalog(
+            &candidate_path,
+            &root,
+            &[TEST_TAG, added.as_str()],
+            source.to_str().unwrap(),
+            &index,
+        );
+        let mut reproduced = Vec::new();
+
+        let summary = crate::reproduce::reproduce_added_git_tags_with(
+            &accepted_path,
+            &candidate_path,
+            |catalog, group| {
+                reproduced.push((
+                    catalog
+                        .iter()
+                        .map(|approval| format!("{}/{}", approval.name, approval.version))
+                        .collect::<Vec<_>>(),
+                    group
+                        .iter()
+                        .map(|approval| format!("{}/{}", approval.name, approval.version))
+                        .collect::<Vec<_>>(),
+                ));
+                reproduce_approved_git_group_from_file_in(
+                    &root,
+                    catalog,
+                    group,
+                    source.to_str().unwrap(),
+                    &index,
+                )
+                .map(|_| ())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            summary.reproduced, 1,
+            "the one identity the candidate adds is packaged and matched against its lock"
+        );
+        assert_eq!(
+            reproduced,
+            [(
+                vec!["pkgre-demo/1.2.3".to_owned(), "pkgre-demo/1.2.4".to_owned()],
+                vec!["pkgre-demo/1.2.4".to_owned()],
+            )],
+            "one group of the added identity is reproduced against the candidate's own approvals"
+        );
+    }
+
+    #[test]
+    fn the_command_refuses_a_tampered_added_identity_and_names_it() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-command-tamper").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_release(&temporary);
+        let added = tag_another_release(&temporary, &source, "1.2.4");
+        let accepted_path = temporary.path().join("accepted");
+        let candidate_path = temporary.path().join("candidate");
+        write_test_catalog(
+            &accepted_path,
+            &root,
+            &[TEST_TAG],
+            source.to_str().unwrap(),
+            &index,
+        );
+        copy_tree(&accepted_path, &candidate_path);
+        write_test_catalog(
+            &candidate_path,
+            &root,
+            &[TEST_TAG, added.as_str()],
+            source.to_str().unwrap(),
+            &index,
+        );
+        let (archive_sha256, source_row_sha256) = locked_hashes(&candidate_path, "1.2.4");
+        let other = "00".repeat(32);
+        let reproduce = |accepted: &Path, candidate: &Path| {
+            crate::reproduce::reproduce_added_git_tags_with(
+                accepted,
+                candidate,
+                |catalog, group| {
+                    reproduce_approved_git_group_from_file_in(
+                        &root,
+                        catalog,
+                        group,
+                        source.to_str().unwrap(),
+                        &index,
+                    )
+                    .map(|_| ())
+                },
+            )
+        };
+
+        let tampered_archive = temporary.path().join("tampered-archive");
+        copy_tree(&candidate_path, &tampered_archive);
+        replace_in_file(&tampered_archive.join("main.lock"), &archive_sha256, &other);
+        replace_in_file(
+            &tampered_archive.join(crate::download::DOWNLOAD_CATALOG_FILE),
+            &archive_sha256,
+            &other,
+        );
+        let error = reproduce(&accepted_path, &tampered_archive).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("reproduce added main/pkgre-demo/1.2.4")
+                && message.contains("Git archive hash changed"),
+            "a tampered archive hash is reported with its identity and its cause: {message}"
+        );
+
+        let tampered_row = temporary.path().join("tampered-row");
+        copy_tree(&candidate_path, &tampered_row);
+        replace_in_file(&tampered_row.join("main.lock"), &source_row_sha256, &other);
+        let error = reproduce(&accepted_path, &tampered_row).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("reproduce added main/pkgre-demo/1.2.4")
+                && message.contains("Git source-row hash changed"),
+            "a tampered source-row hash is reported with its identity and its cause: {message}"
+        );
+    }
+
+    #[test]
+    fn the_command_refuses_a_catalog_that_fails_policy_before_reproducing() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-command-policy").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_release(&temporary);
+        let accepted_path = temporary.path().join("accepted");
+        let candidate_path = temporary.path().join("candidate");
+        write_test_catalog(
+            &accepted_path,
+            &root,
+            &[TEST_TAG],
+            source.to_str().unwrap(),
+            &index,
+        );
+        copy_tree(&accepted_path, &candidate_path);
+        let unsupported = "cargo-version = \"1.94.0\"";
+        let supported = format!("cargo-version = {:?}", crate::policy::CARGO_VERSION);
+        let failing_accepted = temporary.path().join("accepted-policy");
+        copy_tree(&accepted_path, &failing_accepted);
+        replace_in_file(&failing_accepted.join("main.lock"), &supported, unsupported);
+        let failing_candidate = temporary.path().join("candidate-policy");
+        copy_tree(&candidate_path, &failing_candidate);
+        replace_in_file(
+            &failing_candidate.join("main.lock"),
+            &supported,
+            unsupported,
+        );
+        for (role, accepted, candidate) in [
+            ("accepted", &failing_accepted, &candidate_path),
+            ("candidate", &accepted_path, &failing_candidate),
+        ] {
+            let mut reproduced = false;
+
+            let error =
+                crate::reproduce::reproduce_added_git_tags_with(accepted, candidate, |_, _| {
+                    reproduced = true;
+                    Ok(())
+                })
+                .unwrap_err();
+            let message = format!("{error:#}");
+
+            assert!(
+                message.contains(&format!("validate {role} catalog"))
+                    && message.contains("used unsupported Cargo 1.94.0"),
+                "the {role} catalog is refused by policy and named: {message}"
+            );
+            assert!(
+                !reproduced,
+                "a catalog that fails policy is refused before any reproduction"
+            );
+        }
+    }
+
+    #[test]
+    fn a_materialization_verification_names_each_field_it_compares() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-verify").unwrap();
+        let source = create_test_release(&temporary);
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let materialization = resolve_git_tag_from_file_in(
+            &root,
+            TEST_REPOSITORY,
+            TEST_TAG,
+            "pkgre-demo",
+            &cargo_version,
+            source.to_str().unwrap(),
+        )
+        .unwrap();
+        let approval = test_approval(&materialization, &cargo_version);
+        let Source::GitTag {
+            tag_oid,
+            commit,
+            subdir,
+            ..
+        } = &approval.source
+        else {
+            panic!("the fixture approval is a Git tag");
+        };
+        let verify = |materialization: &GitTagMaterialization| {
+            verify_approved_materialization(&approval, tag_oid, commit, subdir, materialization)
+        };
+        verify(&materialization).expect("the materialization that matches its approval passes");
+
+        let mut renamed = copy_of(&materialization);
+        renamed.name = "pkgre-other".to_owned();
+        let error = verify(&renamed).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git publication identity changed"),
+            "{error:#}"
+        );
+
+        let mut reversioned = copy_of(&materialization);
+        reversioned.version = Version::parse("9.9.9").unwrap();
+        let error = verify(&reversioned).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git publication identity changed"),
+            "{error:#}"
+        );
+
+        let mut other_tag = copy_of(&materialization);
+        other_tag.tag_oid = "00".repeat(20);
+        let error = verify(&other_tag).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git tag object changed"),
+            "{error:#}"
+        );
+
+        let mut other_commit = copy_of(&materialization);
+        other_commit.commit = "00".repeat(20);
+        let error = verify(&other_commit).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git tag commit changed"),
+            "{error:#}"
+        );
+
+        let mut other_path = copy_of(&materialization);
+        other_path.path = PathBuf::from("crates/other");
+        let error = verify(&other_path).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git package path changed"),
+            "{error:#}"
+        );
+
+        let mut other_archive = copy_of(&materialization);
+        other_archive.archive_sha256 = "00".repeat(32);
+        let error = verify(&other_archive).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git archive hash changed"),
+            "{error:#}"
+        );
+
+        let mut other_source_row = copy_of(&materialization);
+        other_source_row.source_row_sha256 = "00".repeat(32);
+        let error = verify(&other_source_row).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("Git source-row hash changed"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn a_group_reproduction_refuses_a_member_of_another_registry() {
+        let catalog = [
+            test_group_approval("main", TEST_REPOSITORY, "rust/v0.5.0", "pkgre"),
+            test_group_approval("staging", TEST_REPOSITORY, "rust/v0.5.0", "pkgre-indexer"),
+        ];
+        let group = catalog.iter().collect::<Vec<_>>();
+
+        let error = reproduce_approved_git_group_in(
+            &uncovered_temporary_root(),
+            &catalog,
+            &group,
+            refuser_before_packaging,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(
+            message.contains(
+                "pkgre-indexer 0.5.0 is not a Git-tag publication of tag \"rust/v0.5.0\" in main"
+            ),
+            "a group holds the identities of one registry: {message}"
+        );
+    }
+
+    #[test]
+    fn a_group_reproduction_refuses_a_member_of_another_repository() {
+        let catalog = [
+            test_group_approval("main", TEST_REPOSITORY, "rust/v0.5.0", "pkgre"),
+            test_group_approval(
+                "main",
+                "https://example.invalid/other",
+                "rust/v0.5.0",
+                "pkgre-indexer",
+            ),
+        ];
+        let group = catalog.iter().collect::<Vec<_>>();
+
+        let error = reproduce_approved_git_group_in(
+            &uncovered_temporary_root(),
+            &catalog,
+            &group,
+            refuser_before_packaging,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(
+            message.contains(
+                "pkgre-indexer 0.5.0 is not a Git-tag publication of tag \"rust/v0.5.0\" in main"
+            ),
+            "a group holds the identities of one repository: {message}"
+        );
+    }
+
+    #[test]
+    fn a_group_reproduction_refuses_a_member_of_another_tag() {
+        let catalog = [
+            test_group_approval("main", TEST_REPOSITORY, "rust/v0.5.0", "pkgre"),
+            test_group_approval("main", TEST_REPOSITORY, "indexer/v0.5.0", "pkgre-indexer"),
+        ];
+        let group = catalog.iter().collect::<Vec<_>>();
+
+        let error = reproduce_approved_git_group_in(
+            &uncovered_temporary_root(),
+            &catalog,
+            &group,
+            refuser_before_packaging,
+        )
+        .unwrap_err();
+        let message = format!("{error:#}");
+
+        assert!(
+            message.contains(
+                "pkgre-indexer 0.5.0 is not a Git-tag publication of tag \"rust/v0.5.0\" in main"
+            ),
+            "a group holds the identities of one tag: {message}"
+        );
+    }
+
+    /// Builds one approval of a Git tag, for a group a test refuses before
+    /// packaging.
+    fn test_group_approval(registry: &str, repository: &str, tag: &str, name: &str) -> Approval {
+        Approval {
+            registry: registry.to_owned(),
+            category: format!("{registry}/pkgre").parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse("0.5.0").unwrap(),
+            archive_sha256: "01".repeat(32),
+            index_record_sha256: "02".repeat(32),
+            index_row_sha256: "03".repeat(32),
+            admission_sha256: None,
+            admitted_at: crate::update::time::UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state: PackageState::Active,
+            source: Source::GitTag {
+                repository: repository.to_owned(),
+                tag: tag.to_owned(),
+                tag_oid: "11".repeat(20),
+                commit: "22".repeat(20),
+                package: name.to_owned(),
+                subdir: PathBuf::from("."),
+                cargo_version: Version::parse(crate::policy::CARGO_VERSION).unwrap(),
+            },
+            declared_in: PathBuf::from("main.lock"),
+        }
+    }
+
+    /// Refuses to name a packaging source: a group that is not one tag is
+    /// refused before anything is packaged.
+    fn refuser_before_packaging(_: &str) -> PackagingSource<'_> {
+        panic!("a group that is not one tag must be refused before packaging")
+    }
+
+    /// Copies one materialization, so that a test changes one field of it.
+    fn copy_of(materialization: &GitTagMaterialization) -> GitTagMaterialization {
+        GitTagMaterialization {
+            name: materialization.name.clone(),
+            version: materialization.version.clone(),
+            tag_oid: materialization.tag_oid.clone(),
+            commit: materialization.commit.clone(),
+            commit_time: materialization.commit_time.clone(),
+            path: materialization.path.clone(),
+            archive_bytes: materialization.archive_bytes.clone(),
+            source_row_bytes: materialization.source_row_bytes.clone(),
+            archive_sha256: materialization.archive_sha256.clone(),
+            source_row_sha256: materialization.source_row_sha256.clone(),
+        }
+    }
+
+    /// Commits another version of the test release's crate and tags it, and
+    /// returns the tag.
+    fn tag_another_release(temporary: &TemporaryDirectory, source: &Path, version: &str) -> String {
+        let manifest = source.join("crates/demo/Cargo.toml");
+        let current = fs::read_to_string(&manifest).unwrap();
+        let next = current.replace("version = \"1.2.3\"", &format!("version = {version:?}"));
+        assert_ne!(next, current, "the fixture crate starts at version 1.2.3");
+        fs::write(&manifest, next).unwrap();
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(source)
+                .env("CARGO_HOME", temporary.path().join("lock-cargo-home"))
+                .arg("generate-lockfile"),
+        );
+        test_git(source, &["add", "--all"]);
+        test_git(source, &["commit", "--quiet", "-m", "release"]);
+        let tag = format!("release/pkgre-demo/v{version}");
+        test_git(
+            source,
+            &["tag", "-a", &tag, "-m", &format!("pkgre-demo {version}")],
+        );
+        tag
+    }
+
+    /// Writes a catalog that publishes the given tags of the test repository,
+    /// and reconciles its generated lock and objects from a local repository and
+    /// registry index.
+    fn write_test_catalog(
+        catalog: &Path,
+        root: &Path,
+        tags: &[&str],
+        fetch_repository: &str,
+        index: &str,
+    ) {
+        fs::create_dir_all(catalog).unwrap();
+        let index_url = crate::policy::canonical_registry_index("main");
+        let download = crate::download::router_download_template("main");
+        let tags = tags
+            .iter()
+            .map(|tag| format!("{tag:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        fs::write(
+            catalog.join("main.toml"),
+            format!(
+                "schema = 5\n\n[registry]\nname = \"main\"\nindex = {index_url:?}\n\
+                 download = {download:?}\naudience = \"public\"\ncargo-version = {cargo_version:?}\n\n\
+                 [categories.pkgre]\nmay-depend-on = [\"main/pkgre\"]\n\n\
+                 [categories.pkgre.publish.pkgre-demo]\ngit = {repository:?}\ntags = [{tags}]\n",
+                cargo_version = crate::policy::CARGO_VERSION,
+                repository = TEST_REPOSITORY,
+            ),
+        )
+        .unwrap();
+        crate::lock::reconcile_admitted_with(
+            catalog,
+            &[],
+            &TestCatalogResolver {
+                root,
+                fetch_repository,
+                index,
+            },
+        )
+        .unwrap();
+    }
+
+    /// Resolves the declarations of a test catalog from a local repository and
+    /// registry index.
+    struct TestCatalogResolver<'a> {
+        root: &'a Path,
+        fetch_repository: &'a str,
+        index: &'a str,
+    }
+
+    impl Resolver for TestCatalogResolver<'_> {
+        fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
+            bail!("a test catalog resolves no crates.io identity, not {name} {version}")
+        }
+
+        fn resolve_git_tag_group(
+            &self,
+            repository: &str,
+            tag: &str,
+            packages: &[&str],
+            published: &[PublishedPackage<'_>],
+            cargo_version: &Version,
+        ) -> Result<Vec<ResolvedPackage>> {
+            let materializations = resolve_git_tag_group_from_file(&FileTagRequest {
+                root: self.root,
+                repository,
+                tag,
+                packages,
+                published: Some(published),
+                cargo_version,
+                fetch_repository: self.fetch_repository,
+                registry_index: self.index,
+                allow_retired_registries: false,
+            })?;
+            materializations
+                .into_iter()
+                .map(|materialization| {
+                    Ok(ResolvedPackage {
+                        name: materialization.name.clone(),
+                        version: materialization.version.clone(),
+                        archive_bytes: materialization.archive_bytes.clone(),
+                        source_row_bytes: materialization.source_row_bytes.clone(),
+                        published_at: Some(materialization.commit_time.clone()),
+                        source: LockedSource::GitTag {
+                            git: repository.to_owned(),
+                            tag: tag.to_owned(),
+                            tag_oid: materialization.tag_oid.clone(),
+                            commit: materialization.commit.clone(),
+                            package: materialization.name,
+                            path: materialization.path,
+                            cargo_version: cargo_version.clone(),
+                        },
+                    })
+                })
+                .collect()
+        }
+    }
+
+    /// Returns the locked archive and source-row hashes of one version.
+    fn locked_hashes(catalog: &Path, version: &str) -> (String, String) {
+        let lock = crate::schema::load_lock(&catalog.join("main.lock")).unwrap();
+        let version = Version::parse(version).unwrap();
+        let package = lock
+            .packages
+            .iter()
+            .find(|package| package.version == version)
+            .unwrap_or_else(|| panic!("the catalog locks no identity at version {version}"));
+        (
+            package.crate_sha256.clone(),
+            package.source_row_sha256.clone(),
+        )
+    }
+
+    /// Copies every file of a directory tree into another directory.
+    fn copy_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), &target).unwrap();
+            }
+        }
+    }
+
+    /// Replaces every occurrence of `from` in one regular file.
+    fn replace_in_file(path: &Path, from: &str, to: &str) {
+        let contents = fs::read_to_string(path).unwrap();
+        let replaced = contents.replace(from, to);
+        assert_ne!(
+            replaced,
+            contents,
+            "{} names no {from} to replace",
+            path.display()
+        );
+        fs::write(path, replaced).unwrap();
     }
 }
