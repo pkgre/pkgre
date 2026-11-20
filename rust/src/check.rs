@@ -337,6 +337,7 @@ mod tests {
             packages: &[&str],
             _published: &[crate::package::PublishedPackage<'_>],
             cargo_version: &Version,
+            _native: Option<&crate::package::NativeCatalog<'_>>,
         ) -> Result<Vec<ResolvedPackage>> {
             let version = Version::parse(
                 tag.rsplit('/')

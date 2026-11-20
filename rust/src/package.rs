@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,11 +19,13 @@ use crate::policy::{
     validate_git_object_id, validate_git_tag, validate_https_repository, validate_package_name,
     validate_relative_path, validate_tag_version,
 };
-use crate::schema::{Approval, PackageState, Source};
+use crate::schema::{Approval, Catalog, PackageState, Source};
 use crate::update::time::UtcTimestamp;
 
 const CARGO_REGISTRY: &str = "pkgre";
 const REGISTRY_INDEX: &str = "sparse+https://rust.pkg.re/";
+/// The one registry source a crates.io-native release tag's lock may name.
+const CRATES_IO_INDEX_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
 const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -107,7 +110,8 @@ struct MetadataDependency {
 #[derive(Serialize)]
 struct IsolatedCargoConfig<'a> {
     registries: BTreeMap<&'static str, CargoRegistry<'a>>,
-    registry: CargoDefaultRegistry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registry: Option<CargoDefaultRegistry>,
     source: BTreeMap<&'static str, CargoSource<'a>>,
 }
 
@@ -129,6 +133,8 @@ struct CargoSource<'a> {
     registry: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     directory: Option<&'a Path>,
+    #[serde(rename = "local-registry", skip_serializing_if = "Option::is_none")]
+    local_registry: Option<&'a Path>,
 }
 
 #[derive(Debug, Serialize)]
@@ -182,6 +188,7 @@ pub fn resolve_git_tag(
             packages: &packages,
             published: None,
             allow_retired_registries: false,
+            native: None,
         },
         &PackagingSource::live(repository),
         cargo_version,
@@ -197,6 +204,8 @@ pub fn resolve_git_tag(
 ///
 /// The materializations are returned in the order the packages were requested.
 ///
+/// `native` carries the catalog facts of a repository that `self-publish/crates-io.toml` declares `manifests = "crates-io"`, and makes the tag a crates.io-native one: its released crates are its members whose `publish` is not `false`, its committed `Cargo.lock` must pass the native lock rule against the catalog's active identities, and it is packaged offline, crate by crate in dependency order, from a local registry of those identities' rows. A tag without it is packaged as every tag of a `pkgre`-mode repository is.
+///
 /// # Errors
 ///
 /// Returns an error for an empty group, a requested package outside `published`, a published package that is neither packaged nor carries its locked archive, an unsafe source, a retired registry a new publication may not name, ambiguous package, malformed or moved tag, unsafe checkout, unpinned dependency source, wrong Cargo version, dirty checkout, a workspace without a committed lock or with a `[patch]` or `[replace]` section, non-reproducible archive, a packaged lock that departs from the tag's workspace lock, or invalid package metadata.
@@ -206,6 +215,7 @@ pub fn resolve_git_tag_group(
     packages: &[&str],
     published: &[PublishedPackage<'_>],
     cargo_version: &Version,
+    native: Option<NativeCatalog<'_>>,
 ) -> Result<Vec<GitTagMaterialization>> {
     resolve_tag(
         &std::env::temp_dir(),
@@ -215,6 +225,7 @@ pub fn resolve_git_tag_group(
             packages,
             published: Some(published),
             allow_retired_registries: false,
+            native,
         },
         &PackagingSource::live(repository),
         cargo_version,
@@ -286,13 +297,27 @@ pub fn reproduce_approved_git(approval: &Approval) -> Result<GitTagMaterializati
 /// publication may not name, or any source, tag, package, toolchain, path,
 /// archive, or source-row mismatch.
 pub fn reproduce_approved_git_group(
-    catalog: &[Approval],
+    catalog: &Catalog,
     approvals: &[&Approval],
 ) -> Result<Vec<GitTagMaterialization>> {
+    let repositories = crate::self_publish::NativeRepositories::load_beside(&catalog.root)?;
+    let native = approvals.first().and_then(|approval| {
+        // A group whose first approval is not a Git-tag publication is refused
+        // by the group's own checks, which name it.
+        let git = approved_git_tag(approval).ok()?;
+        repositories.catalog(
+            &catalog.root,
+            &catalog.approvals,
+            &approval.registry,
+            git.repository,
+            git.tag,
+        )
+    });
     reproduce_approved_git_group_in(
         &std::env::temp_dir(),
-        catalog,
+        &catalog.approvals,
         approvals,
+        native,
         PackagingSource::live,
     )
 }
@@ -303,6 +328,7 @@ fn reproduce_approved_git_group_in<'a>(
     root: &Path,
     catalog: &'a [Approval],
     approvals: &[&'a Approval],
+    native: Option<NativeCatalog<'a>>,
     packaging: impl FnOnce(&'a str) -> PackagingSource<'a>,
 ) -> Result<Vec<GitTagMaterialization>> {
     let first = *approvals
@@ -370,6 +396,7 @@ fn reproduce_approved_git_group_in<'a>(
             packages: &packages,
             published: Some(&published),
             allow_retired_registries: false,
+            native,
         },
         &packaging(first_git.repository),
         first_git.cargo_version,
@@ -473,6 +500,7 @@ fn resolve_approved_git_tag(
             packages: &packages,
             published: None,
             allow_retired_registries: true,
+            native: None,
         },
         source,
         git.cargo_version,
@@ -495,6 +523,60 @@ pub struct PublishedPackage<'a> {
     pub locked_sha256: Option<&'a str>,
 }
 
+/// One active identity of the catalog that a crates.io-native tag's lock rule
+/// may name.
+#[derive(Clone, Copy, Debug)]
+pub struct NativeIdentity<'a> {
+    /// Cargo package name.
+    pub name: &'a str,
+    /// Exact version.
+    pub version: &'a Version,
+    /// SHA-256 of the archive the catalog serves for this identity, which is
+    /// the crates.io archive of the same package version.
+    pub crate_sha256: &'a str,
+    /// SHA-256 of the un-routed source index row the catalog retained.
+    pub source_row_sha256: &'a str,
+}
+
+/// One crate of a crates.io-native tag that the catalog locked already.
+#[derive(Clone, Copy, Debug)]
+pub struct NativeLocked<'a> {
+    /// Cargo package name.
+    pub name: &'a str,
+    /// Exact version, which is the tag's version.
+    pub version: &'a Version,
+    /// SHA-256 of the archive the catalog locked for this identity.
+    pub archive_sha256: &'a str,
+    /// SHA-256 of the un-routed source index row the catalog locked.
+    pub source_row_sha256: &'a str,
+}
+
+/// The catalog facts that a crates.io-native release tag is packaged against.
+///
+/// A tag of a repository declared `manifests = "crates-io"` keeps its plain
+/// crates.io manifests, so the catalog serves the tag's own packaging and the
+/// tag's committed `Cargo.lock` names crates.io alone. Packaging such a tag
+/// therefore needs the catalog itself: the lock rule admits exactly the active
+/// identities of the declaration's registry, and the packaging resolves offline
+/// from a local registry of their rows.
+#[derive(Clone, Debug)]
+pub struct NativeCatalog<'a> {
+    /// Root of the catalog, whose `objects/rows` hold the source rows of the
+    /// identities the lock rule admits.
+    pub root: &'a Path,
+    /// Every active identity of the declaration's registry that a lock may
+    /// name, with the archive the catalog serves for it.
+    pub identities: Vec<NativeIdentity<'a>>,
+    /// Every crate of the same tag that the catalog locked already, with the
+    /// archive and row it locked.
+    ///
+    /// A reproduction holds these archives in the local registry before it
+    /// packages anything, since a dependent of the group takes its siblings from
+    /// that registry; `lock` locks every released crate of a tag in one run, so
+    /// it names none.
+    pub locked: Vec<NativeLocked<'a>>,
+}
+
 /// One first-party Git tag whose packages a single resolution materializes.
 struct TagRequest<'a> {
     /// Credential-free HTTPS repository the tag belongs to.
@@ -512,6 +594,14 @@ struct TagRequest<'a> {
     /// compares the archive and source row it produces with the ones the
     /// catalog recorded, so the retired name cannot reach a new publication.
     allow_retired_registries: bool,
+    /// The catalog facts of a crates.io-native tag, when the repository keeps
+    /// crates.io manifests.
+    ///
+    /// A native tag applies the native contract and the lock rule in place of
+    /// the `pkgre` mode's, and packages offline from the catalog's own rows. A
+    /// tag without this is packaged as every Git tag of a `pkgre`-mode
+    /// repository is.
+    native: Option<NativeCatalog<'a>>,
 }
 
 /// Every package a path dependency of one tag may point at, with the archive the
@@ -614,6 +704,7 @@ pub(crate) fn resolve_git_tag_from_file_in(
         fetch_repository,
         registry_index: REGISTRY_INDEX,
         allow_retired_registries: false,
+        native: None,
     })?;
     single_materialization(&mut materializations)
 }
@@ -667,10 +758,11 @@ pub(crate) fn reproduce_approved_git_group_from_file_in(
     root: &Path,
     catalog: &[Approval],
     approvals: &[&Approval],
+    native: Option<NativeCatalog<'_>>,
     fetch_repository: &str,
     registry_index: &str,
 ) -> Result<Vec<GitTagMaterialization>> {
-    reproduce_approved_git_group_in(root, catalog, approvals, |_| PackagingSource {
+    reproduce_approved_git_group_in(root, catalog, approvals, native, |_| PackagingSource {
         fetch_repository,
         allow_file: true,
         registry_index,
@@ -700,6 +792,8 @@ pub(crate) struct FileTagRequest<'a> {
     /// Whether a dependency may name a registry the catalog retired, as only a
     /// reproduction may.
     pub(crate) allow_retired_registries: bool,
+    /// The catalog facts of a crates.io-native tag, when a test packages one.
+    pub(crate) native: Option<NativeCatalog<'a>>,
 }
 
 /// Resolves and reproducibly packages the packages of one tag from a local
@@ -722,6 +816,7 @@ pub(crate) fn resolve_git_tag_group_from_file(
             packages: request.packages,
             published: request.published,
             allow_retired_registries: request.allow_retired_registries,
+            native: request.native.clone(),
         },
         &PackagingSource {
             fetch_repository: request.fetch_repository,
@@ -732,32 +827,33 @@ pub(crate) fn resolve_git_tag_group_from_file(
     )
 }
 
-fn resolve_tag(
+/// The isolated checkout and Cargo home of one tag's packaging.
+struct TagPackaging {
+    /// Temporary root that holds the checkout and the Cargo homes.
+    temporary: TemporaryDirectory,
+    /// The tag's checkout.
+    checkout: PathBuf,
+    /// The isolated Cargo home of the first packaging run.
+    cargo_home: PathBuf,
+    /// The pinned Cargo of the registry.
+    cargo: PathBuf,
+    /// The fixed environment every child of the packaging inherits.
+    environment: ChildEnvironment,
+}
+
+/// Prepares the isolated checkout and Cargo home of one tag.
+///
+/// # Errors
+///
+/// Returns an error for a temporary root that cannot be resolved, a Cargo home
+/// that Cargo configuration covers, an unavailable pinned Cargo, or a Cargo home
+/// that cannot be created or written.
+fn prepare_tag_packaging(
     root: &Path,
     request: &TagRequest<'_>,
     source: &PackagingSource<'_>,
     cargo_version: &Version,
-) -> Result<Vec<GitTagMaterialization>> {
-    validate_https_repository(request.repository)?;
-    validate_git_tag(request.tag)?;
-    ensure!(
-        !request.packages.is_empty(),
-        "no first-party package was named for tag {:?}",
-        request.tag
-    );
-    for package in request.packages {
-        validate_package_name(package)?;
-    }
-    if let Some(published) = request.published {
-        for package in request.packages {
-            ensure!(
-                published.iter().any(|candidate| candidate.name == *package),
-                "package {package:?} is not published from tag {:?}",
-                request.tag
-            );
-        }
-    }
-
+) -> Result<TagPackaging> {
     // Cargo reports every absolute path of its metadata as it sees it, and the
     // checkout is resolved here, so the temporary root is resolved once: Git,
     // Cargo and the path rules then see one form of every path, even below a
@@ -769,8 +865,38 @@ fn resolve_tag(
     let cargo_home = temporary.path().join("cargo-home");
     ensure_no_cargo_configuration(&cargo_home)?;
     let cargo = pinned_cargo(cargo_version)?;
-    prepare_cargo_home(&cargo_home, source.registry_index)?;
+    // A native tag's manifests name crates.io, so its Cargo home declares the
+    // local registry that stands in for it, which the packaging writes once the
+    // lock rule has named the rows it serves. The metadata run before that needs
+    // no registry at all.
+    match request.native {
+        Some(_) => create_cargo_home(&cargo_home)?,
+        None => prepare_cargo_home(&cargo_home, source.registry_index)?,
+    }
     let environment = ChildEnvironment::capture(&cargo_home, &cargo)?;
+    Ok(TagPackaging {
+        temporary,
+        checkout,
+        cargo_home,
+        cargo,
+        environment,
+    })
+}
+
+fn resolve_tag(
+    root: &Path,
+    request: &TagRequest<'_>,
+    source: &PackagingSource<'_>,
+    cargo_version: &Version,
+) -> Result<Vec<GitTagMaterialization>> {
+    validate_tag_request(request)?;
+    let TagPackaging {
+        temporary,
+        checkout,
+        cargo_home,
+        cargo,
+        environment,
+    } = prepare_tag_packaging(root, request, source, cargo_version)?;
 
     let (tag_oid, commit, gitlinks) = fetch_tag(
         &environment,
@@ -790,10 +916,21 @@ fn resolve_tag(
             .is_file(),
         "Git repository has no regular root Cargo.toml"
     );
-    let metadata = cargo_metadata(&cargo, &cargo_home, &environment, &root_manifest)?;
+    let metadata = cargo_metadata(
+        &cargo,
+        &cargo_home,
+        &environment,
+        &root_manifest,
+        request.native.is_some(),
+    )?;
     ensure_workspace_root_inside(&checkout, &metadata.root)?;
     ensure_no_patch_or_replace(&metadata, &root_manifest)?;
-    ensure_tag_gitlinks(&checkout, &gitlinks, &metadata.packages)?;
+    ensure_tag_gitlinks(
+        &checkout,
+        &gitlinks,
+        &metadata.packages,
+        request.native.is_some(),
+    )?;
     let packages = select_packages(&metadata.packages, request.packages)?;
     let tag_version = packages
         .first()
@@ -801,38 +938,46 @@ fn resolve_tag(
         .version
         .clone();
     let siblings = sibling_packages(request.published, &metadata.packages, &packages)?;
-    let paths = validated_packages(
-        &metadata.packages,
-        &packages,
-        request,
-        &tag_version,
-        &checkout,
-        source.registry_index,
-        &siblings,
-    )?;
+    let (paths, order) = match &request.native {
+        None => (
+            validated_packages(
+                &metadata.packages,
+                &packages,
+                request,
+                &tag_version,
+                &checkout,
+                source.registry_index,
+                &siblings,
+            )?,
+            Vec::new(),
+        ),
+        Some(_) => validated_native_packages(
+            &metadata.packages,
+            &packages,
+            request,
+            &tag_version,
+            &checkout,
+        )?,
+    };
 
     let workspace_lock = read_workspace_lock(&metadata.root, request.tag)?;
-    let archives = package_twice(
+    let archives = package_request(
+        request,
         &cargo,
         &cargo_home,
         &environment,
         &root_manifest,
         &packages,
+        &metadata.packages,
+        order,
         temporary.path(),
-        request.tag,
         &siblings,
+        &workspace_lock,
     )?;
     ensure_archives_outside_gitlinks(&gitlinks, &packages, &paths, &archives)?;
     ensure_clean_checkout(&environment, &checkout)?;
 
-    let mut expected = siblings
-        .iter()
-        .filter_map(|(name, locked)| locked.clone().map(|sha256| (name.clone(), sha256)))
-        .collect::<BTreeMap<_, _>>();
-    for (package, archive_bytes) in packages.iter().zip(&archives) {
-        expected.insert(package.name.clone(), sha256_bytes(archive_bytes));
-    }
-
+    let expected = expected_archives(&siblings, &packages, &archives);
     materialize_packages(
         &packages,
         paths,
@@ -846,6 +991,113 @@ fn resolve_tag(
             commit: &commit,
             commit_time: &commit_time,
         },
+    )
+}
+
+/// Returns the archive every package of one resolution must name: the one the
+/// catalog locked for a sibling it does not package again, or the one this run
+/// produced.
+fn expected_archives(
+    siblings: &Siblings,
+    packages: &[&MetadataPackage],
+    archives: &[Vec<u8>],
+) -> BTreeMap<String, String> {
+    let mut expected = siblings
+        .iter()
+        .filter_map(|(name, locked)| locked.clone().map(|sha256| (name.clone(), sha256)))
+        .collect::<BTreeMap<_, _>>();
+    for (package, archive_bytes) in packages.iter().zip(archives) {
+        expected.insert(package.name.clone(), sha256_bytes(archive_bytes));
+    }
+    expected
+}
+
+/// Validates the names and the published set of one tag request.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe repository or tag, a request without a
+/// package, an unsafe package name, or a requested package that the catalog does
+/// not publish from the tag.
+fn validate_tag_request(request: &TagRequest<'_>) -> Result<()> {
+    validate_https_repository(request.repository)?;
+    validate_git_tag(request.tag)?;
+    ensure!(
+        !request.packages.is_empty(),
+        "no first-party package was named for tag {:?}",
+        request.tag
+    );
+    for package in request.packages {
+        validate_package_name(package)?;
+    }
+    if let Some(published) = request.published {
+        for package in request.packages {
+            ensure!(
+                published.iter().any(|candidate| candidate.name == *package),
+                "package {package:?} is not published from tag {:?}",
+                request.tag
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Packages the requested crates of one validated tag.
+///
+/// A `pkgre`-mode tag is packaged against its registry. A crates.io-native tag
+/// is packaged offline from the catalog's own rows, crate by crate in dependency
+/// order, twice, after the lock rule has admitted the tag's lock.
+///
+/// # Errors
+///
+/// Returns the errors of [`package_twice`] and [`package_native_twice`], and the
+/// lock rule's refusals for a native tag.
+#[allow(clippy::too_many_arguments)]
+fn package_request(
+    request: &TagRequest<'_>,
+    cargo: &Path,
+    cargo_home: &Path,
+    environment: &ChildEnvironment,
+    root_manifest: &Path,
+    packages: &[&MetadataPackage],
+    metadata: &[MetadataPackage],
+    order: Vec<&MetadataPackage>,
+    temporary: &Path,
+    siblings: &Siblings,
+    workspace_lock: &LockFile,
+) -> Result<Vec<Vec<u8>>> {
+    let Some(native) = &request.native else {
+        return package_twice(
+            cargo,
+            cargo_home,
+            environment,
+            root_manifest,
+            packages,
+            temporary,
+            request.tag,
+            siblings,
+        );
+    };
+    ensure_native_lock_rule(workspace_lock, metadata, native, request.tag)?;
+    let requested = packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let packaging = order
+        .into_iter()
+        .filter(|package| requested.contains(package.name.as_str()))
+        .collect::<Vec<_>>();
+    package_native_twice(
+        cargo,
+        cargo_home,
+        environment,
+        root_manifest,
+        packages,
+        &packaging,
+        temporary,
+        request.tag,
+        native,
+        workspace_lock,
     )
 }
 
@@ -1289,9 +1541,18 @@ pub(crate) fn pinned_cargo(version: &Version) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
+/// Creates one isolated Cargo home.
+///
+/// # Errors
+///
+/// Returns an error for a Cargo home that cannot be created.
+fn create_cargo_home(cargo_home: &Path) -> Result<()> {
     fs::create_dir(cargo_home)
-        .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+        .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))
+}
+
+fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
+    create_cargo_home(cargo_home)?;
     let disabled = cargo_home.join("disabled-crates-io");
     fs::create_dir(&disabled)
         .with_context(|| format!("create disabled Cargo source {}", disabled.display()))?;
@@ -1308,6 +1569,7 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
                 replace_with: Some("disabled"),
                 registry: None,
                 directory: None,
+                local_registry: None,
             },
         ),
         (
@@ -1316,6 +1578,7 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
                 replace_with: None,
                 registry: None,
                 directory: Some(disabled.as_path()),
+                local_registry: None,
             },
         ),
     ]);
@@ -1332,14 +1595,15 @@ fn prepare_cargo_home(cargo_home: &Path, registry_index: &str) -> Result<()> {
                 replace_with: Some(CARGO_REGISTRY),
                 registry: Some(retired_index),
                 directory: None,
+                local_registry: None,
             },
         );
     }
     let config = IsolatedCargoConfig {
         registries,
-        registry: CargoDefaultRegistry {
+        registry: Some(CargoDefaultRegistry {
             default: CARGO_REGISTRY,
-        },
+        }),
         source,
     };
     let contents = toml::to_string_pretty(&config).context("serialize isolated Cargo config")?;
@@ -1354,11 +1618,16 @@ fn is_curated_registry_source(source: &str, registry_indexes: &[&str]) -> bool {
             .is_some_and(|index| registry_indexes.contains(&index))
 }
 
+/// Reads the workspace metadata of one tag with the pinned Cargo.
+///
+/// `offline` keeps a crates.io-native tag's run from reaching the network: its
+/// Cargo home holds no registry, and the metadata run reads no index either.
 fn cargo_metadata(
     cargo: &Path,
     cargo_home: &Path,
     environment: &ChildEnvironment,
     manifest_path: &Path,
+    offline: bool,
 ) -> Result<WorkspaceMetadata> {
     let mut command = isolated_cargo(cargo, environment);
     command.current_dir(cargo_home).args([
@@ -1370,6 +1639,9 @@ fn cargo_metadata(
         OsStr::new("--manifest-path"),
         manifest_path.as_os_str(),
     ]);
+    if offline {
+        command.arg("--offline");
+    }
     let output = run_command(command, "read Cargo package metadata")?;
     let metadata: Metadata =
         serde_json::from_slice(&output.stdout).context("parse pinned Cargo metadata output")?;
@@ -1420,6 +1692,657 @@ fn validated_packages(
         )?;
     }
     Ok(paths)
+}
+
+/// Returns the crates that one crates.io-native tag releases.
+///
+/// Nothing rewrites a native tag's manifests, so its released crates are its
+/// members whose manifest does not set `publish = false`; a member that names a
+/// list of registries would be published under a manifest the tag does not
+/// carry, so it is refused.
+///
+/// # Errors
+///
+/// Returns an error for a member whose `publish` is a list of registries.
+fn released_packages(metadata: &[MetadataPackage]) -> Result<BTreeSet<&str>> {
+    let mut released = BTreeSet::new();
+    for package in metadata {
+        match &package.publish {
+            None => {
+                released.insert(package.name.as_str());
+            }
+            Some(list) if list.is_empty() => {}
+            Some(list) => bail!(
+                "first-party package {:?} sets publish = {list:?}; a crates.io-native release tag keeps its manifests, so a member either is released or sets publish = false, and a list of registries is refused",
+                package.name
+            ),
+        }
+    }
+    Ok(released)
+}
+
+/// Validates the released crates of one crates.io-native tag.
+///
+/// Returns the repository-relative path of each requested crate, and every
+/// released crate of the tag in the order that packages it.
+///
+/// # Errors
+///
+/// Returns an error for a member whose `publish` is a list, a tag the catalog
+/// does not declare for exactly its released crates, a released crate outside
+/// the tag's version, a dependency that is neither a crates.io requirement nor
+/// an exactly required path dependency on another released crate of the tag, or
+/// a cycle between the released crates.
+fn validated_native_packages<'a>(
+    metadata: &'a [MetadataPackage],
+    packages: &[&MetadataPackage],
+    request: &TagRequest<'_>,
+    tag_version: &Version,
+    checkout: &Path,
+) -> Result<(Vec<PathBuf>, Vec<&'a MetadataPackage>)> {
+    let released = released_packages(metadata)?;
+    let published = request.published.context(
+        "a crates.io-native release tag is packaged only from a catalog, which names every crate it publishes from the tag",
+    )?;
+    let declared = published
+        .iter()
+        .map(|package| package.name)
+        .collect::<BTreeSet<_>>();
+    let missing = released.difference(&declared).copied().collect::<Vec<_>>();
+    let extra = declared.difference(&released).copied().collect::<Vec<_>>();
+    ensure!(
+        missing.is_empty() && extra.is_empty(),
+        "tag {:?} releases the crates {released:?}, but the catalog publishes the tag for {declared:?}; a crate the catalog omits ({missing:?}) and a crate the tag does not release ({extra:?}) are both refused, since a native tag is locked and uploaded for exactly its released crates",
+        request.tag
+    );
+    for name in &released {
+        let package = member_named(metadata, name);
+        validate_tag_version(request.tag, &package.version)?;
+    }
+    let mut paths = Vec::with_capacity(packages.len());
+    for package in packages {
+        paths.push(package_path(checkout, &package.manifest_path)?);
+    }
+    for name in &released {
+        validate_native_dependencies(
+            member_named(metadata, name),
+            metadata,
+            &released,
+            tag_version,
+        )?;
+    }
+    let order = native_packaging_order(metadata, &released, request.tag)?;
+    Ok((paths, order))
+}
+
+/// Returns the workspace member that one released crate names.
+fn member_named<'a>(metadata: &'a [MetadataPackage], name: &str) -> &'a MetadataPackage {
+    metadata
+        .iter()
+        .find(|package| package.name == name)
+        .expect("a released crate is a workspace member")
+}
+
+/// Validates every dependency of one released crate of a crates.io-native tag.
+///
+/// A dependency is either a crates.io requirement, with no `registry`,
+/// `registry-index` or Git source, or a `path` dependency on another released
+/// crate of the same tag, at that crate's own directory, which requires exactly
+/// the tag's version. Every kind counts: normal, dev, build and
+/// target-specific.
+///
+/// # Errors
+///
+/// Returns an error for a Git source, another registry, a path dependency
+/// without a version or on a crate the tag does not release, a requirement that
+/// is not the tag's own version, or a directory that is not the target crate's
+/// own.
+fn validate_native_dependencies(
+    package: &MetadataPackage,
+    metadata: &[MetadataPackage],
+    released: &BTreeSet<&str>,
+    tag_version: &Version,
+) -> Result<()> {
+    for dependency in &package.dependencies {
+        let described = describe_dependency(dependency);
+        if let Some(source) = &dependency.source {
+            ensure!(
+                source == CRATES_IO_INDEX_SOURCE,
+                "first-party package dependency {described} of {:?} uses unsupported source {source:?}; a crates.io-native release tag keeps plain crates.io manifests, so a dependency is a crates.io requirement or a path dependency on another released crate of the tag",
+                package.name
+            );
+            ensure!(
+                dependency.registry.is_none(),
+                "first-party package dependency {described} of {:?} names the registry {:?}; a crates.io-native release tag keeps plain crates.io manifests, so a dependency may not name a registry",
+                package.name,
+                dependency.registry.as_deref().unwrap_or_default()
+            );
+        } else {
+            ensure!(
+                dependency.registry.is_none(),
+                "first-party package dependency {described} of {:?} is a path dependency that names the registry {:?}; a crates.io-native release tag keeps plain crates.io manifests, so a sibling is a path dependency without a registry",
+                package.name,
+                dependency.registry.as_deref().unwrap_or_default()
+            );
+            let target = metadata
+                    .iter()
+                    .find(|candidate| candidate.name == dependency.name)
+                    .with_context(|| {
+                        format!(
+                            "first-party package dependency {described} of {:?} is a path dependency on no package of the tagged workspace",
+                            package.name
+                        )
+                    })?;
+            ensure!(
+                released.contains(target.name.as_str()),
+                "first-party package dependency {described} of {:?} is a path dependency on {:?}, which the tag does not release; the released crates of a crates.io-native release tag may depend on each other only",
+                package.name,
+                target.name
+            );
+            ensure!(
+                target.version == *tag_version,
+                "first-party package dependency {described} of {:?} is a path dependency on {} {}, whose version is not the tag's version {tag_version}",
+                package.name,
+                target.name,
+                target.version
+            );
+            let exact = format!("={tag_version}");
+            let expected =
+                VersionReq::parse(&exact).context("build the exact requirement of the tag")?;
+            ensure!(
+                VersionReq::parse(&dependency.req).is_ok_and(|requirement| requirement == expected),
+                "first-party package dependency {described} of {:?} requires {:?}; a path dependency on a crate of the same tag must require exactly {exact:?}",
+                package.name,
+                dependency.req
+            );
+            let directory = dependency.path.as_deref().with_context(|| {
+                    format!(
+                        "first-party package dependency {described} of {:?} is a path dependency without a directory",
+                        package.name
+                    )
+                })?;
+            let target_directory = target.manifest_path.parent().with_context(|| {
+                format!("the manifest of {} has no parent directory", target.name)
+            })?;
+            ensure!(
+                same_directory(directory, target_directory)?,
+                "first-party package dependency {described} of {:?} is a path dependency on {}, but the released crate {} is at {}",
+                package.name,
+                directory.display(),
+                target.name,
+                target_directory.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Returns every released crate of one tag, each after the crates it depends on.
+///
+/// A cycle between the released crates is refused: no packaging order and no
+/// upload order could serve it, and every dependency kind counts, the
+/// dev-dependencies included, since a packaged lock resolves them.
+///
+/// # Errors
+///
+/// Returns an error for a cycle between the released crates.
+fn native_packaging_order<'a>(
+    metadata: &'a [MetadataPackage],
+    released: &BTreeSet<&str>,
+    tag: &str,
+) -> Result<Vec<&'a MetadataPackage>> {
+    let mut remaining = BTreeMap::new();
+    for name in released {
+        let package = member_named(metadata, name);
+        let mut dependencies = BTreeSet::new();
+        for dependency in &package.dependencies {
+            if dependency.source.is_none() && released.contains(dependency.name.as_str()) {
+                dependencies.insert(dependency.name.as_str());
+            }
+        }
+        remaining.insert(*name, (package, dependencies));
+    }
+    let mut order = Vec::with_capacity(remaining.len());
+    while let Some(name) = remaining
+        .iter()
+        .find(|(_, (_, dependencies))| dependencies.is_empty())
+        .map(|(name, _)| *name)
+    {
+        let (package, _) = remaining
+            .remove(name)
+            .expect("a ready crate is still pending");
+        order.push(package);
+        for (_, dependencies) in remaining.values_mut() {
+            dependencies.remove(name);
+        }
+    }
+    ensure!(
+        remaining.is_empty(),
+        "released crates of tag {tag:?} form a dependency cycle: {}; no packaging order and no upload order could serve it",
+        native_cycle(&remaining)
+    );
+    Ok(order)
+}
+
+/// Returns one dependency cycle among the released crates that no packaging
+/// order reached, as `a -> b -> a`.
+fn native_cycle(remaining: &BTreeMap<&str, (&MetadataPackage, BTreeSet<&str>)>) -> String {
+    let Some(start) = remaining.keys().next().copied() else {
+        return String::new();
+    };
+    let mut path = vec![start];
+    let mut seen = BTreeSet::from([start]);
+    let mut current = start;
+    while let Some(next) = remaining
+        .get(current)
+        .and_then(|(_, dependencies)| dependencies.iter().next().copied())
+    {
+        path.push(next);
+        if !seen.insert(next) {
+            break;
+        }
+        current = next;
+    }
+    path.join(" -> ")
+}
+
+/// Applies the lock rule of one crates.io-native release tag.
+///
+/// Every package of the tag's committed `Cargo.lock` with a source must name
+/// the crates.io source and carry a checksum of its own, and its name, version
+/// and checksum must be an active identity of the catalog, which is the archive
+/// crates.io serves for it. Every package without a source must be a member of
+/// the workspace. A lock older than version 3 is refused before any of its
+/// packages is read: a lock without a `version` key is version 1, which keeps
+/// its checksums in `[metadata]` rather than in `[[package]]`.
+///
+/// # Errors
+///
+/// Returns an error for a lock older than version 3, a Git or other registry
+/// source, a package without a checksum, an identity the catalog does not serve
+/// as an active one, another checksum, or a path package outside the workspace.
+fn ensure_native_lock_rule(
+    lock: &LockFile,
+    workspace: &[MetadataPackage],
+    native: &NativeCatalog<'_>,
+    tag: &str,
+) -> Result<()> {
+    let version = lock.version.unwrap_or(1);
+    ensure!(
+        version >= 3,
+        "the Cargo.lock of tag {tag:?} is version {version}, but a crates.io-native release tag must commit a lock of version 3 or later; a lock without a version key is version 1, which keeps its checksums in [metadata]"
+    );
+    for entry in &lock.packages {
+        let Some(source) = &entry.source else {
+            ensure!(
+                workspace
+                    .iter()
+                    .any(|package| package.name == entry.name && package.version == entry.version),
+                "the Cargo.lock of tag {tag:?} records {} {} without a source, and no member of the workspace has that identity; a crates.io-native release tag's lock records only its workspace members as path packages",
+                entry.name,
+                entry.version
+            );
+            continue;
+        };
+        ensure!(
+            source == CRATES_IO_INDEX_SOURCE,
+            "the Cargo.lock of tag {tag:?} records {} {} from {source}; a crates.io-native release tag's lock names the crates.io source {CRATES_IO_INDEX_SOURCE} alone",
+            entry.name,
+            entry.version
+        );
+        let checksum = entry.checksum.as_deref().with_context(|| {
+            format!(
+                "the Cargo.lock of tag {tag:?} records {} {} without a checksum; a crates.io-native release tag's lock carries the checksum of every registry package",
+                entry.name, entry.version
+            )
+        })?;
+        let identity = native_identity(native, &entry.name, &entry.version, tag)?;
+        ensure!(
+            identity.crate_sha256 == checksum,
+            "the Cargo.lock of tag {tag:?} records {} {} at checksum {checksum}, but the catalog serves it at {}; a fork, another registry, and another checksum are refused",
+            entry.name,
+            entry.version,
+            identity.crate_sha256
+        );
+    }
+    Ok(())
+}
+
+/// Returns the active identity of the catalog that one lock entry names.
+///
+/// # Errors
+///
+/// Returns an error for an identity the catalog does not serve as an active
+/// one, a removed one included.
+fn native_identity<'a>(
+    native: &NativeCatalog<'a>,
+    name: &str,
+    version: &Version,
+    tag: &str,
+) -> Result<NativeIdentity<'a>> {
+    native
+        .identities
+        .iter()
+        .find(|identity| identity.name == name && identity.version == version)
+        .copied()
+        .with_context(|| {
+            format!(
+                "the Cargo.lock of tag {tag:?} records {name} {version} from crates.io, which is not an active identity of the catalog; a crates.io-native release tag is locked from the curated packages alone"
+            )
+        })
+}
+
+/// Writes a local registry that serves exactly the curated packages of one
+/// native tag's lock, and the crates of the tag that the catalog locked.
+///
+/// The index rows come from the catalog's own objects, so the registry serves
+/// what the catalog serves; an archive is copied only for a crate of the tag,
+/// since `--no-verify` packaging reads no other body.
+///
+/// # Errors
+///
+/// Returns an error for a row or archive the catalog lacks, one that does not
+/// hash to what the catalog records, or a row of another identity.
+fn write_native_registry(
+    registry: &Path,
+    lock: &LockFile,
+    native: &NativeCatalog<'_>,
+    tag: &str,
+) -> Result<()> {
+    fs::create_dir_all(registry.join("index"))
+        .with_context(|| format!("create the native registry {}", registry.display()))?;
+    let mut rows: BTreeMap<&str, Vec<(&Version, Vec<u8>)>> = BTreeMap::new();
+    for entry in &lock.packages {
+        if entry.source.is_none() {
+            continue;
+        }
+        let identity = native_identity(native, &entry.name, &entry.version, tag)?;
+        let row = read_native_row(
+            native.root,
+            &entry.name,
+            &entry.version,
+            identity.crate_sha256,
+            identity.source_row_sha256,
+        )?;
+        rows.entry(entry.name.as_str())
+            .or_default()
+            .push((&entry.version, row));
+    }
+    for (name, mut versions) in rows {
+        versions.sort_by(|left, right| left.0.cmp(right.0));
+        let mut bytes = Vec::new();
+        for (_, row) in versions {
+            bytes.extend(row);
+            if !bytes.ends_with(b"\n") {
+                bytes.push(b'\n');
+            }
+        }
+        let path = registry.join("index").join(crate::index::index_path(name));
+        fs::create_dir_all(path.parent().expect("an index path has a directory"))
+            .with_context(|| format!("create the index directory of {}", path.display()))?;
+        fs::write(&path, bytes)
+            .with_context(|| format!("write the index row {}", path.display()))?;
+    }
+    for locked in &native.locked {
+        let row = read_native_row(
+            native.root,
+            locked.name,
+            locked.version,
+            locked.archive_sha256,
+            locked.source_row_sha256,
+        )?;
+        let path = native
+            .root
+            .join("objects/crates")
+            .join(format!("{}.crate", locked.archive_sha256));
+        let archive = read_bounded_archive(&path)?;
+        ensure!(
+            sha256_bytes(&archive) == locked.archive_sha256,
+            "the archive {} does not hash to the {} the catalog records",
+            path.display(),
+            locked.archive_sha256
+        );
+        add_native_registry_entry(registry, locked.name, locked.version, &archive, &row)?;
+    }
+    Ok(())
+}
+
+/// Reads one retained source row of the catalog and checks that it records the
+/// identity and the archive the catalog locks.
+///
+/// # Errors
+///
+/// Returns an error for a missing row, one that does not hash to what the
+/// catalog records, or one that records another identity or checksum.
+fn read_native_row(
+    root: &Path,
+    name: &str,
+    version: &Version,
+    checksum: &str,
+    source_row_sha256: &str,
+) -> Result<Vec<u8>> {
+    let path = root
+        .join("objects/rows")
+        .join(format!("{source_row_sha256}.json"));
+    let row = fs::read(&path).with_context(|| format!("read source row {}", path.display()))?;
+    let actual = sha256_bytes(&row);
+    ensure!(
+        actual == source_row_sha256,
+        "the source row {} hashes to {actual}, not to the {source_row_sha256} the catalog records",
+        path.display()
+    );
+    let record = crate::index::IndexRecord::parse(&row)
+        .with_context(|| format!("parse source row {}", path.display()))?;
+    ensure!(
+        record.name()? == name && record.version()? == *version && record.checksum()? == checksum,
+        "the source row {} does not record {name} {version} at checksum {checksum}",
+        path.display()
+    );
+    Ok(row)
+}
+
+/// Adds one crate's archive and index row to a native local registry.
+///
+/// # Errors
+///
+/// Returns an error for a row or archive that cannot be written.
+fn add_native_registry_entry(
+    registry: &Path,
+    name: &str,
+    version: &Version,
+    archive: &[u8],
+    row: &[u8],
+) -> Result<()> {
+    let path = registry.join(format!("{name}-{version}.crate"));
+    fs::write(&path, archive).with_context(|| format!("write the archive {}", path.display()))?;
+    let path = registry.join("index").join(crate::index::index_path(name));
+    fs::create_dir_all(path.parent().expect("an index path has a directory"))
+        .with_context(|| format!("create the index directory of {}", path.display()))?;
+    let mut bytes = row.to_vec();
+    if !bytes.ends_with(b"\n") {
+        bytes.push(b'\n');
+    }
+    // A reproduction serves the archives the catalog locked before it packages
+    // anything and then packages those crates again, so the row may be there
+    // already; one row for a version is what a Cargo index reader expects.
+    if fs::read(&path).is_ok_and(|existing| {
+        existing
+            .split_inclusive(|byte| *byte == b'\n')
+            .any(|line| line == bytes.as_slice())
+    }) {
+        return Ok(());
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("open the index row {}", path.display()))?;
+    file.write_all(&bytes)
+        .with_context(|| format!("append the index row {}", path.display()))
+}
+
+/// Writes the Cargo home of one crates.io-native tag's packaging.
+///
+/// crates.io is replaced by the local registry that serves exactly the lock's
+/// curated packages, so Cargo can resolve nothing else while it packages
+/// offline.
+///
+/// # Errors
+///
+/// Returns an error for a Cargo home that cannot be created or written.
+fn prepare_native_cargo_home(cargo_home: &Path, registry: &Path) -> Result<()> {
+    fs::create_dir_all(cargo_home)
+        .with_context(|| format!("create isolated Cargo home {}", cargo_home.display()))?;
+    let source = BTreeMap::from([
+        (
+            "crates-io",
+            CargoSource {
+                replace_with: Some("native"),
+                registry: None,
+                directory: None,
+                local_registry: None,
+            },
+        ),
+        (
+            "native",
+            CargoSource {
+                replace_with: None,
+                registry: None,
+                directory: None,
+                local_registry: Some(registry),
+            },
+        ),
+    ]);
+    let config = IsolatedCargoConfig {
+        registries: BTreeMap::new(),
+        registry: None,
+        source,
+    };
+    let contents = toml::to_string_pretty(&config).context("serialize isolated Cargo config")?;
+    fs::write(cargo_home.join("config.toml"), contents)
+        .with_context(|| format!("write isolated Cargo config below {}", cargo_home.display()))
+}
+
+/// Packages the released crates of one crates.io-native tag one at a time,
+/// offline, from a local registry of the lock's curated packages, twice.
+///
+/// Cargo refuses one run that packages crates depending on each other through a
+/// replacement of crates.io, so each crate is packaged alone, in dependency
+/// order, and each archive and its source row join the registry before the next
+/// crate. The sequence then runs again from a fresh copy of the registry, and
+/// every archive must be byte-identical.
+///
+/// The archives are returned in the order of `packages`.
+///
+/// # Errors
+///
+/// Returns an error for a Cargo run that fails, an archive that is missing, too
+/// large, or not a regular file, or two runs that produced different bytes.
+#[allow(clippy::too_many_arguments)]
+fn package_native_twice(
+    cargo: &Path,
+    cargo_home: &Path,
+    environment: &ChildEnvironment,
+    manifest_path: &Path,
+    packages: &[&MetadataPackage],
+    packaging: &[&MetadataPackage],
+    temporary: &Path,
+    tag: &str,
+    native: &NativeCatalog<'_>,
+    workspace_lock: &LockFile,
+) -> Result<Vec<Vec<u8>>> {
+    let mut archives: Option<BTreeMap<String, Vec<u8>>> = None;
+    for (position, run) in ["one", "two"].into_iter().enumerate() {
+        let registry = temporary.join(format!("native-registry-{run}"));
+        write_native_registry(&registry, workspace_lock, native, tag)?;
+        let home = if position == 0 {
+            cargo_home.to_path_buf()
+        } else {
+            temporary.join("cargo-home-two")
+        };
+        prepare_native_cargo_home(&home, &registry)?;
+        let environment = if position == 0 {
+            environment.clone()
+        } else {
+            ChildEnvironment::capture(&home, cargo)?
+        };
+        let mut produced = BTreeMap::new();
+        for package in packaging {
+            let target = temporary.join(format!("native-target-{run}-{}", package.name));
+            let archive =
+                package_native_crate(cargo, &home, &environment, manifest_path, package, &target)?;
+            let checksum = sha256_bytes(&archive);
+            let row = generated_index_record(package, &checksum)?;
+            add_native_registry_entry(&registry, &package.name, &package.version, &archive, &row)?;
+            produced.insert(package.name.clone(), archive);
+        }
+        match &archives {
+            None => archives = Some(produced),
+            Some(first) => {
+                for package in packaging {
+                    ensure!(
+                        first.get(&package.name) == produced.get(&package.name),
+                        "pinned Cargo produced non-deterministic archives for {} {}",
+                        package.name,
+                        package.version
+                    );
+                }
+            }
+        }
+    }
+    let archives = archives.context("a crates.io-native tag packaged no crate")?;
+    let mut ordered = Vec::with_capacity(packages.len());
+    for package in packages {
+        ordered.push(
+            archives
+                .get(&package.name)
+                .with_context(|| format!("no archive of {} was packaged", package.name))?
+                .clone(),
+        );
+    }
+    Ok(ordered)
+}
+
+/// Packages one released crate of a crates.io-native tag alone and offline.
+///
+/// # Errors
+///
+/// Returns an error when Cargo fails, or when the archive is missing, too large,
+/// or not a regular file.
+fn package_native_crate(
+    cargo: &Path,
+    cargo_home: &Path,
+    environment: &ChildEnvironment,
+    manifest_path: &Path,
+    package: &MetadataPackage,
+    target: &Path,
+) -> Result<Vec<u8>> {
+    let mut command = isolated_cargo(cargo, environment);
+    command.current_dir(cargo_home).args([
+        OsStr::new("package"),
+        OsStr::new("--offline"),
+        OsStr::new("--no-verify"),
+        OsStr::new("--locked"),
+        OsStr::new("--package"),
+        OsStr::new(&package.name),
+        OsStr::new("--manifest-path"),
+        manifest_path.as_os_str(),
+        OsStr::new("--target-dir"),
+        target.as_os_str(),
+    ]);
+    run_command(command, "package a crates.io-native crate offline")?;
+    let archive = target
+        .join("package")
+        .join(format!("{}-{}.crate", package.name, package.version));
+    ensure!(
+        fs::symlink_metadata(&archive)
+            .with_context(|| format!("inspect Cargo archive {}", archive.display()))?
+            .file_type()
+            .is_file(),
+        "Cargo did not produce a regular archive at {}",
+        archive.display()
+    );
+    read_bounded_archive(&archive)
 }
 
 /// Selects the requested packages from the metadata of one tagged workspace.
@@ -1509,8 +2432,9 @@ fn ensure_tag_gitlinks(
     checkout: &Path,
     gitlinks: &[PathBuf],
     packages: &[MetadataPackage],
+    native: bool,
 ) -> Result<()> {
-    crate::gitlinks::ensure_release_tag_paths(checkout, gitlinks, &tag_members(packages)?)
+    crate::gitlinks::ensure_release_tag_paths(checkout, gitlinks, &tag_members(packages, native)?)
 }
 
 /// Requires that no packaged archive of the tag holds a path at or below a
@@ -1540,15 +2464,18 @@ fn ensure_archives_outside_gitlinks(
 /// Returns the workspace members of one tagged checkout, as the Gitlink rule
 /// reads them.
 ///
-/// A member is released when its manifest declares exactly `publish =
-/// ["pkgre"]`, which is the widest set the catalog can publish from the tag: a
-/// Gitlink inside a member that another resolution of the same tag packages is
-/// refused here too.
+/// A member of a `pkgre`-mode tag is released when its manifest declares
+/// exactly `publish = ["pkgre"]`, which is the widest set the catalog can
+/// publish from the tag: a Gitlink inside a member that another resolution of
+/// the same tag packages is refused here too. A crates.io-native tag releases
+/// every member whose manifest does not set `publish = false`, so the widest set
+/// is the wider one, and a member that names a list of registries counts as
+/// released, since the tag is refused for that list anyway.
 ///
 /// # Errors
 ///
 /// Returns an error for a member manifest without a directory.
-fn tag_members(packages: &[MetadataPackage]) -> Result<Vec<crate::gitlinks::Member>> {
+fn tag_members(packages: &[MetadataPackage], native: bool) -> Result<Vec<crate::gitlinks::Member>> {
     let mut members = Vec::with_capacity(packages.len());
     for package in packages {
         let directory = package.manifest_path.parent().with_context(|| {
@@ -1557,7 +2484,11 @@ fn tag_members(packages: &[MetadataPackage]) -> Result<Vec<crate::gitlinks::Memb
                 package.name
             )
         })?;
-        let released = package.publish.as_deref() == Some(&[CARGO_REGISTRY.to_owned()]);
+        let released = if native {
+            !matches!(&package.publish, Some(list) if list.is_empty())
+        } else {
+            package.publish.as_deref() == Some(&[CARGO_REGISTRY.to_owned()])
+        };
         let manifest_paths = if released {
             let target_paths = package
                 .targets
@@ -2177,6 +3108,9 @@ const PACKAGED_LOCK: &str = "Cargo.lock";
 /// writes into one packaged archive.
 #[derive(Debug, Deserialize)]
 struct LockFile {
+    /// Lock format version, which a version-1 lock omits; the native lock rule
+    /// requires version 3 or later.
+    version: Option<u32>,
     #[serde(default, rename = "package")]
     packages: Vec<LockedPackage>,
 }
@@ -2802,6 +3736,7 @@ mod tests {
             fetch_repository: source.to_str().unwrap(),
             registry_index: &index,
             allow_retired_registries: true,
+            native: None,
         })
         .unwrap();
         let base = materializations.remove(1);
@@ -2859,6 +3794,7 @@ mod tests {
             fetch_repository: source.to_str().unwrap(),
             registry_index: &index,
             allow_retired_registries: true,
+            native: None,
         })
         .unwrap();
         let materialization = materializations.remove(0);
@@ -2907,6 +3843,7 @@ mod tests {
             fetch_repository: source.to_str().unwrap(),
             registry_index: &index,
             allow_retired_registries: true,
+            native: None,
         })
         .unwrap();
         let approval = test_approval(&materializations.remove(0), &cargo_version);
@@ -2916,6 +3853,7 @@ mod tests {
                 &root,
                 &catalog,
                 group,
+                None,
                 source.to_str().unwrap(),
                 &index,
             )
@@ -2986,6 +3924,7 @@ mod tests {
             &root,
             &catalog,
             &group,
+            None,
             source.to_str().unwrap(),
             &index,
         )
@@ -3045,6 +3984,7 @@ mod tests {
             &root,
             &catalog,
             &group,
+            None,
             source.to_str().unwrap(),
             &index,
         )
@@ -3058,6 +3998,7 @@ mod tests {
             &root,
             &catalog,
             &group,
+            None,
             source.to_str().unwrap(),
             &index,
         )
@@ -3091,6 +4032,7 @@ mod tests {
                 fetch_repository: source.to_str().unwrap(),
                 registry_index: &index,
                 allow_retired_registries: true,
+                native: None,
             })
             .unwrap();
             let catalog = [test_approval(&materializations.remove(0), &cargo_version)];
@@ -3100,6 +4042,7 @@ mod tests {
                 &root,
                 &catalog,
                 &group,
+                None,
                 source.to_str().unwrap(),
                 &index,
             )
@@ -3164,6 +4107,7 @@ mod tests {
             &root,
             &catalog,
             &group,
+            None,
             source.to_str().unwrap(),
             &index,
         )
@@ -3195,6 +4139,7 @@ mod tests {
             &root,
             &removed_catalog,
             &group,
+            None,
             source.to_str().unwrap(),
             &index,
         )
@@ -3211,6 +4156,7 @@ mod tests {
     #[test]
     fn a_packaged_lock_must_take_the_versions_the_tag_lock_records() {
         let lock = |entries: &[(&str, &str, Option<&str>, Option<&str>)]| LockFile {
+            version: Some(4),
             packages: entries
                 .iter()
                 .map(|(name, version, source, checksum)| LockedPackage {
@@ -3849,6 +4795,1667 @@ mod tests {
         assert!(message.contains("tools/vendor"), "{message}");
     }
 
+    /// The crates.io dependency of the crates.io-native fixture, which the test
+    /// index serves at [`native_mirror_checksum`].
+    const NATIVE_DEPENDENCY: &str = "fixture-dep";
+
+    /// The package that stands for a crate of an earlier crates.io-native
+    /// release of the same repository.
+    const NATIVE_EARLIER: &str = "fixture-earlier";
+
+    /// Returns the archive that the reconciliation's synthetic crates.io
+    /// resolver serves for one identity of the native fixture.
+    fn native_mirror_archive(name: &str) -> Vec<u8> {
+        format!("synthetic archive of {name}\n").into_bytes()
+    }
+
+    /// Returns the checksum that the synthetic crates.io archive of one identity
+    /// hashes to, which its index row and the fixture's lock record.
+    fn native_mirror_checksum(name: &str) -> String {
+        sha256_bytes(&native_mirror_archive(name))
+    }
+
+    /// Publishes the native fixture's two crates.io dependencies in the test
+    /// index.
+    fn publish_native_dependencies(index: &str) {
+        publish_test_index_entry(
+            index,
+            NATIVE_DEPENDENCY,
+            &Version::parse("1.0.0").unwrap(),
+            &native_mirror_checksum(NATIVE_DEPENDENCY),
+        );
+        publish_test_index_entry(
+            index,
+            NATIVE_EARLIER,
+            &Version::parse("0.9.0").unwrap(),
+            &native_mirror_checksum(NATIVE_EARLIER),
+        );
+    }
+
+    /// Generates the native fixture's lock against the test index through
+    /// Cargo's own crates.io testing hook, which keeps the lock's crates.io
+    /// source while it resolves from the index.
+    fn generate_native_lock(temporary: &TemporaryDirectory, source: &Path, index: &str) {
+        let home = temporary.path().join("native-lock-home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("config.toml"),
+            "[registries.crates-io]\nprotocol = \"git\"\n",
+        )
+        .unwrap();
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(source)
+            .env("CARGO_HOME", &home)
+            .env("__CARGO_TEST_CRATES_IO_URL_DO_NOT_USE_THIS", index)
+            .arg("generate-lockfile");
+        run_test_command(&mut command);
+    }
+
+    /// Commits a change to one fixture and points its tag at the new commit.
+    fn commit_and_retag(source: &Path) {
+        test_git(source, &["add", "--all"]);
+        test_git(source, &["commit", "--quiet", "-m", "change"]);
+        retag(source);
+    }
+
+    /// Creates the tagged workspace of one crates.io-native release.
+    ///
+    /// `native-first` and `native-second` depend on `native-third` by path at
+    /// exactly its own version, and `native-first` also depends on the test
+    /// index's two crates.io packages, one of which stands for a crate of an
+    /// earlier release of the same repository. `native-extra` is a member that
+    /// the tag does not release.
+    fn create_native_release(temporary: &TemporaryDirectory, index: &str) -> PathBuf {
+        let source = temporary.path().join("native-source");
+        for name in [
+            "native-first",
+            "native-second",
+            "native-third",
+            "native-extra",
+        ] {
+            fs::create_dir_all(source.join("crates").join(name).join("src")).unwrap();
+            fs::write(
+                source.join("crates").join(name).join("src/lib.rs"),
+                "pub fn value() -> u32 { 1 }\n",
+            )
+            .unwrap();
+        }
+        fs::write(
+            source.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/native-first\", \"crates/native-second\", \"crates/native-third\", \"crates/native-extra\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        let manifest = |name: &str, publish: &str, dependencies: &str| {
+            format!(
+                "[package]\nname = {name:?}\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\n{publish}{dependencies}"
+            )
+        };
+        fs::write(
+            source.join("crates/native-third/Cargo.toml"),
+            manifest("native-third", "", ""),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/native-second/Cargo.toml"),
+            manifest(
+                "native-second",
+                "",
+                "\n[dependencies]\nnative-third = { path = \"../native-third\", version = \"=1.2.3\" }\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/native-first/Cargo.toml"),
+            manifest(
+                "native-first",
+                "",
+                "\n[dependencies]\nnative-third = { path = \"../native-third\", version = \"=1.2.3\" }\nfixture-dep = \"1\"\nfixture-earlier = \"0.9\"\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            source.join("crates/native-extra/Cargo.toml"),
+            manifest("native-extra", "publish = false\n", ""),
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        generate_native_lock(temporary, &source, index);
+        test_git(&source, &["add", "Cargo.lock"]);
+        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "native 1.2.3"]);
+        source
+    }
+
+    /// The catalog facts that the crates.io-native fixture's lock rule admits,
+    /// with the source rows the catalog retains for its two crates.io
+    /// identities.
+    struct NativeFixture {
+        /// Catalog directory, whose `objects/rows` hold the source rows.
+        root: PathBuf,
+        /// Version of the crates.io mirror the fixture's lock names.
+        dependency_version: Version,
+        /// Version of the earlier native release the fixture's lock names.
+        earlier_version: Version,
+        /// Archive checksum the catalog serves for the mirror.
+        dependency_checksum: String,
+        /// Archive checksum the catalog serves for the earlier release.
+        earlier_checksum: String,
+        /// SHA-256 of the mirror's retained source row.
+        dependency_row: String,
+        /// SHA-256 of the earlier release's retained source row.
+        earlier_row: String,
+    }
+
+    impl NativeFixture {
+        /// Writes the catalog's `objects/rows` and returns the fixture.
+        fn new(temporary: &TemporaryDirectory) -> Self {
+            let root = temporary.path().join("native-catalog");
+            let directory = root.join("objects/rows");
+            fs::create_dir_all(&directory).unwrap();
+            let dependency_checksum = native_mirror_checksum(NATIVE_DEPENDENCY);
+            let earlier_checksum = native_mirror_checksum(NATIVE_EARLIER);
+            let write = |row: &str| {
+                let sha256 = sha256_bytes(row.as_bytes());
+                fs::write(directory.join(format!("{sha256}.json")), row).unwrap();
+                sha256
+            };
+            let dependency_row = write(&format!(
+                "{{\"name\":{NATIVE_DEPENDENCY:?},\"vers\":\"1.0.0\",\"deps\":[],\"cksum\":{dependency_checksum:?},\"features\":{{}},\"yanked\":false}}\n"
+            ));
+            let earlier_row = write(&format!(
+                "{{\"name\":{NATIVE_EARLIER:?},\"vers\":\"0.9.0\",\"deps\":[],\"cksum\":{earlier_checksum:?},\"features\":{{}},\"yanked\":false}}\n"
+            ));
+            Self {
+                root,
+                dependency_version: Version::parse("1.0.0").unwrap(),
+                earlier_version: Version::parse("0.9.0").unwrap(),
+                dependency_checksum,
+                earlier_checksum,
+                dependency_row,
+                earlier_row,
+            }
+        }
+
+        /// Returns the catalog facts, with the archives the catalog locked for
+        /// `locked` served by the local registry before anything is packaged.
+        fn catalog<'a>(&'a self, locked: Vec<NativeLocked<'a>>) -> NativeCatalog<'a> {
+            NativeCatalog {
+                root: &self.root,
+                identities: self.identities(),
+                locked,
+            }
+        }
+
+        /// Returns the two active crates.io identities of the fixture's
+        /// catalog.
+        fn identities(&self) -> Vec<NativeIdentity<'_>> {
+            vec![
+                NativeIdentity {
+                    name: NATIVE_DEPENDENCY,
+                    version: &self.dependency_version,
+                    crate_sha256: &self.dependency_checksum,
+                    source_row_sha256: &self.dependency_row,
+                },
+                NativeIdentity {
+                    name: NATIVE_EARLIER,
+                    version: &self.earlier_version,
+                    crate_sha256: &self.earlier_checksum,
+                    source_row_sha256: &self.earlier_row,
+                },
+            ]
+        }
+
+        /// Returns a catalog that no longer serves the crate the fixture's lock
+        /// names, as a catalog that removed it does.
+        fn catalog_without_the_dependency(&self) -> NativeCatalog<'_> {
+            NativeCatalog {
+                root: &self.root,
+                identities: self
+                    .identities()
+                    .into_iter()
+                    .filter(|identity| identity.name != NATIVE_DEPENDENCY)
+                    .collect(),
+                locked: Vec::new(),
+            }
+        }
+
+        /// Returns a catalog that serves the dependency at another archive.
+        fn catalog_with_another_checksum<'a>(&'a self, checksum: &'a str) -> NativeCatalog<'a> {
+            NativeCatalog {
+                root: &self.root,
+                identities: self
+                    .identities()
+                    .into_iter()
+                    .map(|mut identity| {
+                        if identity.name == NATIVE_DEPENDENCY {
+                            identity.crate_sha256 = checksum;
+                        }
+                        identity
+                    })
+                    .collect(),
+                locked: Vec::new(),
+            }
+        }
+
+        /// Adds the archive and source row of one packaged crate to the
+        /// catalog's objects.
+        fn store(&self, materialization: &GitTagMaterialization) {
+            fs::create_dir_all(self.root.join("objects/rows")).unwrap();
+            fs::create_dir_all(self.root.join("objects/crates")).unwrap();
+            fs::write(
+                self.root
+                    .join("objects/rows")
+                    .join(format!("{}.json", materialization.source_row_sha256)),
+                &materialization.source_row_bytes,
+            )
+            .unwrap();
+            fs::write(
+                self.root
+                    .join("objects/crates")
+                    .join(format!("{}.crate", materialization.archive_sha256)),
+                &materialization.archive_bytes,
+            )
+            .unwrap();
+        }
+    }
+
+    /// Builds one approval of a native fixture's catalog.
+    fn native_approval(
+        name: &str,
+        version: &str,
+        archive_sha256: &str,
+        index_record_sha256: &str,
+        source: Source,
+    ) -> Approval {
+        Approval {
+            registry: "main".to_owned(),
+            category: "main/pkgre".parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse(version).unwrap(),
+            archive_sha256: archive_sha256.to_owned(),
+            index_record_sha256: index_record_sha256.to_owned(),
+            index_row_sha256: "01".repeat(32),
+            admission_sha256: None,
+            admitted_at: UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state: PackageState::Active,
+            source,
+            declared_in: PathBuf::from("main.lock"),
+        }
+    }
+
+    /// Returns the source of one Git-tag approval of a fixture repository.
+    fn native_git_source(name: &str, tag: &str, directory: &str) -> Source {
+        Source::GitTag {
+            repository: TEST_REPOSITORY.to_owned(),
+            tag: tag.to_owned(),
+            tag_oid: "11".repeat(20),
+            commit: "22".repeat(20),
+            package: name.to_owned(),
+            subdir: PathBuf::from(directory),
+            cargo_version: Version::parse(crate::policy::CARGO_VERSION).unwrap(),
+        }
+    }
+
+    /// Returns one crates.io identity of the native fixture, as the
+    /// reconciliation's resolver returns it.
+    fn native_mirror_resolved(name: &str, version: &Version) -> ResolvedPackage {
+        let archive_bytes = native_mirror_archive(name);
+        let checksum = sha256_bytes(&archive_bytes);
+        let mut source_row_bytes = serde_json::to_vec(&serde_json::json!({
+            "name": name,
+            "vers": version.to_string(),
+            "deps": [],
+            "cksum": checksum,
+            "features": {},
+            "yanked": false,
+            "pubtime": "2026-01-01T00:00:00Z",
+        }))
+        .unwrap();
+        source_row_bytes.push(b'\n');
+        ResolvedPackage {
+            name: name.to_owned(),
+            version: version.clone(),
+            archive_bytes,
+            source_row_bytes,
+            published_at: Some(UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap()),
+            source: LockedSource::CratesIo {},
+        }
+    }
+
+    /// Returns one workspace member of a native tag's metadata, with the path
+    /// dependencies that `dependencies` names.
+    fn native_metadata_member(name: &str, dependencies: &[&str]) -> MetadataPackage {
+        MetadataPackage {
+            name: name.to_owned(),
+            version: Version::parse("1.2.3").unwrap(),
+            manifest_path: PathBuf::from(format!("crates/{name}/Cargo.toml")),
+            dependencies: dependencies
+                .iter()
+                .map(|dependency| MetadataDependency {
+                    name: (*dependency).to_owned(),
+                    source: None,
+                    req: "=1.2.3".to_owned(),
+                    kind: None,
+                    rename: None,
+                    optional: false,
+                    uses_default_features: true,
+                    features: Vec::new(),
+                    target: None,
+                    registry: None,
+                    path: Some(PathBuf::from(format!("../{dependency}"))),
+                })
+                .collect(),
+            features: BTreeMap::new(),
+            links: None,
+            rust_version: None,
+            publish: None,
+            readme: None,
+            license_file: None,
+            targets: Vec::new(),
+        }
+    }
+
+    /// Admits the native fixture's two crates.io mirrors into a new catalog, and
+    /// returns the resolver that serves them.
+    fn admit_native_mirrors<'a>(
+        catalog: &Path,
+        root: &'a Path,
+        source: &'a Path,
+        index: &'a str,
+    ) -> TestCatalogResolver<'a> {
+        write_native_test_catalog(catalog, NATIVE_MIRROR_DECLARATIONS);
+        let resolver = TestCatalogResolver {
+            root,
+            fetch_repository: source.to_str().unwrap(),
+            index,
+            native_mirrors: true,
+        };
+        crate::lock::reconcile_direct_with(catalog, &resolver).unwrap();
+        resolver
+    }
+
+    /// Locks the native fixture's tag into a catalog whose crates.io mirrors are
+    /// admitted already, and returns the resolver.
+    fn lock_native_tag<'a>(
+        catalog: &Path,
+        root: &'a Path,
+        source: &'a Path,
+        index: &'a str,
+    ) -> TestCatalogResolver<'a> {
+        let resolver = admit_native_mirrors(catalog, root, source, index);
+        write_native_test_catalog(
+            catalog,
+            &format!("{NATIVE_MIRROR_DECLARATIONS}{}", native_tag_declarations()),
+        );
+        crate::lock::reconcile_direct_with(catalog, &resolver).unwrap();
+        resolver
+    }
+
+    /// Resolves the native fixture's released crates with `native` and the
+    /// catalog's published set.
+    fn resolve_native_group(
+        root: &Path,
+        source: &Path,
+        index: &str,
+        native: Option<NativeCatalog<'_>>,
+        packages: &[&str],
+        published: &[PublishedPackage<'_>],
+    ) -> Result<Vec<GitTagMaterialization>> {
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        resolve_git_tag_group_from_file(&FileTagRequest {
+            root,
+            repository: TEST_REPOSITORY,
+            tag: TEST_TAG,
+            packages,
+            published: Some(published),
+            cargo_version: &cargo_version,
+            fetch_repository: source.to_str().unwrap(),
+            registry_index: index,
+            allow_retired_registries: false,
+            native,
+        })
+    }
+
+    /// Returns the native fixture's three released crates, unbound.
+    fn native_published() -> Vec<PublishedPackage<'static>> {
+        ["native-first", "native-second", "native-third"]
+            .into_iter()
+            .map(|name| PublishedPackage {
+                name,
+                locked_sha256: None,
+            })
+            .collect()
+    }
+
+    /// Packages the native fixture's crates as one group against the test
+    /// index, through Cargo's crates.io testing hook, and returns the archives
+    /// by package name.
+    fn package_native_group(
+        temporary: &TemporaryDirectory,
+        source: &Path,
+        index: &str,
+        packages: &[&str],
+    ) -> BTreeMap<String, Vec<u8>> {
+        let checkout = temporary.path().join("native-group-checkout");
+        run_test_command(
+            Command::new("git")
+                .args(["clone", "--quiet"])
+                .arg(source)
+                .arg(&checkout),
+        );
+        let home = temporary.path().join("native-group-home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(
+            home.join("config.toml"),
+            "[registries.crates-io]\nprotocol = \"git\"\n",
+        )
+        .unwrap();
+        let cargo = pinned_cargo(&Version::parse(crate::policy::CARGO_VERSION).unwrap()).unwrap();
+        let environment = ChildEnvironment::capture(&home, &cargo)
+            .unwrap()
+            .with_variable("__CARGO_TEST_CRATES_IO_URL_DO_NOT_USE_THIS", index);
+        let work = temporary.path().join("native-group-work");
+        fs::create_dir_all(&work).unwrap();
+        let target = temporary.path().join("native-group-target");
+        let mut command = Command::new(&cargo);
+        environment.apply(&mut command);
+        command
+            .current_dir(&work)
+            .args(["package", "--no-verify", "--locked", "--manifest-path"])
+            .arg(checkout.join("Cargo.toml"))
+            .arg("--target-dir")
+            .arg(&target);
+        for package in packages {
+            command.arg("--package").arg(package);
+        }
+        run_test_command(&mut command);
+        packages
+            .iter()
+            .map(|package| {
+                let archive = target
+                    .join("package")
+                    .join(format!("{package}-1.2.3.crate"));
+                (
+                    (*package).to_owned(),
+                    read_bounded_archive(&archive).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// Returns the lock file that one packaged archive holds.
+    fn packaged_lock_of(archive: &[u8], name: &str, version: &Version) -> LockFile {
+        let archive =
+            crate::update::read_crate_archive(name, version, archive, &[PACKAGED_LOCK]).unwrap();
+        toml::from_slice(archive.contents.get(PACKAGED_LOCK).unwrap()).unwrap()
+    }
+
+    /// Creates one tagged crates.io-native fixture whose Gitlink is either
+    /// inside the released crate or below the member that is not released and
+    /// named by the released crate's readme.
+    fn create_native_gitlink_release(temporary: &TemporaryDirectory, readme: bool) -> PathBuf {
+        let name = if readme { "readme" } else { "released" };
+        let source = temporary.path().join(format!("native-gitlink-{name}"));
+        fs::create_dir_all(source.join("crates/demo/src")).unwrap();
+        fs::create_dir_all(source.join("tools/src")).unwrap();
+        fs::write(
+            source.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/demo\", \"tools\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        let mut manifest = String::from(
+            "[package]\nname = \"pkgre-demo\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\n",
+        );
+        if readme {
+            manifest.push_str("readme = \"../../tools/vendor/README.md\"\n");
+        }
+        fs::write(source.join("crates/demo/Cargo.toml"), manifest).unwrap();
+        fs::write(
+            source.join("crates/demo/src/lib.rs"),
+            "pub fn answer() -> u32 { 42 }\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("tools/Cargo.toml"),
+            "[package]\nname = \"pkgre-tools\"\nversion = \"1.2.3\"\nedition = \"2024\"\nlicense = \"MIT\"\npublish = false\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("tools/src/lib.rs"),
+            "pub fn tool() -> u32 { 1 }\n",
+        )
+        .unwrap();
+        run_test_command(Command::new("git").arg("init").arg("--quiet").arg(&source));
+        test_git(&source, &["add", "."]);
+        test_git(&source, &["commit", "--quiet", "-m", "release"]);
+        let home = temporary.path().join(format!("native-gitlink-home-{name}"));
+        run_test_command(
+            Command::new("cargo")
+                .current_dir(&source)
+                .env("CARGO_HOME", &home)
+                .arg("generate-lockfile"),
+        );
+        test_git(&source, &["add", "Cargo.lock"]);
+        test_git(&source, &["commit", "--quiet", "-m", "lock"]);
+        let linked = test_git(&source, &["rev-parse", "HEAD"]).trim().to_owned();
+        let path = if readme {
+            "tools/vendor"
+        } else {
+            "crates/demo/vendor"
+        };
+        test_git(
+            &source,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{linked},{path}"),
+            ],
+        );
+        test_git(&source, &["commit", "--quiet", "-m", "gitlink"]);
+        test_git(&source, &["tag", "-a", TEST_TAG, "-m", "pkgre-demo 1.2.3"]);
+        source
+    }
+
+    /// Writes a catalog that publishes the native fixture's tag for its three
+    /// released crates, beside the self-publishing declarations that make the
+    /// repository native, and reconciles it from the local repository.
+    /// The declarations of the native fixture's two crates.io mirrors, below
+    /// its `main/pkgre` category.
+    const NATIVE_MIRROR_DECLARATIONS: &str =
+        "[categories.pkgre.mirror]\nfixture-dep = [\"1.0.0\"]\nfixture-earlier = [\"0.9.0\"]\n";
+
+    /// Returns the declarations of the native fixture's tag, below its
+    /// `main/pkgre` category.
+    fn native_tag_declarations() -> String {
+        use std::fmt::Write as _;
+
+        let mut declarations = String::new();
+        for name in ["native-first", "native-second", "native-third"] {
+            write!(
+                declarations,
+                "\n[categories.pkgre.publish.{name}]\ngit = {TEST_REPOSITORY:?}\ntags = [{TEST_TAG:?}]\n"
+            )
+            .unwrap();
+        }
+        declarations
+    }
+
+    /// Writes the native fixture's catalog with `declarations` below its
+    /// `main/pkgre` category.
+    fn write_native_test_catalog(catalog: &Path, declarations: &str) {
+        let index_url = crate::policy::canonical_registry_index("main");
+        let download = crate::download::router_download_template("main");
+        fs::create_dir_all(catalog).unwrap();
+        fs::write(
+            catalog.join("main.toml"),
+            format!(
+                "schema = 5\n\n[registry]\nname = \"main\"\nindex = {index_url:?}\n\
+                 download = {download:?}\naudience = \"public\"\ncargo-version = {cargo_version:?}\n\n\
+                 [categories.pkgre]\nmay-depend-on = [\"main/pkgre\"]\n{declarations}",
+                cargo_version = crate::policy::CARGO_VERSION,
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Writes the self-publishing declarations that make one fixture
+    /// repository native, beside its catalog.
+    fn write_native_declarations(catalog: &Path) {
+        let directory = catalog.parent().unwrap().join("self-publish");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("crates-io.toml"),
+            format!(
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = {TEST_REPOSITORY:?}\ntag-prefix = \"release/pkgre-demo/v\"\nmanifests = \"crates-io\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_packages_offline_to_the_group_bytes() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-tag").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let materializations = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap();
+
+        let names = materializations
+            .iter()
+            .map(|materialization| materialization.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, packages);
+        for materialization in &materializations {
+            assert_eq!(materialization.version, Version::parse("1.2.3").unwrap());
+        }
+        assert_eq!(materializations[0].path, Path::new("crates/native-first"));
+
+        let group = package_native_group(&temporary, &source, &index, &packages);
+        for materialization in &materializations {
+            assert_eq!(
+                materialization.archive_bytes, group[&materialization.name],
+                "{} packages to the bytes of the same tag packaged as one group",
+                materialization.name
+            );
+        }
+
+        let first = &materializations[0];
+        let third = &materializations[2];
+        let lock = packaged_lock_of(&first.archive_bytes, &first.name, &first.version);
+        let sibling = lock
+            .packages
+            .iter()
+            .find(|entry| entry.name == "native-third")
+            .unwrap();
+        assert_eq!(sibling.source.as_deref(), Some(CRATES_IO_INDEX_SOURCE));
+        assert_eq!(
+            sibling.checksum.as_deref(),
+            Some(third.archive_sha256.as_str())
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_package_the_catalog_removed() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-removed").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog_without_the_dependency()),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("fixture-dep 1.0.0"), "{message}");
+        assert!(
+            message.contains("is not an active identity of the catalog"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_package_at_another_checksum() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-checksum").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let checksum = "00".repeat(32);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog_with_another_checksum(&checksum)),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("but the catalog serves it at 0000"),
+            "{message}"
+        );
+        assert!(
+            message.contains("another checksum are refused"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_package_from_git() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-git-source").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("Cargo.lock"),
+            "source = \"registry+https://github.com/rust-lang/crates.io-index\"",
+            "source = \"git+https://example.invalid/fork\"",
+        );
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("from git+https://example.invalid/fork"),
+            "{message}"
+        );
+        assert!(message.contains("names the crates.io source"), "{message}");
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_package_from_another_registry() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-registry").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("Cargo.lock"),
+            "source = \"registry+https://github.com/rust-lang/crates.io-index\"",
+            "source = \"registry+https://example.invalid/index\"",
+        );
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("from registry+https://example.invalid/index"),
+            "{message}"
+        );
+        assert!(message.contains("names the crates.io source"), "{message}");
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_package_without_a_source_that_is_no_member() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-no-source").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let lock = fs::read_to_string(source.join("Cargo.lock")).unwrap();
+        fs::write(
+            source.join("Cargo.lock"),
+            format!("{lock}\n[[package]]\nname = \"fixture-local\"\nversion = \"1.0.0\"\n"),
+        )
+        .unwrap();
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("records fixture-local 1.0.0 without a source"),
+            "{message}"
+        );
+        assert!(
+            message.contains("no member of the workspace has that identity"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_package_without_a_checksum() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-no-checksum").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("Cargo.lock"),
+            &format!(
+                "checksum = {:?}\n",
+                native_mirror_checksum(NATIVE_DEPENDENCY)
+            ),
+            "",
+        );
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("fixture-dep 1.0.0"), "{message}");
+        assert!(message.contains("without a checksum"), "{message}");
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_lock_without_a_version() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-lock-version").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        // Cargo omits the key in a version-1 lock, which keeps its checksums in
+        // `[metadata]`.
+        replace_in_file(&source.join("Cargo.lock"), "version = 4\n", "");
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("is version 1"), "{message}");
+        assert!(message.contains("version 3 or later"), "{message}");
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_caret_sibling_requirement() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-caret").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("crates/native-first/Cargo.toml"),
+            "version = \"=1.2.3\"",
+            "version = \"1.2.3\"",
+        );
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("must require exactly \"=1.2.3\""),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_path_dependency_without_a_version() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-no-version").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("crates/native-first/Cargo.toml"),
+            "native-third = { path = \"../native-third\", version = \"=1.2.3\" }",
+            "native-third = { path = \"../native-third\" }",
+        );
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("must require exactly \"=1.2.3\""),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_publish_list() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-publish-list").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("crates/native-extra/Cargo.toml"),
+            "publish = false",
+            "publish = [\"crates-io\"]",
+        );
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("native-extra"), "{message}");
+        assert!(
+            message.contains("a list of registries is refused"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_catalog_that_declares_only_some_released_crates() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-missing").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-third"];
+        let published = [
+            PublishedPackage {
+                name: "native-first",
+                locked_sha256: None,
+            },
+            PublishedPackage {
+                name: "native-third",
+                locked_sha256: None,
+            },
+        ];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &published,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("native-second"), "{message}");
+        assert!(
+            message.contains("the catalog publishes the tag for"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_catalog_that_declares_an_unreleased_crate() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-extra").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+        let extra = "00".repeat(32);
+        let published = vec![
+            PublishedPackage {
+                name: "native-first",
+                locked_sha256: None,
+            },
+            PublishedPackage {
+                name: "native-second",
+                locked_sha256: None,
+            },
+            PublishedPackage {
+                name: "native-third",
+                locked_sha256: None,
+            },
+            PublishedPackage {
+                name: "native-extra",
+                locked_sha256: Some(&extra),
+            },
+        ];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &published,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("native-extra"), "{message}");
+        assert!(
+            message.contains("a crate the tag does not release"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_dev_dependency_cycle() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-cycle").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        replace_in_file(
+            &source.join("crates/native-third/Cargo.toml"),
+            "license = \"MIT\"\n",
+            "license = \"MIT\"\n\n[dev-dependencies]\nnative-first = { path = \"../native-first\", version = \"=1.2.3\" }\n",
+        );
+        generate_native_lock(&temporary, &source, &index);
+        commit_and_retag(&source);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("form a dependency cycle"), "{message}");
+        assert!(message.contains("no packaging order"), "{message}");
+    }
+
+    #[test]
+    fn a_crates_io_native_shaped_tag_is_refused_without_the_native_mode() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-pkgre-mode").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let error =
+            resolve_native_group(&root, &source, &index, None, &packages, &native_published())
+                .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("first-party package must set publish = [\"pkgre\"] exactly"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_gitlink_inside_a_released_crate() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-gitlink").unwrap();
+        let source = create_native_gitlink_release(&temporary, false);
+        let catalog = temporary.path().join("native-catalog");
+        let native = NativeCatalog {
+            root: &catalog,
+            identities: Vec::new(),
+            locked: Vec::new(),
+        };
+        let published = [PublishedPackage {
+            name: "pkgre-demo",
+            locked_sha256: None,
+        }];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            "file://unused",
+            Some(native),
+            &["pkgre-demo"],
+            &published,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("inside the released package"), "{message}");
+        assert!(message.contains("crates/demo/vendor"), "{message}");
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_refuses_a_readme_below_a_gitlink() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-gitlink-readme").unwrap();
+        let source = create_native_gitlink_release(&temporary, true);
+        let catalog = temporary.path().join("native-catalog");
+        let native = NativeCatalog {
+            root: &catalog,
+            identities: Vec::new(),
+            locked: Vec::new(),
+        };
+        let published = [PublishedPackage {
+            name: "pkgre-demo",
+            locked_sha256: None,
+        }];
+
+        let error = resolve_native_group(
+            &root,
+            &source,
+            "file://unused",
+            Some(native),
+            &["pkgre-demo"],
+            &published,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("readme"), "{message}");
+        assert!(message.contains("tools/vendor"), "{message}");
+        assert!(
+            message.contains("Cargo copies such a file into the archive"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn lock_reads_the_native_declarations_beside_the_catalog() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-lock").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let catalog = temporary.path().join("catalog");
+        write_native_declarations(&catalog);
+        write_native_test_catalog(&catalog, &native_tag_declarations());
+
+        let error = crate::lock::reconcile_admitted_with(
+            &catalog,
+            &[],
+            &TestCatalogResolver {
+                root: &root,
+                fetch_repository: source.to_str().unwrap(),
+                index: &index,
+                native_mirrors: false,
+            },
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("fixture-dep 1.0.0"), "{message}");
+        assert!(
+            message.contains("is not an active identity of the catalog"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn the_native_catalog_admits_only_active_identities_of_native_repositories() {
+        let temporary =
+            TemporaryDirectory::new_in(&uncovered_temporary_root(), "pkgre-native-catalog")
+                .unwrap();
+        let catalog = temporary.path().join("catalog");
+        fs::create_dir_all(&catalog).unwrap();
+        let directory = temporary.path().join("self-publish");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("crates-io.toml"),
+            format!(
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = {TEST_REPOSITORY:?}\ntag-prefix = \"release/pkgre-demo/v\"\nmanifests = \"crates-io\"\n\n[[repositories]]\ngit = \"https://example.invalid/pkgre-mode\"\ntag-prefix = \"v\"\n"
+            ),
+        )
+        .unwrap();
+        let checksum = "01".repeat(32);
+        let mut removed = native_approval(
+            "native-removed",
+            "1.2.3",
+            &checksum,
+            &checksum,
+            native_git_source("native-removed", TEST_TAG, "crates/native-removed"),
+        );
+        removed.state = PackageState::Removed;
+        let approvals = vec![
+            native_approval(
+                NATIVE_DEPENDENCY,
+                "1.0.0",
+                &native_mirror_checksum(NATIVE_DEPENDENCY),
+                &checksum,
+                Source::CratesIo,
+            ),
+            native_approval(
+                NATIVE_EARLIER,
+                "0.9.0",
+                &checksum,
+                &checksum,
+                native_git_source(
+                    NATIVE_EARLIER,
+                    "release/pkgre-demo/v0.9.0",
+                    "crates/native-earlier",
+                ),
+            ),
+            native_approval(
+                "native-first",
+                "1.2.3",
+                &checksum,
+                &checksum,
+                native_git_source("native-first", TEST_TAG, "crates/native-first"),
+            ),
+            native_approval(
+                "pkgre-mode-crate",
+                "1.2.3",
+                &checksum,
+                &checksum,
+                Source::GitTag {
+                    repository: "https://example.invalid/pkgre-mode".to_owned(),
+                    tag: "v1.2.3".to_owned(),
+                    tag_oid: "11".repeat(20),
+                    commit: "22".repeat(20),
+                    package: "pkgre-mode-crate".to_owned(),
+                    subdir: PathBuf::from("crates/pkgre-mode-crate"),
+                    cargo_version: Version::parse(crate::policy::CARGO_VERSION).unwrap(),
+                },
+            ),
+            removed,
+        ];
+        let repositories = crate::self_publish::NativeRepositories::load_beside(&catalog).unwrap();
+
+        let native = repositories
+            .catalog(&catalog, &approvals, "main", TEST_REPOSITORY, TEST_TAG)
+            .unwrap();
+
+        let identities = native
+            .identities
+            .iter()
+            .map(|identity| identity.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            identities,
+            [NATIVE_DEPENDENCY, NATIVE_EARLIER],
+            "a crate of the tag being reproduced is bound by its locked archive, not admitted as an identity"
+        );
+        let locked = native
+            .locked
+            .iter()
+            .map(|locked| locked.name)
+            .collect::<Vec<_>>();
+        assert_eq!(locked, ["native-first"]);
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_locks_through_the_reconciliation() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-lock-tag").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let catalog = temporary.path().join("catalog");
+        write_native_declarations(&catalog);
+
+        lock_native_tag(&catalog, &root, &source, &index);
+
+        let catalog = Catalog::load(&catalog).unwrap();
+        let locked = catalog
+            .approvals
+            .iter()
+            .filter(|approval| {
+                matches!(&approval.source, Source::GitTag { tag, .. } if tag == TEST_TAG)
+            })
+            .map(|approval| (approval.name.as_str(), approval.state))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            locked,
+            [
+                ("native-first", PackageState::Active),
+                ("native-second", PackageState::Active),
+                ("native-third", PackageState::Active),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_crate_added_to_a_locked_native_tag_is_refused() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-lock-added").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let catalog = temporary.path().join("catalog");
+        write_native_declarations(&catalog);
+        let resolver = lock_native_tag(&catalog, &root, &source, &index);
+        let extra = format!(
+            "\n[categories.pkgre.publish.native-extra]\ngit = {TEST_REPOSITORY:?}\ntags = [{TEST_TAG:?}]\n"
+        );
+        write_native_test_catalog(
+            &catalog,
+            &format!(
+                "{NATIVE_MIRROR_DECLARATIONS}{}{extra}",
+                native_tag_declarations()
+            ),
+        );
+
+        let error = crate::lock::reconcile_direct_with(&catalog, &resolver).unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("already locks a crate in main"),
+            "{message}"
+        );
+        assert!(
+            message.contains("a crate added to the tag later is refused"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn reproduce_git_tags_loads_the_candidates_native_declarations() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-reproduce-load").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let catalog_root = temporary.path().join("catalog");
+        write_native_declarations(&catalog_root);
+        lock_native_tag(&catalog_root, &root, &source, &index);
+        let catalog = Catalog::load(&catalog_root).unwrap();
+        let group = catalog
+            .approvals
+            .iter()
+            .filter(|approval| matches!(&approval.source, Source::GitTag { .. }))
+            .collect::<Vec<_>>();
+        // The reproduction loads the declarations beside its candidate before it
+        // fetches anything, so a malformed file fails it without a network.
+        fs::write(
+            catalog_root
+                .parent()
+                .unwrap()
+                .join("self-publish/crates-io.toml"),
+            "schema = 1\n",
+        )
+        .unwrap();
+
+        let error = crate::package::reproduce_approved_git_group(&catalog, &group).unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("self-publishing config"), "{message}");
+        assert!(
+            message.contains("must declare at least one crates.io owner"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_cycle_between_normal_dependencies() {
+        let metadata = vec![
+            native_metadata_member("native-first", &["native-third"]),
+            native_metadata_member("native-third", &["native-first"]),
+        ];
+        let released = BTreeSet::from(["native-first", "native-third"]);
+
+        let error = native_packaging_order(&metadata, &released, TEST_TAG).unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("form a dependency cycle"), "{message}");
+        assert!(
+            message.contains("native-first -> native-third"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_tag_reproduces_offline_from_the_catalogs_objects() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-reproduce").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let materializations = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap();
+        for materialization in &materializations {
+            fixture.store(materialization);
+        }
+        write_native_declarations(&fixture.root);
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let mut approvals = materializations
+            .iter()
+            .map(|materialization| test_approval(materialization, &cargo_version))
+            .collect::<Vec<_>>();
+        approvals.push(native_approval(
+            NATIVE_DEPENDENCY,
+            "1.0.0",
+            &native_mirror_checksum(NATIVE_DEPENDENCY),
+            &fixture.dependency_row,
+            Source::CratesIo,
+        ));
+        approvals.push(native_approval(
+            NATIVE_EARLIER,
+            "0.9.0",
+            &fixture.earlier_checksum,
+            &fixture.earlier_row,
+            native_git_source(
+                NATIVE_EARLIER,
+                "release/pkgre-demo/v0.9.0",
+                "crates/native-earlier",
+            ),
+        ));
+        let repositories =
+            crate::self_publish::NativeRepositories::load_beside(&fixture.root).unwrap();
+        let native = repositories
+            .catalog(&fixture.root, &approvals, "main", TEST_REPOSITORY, TEST_TAG)
+            .unwrap();
+        let group = approvals[..materializations.len()]
+            .iter()
+            .collect::<Vec<_>>();
+
+        let reproduced = reproduce_approved_git_group_from_file_in(
+            &root,
+            &approvals,
+            &group,
+            Some(native),
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap();
+
+        assert_eq!(reproduced.len(), materializations.len());
+        for (original, reproduced) in materializations.iter().zip(&reproduced) {
+            assert_eq!(reproduced.archive_bytes, original.archive_bytes);
+            assert_eq!(reproduced.source_row_bytes, original.source_row_bytes);
+            assert_eq!(reproduced.archive_sha256, original.archive_sha256);
+            assert_eq!(reproduced.source_row_sha256, original.source_row_sha256);
+        }
+    }
+
+    #[test]
+    fn a_crates_io_native_reproduction_refuses_an_approval_whose_archive_changed() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-tamper").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let materializations = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap();
+        for materialization in &materializations {
+            fixture.store(materialization);
+        }
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let mut approvals = materializations
+            .iter()
+            .map(|materialization| test_approval(materialization, &cargo_version))
+            .collect::<Vec<_>>();
+        approvals[1].archive_sha256 = "00".repeat(32);
+        let native = NativeCatalog {
+            root: &fixture.root,
+            identities: fixture.identities(),
+            locked: materializations
+                .iter()
+                .map(|materialization| NativeLocked {
+                    name: &materialization.name,
+                    version: &materialization.version,
+                    archive_sha256: &materialization.archive_sha256,
+                    source_row_sha256: &materialization.source_row_sha256,
+                })
+                .collect(),
+        };
+        let group = approvals.iter().collect::<Vec<_>>();
+
+        let error = reproduce_approved_git_group_from_file_in(
+            &root,
+            &approvals,
+            &group,
+            Some(native),
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Git archive hash changed for native-second"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_crates_io_native_reproduction_refuses_an_object_that_does_not_hash() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-native-object").unwrap();
+        let index = create_test_index(&temporary);
+        publish_native_dependencies(&index);
+        let source = create_native_release(&temporary, &index);
+        let fixture = NativeFixture::new(&temporary);
+        let packages = ["native-first", "native-second", "native-third"];
+
+        let materializations = resolve_native_group(
+            &root,
+            &source,
+            &index,
+            Some(fixture.catalog(Vec::new())),
+            &packages,
+            &native_published(),
+        )
+        .unwrap();
+        for materialization in &materializations {
+            fixture.store(materialization);
+        }
+        fs::write(
+            fixture
+                .root
+                .join("objects/crates")
+                .join(format!("{}.crate", materializations[1].archive_sha256)),
+            b"not the archive the catalog locked",
+        )
+        .unwrap();
+        write_native_declarations(&fixture.root);
+        let cargo_version = Version::parse(crate::policy::CARGO_VERSION).unwrap();
+        let mut approvals = materializations
+            .iter()
+            .map(|materialization| test_approval(materialization, &cargo_version))
+            .collect::<Vec<_>>();
+        approvals.push(native_approval(
+            NATIVE_DEPENDENCY,
+            "1.0.0",
+            &native_mirror_checksum(NATIVE_DEPENDENCY),
+            &fixture.dependency_row,
+            Source::CratesIo,
+        ));
+        approvals.push(native_approval(
+            NATIVE_EARLIER,
+            "0.9.0",
+            &fixture.earlier_checksum,
+            &fixture.earlier_row,
+            native_git_source(
+                NATIVE_EARLIER,
+                "release/pkgre-demo/v0.9.0",
+                "crates/native-earlier",
+            ),
+        ));
+        let repositories =
+            crate::self_publish::NativeRepositories::load_beside(&fixture.root).unwrap();
+        let native = repositories
+            .catalog(&fixture.root, &approvals, "main", TEST_REPOSITORY, TEST_TAG)
+            .unwrap();
+        let group = approvals[..materializations.len()]
+            .iter()
+            .collect::<Vec<_>>();
+
+        let error = reproduce_approved_git_group_from_file_in(
+            &root,
+            &approvals,
+            &group,
+            Some(native),
+            source.to_str().unwrap(),
+            &index,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("does not hash to"), "{message}");
+    }
+
     /// Returns the first of `TMPDIR`, `/tmp`, and `/var/tmp` that no Cargo
     /// configuration covers.
     ///
@@ -4321,6 +6928,7 @@ mod tests {
             fetch_repository: source.to_str().unwrap(),
             registry_index: index,
             allow_retired_registries: false,
+            native: None,
         })
     }
 
@@ -5007,7 +7615,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         let group =
-            resolve_git_tag_group(repository, tag, &packages, &published, &cargo_version).unwrap();
+            resolve_git_tag_group(repository, tag, &packages, &published, &cargo_version, None)
+                .unwrap();
         assert_eq!(group.len(), locked.len());
         for (materialization, (name, archive_sha256, source_row_sha256)) in group.iter().zip(locked)
         {
@@ -5166,6 +7775,7 @@ mod tests {
             |catalog, group| {
                 reproduced.push((
                     catalog
+                        .approvals
                         .iter()
                         .map(|approval| format!("{}/{}", approval.name, approval.version))
                         .collect::<Vec<_>>(),
@@ -5176,8 +7786,9 @@ mod tests {
                 ));
                 reproduce_approved_git_group_from_file_in(
                     &root,
-                    catalog,
+                    &catalog.approvals,
                     group,
+                    None,
                     source.to_str().unwrap(),
                     &index,
                 )
@@ -5233,8 +7844,9 @@ mod tests {
                 |catalog, group| {
                     reproduce_approved_git_group_from_file_in(
                         &root,
-                        catalog,
+                        &catalog.approvals,
                         group,
+                        None,
                         source.to_str().unwrap(),
                         &index,
                     )
@@ -5424,6 +8036,7 @@ mod tests {
             &uncovered_temporary_root(),
             &catalog,
             &group,
+            None,
             refuser_before_packaging,
         )
         .unwrap_err();
@@ -5454,6 +8067,7 @@ mod tests {
             &uncovered_temporary_root(),
             &catalog,
             &group,
+            None,
             refuser_before_packaging,
         )
         .unwrap_err();
@@ -5479,6 +8093,7 @@ mod tests {
             &uncovered_temporary_root(),
             &catalog,
             &group,
+            None,
             refuser_before_packaging,
         )
         .unwrap_err();
@@ -5602,6 +8217,7 @@ mod tests {
                 root,
                 fetch_repository,
                 index,
+                native_mirrors: false,
             },
         )
         .unwrap();
@@ -5613,10 +8229,16 @@ mod tests {
         root: &'a Path,
         fetch_repository: &'a str,
         index: &'a str,
+        /// Whether the resolver serves the native fixture's two crates.io
+        /// identities, for a reconciliation that admits them.
+        native_mirrors: bool,
     }
 
     impl Resolver for TestCatalogResolver<'_> {
         fn resolve_mirror(&self, name: &str, version: &Version) -> Result<ResolvedPackage> {
+            if self.native_mirrors {
+                return Ok(native_mirror_resolved(name, version));
+            }
             bail!("a test catalog resolves no crates.io identity, not {name} {version}")
         }
 
@@ -5627,6 +8249,7 @@ mod tests {
             packages: &[&str],
             published: &[PublishedPackage<'_>],
             cargo_version: &Version,
+            native: Option<&NativeCatalog<'_>>,
         ) -> Result<Vec<ResolvedPackage>> {
             let materializations = resolve_git_tag_group_from_file(&FileTagRequest {
                 root: self.root,
@@ -5638,6 +8261,7 @@ mod tests {
                 fetch_repository: self.fetch_repository,
                 registry_index: self.index,
                 allow_retired_registries: false,
+                native: native.cloned(),
             })?;
             materializations
                 .into_iter()
