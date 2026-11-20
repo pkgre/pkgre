@@ -91,6 +91,7 @@ test("unready serving reports unavailable without dispatch", async () => {
     assert.equal(report.mode, "redirect");
     assert.equal(report.schema, 1);
     assert.equal(typeof report.uptimeSeconds, "number");
+    assert.equal(report.watcher, null, "a static catalog has no watcher");
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
@@ -205,6 +206,7 @@ test("admin endpoints enforce method and path policy", async () => {
       ready: true,
       schema: 1,
       uptimeSeconds: report.uptimeSeconds,
+      watcher: null,
     });
     assert.equal(typeof report.uptimeSeconds, "number");
 
