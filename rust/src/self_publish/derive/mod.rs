@@ -474,7 +474,7 @@ pub(super) fn derive_release_in(
     )?;
     ensure_release_members(&workspace, released, &release.tag)?;
     let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
-    let published = published_crates(&workspace, released, config, &release.tag)?;
+    let published = published_crates(&workspace, released, config, &release.tag, &release.git)?;
     let curated_index = cargo::curated_index(&registry_sources)?;
     let mut expectations =
         Expectations::build(&lock, catalog, config, earlier, &published, &curated_index)?;
@@ -731,6 +731,7 @@ fn published_crates(
     released: &[ReleasedCrate],
     config: &CratesIoConfig,
     tag: &str,
+    git: &str,
 ) -> Result<BTreeMap<String, String>> {
     let mut published = BTreeMap::new();
     let mut used: BTreeMap<String, String> = BTreeMap::new();
@@ -749,7 +750,7 @@ fn published_crates(
             package.version
         );
         validate_tag_version(tag, &member.version)?;
-        let crates_io_name = config.effective_name(&package.name);
+        let crates_io_name = config.effective_name(&package.name, git);
         name::validate(&crates_io_name)
             .with_context(|| format!("validate the crates.io name of {}", package.name))?;
         let key = name::canonical(&crates_io_name);

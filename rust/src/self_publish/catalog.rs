@@ -1,7 +1,7 @@
 //! The catalog facts that the self-publishing state is checked and derived
 //! against.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
@@ -306,26 +306,28 @@ pub(crate) fn release_of_group(
     Ok(release)
 }
 
-/// Returns the package names that a self-publishing repository publishes.
+/// Returns the package names that a self-publishing repository publishes, and
+/// the repository each one comes from.
 ///
 /// A publish declaration counts even before its first tag, so that a name can be
 /// declared and validated ahead of the crate's first release.
 pub(crate) fn published_names<'a>(
     catalog: &'a CatalogSnapshot,
     config: &'a CratesIoConfig,
-) -> BTreeSet<&'a str> {
-    let mut names = catalog
-        .identities
-        .iter()
-        .filter(|identity| release_of(config, identity).is_some())
-        .map(|identity| identity.name.as_str())
-        .collect::<BTreeSet<_>>();
-    names.extend(
-        catalog
-            .publish_declarations
-            .iter()
-            .filter(|(_, git)| config.repository(git).is_some())
-            .map(|(name, _)| name.as_str()),
-    );
+) -> BTreeMap<&'a str, &'a str> {
+    let mut names = BTreeMap::new();
+    for identity in &catalog.identities {
+        let Some((_, release)) = release_of(config, identity) else {
+            continue;
+        };
+        names
+            .entry(identity.name.as_str())
+            .or_insert(release.git.as_str());
+    }
+    for (name, git) in &catalog.publish_declarations {
+        if config.repository(git).is_some() {
+            names.entry(name.as_str()).or_insert(git.as_str());
+        }
+    }
     names
 }

@@ -45,6 +45,40 @@ pub(crate) struct RepositoryDeclaration {
     pub(crate) git: String,
     /// Prefix that turns a version into a release tag.
     pub(crate) tag_prefix: String,
+    /// Registry for which the repository's release tags keep their manifests;
+    /// absent means `pkgre`.
+    #[serde(default)]
+    pub(crate) manifests: Option<Manifests>,
+}
+
+/// The registry for which a self-publishing repository's release tags are written.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Manifests {
+    /// Release tags carry manifests rewritten for the `pkgre` registry.
+    #[default]
+    Pkgre,
+    /// Release tags keep plain crates.io manifests, and one archive serves both
+    /// registries.
+    CratesIo,
+}
+
+impl Manifests {
+    /// Returns the value that `crates-io.toml` spells.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Pkgre => "pkgre",
+            Self::CratesIo => "crates-io",
+        }
+    }
+}
+
+impl RepositoryDeclaration {
+    /// Returns the registry for which the repository's release tags keep their
+    /// manifests.
+    pub(crate) fn manifests(&self) -> Manifests {
+        self.manifests.unwrap_or_default()
+    }
 }
 
 /// One release that crates.io never took.
@@ -112,9 +146,22 @@ impl CratesIoConfig {
         self.repository(git).map(|entry| entry.tag_prefix.as_str())
     }
 
-    /// Returns the crates.io name of a crate, mapped or by the default rule.
+    /// Returns whether a repository's release tags keep crates.io manifests.
+    pub(crate) fn is_native(&self, git: &str) -> bool {
+        self.repository(git)
+            .is_some_and(|entry| entry.manifests() == Manifests::CratesIo)
+    }
+
+    /// Returns the crates.io name of a crate of a self-publishing repository.
+    ///
+    /// A crate of a crates.io-native repository keeps its own name, since nothing
+    /// rewrites its manifest; every other crate is mapped in `[names]`, or gets
+    /// the default prefix.
     #[must_use]
-    pub(crate) fn effective_name(&self, crate_name: &str) -> String {
+    pub(crate) fn effective_name(&self, crate_name: &str, git: &str) -> String {
+        if self.is_native(git) {
+            return crate_name.to_owned();
+        }
         self.names
             .get(crate_name)
             .cloned()
@@ -329,9 +376,12 @@ reason = "crates.io refused the upload"
             config.prefix_for("https://git.example.invalid/example/project"),
             Some("rust/v")
         );
-        assert_eq!(config.effective_name("example-lib"), "example-lib");
         assert_eq!(
-            config.effective_name("example-bin"),
+            config.effective_name("example-lib", "https://git.example.invalid/example/project"),
+            "example-lib"
+        );
+        assert_eq!(
+            config.effective_name("example-bin", "https://git.example.invalid/example/project"),
             "pkgre-pkgs-example-bin"
         );
         assert!(
@@ -339,6 +389,52 @@ reason = "crates.io refused the upload"
                 .abandoned_version("example-lib", &Version::parse("0.9.0").unwrap())
                 .is_some()
         );
+    }
+
+    #[test]
+    fn manifests_names_the_registry_of_a_repository_that_is_not_the_default() {
+        const REPOSITORY: &str = "https://git.example.invalid/example/project";
+        let native = |manifest: &str| {
+            format!(
+                "schema = 1\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = {REPOSITORY:?}\ntag-prefix = \"rust/v\"\nmanifests = {manifest}\n"
+            )
+        };
+        let config = CratesIoConfig::parse(native("\"crates-io\"").as_bytes(), path()).unwrap();
+        assert_eq!(
+            config.repository(REPOSITORY).unwrap().manifests(),
+            Manifests::CratesIo
+        );
+        assert!(config.is_native(REPOSITORY));
+        // A native crate keeps its own name, whether or not `[names]` maps it.
+        assert_eq!(
+            config.effective_name("example-pkg", REPOSITORY),
+            "example-pkg"
+        );
+        // Every repository that is not native keeps the mapping or the default.
+        assert_eq!(
+            config.effective_name("example-pkg", "https://git.example.invalid/other"),
+            "pkgre-pkgs-example-pkg"
+        );
+
+        // The key is optional, and its absence means the `pkgre` mode.
+        let config = CratesIoConfig::parse(VALID.as_bytes(), path()).unwrap();
+        assert_eq!(
+            config.repository(REPOSITORY).unwrap().manifests(),
+            Manifests::Pkgre
+        );
+        assert!(!config.is_native(REPOSITORY));
+
+        // No other value is a registry this workflow writes manifests for.
+        for manifest in ["\"registry\"", "\"crates_io\"", "\"crates-io2\"", "true"] {
+            let error = CratesIoConfig::parse(native(manifest).as_bytes(), path()).unwrap_err();
+            let error = format!("{error:#}");
+            assert!(
+                error.contains("unknown variant")
+                    || error.contains("invalid type")
+                    || error.contains("wanted string"),
+                "{manifest}: {error}"
+            );
+        }
     }
 
     #[test]

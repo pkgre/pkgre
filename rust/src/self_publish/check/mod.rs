@@ -290,6 +290,13 @@ fn check_accepted_repositories(
             repository.tag_prefix,
             current.tag_prefix
         );
+        ensure!(
+            current.manifests() == repository.manifests(),
+            "self-publishing repository {:?} changed manifests from {:?} to {:?}; the registry that a repository's release tags keep their manifests for is permanent",
+            repository.git,
+            repository.manifests().as_str(),
+            current.manifests().as_str()
+        );
     }
     Ok(())
 }
@@ -412,8 +419,24 @@ fn check_entries(
         // a version abandoned in the change that adds it.
         let exempt = config.abandoned_version(name, version).is_some()
             && accepted_lock.is_none_or(|lock| lock.entry(name, version).is_some());
-        if !exempt {
-            let effective = config.effective_name(name);
+        if config.is_native(&release.git) {
+            // Nothing rewrites a native tag's manifest, so its crates.io name is
+            // the package name, abandoned version or not.
+            ensure!(
+                entry.crates_io_name == *name,
+                "entry {name} {version} of the crates.io-native repository {:?} records crates.io name {:?}; a release tag of that repository keeps its manifest, so the crate's crates.io name is its package name {name:?}",
+                release.git,
+                entry.crates_io_name
+            );
+            ensure!(
+                entry.crate_sha256 == entry.pkgre_crate_sha256,
+                "entry {name} {version} of the crates.io-native repository {:?} records crates.io archive checksum {:?} but pkgre archive checksum {:?}; a release tag of that repository keeps its manifests, so its archive is both registries' package",
+                release.git,
+                entry.crate_sha256,
+                entry.pkgre_crate_sha256
+            );
+        } else if !exempt {
+            let effective = config.effective_name(name, &release.git);
             ensure!(
                 entry.crates_io_name == effective,
                 "entry {name} {version} records crates.io name {:?} but the mapping gives {effective:?}; only an abandoned entry that was released may keep another name",
@@ -435,7 +458,7 @@ fn check_entries(
 fn check_names(
     config: &CratesIoConfig,
     catalog: &CatalogSnapshot,
-    published: &BTreeSet<&str>,
+    published: &BTreeMap<&str, &str>,
 ) -> Result<()> {
     let mirrors = catalog
         .mirrors
@@ -443,8 +466,8 @@ fn check_names(
         .map(|mirror| name::canonical(mirror))
         .collect::<BTreeSet<_>>();
     let mut used = BTreeMap::new();
-    for &crate_name in published {
-        let effective = config.effective_name(crate_name);
+    for (&crate_name, &git) in published {
+        let effective = config.effective_name(crate_name, git);
         name::validate(&effective)
             .with_context(|| format!("validate crates.io name of crate {crate_name:?}"))?;
         // A mirror that carries an effective name is refused here; a mapped
@@ -453,9 +476,25 @@ fn check_names(
             !mirrors.contains(&name::canonical(&effective)),
             "crates.io name {effective:?} of crate {crate_name:?} is the name of a crate that registry/{CATALOG_REGISTRY} mirrors"
         );
+        // A native crate's name is its package name, which no mapping may give
+        // another crate's shape; the namespace of the default rule stays apart.
+        if config.is_native(git) {
+            ensure!(
+                !name::is_in_default_namespace(&effective),
+                "crates.io name {effective:?} of crate {crate_name:?} is in the pkgre-pkgs- namespace, which the default rule owns, but a crate of the crates.io-native repository {git:?} keeps its own name"
+            );
+        }
         record_name(&mut used, &effective, crate_name)?;
     }
     for (crate_name, mapped) in &config.names {
+        // A native crate's release tag keeps its manifest, so its crates.io name
+        // can only be its package name, and a mapping would have to repeat it.
+        if let Some(git) = published.get(crate_name.as_str()) {
+            ensure!(
+                !config.is_native(git),
+                "[names] maps crate {crate_name:?} of the crates.io-native repository {git:?}, whose release tags keep their manifests: its crates.io name is its package name, so the key is refused"
+            );
+        }
         name::validate(mapped)
             .with_context(|| format!("validate mapped crates.io name of crate {crate_name:?}"))?;
         ensure!(
@@ -469,7 +508,7 @@ fn check_names(
         record_name(&mut used, mapped, crate_name)?;
     }
     let published_canonical = published
-        .iter()
+        .keys()
         .map(|crate_name| (name::canonical(crate_name), *crate_name))
         .collect::<BTreeMap<_, _>>();
     let catalog_names = catalog
@@ -485,7 +524,7 @@ fn check_names(
         )
         .collect::<BTreeSet<_>>();
     for key in config.names.keys() {
-        if published.contains(key.as_str()) {
+        if published.contains_key(key.as_str()) {
             continue;
         }
         if let Some(actual) = published_canonical.get(&name::canonical(key)) {

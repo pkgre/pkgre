@@ -60,6 +60,10 @@ owners = ["LOGIN"]
 [[repositories]]
 git = "https://github.com/pkgre/pkgre"
 tag-prefix = "rust/v"
+# Optional: the registry that its release tags keep their manifests for.
+# "pkgre", the default, rewrites them for the pkgre registry; "crates-io"
+# keeps plain crates.io manifests, so that one archive serves both.
+# manifests = "crates-io"
 
 # Optional crates.io names; other crates get "pkgre-pkgs-" + name.
 [names]
@@ -88,6 +92,28 @@ trailing `.git` is dropped; for GitHub the path is lowercased too. A Git identit
 declaration that names a self-publishing repository in another spelling is refused, so that
 it cannot escape the release rules of its declaration.
 
+### The manifests of a release tag
+
+`manifests` says for which registry a repository's release tags are written. It is optional,
+and `"pkgre"`, the default, is the mode above: a release tag with manifests that `pkgre`
+rewrites for its own registry, and a derived, separate crates.io archive. `"crates-io"` is
+the other mode: the tag's manifests stay plain crates.io manifests, and the tag's own
+packaging serves both registries, the `pkgre` one and crates.io, with one archive.
+
+```toml
+[[repositories]]
+git = "https://github.com/example/workspace"
+tag-prefix = "v"
+manifests = "crates-io"
+```
+
+Since an absent key means the default, a declaration that has no `manifests` keeps its
+meaning and the schema stays 1, and a strict parser of an older tool refuses the key. The
+value is permanent from the declaration, as the prefix is: the checks refuse a changed or
+removed value against the accepted state. Spelling the default, `manifests = "pkgre"`, is
+no change, so adding that key to a declaration that omitted it, or removing it again, is
+accepted.
+
 ### Names
 
 `[names]` maps a crate's `pkgre` name to its crates.io name. Without an entry the crates.io
@@ -98,6 +124,11 @@ catalog at all, so that a name can be declared before the crate's first release.
 names a crate the catalog publishes from a mirror or from a repository that does not
 self-publish is stale, and refused. The crates.io name rules below apply to every name the
 workflow uses.
+
+A crate of a repository whose `manifests` is `"crates-io"` keeps its own name on crates.io,
+since nothing rewrites its manifest: its crates.io name is its package name, the default
+prefix never applies, and `[names]` may not hold a key for it, because such a key could only
+repeat the name that the crate already has.
 
 ### Abandoned versions
 
@@ -146,7 +177,10 @@ cargo-version = "1.95.0"
 | `cargo-version` | Exact Cargo version that packaged the archive |
 
 Entries are never edited and never removed, not even when the catalog removes the identity.
-An entry names one crate version and one release, and each release has one entry.
+An entry names one crate version and one release, and each release has one entry. An entry
+of a repository whose `manifests` is `"crates-io"` records `crates-io-name` equal to `name`
+and `crate-sha256` equal to `pkgre-crate-sha256`, since the tag's own archive is both
+registries' package, and the checks refuse any other value.
 
 ## The derivation
 
@@ -265,8 +299,9 @@ Checked offline, on every run:
   characters.
 - crates.io names are unique among themselves under crates.io's comparison, which ignores
   case and treats `-` and `_` as equal:`foo-bar` and `Foo_Bar` are one name.
-- A mapped name does not start with `pkgre-pkgs-`. That namespace belongs to the default
-  rule, which keeps the two kinds of names apart.
+- A mapped name does not start with `pkgre-pkgs-`, and neither does the name of a crate
+  whose release tags keep crates.io manifests, which is its package name. That namespace
+  belongs to the default rule, which keeps the two kinds of names apart.
 - A crates.io name is not the name of a crate that `registry/main` mirrors, which belongs to
   someone else on crates.io. Conversely, a mirror may not carry a name the workflow uses,
   mapped or default, or be named `pkgre-pkgs-…`, which readers would take for one of ours.
@@ -296,7 +331,10 @@ runs these checks:
 - Each self-published identity of `registry/main.lock`, active or removed, has exactly one
   entry in `crates-io.lock` whose fields agree with it, and each entry has exactly one
   identity. An identity is self-published when it comes from a self-publishing repository
-  and its tag is that repository's `tag-prefix` followed by the version.
+  and its tag is that repository's `tag-prefix` followed by the version. An entry of a
+  repository whose `manifests` is `"crates-io"` records the crate's own name as its
+  crates.io name and one archive for both registries, so `crates-io-name` equals `name` and
+  `crate-sha256` equals `pkgre-crate-sha256`.
 - Each abandoned record names an entry of `crates-io.lock`, and a record that the accepted
   state does not have names an entry of the accepted lock, so that a version is abandoned
   only after it was released.
@@ -312,10 +350,10 @@ runs these checks:
 
 `<accepted-repository>` is an earlier checkout of the same repository whose state is
 accepted, such as the base of a change. With it, the command also checks that the accepted
-lock entries, repositories, tag prefixes and abandoned records are unchanged and only
-added, that a crate's crates.io name is permanent while any of its entries is not
-abandoned, that each Git identity the candidate gains comes from a release tag, and that
-versions increase. Without an accepted repository those comparisons are skipped, and the
+lock entries, repositories, tag prefixes, `manifests` values and abandoned records are
+unchanged and only added, that a crate's crates.io name is permanent while any of its entries
+is not abandoned, that each Git identity the candidate gains comes from a release tag, and
+that versions increase. Without an accepted repository those comparisons are skipped, and the
 command says so; the candidate's own files, name rules, entry correspondence and abandoned
 records are still checked. A repository without `self-publish/` is accepted with a message
 that there is nothing to check, unless the accepted repository has one: removing the state is
