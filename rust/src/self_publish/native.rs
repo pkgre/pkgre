@@ -141,6 +141,17 @@ impl NativeRepositories {
 }
 
 #[cfg(test)]
+impl NativeRepositories {
+    /// Builds the declarations from one parsed config, for a test whose catalog
+    /// declares no repository of its own.
+    pub(crate) fn from_config(config: CratesIoConfig) -> Self {
+        Self {
+            config: Some(config),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::package::TemporaryDirectory;
