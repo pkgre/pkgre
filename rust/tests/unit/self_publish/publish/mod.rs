@@ -216,11 +216,15 @@ impl Fixture {
             )
         })
         .collect::<Vec<_>>();
+        let earlier = if self.entry(LIB).crates_io_name == LIB {
+            "earlier-lib"
+        } else {
+            fixtures::EARLIER_CRATES_IO_NAME
+        };
         dependencies.push((
-            fixtures::EARLIER_CRATES_IO_NAME.to_owned(),
+            earlier.to_owned(),
             "0.9.0".parse().expect("parse a fixture version"),
-            self.source
-                .checksum(fixtures::EARLIER_CRATES_IO_NAME, "0.9.0"),
+            self.source.checksum(earlier, "0.9.0"),
         ));
         dependencies
     }
@@ -499,7 +503,21 @@ impl FakeUploader {
             .map(|name| {
                 (
                     fixture.entry(name).crates_io_name,
-                    fixtures::derived_dependencies(name),
+                    fixtures::derived_dependencies(name)
+                        .into_iter()
+                        .map(|(dependency, requirement)| {
+                            (
+                                if fixture.entry(LIB).crates_io_name == LIB
+                                    && dependency == fixtures::EARLIER_CRATES_IO_NAME
+                                {
+                                    "earlier-lib"
+                                } else {
+                                    dependency
+                                },
+                                requirement,
+                            )
+                        })
+                        .collect(),
                 )
             })
             .collect();
@@ -1715,6 +1733,7 @@ fn fake_upload(temporary: &fixtures::Temp, action: &str) -> (UploadEnvironment, 
             work,
             manifest: root.join("Cargo.toml"),
             target: root.join(format!("target-{action}")),
+            allow_dirty: true,
         },
         record,
     )
@@ -1764,3 +1783,6 @@ fn assert_allowlisted(recorded: &BTreeMap<String, String>, extra: &[&str]) {
         "{recorded:?}"
     );
 }
+
+#[path = "native.rs"]
+mod native;

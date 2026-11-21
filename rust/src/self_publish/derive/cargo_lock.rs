@@ -28,6 +28,8 @@ pub(super) struct LockedPackage {
 
 /// The packages of one `Cargo.lock`, with every dependency resolved.
 pub(super) struct LockIndex {
+    /// Lock format version; an absent field is version 1.
+    pub(super) version: i64,
     packages: Vec<LockedPackage>,
 }
 
@@ -102,6 +104,10 @@ impl LockIndex {
             ));
         }
         let mut index = Self {
+            version: document
+                .get("version")
+                .and_then(Item::as_integer)
+                .unwrap_or(1),
             packages: packages
                 .iter()
                 .map(|(package, _)| package.clone())

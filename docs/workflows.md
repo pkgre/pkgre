@@ -224,6 +224,36 @@ The summary counts the release's crate versions per state, and the packages outs
 
 **When crates.io cannot take a release.** A release can reach the `pkgre` registry and still fail on crates.io, for example when someone takes a name in the meantime, or when crates.io refuses a package for a rule the checks did not know. The tag cannot move, so the way forward is a new version: a pull request appends an `[[abandoned]]` record to `self-publish/crates-io.toml`, with the reason crates.io gave, which the checks accept and the routine never uploads, and the next release goes to both registries as usual. When the name itself is lost, a crate whose entries are all abandoned may get another crates.io name in `[names]`, for its later versions.
 
+### A crates.io-native release by hand
+
+A version of a crates.io-native repository that is released by hand has the same bytes when
+it is packaged as follows; `pkgre`'s release pull request then records it, and the routine's
+dry run reports it as published.
+
+1. A fresh clone of the repository at the tag, not recursive, so that no submodule is
+   initialized, on Linux or macOS, without `core.autocrlf`, Git filters or LFS, and the
+   checkout clean.
+2. The pinned Cargo named explicitly, `cargo +1.95.0` or its path, since a
+   `rust-toolchain.toml` in the repository may pin another toolchain.
+3. A fresh `CARGO_HOME` without source replacement or other configuration, and a working
+   directory outside the checkout, with `--manifest-path`, so that neither the repository's
+   `.cargo/config.toml` nor configuration above the working directory applies.
+4. `--locked`, and no `--allow-dirty`.
+5. All released crates in one `cargo publish --workspace --locked`, or one `cargo publish -p`
+   for each crate in dependency order, with the siblings required as exactly the tag's
+   version, so that no newer compatible version on crates.io can enter a packaged lock.
+6. The released crates build without warnings on Rust 1.95.0, since `cargo publish` verifies
+   the build.
+
+A version that already reached crates.io with other bytes is reported `different` and
+refused, as for every release; it then stays a crates.io version only.
+
+The routine differs from the `pkgre` mode only where the tag is not rewritten: step 5
+packages the missing crates with Cargo's verification in a copy of the clean checkout, step
+6 packages them again in the upload's Cargo home, and both run without `--allow-dirty`, so
+Cargo itself refuses an uncommitted change. Each step requires the byte identity with the
+archive that `pkgre` serves, as [`self-publish.md`](self-publish.md) describes.
+
 ## Publish first-party/fork Git tag
 
 Preconditions:

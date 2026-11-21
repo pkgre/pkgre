@@ -12,6 +12,7 @@ mod cargo_lock;
 mod compare;
 mod expectations;
 mod git;
+mod native;
 mod workspace;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -209,6 +210,8 @@ pub(super) struct DerivedWorkspace {
     /// The registries that the checkout resolves from, which the upload's Cargo
     /// home mirrors.
     sources: cargo::RegistrySources,
+    /// Native tags stay clean; rewritten manifests need Cargo's dirty allowance.
+    native: bool,
 }
 
 impl DerivedWorkspace {
@@ -255,6 +258,11 @@ impl DerivedWorkspace {
         Ok(environment)
     }
 
+    /// Whether the checkout is the unchanged native tag.
+    pub(super) fn is_native(&self) -> bool {
+        self.native
+    }
+
     /// Returns the target directory of an upload.
     pub(super) fn upload_target(&self) -> PathBuf {
         self.root().join("upload-targets")
@@ -290,7 +298,10 @@ impl DerivedWorkspace {
             &target,
             &manifest,
             packages,
-            cargo::Build::Package,
+            cargo::Options {
+                build: cargo::Build::Package,
+                allow_dirty: !self.native,
+            },
         )
         .context("package the crates of the release as cargo publish would")
     }
@@ -344,7 +355,15 @@ impl DerivedWorkspace {
         packages: &[(String, Version)],
     ) -> Result<BTreeMap<String, Vec<u8>>> {
         ensure_no_cargo_configuration(&self.work)?;
-        let manifest = self.manifest();
+        let manifest = if self.native {
+            let copy = self.root().join("verified-checkout");
+            git::ensure_clean_checkout(&self.workspace, &self.environment, false)?;
+            native::copy_checkout(&self.workspace, &copy)?;
+            git::ensure_clean_checkout(&copy, &self.environment, false)?;
+            copy.join("Cargo.toml")
+        } else {
+            self.manifest()
+        };
         cargo::package_group(
             &self.cargo,
             &self.environment,
@@ -352,7 +371,10 @@ impl DerivedWorkspace {
             &self.targets,
             &manifest,
             packages,
-            cargo::Build::Verify,
+            cargo::Options {
+                build: cargo::Build::Verify,
+                allow_dirty: !self.native,
+            },
         )
         .context("verify the crates.io packages of the release")
     }
@@ -466,7 +488,9 @@ pub(super) fn derive_release_in(
         release.commit
     );
 
-    let workspace = workspace::Workspace::load(&cargo, &environment, &work, &checkout.root)?;
+    let native = config.is_native(&release.git);
+    let workspace =
+        workspace::Workspace::load(&cargo, &environment, &work, &checkout.root, native)?;
     crate::gitlinks::ensure_release_tag_paths(
         &checkout.root,
         &checkout.gitlinks,
@@ -475,13 +499,25 @@ pub(super) fn derive_release_in(
     ensure_release_members(&workspace, released, &release.tag)?;
     let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
     let published = published_crates(&workspace, released, config, &release.tag, &release.git)?;
-    let curated_index = cargo::curated_index(&registry_sources)?;
-    let mut expectations =
-        Expectations::build(&lock, catalog, config, earlier, &published, &curated_index)?;
-    let plan =
-        workspace::ReleasePlan::new(&workspace, &lock, &expectations, &published, &curated_index)?;
-    workspace::rewrite_manifests(&workspace, &plan, &expectations)?;
-    cargo_lock::translate_lock(&checkout.root, &expectations)?;
+    let (mut expectations, native_dependencies) = if native {
+        let dependencies = native::validate(&workspace, &lock, catalog, config, &environment)?;
+        git::ensure_clean_checkout(&checkout.root, &environment, allow_file)?;
+        (None, dependencies)
+    } else {
+        let curated_index = cargo::curated_index(&registry_sources)?;
+        let expectations =
+            Expectations::build(&lock, catalog, config, earlier, &published, &curated_index)?;
+        let plan = workspace::ReleasePlan::new(
+            &workspace,
+            &lock,
+            &expectations,
+            &published,
+            &curated_index,
+        )?;
+        workspace::rewrite_manifests(&workspace, &plan, &expectations)?;
+        cargo_lock::translate_lock(&checkout.root, &expectations)?;
+        (Some(expectations), Vec::new())
+    };
 
     let members = released
         .iter()
@@ -499,7 +535,11 @@ pub(super) fn derive_release_in(
         &root.join("targets"),
         &checkout.root,
         &members,
+        !native,
     )?;
+    if native {
+        git::ensure_clean_checkout(&checkout.root, &environment, allow_file)?;
+    }
     // The comparison proves the packaged locks against the archives this run
     // packages, so a crate that depends on another crate of the release is
     // compared with the sibling's crates.io archive, not the curated one.
@@ -519,7 +559,9 @@ pub(super) fn derive_release_in(
             sha256_bytes(archive),
         );
     }
-    expectations.bind_release(released, &derived)?;
+    if let Some(expectations) = &mut expectations {
+        expectations.bind_release(released, &derived)?;
+    }
 
     let mut packages = Vec::new();
     for package in released {
@@ -548,24 +590,33 @@ pub(super) fn derive_release_in(
             &package.version,
             archive,
         )?;
-        compare::compare_archives(
-            &package.version,
-            &compare::ArchiveToCompare {
-                name: package.name.as_str(),
-                bytes: package.archive.as_slice(),
-            },
-            &compare::ArchiveToCompare {
-                name: crates_io_name.as_str(),
-                bytes: archive.as_slice(),
-            },
-            &expectations,
-        )
-        .with_context(|| {
-            format!(
-                "the crates.io archive of {} {} differs from the curated archive",
-                package.name, package.version
+        if let Some(expectations) = &expectations {
+            compare::compare_archives(
+                &package.version,
+                &compare::ArchiveToCompare {
+                    name: package.name.as_str(),
+                    bytes: package.archive.as_slice(),
+                },
+                &compare::ArchiveToCompare {
+                    name: crates_io_name.as_str(),
+                    bytes: archive.as_slice(),
+                },
+                expectations,
             )
-        })?;
+            .with_context(|| {
+                format!(
+                    "the crates.io archive of {} {} differs from the curated archive",
+                    package.name, package.version
+                )
+            })?;
+        } else {
+            ensure!(
+                archive == &package.archive,
+                "native crates.io archive of {} {} differs byte for byte from the retained archive",
+                package.name,
+                package.version
+            );
+        }
         packages.push(DerivedPackage {
             entry: CratesIoPackage {
                 name: package.name.clone(),
@@ -598,7 +649,7 @@ pub(super) fn derive_release_in(
                 &right.entry.version,
             ))
     });
-    let dependencies = expectations.dependencies();
+    let dependencies = expectations.map_or(native_dependencies, |expected| expected.dependencies());
     let siblings = sibling_dependencies(&workspace, &published);
     let targets = root.join("targets");
     Ok(Derivation {
@@ -613,6 +664,7 @@ pub(super) fn derive_release_in(
             workspace: checkout.root,
             targets,
             sources: registry_sources,
+            native,
         },
     })
 }

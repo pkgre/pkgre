@@ -1141,6 +1141,7 @@ fn only_a_test_adds_cargos_testing_hook_to_a_child() {
 
 #[test]
 #[ignore = "needs the network: packages against live crates.io"]
+#[allow(clippy::too_many_lines)]
 fn live_packaging_serves_a_sibling_to_its_dependent() {
     let temporary = fixtures::Temp::new("pkgre-live-group");
     let workspace = temporary.path().join("workspace");
@@ -1219,7 +1220,10 @@ fn live_packaging_serves_a_sibling_to_its_dependent() {
             &temporary.path().join(format!("targets-{build:?}")),
             &manifest,
             &members,
-            build,
+            super::cargo::Options {
+                build,
+                allow_dirty: true,
+            },
         )
         .expect("package the group against live crates.io");
         assert_eq!(archives.len(), 2);
@@ -2439,3 +2443,9 @@ fn fake_standard_input_cargo(root: &Path) -> (PathBuf, PathBuf) {
     fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
     (cargo, seen)
 }
+
+#[path = "native.rs"]
+mod native;
+
+#[path = "rehearsal.rs"]
+mod rehearsal;

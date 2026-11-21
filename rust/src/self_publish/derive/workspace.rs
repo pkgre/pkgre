@@ -42,8 +42,7 @@ pub(super) struct Member {
     /// Dependencies, as Cargo reports them, with inherited workspace
     /// dependencies resolved.
     pub(super) dependencies: Vec<MemberDependency>,
-    /// Whether `publish` is exactly `[`pkgre`]`, which makes the member part of
-    /// its repository's releases.
+    /// Whether the member is released under the repository's manifest mode.
     pub(super) released: bool,
     /// The paths the member's manifest names, which Cargo copies into the
     /// member's archive; empty for a member the release does not publish.
@@ -135,6 +134,7 @@ impl Workspace {
         environment: &ChildEnvironment,
         work: &Path,
         checkout: &Path,
+        native: bool,
     ) -> Result<Self> {
         let manifest_path = checkout.join("Cargo.toml");
         let mut arguments = [
@@ -153,11 +153,24 @@ impl Workspace {
         let metadata: Metadata =
             serde_json::from_slice(&output).context("parse pinned Cargo metadata output")?;
         let root = metadata.workspace_root.clone();
+        ensure!(
+            root.starts_with(checkout),
+            "workspace root lies outside the release checkout"
+        );
         let members = metadata
             .packages
             .into_iter()
             .map(|package| {
-                let released = package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()]);
+                let released = if native {
+                    ensure!(
+                        package.publish.as_ref().is_none_or(Vec::is_empty),
+                        "crate {} sets a publish list; a native member is released or sets publish = false",
+                        package.name
+                    );
+                    package.publish.is_none()
+                } else {
+                    package.publish.as_deref() == Some(&[CURATED_REGISTRY.to_owned()])
+                };
                 let manifest_paths = if released {
                     crate::gitlinks::manifest_paths(
                         package.readme.as_deref(),
@@ -171,7 +184,7 @@ impl Workspace {
                 } else {
                     Vec::new()
                 };
-                Member {
+                Ok(Member {
                     library: library_target(&package),
                     main_binary: main_binary_target(&package),
                     facts: super::MemberFacts {
@@ -201,9 +214,9 @@ impl Workspace {
                     name: package.name,
                     version: package.version,
                     manifest_path: package.manifest_path,
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self { root, members })
     }
 

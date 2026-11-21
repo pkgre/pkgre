@@ -171,6 +171,8 @@ pub(crate) enum LicenseFile {
 #[derive(Clone, Copy, Debug, Default)]
 #[allow(clippy::struct_excessive_bools)]
 pub(crate) struct Variant {
+    /// Keep plain crates.io manifests and identical archives.
+    pub(crate) native: bool,
     /// The dependency that the released binary declares on the released library.
     pub(crate) sibling: Sibling,
     /// Declare a `[patch.crates-io]` table in the root manifest.
@@ -443,6 +445,21 @@ pub(crate) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
     fs::create_dir_all(root.join("bin/src")).expect("create the binary");
     fs::create_dir_all(root.join("serve/src")).expect("create the server");
     write_manifests(&root, variant);
+    if variant.native {
+        for relative in [
+            "Cargo.toml",
+            "lib/Cargo.toml",
+            "bin/Cargo.toml",
+            "serve/Cargo.toml",
+        ] {
+            let path = root.join(relative);
+            let text = fs::read_to_string(&path)
+                .expect("read native fixture manifest")
+                .replace("publish = [\"pkgre\"]\n", "")
+                .replace(", registry = \"pkgre\"", "");
+            fs::write(path, text).expect("write native fixture manifest");
+        }
+    }
     fs::write(
         root.join("lib/src/lib.rs"),
         "pub fn answer() -> u32 { 42 }\n",
@@ -666,18 +683,29 @@ pub(crate) fn curated_archives(
     source: &Path,
     members: &[(&str, Version)],
 ) -> BTreeMap<String, Vec<u8>> {
+    release_archives(checkout, source, members, false)
+}
+
+/// Packages a fixture in its declared manifest mode.
+fn release_archives(
+    checkout: &Path,
+    source: &Path,
+    members: &[(&str, Version)],
+    native: bool,
+) -> BTreeMap<String, Vec<u8>> {
     let temporary = Temp::new("pkgre-curated-archive");
     let home = temporary.path().join("cargo-home");
-    prepare_cargo_home(&home, RegistrySources::LocalCurated(source.to_path_buf()))
-        .expect("prepare the curated Cargo home");
+    let sources = if native {
+        RegistrySources::Local(source.to_path_buf())
+    } else {
+        RegistrySources::LocalCurated(source.to_path_buf())
+    };
+    prepare_cargo_home(&home, sources.clone()).expect("prepare the curated Cargo home");
     let cargo = pinned_cargo(&Version::parse(CARGO_VERSION).expect("parse the pinned version"))
         .expect("locate the pinned Cargo");
     let environment = ChildEnvironment::capture(&home, &cargo).expect("capture the environment");
-    let environment = super::super::cargo::with_test_crates_io(
-        environment,
-        &RegistrySources::LocalCurated(source.to_path_buf()),
-    )
-    .expect("point crates.io at the local index");
+    let environment = super::super::cargo::with_test_crates_io(environment, &sources)
+        .expect("point crates.io at the local index");
     let work = temporary.path().join("work");
     fs::create_dir(&work).expect("create the working directory");
     let members = members
@@ -691,6 +719,7 @@ pub(crate) fn curated_archives(
         &temporary.path().join("targets"),
         checkout,
         &members,
+        !native,
     )
     .expect("package the curated archives")
 }
@@ -786,13 +815,14 @@ pub(crate) fn catalog_at(
     fs::create_dir_all(registry.join("objects/crates")).expect("create the catalog");
     fs::create_dir_all(root.join("self-publish")).expect("create the self-publishing state");
     let curated = if released {
-        curated_archives(
+        release_archives(
             &release.root,
             &source.root,
             &[
                 ("example-bin", release.version("example-bin")),
                 ("example-lib", release.version("example-lib")),
             ],
+            variant.native,
         )
     } else {
         BTreeMap::new()
@@ -863,7 +893,14 @@ pub(crate) fn catalog_at(
         schema: CRATES_IO_LOCK_SCHEMA,
         packages: Vec::new(),
     };
-    earlier.packages.push(earlier_entry(source));
+    let mut entry = earlier_entry(source);
+    if variant.native {
+        entry.crates_io_name = entry.name.clone();
+        entry.crate_sha256.clone_from(&entry.pkgre_crate_sha256);
+        let path = root.join("self-publish/crates-io.toml");
+        fs::write(&path, format!("schema = 1\n\nowners = [\"example-owner\"]\n\n[[repositories]]\ngit = {REPOSITORY:?}\ntag-prefix = {TAG_PREFIX:?}\nmanifests = \"crates-io\"\n")).expect("write native config");
+    }
+    earlier.packages.push(entry);
     fs::write(
         root.join("self-publish/crates-io.lock"),
         earlier.serialize().expect("serialize the fixture entries"),
