@@ -20,6 +20,7 @@ use crate::policy::{
     validate_relative_path, validate_tag_version,
 };
 use crate::schema::{Approval, Catalog, PackageState, Source};
+use crate::self_publish::NativeRepositories;
 use crate::update::time::UtcTimestamp;
 
 const CARGO_REGISTRY: &str = "pkgre";
@@ -300,26 +301,52 @@ pub fn reproduce_approved_git_group(
     catalog: &Catalog,
     approvals: &[&Approval],
 ) -> Result<Vec<GitTagMaterialization>> {
-    let repositories = crate::self_publish::NativeRepositories::load_beside(&catalog.root)?;
-    let native = approvals.first().and_then(|approval| {
+    reproduce_approved_git_group_with(
+        &std::env::temp_dir(),
+        &catalog.root,
+        &catalog.approvals,
+        approvals,
+        PackagingSource::live,
+    )
+}
+
+/// Returns the crates.io-native catalog facts that one group is packaged
+/// against, or `None` when the declarations beside `catalog_root` leave the
+/// group's repository in the pkgre mode.
+///
+/// `root` is the catalog's own directory, and `catalog` holds every approval it
+/// locks, so the native set is the one the catalog's lock rule admits.
+fn native_catalog_for_group<'a>(
+    repositories: &NativeRepositories,
+    root: &'a Path,
+    catalog: &'a [Approval],
+    approvals: &[&Approval],
+) -> Option<NativeCatalog<'a>> {
+    approvals.first().and_then(|approval| {
         // A group whose first approval is not a Git-tag publication is refused
         // by the group's own checks, which name it.
         let git = approved_git_tag(approval).ok()?;
-        repositories.catalog(
-            &catalog.root,
-            &catalog.approvals,
-            &approval.registry,
-            git.repository,
-            git.tag,
-        )
-    });
-    reproduce_approved_git_group_in(
-        &std::env::temp_dir(),
-        &catalog.approvals,
-        approvals,
-        native,
-        PackagingSource::live,
-    )
+        repositories.catalog(root, catalog, &approval.registry, git.repository, git.tag)
+    })
+}
+
+/// Reproduces the given group below `root`, fetching and resolving from the
+/// packaging source that `packaging` names for the group's repository, with the
+/// native catalog facts that the declarations beside `catalog_root` give it.
+///
+/// The public entry point and the file-based test entry point both reproduce a
+/// group here, so that one computation of the native catalog serves the network
+/// and the local repository a test fetches.
+fn reproduce_approved_git_group_with<'a>(
+    root: &Path,
+    catalog_root: &'a Path,
+    catalog: &'a [Approval],
+    approvals: &[&'a Approval],
+    packaging: impl FnOnce(&'a str) -> PackagingSource<'a>,
+) -> Result<Vec<GitTagMaterialization>> {
+    let repositories = NativeRepositories::load_beside(catalog_root)?;
+    let native = native_catalog_for_group(&repositories, catalog_root, catalog, approvals);
+    reproduce_approved_git_group_in(root, catalog, approvals, native, packaging)
 }
 
 /// Reproduces the given group below `root`, fetching and resolving from the
@@ -766,6 +793,37 @@ pub(crate) fn reproduce_approved_git_group_from_file_in(
         fetch_repository,
         allow_file: true,
         registry_index,
+    })
+}
+
+/// Reproduces the given group of one locked tag from a local repository and a
+/// local registry index, as [`reproduce_approved_git_group`] does over the
+/// network, with the crates.io-native declarations that stand beside
+/// `catalog_root`.
+///
+/// The public entry point computes its native catalog the same way, so a test
+/// that drives this function pins that computation.
+///
+/// # Errors
+///
+/// Returns an error for a group that the entry point refuses, for declarations
+/// it cannot read, or for the source, tag, package, toolchain, path, archive, or
+/// source-row mismatch that [`reproduce_approved_git_group`] reports.
+#[cfg(test)]
+pub(crate) fn reproduce_approved_git_group_from_directory_in(
+    root: &Path,
+    catalog_root: &Path,
+    catalog: &[Approval],
+    approvals: &[&Approval],
+    fetch_repository: &str,
+    registry_index: &str,
+) -> Result<Vec<GitTagMaterialization>> {
+    reproduce_approved_git_group_with(root, catalog_root, catalog, approvals, |_| {
+        PackagingSource {
+            fetch_repository,
+            allow_file: true,
+            registry_index,
+        }
     })
 }
 
@@ -6245,6 +6303,312 @@ mod tests {
         );
     }
 
+    /// Writes one member directory of a native tag below `temporary`, and
+    /// returns its metadata at `version`.
+    fn native_member_at(
+        temporary: &TemporaryDirectory,
+        name: &str,
+        version: &str,
+    ) -> MetadataPackage {
+        let directory = temporary.path().join("crates").join(name);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("Cargo.toml"), "").unwrap();
+        let mut member = native_metadata_member(name, &[]);
+        member.version = Version::parse(version).unwrap();
+        member.manifest_path = directory.join("Cargo.toml");
+        member
+    }
+
+    /// Returns one path dependency of a native tag on `target` at `directory`.
+    fn native_path_dependency(
+        target: &str,
+        requirement: &str,
+        directory: &Path,
+    ) -> MetadataDependency {
+        MetadataDependency {
+            name: target.to_owned(),
+            source: None,
+            req: requirement.to_owned(),
+            kind: None,
+            rename: None,
+            optional: false,
+            uses_default_features: true,
+            features: Vec::new(),
+            target: None,
+            registry: None,
+            path: Some(directory.to_path_buf()),
+        }
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_dependency_from_another_source() {
+        let temporary = TemporaryDirectory::new("pkgre-native-dep-source").unwrap();
+        let target = native_member_at(&temporary, "native-base", "1.2.3");
+        let directory = target.manifest_path.parent().unwrap();
+        let mut dependent = native_metadata_member("native-first", &[]);
+        let mut dependency = native_path_dependency("native-base", "=1.2.3", directory);
+        dependency.source = Some("git+https://example.invalid/native-base".to_owned());
+        dependent.dependencies.push(dependency);
+        let metadata = vec![dependent, target];
+        let released = BTreeSet::from(["native-first", "native-base"]);
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error = validate_native_dependencies(&metadata[0], &metadata, &released, &tag_version)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("uses unsupported source \"git+https://example.invalid/native-base\""),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "keeps plain crates.io manifests, so a dependency is a crates.io requirement or a path dependency on another released crate of the tag"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_registry_on_a_crates_io_dependency() {
+        let temporary = TemporaryDirectory::new("pkgre-native-dep-registry").unwrap();
+        let target = native_member_at(&temporary, "native-base", "1.2.3");
+        let directory = target.manifest_path.parent().unwrap();
+        let mut dependent = native_metadata_member("native-first", &[]);
+        let mut dependency = native_path_dependency("native-base", "=1.2.3", directory);
+        dependency.source = Some(CRATES_IO_INDEX_SOURCE.to_owned());
+        dependency.registry = Some("pkgre".to_owned());
+        dependent.dependencies.push(dependency);
+        let metadata = vec![dependent, target];
+        let released = BTreeSet::from(["native-first", "native-base"]);
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error = validate_native_dependencies(&metadata[0], &metadata, &released, &tag_version)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("names the registry \"pkgre\""),
+            "{message}"
+        );
+        assert!(
+            message.contains("a dependency may not name a registry"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_registry_on_a_path_dependency() {
+        let temporary = TemporaryDirectory::new("pkgre-native-path-registry").unwrap();
+        let target = native_member_at(&temporary, "native-base", "1.2.3");
+        let directory = target.manifest_path.parent().unwrap();
+        let mut dependent = native_metadata_member("native-first", &[]);
+        let mut dependency = native_path_dependency("native-base", "=1.2.3", directory);
+        dependency.registry = Some("staging".to_owned());
+        dependent.dependencies.push(dependency);
+        let metadata = vec![dependent, target];
+        let released = BTreeSet::from(["native-first", "native-base"]);
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error = validate_native_dependencies(&metadata[0], &metadata, &released, &tag_version)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("is a path dependency that names the registry \"staging\""),
+            "{message}"
+        );
+        assert!(
+            message.contains("a sibling is a path dependency without a registry"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_path_dependency_on_a_crate_it_does_not_release() {
+        let temporary = TemporaryDirectory::new("pkgre-native-path-unreleased").unwrap();
+        let mut target = native_member_at(&temporary, "native-private", "1.2.3");
+        target.publish = Some(Vec::new());
+        let directory = target.manifest_path.parent().unwrap();
+        let mut dependent = native_metadata_member("native-first", &[]);
+        dependent.dependencies.push(native_path_dependency(
+            "native-private",
+            "=1.2.3",
+            directory,
+        ));
+        let metadata = vec![dependent, target];
+        let released = BTreeSet::from(["native-first"]);
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error = validate_native_dependencies(&metadata[0], &metadata, &released, &tag_version)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(
+                "is a path dependency on \"native-private\", which the tag does not release"
+            ),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "the released crates of a crates.io-native release tag may depend on each other only"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_path_dependency_on_another_version() {
+        let temporary = TemporaryDirectory::new("pkgre-native-path-version").unwrap();
+        let target = native_member_at(&temporary, "native-base", "1.2.4");
+        let directory = target.manifest_path.parent().unwrap();
+        let mut dependent = native_metadata_member("native-first", &[]);
+        dependent
+            .dependencies
+            .push(native_path_dependency("native-base", "=1.2.3", directory));
+        let metadata = vec![dependent, target];
+        let released = BTreeSet::from(["native-first", "native-base"]);
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error = validate_native_dependencies(&metadata[0], &metadata, &released, &tag_version)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("is a path dependency on native-base 1.2.4, whose version is not the tag's version 1.2.3"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_refuses_a_path_dependency_to_another_directory() {
+        let temporary = TemporaryDirectory::new("pkgre-native-path-directory").unwrap();
+        let target = native_member_at(&temporary, "native-base", "1.2.3");
+        let elsewhere = temporary.path().join("crates/elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        let mut dependent = native_metadata_member("native-first", &[]);
+        dependent
+            .dependencies
+            .push(native_path_dependency("native-base", "=1.2.3", &elsewhere));
+        let metadata = vec![dependent, target];
+        let released = BTreeSet::from(["native-first", "native-base"]);
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error = validate_native_dependencies(&metadata[0], &metadata, &released, &tag_version)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!(
+                "is a path dependency on {}, but the released crate native-base is at",
+                elsewhere.display()
+            )),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_tag_requires_each_released_crate_at_the_tags_version() {
+        let mut metadata = vec![native_metadata_member("native-base", &[])];
+        metadata[0].version = Version::parse("1.2.4").unwrap();
+        let published = [PublishedPackage {
+            name: "native-base",
+            locked_sha256: None,
+        }];
+        let request = TagRequest {
+            repository: TEST_REPOSITORY,
+            tag: TEST_TAG,
+            packages: &[],
+            published: Some(&published),
+            allow_retired_registries: false,
+            native: None,
+        };
+        let tag_version = Version::parse("1.2.3").unwrap();
+
+        let error =
+            validated_native_packages(&metadata, &[], &request, &tag_version, Path::new("."))
+                .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Git tag final component \"v1.2.3\" must equal \"1.2.4\""),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_source_row_must_hash_to_the_value_the_catalog_records() {
+        let temporary = TemporaryDirectory::new("pkgre-native-row-hash").unwrap();
+        let root = temporary.path().join("catalog");
+        let directory = root.join("objects/rows");
+        fs::create_dir_all(&directory).unwrap();
+        let recorded = sha256_bytes(b"the retained source row");
+        fs::write(
+            directory.join(format!("{recorded}.json")),
+            b"a tampered source row",
+        )
+        .unwrap();
+
+        let error = read_native_row(
+            &root,
+            "native-base",
+            &Version::parse("1.2.3").unwrap(),
+            &"11".repeat(32),
+            &recorded,
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("hashes to"), "{message}");
+        assert!(
+            message.contains(&format!("not to the {recorded} the catalog records")),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_native_source_row_must_record_the_identity_the_catalog_locks() {
+        let temporary = TemporaryDirectory::new("pkgre-native-row-identity").unwrap();
+        let root = temporary.path().join("catalog");
+        let directory = root.join("objects/rows");
+        fs::create_dir_all(&directory).unwrap();
+        let checksum = "12".repeat(32);
+        let row = |name: &str, checksum: &str| {
+            format!(
+                "{{\"name\":{name:?},\"vers\":\"1.2.3\",\"deps\":[],\"cksum\":{checksum:?},\"features\":{{}},\"yanked\":false}}\n"
+            )
+        };
+        let store = |contents: &str| {
+            let sha256 = sha256_bytes(contents.as_bytes());
+            fs::write(directory.join(format!("{sha256}.json")), contents).unwrap();
+            sha256
+        };
+        let version = Version::parse("1.2.3").unwrap();
+
+        let another_identity = store(&row("native-other", &checksum));
+        let error = read_native_row(&root, "native-base", &version, &checksum, &another_identity)
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!(
+                "does not record native-base 1.2.3 at checksum {checksum}"
+            )),
+            "{message}"
+        );
+
+        let another_checksum = store(&row("native-base", &"13".repeat(32)));
+        let error = read_native_row(&root, "native-base", &version, &checksum, &another_checksum)
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!(
+                "does not record native-base 1.2.3 at checksum {checksum}"
+            )),
+            "a row that records another checksum is refused: {message}"
+        );
+    }
+
     #[test]
     fn a_crates_io_native_tag_reproduces_offline_from_the_catalogs_objects() {
         let root = uncovered_temporary_root();
@@ -6291,20 +6655,15 @@ mod tests {
                 "crates/native-earlier",
             ),
         ));
-        let repositories =
-            crate::self_publish::NativeRepositories::load_beside(&fixture.root).unwrap();
-        let native = repositories
-            .catalog(&fixture.root, &approvals, "main", TEST_REPOSITORY, TEST_TAG)
-            .unwrap();
         let group = approvals[..materializations.len()]
             .iter()
             .collect::<Vec<_>>();
 
-        let reproduced = reproduce_approved_git_group_from_file_in(
+        let reproduced = reproduce_approved_git_group_from_directory_in(
             &root,
+            &fixture.root,
             &approvals,
             &group,
-            Some(native),
             source.to_str().unwrap(),
             &index,
         )
@@ -6433,20 +6792,15 @@ mod tests {
                 "crates/native-earlier",
             ),
         ));
-        let repositories =
-            crate::self_publish::NativeRepositories::load_beside(&fixture.root).unwrap();
-        let native = repositories
-            .catalog(&fixture.root, &approvals, "main", TEST_REPOSITORY, TEST_TAG)
-            .unwrap();
         let group = approvals[..materializations.len()]
             .iter()
             .collect::<Vec<_>>();
 
-        let error = reproduce_approved_git_group_from_file_in(
+        let error = reproduce_approved_git_group_from_directory_in(
             &root,
+            &fixture.root,
             &approvals,
             &group,
-            Some(native),
             source.to_str().unwrap(),
             &index,
         )
@@ -7808,6 +8162,49 @@ mod tests {
                 vec!["pkgre-demo/1.2.4".to_owned()],
             )],
             "one group of the added identity is reproduced against the candidate's own approvals"
+        );
+    }
+
+    #[test]
+    fn the_command_fails_when_it_cannot_reproduce_the_added_identity() {
+        let root = uncovered_temporary_root();
+        let temporary = TemporaryDirectory::new_in(&root, "pkgre-git-command-fetch").unwrap();
+        let index = create_test_index(&temporary);
+        let source = create_test_release(&temporary);
+        let added = tag_another_release(&temporary, &source, "1.2.4");
+        let accepted_path = temporary.path().join("accepted");
+        let candidate_path = temporary.path().join("candidate");
+        write_test_catalog(
+            &accepted_path,
+            &root,
+            &[TEST_TAG],
+            source.to_str().unwrap(),
+            &index,
+        );
+        copy_tree(&accepted_path, &candidate_path);
+        write_test_catalog(
+            &candidate_path,
+            &root,
+            &[TEST_TAG, added.as_str()],
+            source.to_str().unwrap(),
+            &index,
+        );
+
+        // The catalogs publish the tag from a repository no network resolves,
+        // so the command can pass only by skipping the reproduction of the
+        // identity the candidate adds. The reproduction refuses a temporary
+        // root that Cargo configuration covers before it fetches, so the
+        // failure is either that refusal or the fetch, and both belong to the
+        // group.
+        let error = crate::reproduce::reproduce_added_git_tags(&accepted_path, &candidate_path)
+            .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!(
+                "reproduce added main/pkgre-demo/1.2.4 of tag {added:?}"
+            )),
+            "the failure belongs to the identity's own reproduction: {message}"
         );
     }
 
