@@ -39,7 +39,6 @@ impl Uploader for LiveUploader {
             OsStr::new("publish"),
             OsStr::new("--no-verify"),
             OsStr::new("--locked"),
-            OsStr::new("--allow-dirty"),
             OsStr::new("--manifest-path"),
             upload.manifest.as_os_str(),
             OsStr::new("--target-dir"),
@@ -47,6 +46,9 @@ impl Uploader for LiveUploader {
             OsStr::new("--package"),
             OsStr::new(request.crates_io_name),
         ]);
+        if upload.allow_dirty {
+            command.arg("--allow-dirty");
+        }
         upload.environment.apply_with(
             &mut command,
             &[

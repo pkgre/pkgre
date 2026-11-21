@@ -215,6 +215,14 @@ pub(super) enum Build {
     Verify,
 }
 
+/// The flags of one packaging run: whether it builds, and whether it may
+/// package a checkout whose manifests the derivation rewrote.
+#[derive(Clone, Copy)]
+pub(super) struct Options {
+    pub(super) build: Build,
+    pub(super) allow_dirty: bool,
+}
+
 /// Packages the named members of one checkout twice and returns the archives by
 /// package name.
 ///
@@ -240,6 +248,7 @@ pub(super) fn package_members(
     targets: &Path,
     checkout: &Path,
     members: &[(String, Version)],
+    allow_dirty: bool,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     ensure_no_cargo_configuration(work)?;
     let manifest_path = checkout.join("Cargo.toml");
@@ -253,7 +262,10 @@ pub(super) fn package_members(
             &target,
             &manifest_path,
             members,
-            Build::Package,
+            Options {
+                build: Build::Package,
+                allow_dirty,
+            },
         )?;
         for (name, bytes) in read_archives(&target, members)? {
             match archives.get(&name) {
@@ -284,7 +296,7 @@ pub(super) fn package_group(
     target: &Path,
     manifest_path: &Path,
     members: &[(String, Version)],
-    build: Build,
+    options: Options,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     package_once(
         cargo,
@@ -293,7 +305,7 @@ pub(super) fn package_group(
         target,
         manifest_path,
         members,
-        build,
+        options,
     )?;
     read_archives(target, members)
 }
@@ -315,25 +327,27 @@ fn package_once(
     target: &Path,
     manifest_path: &Path,
     members: &[(String, Version)],
-    build: Build,
+    options: Options,
 ) -> Result<()> {
     let mut arguments = vec![
         OsString::from("package"),
         OsString::from("--locked"),
-        OsString::from("--allow-dirty"),
         OsString::from("--manifest-path"),
         manifest_path.as_os_str().to_owned(),
         OsString::from("--target-dir"),
         target.as_os_str().to_owned(),
     ];
-    if build == Build::Package {
+    if options.allow_dirty {
+        arguments.push(OsString::from("--allow-dirty"));
+    }
+    if options.build == Build::Package {
         arguments.insert(1, OsString::from("--no-verify"));
     }
     for (name, _) in members {
         arguments.push(OsString::from("--package"));
         arguments.push(OsString::from(name));
     }
-    run_build(cargo, environment, work, arguments, build)
+    run_build(cargo, environment, work, arguments, options.build)
 }
 
 /// Runs one packaging command, in its own process group when it builds.

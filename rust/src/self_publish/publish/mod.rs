@@ -304,6 +304,8 @@ pub(crate) struct UploadEnvironment {
     pub(crate) manifest: PathBuf,
     /// The target directory of the upload.
     pub(crate) target: PathBuf,
+    /// Whether this checkout has rewritten manifests.
+    pub(crate) allow_dirty: bool,
 }
 
 /// One `cargo publish` of one crate version.
@@ -790,6 +792,7 @@ fn upload_missing(
     siblings: &BTreeMap<String, BTreeSet<String>>,
     services: &Services<'_>,
 ) -> Result<()> {
+    info!("waiting for the crates.io token on standard input");
     let token = services.tokens.read()?;
     for position in order.iter().copied() {
         let (crate_, _) = classified[position];
@@ -1061,6 +1064,7 @@ fn upload_environment(derivation: &Derivation) -> Result<UploadEnvironment> {
         work: derivation.workspace.work().to_path_buf(),
         manifest: derivation.workspace.manifest(),
         target: derivation.workspace.upload_target(),
+        allow_dirty: !derivation.workspace.is_native(),
     })
 }
 

@@ -255,7 +255,7 @@ that the catalog publishes from it:
 
 Deriving from the tag and proving the result against the retained archive is what lets
 `cargo publish` work from ordinary sources, and what guarantees that the crates.io package
-is the curated package with a mechanically rewritten manifest.
+is the curated package, with a mechanically rewritten manifest for a `pkgre`-mode tag.
 
 Every Git and Cargo process of the derivation starts from an empty environment and inherits
 only `PATH`, `TMPDIR`, the certificate variables, `CARGO_HOME`, and `RUSTC` pointing at the
@@ -263,6 +263,47 @@ only `PATH`, `TMPDIR`, the certificate variables, `CARGO_HOME`, and `RUSTC` poin
 derivation works in a temporary directory and refuses to run when that directory or any
 directory above it holds Cargo configuration, so set `TMPDIR` to a directory that no Cargo
 configuration covers; a symbolic link on the way is resolved too, since Cargo follows it.
+
+### A crates.io-native release
+
+A repository whose `manifests` is `"crates-io"` derives its release differently, since the
+tag's own packaging is both registries' archive. Steps 1 and 7 stay as they are, step 2
+takes the released crates of item 1 below, and these items replace steps 3 to 6:
+
+1. requires every member to be released or to set `publish = false`, refuses a list of
+   registries in `publish`, and takes the tag's publishable members, whose `publish` is
+   absent or `true`, as the released crates;
+2. rewrites nothing: it requires every dependency of every released crate, in every table,
+   to be a crates.io dependency by version requirement without `registry`, `registry-index`
+   or `git`, or a path dependency on another released crate of the same tag, at that
+   crate's own directory, requiring exactly the tag's version `=X.Y.Z`. A path dependency
+   without a version, or on any other package, is refused, as are Git dependencies, other
+   registries, and a cycle between the released crates, dev-dependencies included;
+3. requires the workspace root to commit its `Cargo.lock` and applies the lock rule of
+   `docs/catalog.md`: every package with a source in the lock names
+   `registry+https://github.com/rust-lang/crates.io-index`, carries a checksum of its own,
+   and is an active identity of `registry/main.lock`, as a crates.io mirror or as a crate
+   of an earlier native release, with that `crate-sha256`; every package without a source
+   is a workspace member. A lock of version 1 or 2, a Git source, another registry, a
+   removed identity, or another checksum is refused;
+4. packages every released crate as one group against crates.io, `cargo package
+   --no-verify --locked` without `--allow-dirty`, in a fresh Cargo home that uses plain
+   crates.io, from a working directory outside the checkout, twice, requiring identical
+   bytes, and requires the checkout to stay clean;
+5. requires each archive to equal the archive that the catalog retains, byte for byte,
+   since nothing rewrites the tag;
+6. records the result; the entry checks require `crates-io-name` to equal `name` and
+   `crate-sha256` to equal `pkgre-crate-sha256`.
+
+Cargo serves a crate of the tag to the crates that depend on it through the temporary
+registry it builds from the archives of that one run, so a dependent's packaged lock names
+its siblings, and `--locked` proves that crates.io resolves the committed lock without a
+change.
+
+For a consumer a native crate behaves like a mirror: Cargo resolves it through the
+registry's index, and a plain `cargo vendor` of a project that takes it from `pkgre` as an
+alternative registry needs `pkgre-vendor`, which patches the vendored manifests from the
+lock, as it does for every mirror.
 
 ## Recording entries
 
@@ -455,7 +496,8 @@ For one release, a run:
    cannot have taken the dependent before its sibling. A yanked dependency is reported rather
    than refused, since Cargo accepts a yanked version that a lock file pins.
 5. builds the missing crates with Cargo's verification, `cargo package --locked --allow-dirty`
-   in the derived, rewritten workspace, against plain crates.io, in an isolated Cargo home, from
+   in the derived, rewritten workspace, or `cargo package --locked` in a copy of a native
+   release's clean checkout, against plain crates.io, in an isolated Cargo home, from
    a working directory that no Cargo configuration covers, and requires each archive's SHA-256
    to equal its `crates-io.lock` entry. The missing crates are packaged in one run, so a crate
    whose sibling crates.io does not have yet is packaged against that sibling of the same run.
@@ -466,12 +508,15 @@ For one release, a run:
    no process the package code started outlives it.
 6. with `--upload`, and only after steps 1 to 5 passed, packages the missing crates the way
    `cargo publish` packages them, `cargo package --no-verify --locked --allow-dirty`, in the same
-   derived workspace and in the upload's own isolated Cargo home, which configures plain
+   derived workspace, or in the clean checkout of a native release, which is packaged without
+   `--allow-dirty`, and in the upload's own isolated Cargo home, which configures plain
    crates.io with the `cargo:token` credential provider and no other registry; they are
    packaged in one run, as in step 5, so a dependent whose sibling crates.io does not have yet
    is packaged against that sibling of the same run, and it requires each of those archives to
-   equal its `crates-io.lock` entry. Only then does it read the token and run
-   `cargo publish --no-verify --locked --allow-dirty` for each missing crate, with the token in
+   equal its `crates-io.lock` entry. Before it reads the token, the routine logs one line,
+   `waiting for the crates.io token on standard input`, so that a caller knows the run waits.
+   Only then does it read the token and run `cargo publish --no-verify --locked --allow-dirty`
+   for each missing crate, without `--allow-dirty` for a native release, with the token in
    the environment of that one process alone. A crate of the release is published after the
    crates it depends on, and name order decides among crates that do not depend on each other,
    so a release whose crates do not depend on each other uploads in name order, as it always
