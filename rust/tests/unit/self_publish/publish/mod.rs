@@ -10,6 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -48,6 +49,9 @@ const REPOSITORY: &str = fixtures::REPOSITORY;
 const OWNER: &str = "example-owner";
 /// A token that no report lets through.
 const TOKEN: &str = "example-crates-io-token";
+
+/// The routine's line that says it waits for the crates.io token.
+const TOKEN_LINE: &str = "waiting for the crates.io token on standard input";
 /// How long a test waits for an upload, which the fakes answer at once.
 const WAIT: WaitPolicy = WaitPolicy {
     attempts: 3,
@@ -457,6 +461,40 @@ impl RegistryIndex for FakeRegistry {
     }
 }
 
+/// Records the routine's log output on this thread, and marks a fake adds.
+#[derive(Clone, Default)]
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Capture {
+    /// Returns what was recorded so far.
+    fn text(&self) -> String {
+        let bytes = self.0.lock().expect("lock the capture").clone();
+        String::from_utf8(bytes).expect("the recorded output is UTF-8")
+    }
+}
+
+impl std::io::Write for Capture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("lock the capture")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    type Writer = Capture;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
 /// A fake upload that publishes into the fake crates.io.
 struct FakeUploader {
     /// crates.io, which the fake publishes into.
@@ -475,6 +513,8 @@ struct FakeUploader {
     fail_after: Cell<usize>,
     /// The crates.io names the fake uploaded.
     uploads: RefCell<Vec<String>>,
+    /// Whether each upload's environment allowed a dirty checkout.
+    allow_dirty: RefCell<Vec<bool>>,
     /// The tokens the fake was given.
     tokens: RefCell<Vec<String>>,
 }
@@ -529,6 +569,7 @@ impl FakeUploader {
             checksums,
             fail_after: Cell::new(usize::MAX),
             uploads: RefCell::new(Vec::new()),
+            allow_dirty: RefCell::new(Vec::new()),
             tokens: RefCell::new(Vec::new()),
         }
     }
@@ -541,7 +582,13 @@ impl FakeUploader {
     /// Forgets the uploads of an earlier run.
     fn reset(&self) {
         self.uploads.borrow_mut().clear();
+        self.allow_dirty.borrow_mut().clear();
         self.tokens.borrow_mut().clear();
+    }
+
+    /// Returns whether each upload's environment allowed a dirty checkout.
+    fn allow_dirty(&self) -> Vec<bool> {
+        self.allow_dirty.borrow().clone()
     }
 
     /// Returns the crates.io names the fake uploaded.
@@ -571,6 +618,9 @@ impl Uploader for FakeUploader {
         self.uploads
             .borrow_mut()
             .push(request.crates_io_name.to_owned());
+        self.allow_dirty
+            .borrow_mut()
+            .push(request.environment.allow_dirty);
         self.tokens
             .borrow_mut()
             .push(request.token.expose().to_owned());
@@ -604,6 +654,8 @@ struct FakeTokens {
     value: Option<String>,
     /// How often the token was read.
     reads: Cell<usize>,
+    /// Where a read marks itself, when a test records the run's output.
+    capture: Option<Capture>,
 }
 
 impl FakeTokens {
@@ -612,6 +664,17 @@ impl FakeTokens {
         Self {
             value: Some(TOKEN.to_owned()),
             reads: Cell::new(0),
+            capture: None,
+        }
+    }
+
+    /// Returns a source that answers with the test token, and marks its read in
+    /// `capture`.
+    fn with_token_and_capture(capture: Capture) -> Self {
+        Self {
+            value: Some(TOKEN.to_owned()),
+            reads: Cell::new(0),
+            capture: Some(capture),
         }
     }
 
@@ -620,6 +683,7 @@ impl FakeTokens {
         Self {
             value: None,
             reads: Cell::new(0),
+            capture: None,
         }
     }
 
@@ -632,6 +696,9 @@ impl FakeTokens {
 impl TokenSource for FakeTokens {
     fn read(&self) -> Result<Token> {
         self.reads.set(self.reads.get() + 1);
+        if let Some(capture) = &self.capture {
+            writeln!(capture.clone(), "TOKEN-READ").expect("record the token read");
+        }
         match &self.value {
             Some(value) => Token::new(value.clone()),
             None => bail!("this run must not read a token"),
@@ -845,6 +912,8 @@ fn uploads_a_sibling_before_the_crate_that_depends_on_it() {
     let setup = Setup::with_variant(temporary.path(), &[], sibling_release());
     let summary = setup.execute(true).expect("the upload passes");
     assert_eq!(summary.uploaded, 2);
+    // A rewritten workspace packages the upload with the dirty allowance.
+    assert_eq!(setup.uploader.allow_dirty(), [true, true]);
     assert_eq!(
         setup.uploader.uploads(),
         vec![
@@ -1278,6 +1347,7 @@ fn refuses_an_empty_token_before_any_upload() {
     let tokens = FakeTokens {
         value: Some(" \n".to_owned()),
         reads: Cell::new(0),
+        capture: None,
     };
     let services = Services {
         tokens: &tokens,
@@ -1704,6 +1774,89 @@ fn only_the_upload_process_gets_the_token() {
     assert!(recorded.contains_key("RUSTC"), "{recorded:?}");
 }
 
+#[test]
+fn a_native_upload_process_is_not_given_allow_dirty() {
+    let temporary = fixtures::Temp::new("pkgre-publish-native-arguments");
+    let (mut upload, record) = fake_upload(&temporary, "arguments");
+    let version: Version = "1.0.0".parse().expect("parse a version");
+    let token = Token::new(TOKEN.to_owned()).expect("build the token");
+    upload.allow_dirty = false;
+    {
+        let request = UploadRequest {
+            environment: &upload,
+            crates_io_name: "example-library",
+            version: &version,
+            token: &token,
+        };
+        live::LiveUploader
+            .publish(&request)
+            .expect("the fake upload succeeds");
+    }
+    let arguments = fs::read_to_string(&record).expect("read the recorded arguments");
+    assert!(
+        !arguments.lines().any(|line| line == "--allow-dirty"),
+        "{arguments}"
+    );
+    assert!(
+        arguments.lines().any(|line| line == "--no-verify"),
+        "{arguments}"
+    );
+    // A rewritten workspace still packages with the dirty allowance.
+    upload.allow_dirty = true;
+    let request = UploadRequest {
+        environment: &upload,
+        crates_io_name: "example-library",
+        version: &version,
+        token: &token,
+    };
+    live::LiveUploader
+        .publish(&request)
+        .expect("the fake upload succeeds");
+    let arguments = fs::read_to_string(&record).expect("read the recorded arguments");
+    assert!(
+        arguments.lines().any(|line| line == "--allow-dirty"),
+        "{arguments}"
+    );
+}
+
+#[test]
+fn the_token_line_is_logged_once_after_the_comparison_and_before_the_token() {
+    let temporary = fixtures::Temp::new("pkgre-publish-token-line");
+    let capture = Capture::default();
+    let mut setup = Setup::new(temporary.path());
+    setup.tokens = FakeTokens::with_token_and_capture(capture.clone());
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .without_time()
+        .with_target(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        setup.dry_run().expect("the dry run passes");
+    });
+    assert!(
+        !capture.text().contains(TOKEN_LINE),
+        "a dry run logs no token line: {}",
+        capture.text()
+    );
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .without_time()
+        .with_target(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        setup.execute(true).expect("the upload passes");
+    });
+    let text = capture.text();
+    assert_eq!(text.matches(TOKEN_LINE).count(), 1, "{text}");
+    let line = text.find(TOKEN_LINE).expect("the token line is logged");
+    let compared = text
+        .find("checked the package that cargo publish would upload")
+        .expect("step 6 logs the comparison");
+    assert!(compared < line, "{text}");
+    let read = text.find("TOKEN-READ").expect("the token was read");
+    assert!(line < read, "{text}");
+}
+
 /// Writes a fake toolchain of a `cargo` that acts as `action` says, with a
 /// `rustc` beside it, and returns where one upload runs and where the fake
 /// records its environment.
@@ -1714,6 +1867,11 @@ fn fake_upload(temporary: &fixtures::Temp, action: &str) -> (UploadEnvironment, 
     let record = root.join(format!("recorded-environment-{action}"));
     let script = if action == "record" {
         format!("#!/bin/sh\nenv | sort > '{}'\nexit 0\n", record.display())
+    } else if action == "arguments" {
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nexit 0\n",
+            record.display()
+        )
     } else {
         "#!/bin/sh\necho \"$CARGO_REGISTRY_TOKEN\"\necho \"$CARGO_REGISTRY_TOKEN\" >&2\nexit 1\n"
             .to_owned()

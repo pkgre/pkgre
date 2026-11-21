@@ -85,17 +85,27 @@ fn check_changed(change: impl FnOnce(&Path)) -> String {
             &release.root,
             true,
         )?;
-        let lock = LockIndex::load(&release.root.join("Cargo.lock"))?;
+        let lock = LockIndex::load(&workspace.root.join("Cargo.lock"))?;
         super::super::native::validate(
             &workspace,
             &lock,
             &state.catalog,
             &state.self_publish.unwrap().config,
+            fixtures::REPOSITORY,
+            &fixtures::tag(),
             &environment,
         )?;
         Ok(())
     })();
     format!("{:#}", result.unwrap_err())
+}
+
+/// Appends one entry to a fixture file.
+fn append(root: &Path, file: &str, text: &str) {
+    let path = root.join(file);
+    let mut contents = fs::read_to_string(&path).unwrap();
+    contents.push_str(text);
+    fs::write(path, contents).unwrap();
 }
 
 fn replace(root: &Path, file: &str, old: &str, new: &str) {
@@ -204,4 +214,191 @@ fn native_verified_build_uses_an_independent_clean_copy() {
             .unwrap(),
         archives
     );
+}
+
+#[test]
+fn native_contract_refuses_other_dependency_sources() {
+    let cases: [(&str, &str, &str, &str); 5] = [
+        (
+            "lib/Cargo.toml",
+            "mirrored-dep.workspace = true",
+            "mirrored-dep.workspace = true\ngit-dep = { git = \"https://example.invalid/repository\" }",
+            "unsupported source",
+        ),
+        (
+            "lib/Cargo.toml",
+            "mirrored-dep.workspace = true",
+            "mirrored-dep = { version = \"0.3\", registry = \"pkgre\" }",
+            "names a registry",
+        ),
+        (
+            "lib/Cargo.toml",
+            "mirrored-dep.workspace = true",
+            "mirrored-dep = { version = \"0.3\", registry-index = \"https://example.invalid/index\" }",
+            "names a registry",
+        ),
+        (
+            "bin/Cargo.toml",
+            "example-lib.workspace = true",
+            "example-lib = { path = \"../lib\" }",
+            "must require exactly",
+        ),
+        (
+            "bin/Cargo.toml",
+            "example-lib.workspace = true",
+            "example-serve = { path = \"../serve\", version = \"=0.2.0\" }",
+            "is not a released sibling",
+        ),
+    ];
+    for (file, old, new, expected) in cases {
+        let error = check_changed(|root| replace(root, file, old, new));
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}
+
+#[test]
+fn native_contract_refuses_a_sibling_in_another_directory() {
+    let error = check_changed(|root| {
+        fs::create_dir_all(root.join("other/src")).unwrap();
+        fs::write(
+            root.join("other/Cargo.toml"),
+            "[package]\nname = \"example-lib\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("other/src/lib.rs"), "").unwrap();
+        replace(
+            root,
+            "Cargo.toml",
+            "members = [\"lib\", \"bin\", \"serve\"]",
+            "members = [\"lib\", \"bin\", \"serve\"]\nexclude = [\"other\"]",
+        );
+        replace(
+            root,
+            "bin/Cargo.toml",
+            "example-lib.workspace = true",
+            "lib-alias = { package = \"example-lib\", path = \"../other\", version = \"=1.0.0\" }",
+        );
+    });
+    assert!(error.contains("names another directory"), "{error}");
+}
+
+#[test]
+fn native_lock_rule_refuses_other_sources_and_unknown_packages() {
+    type Change = fn(&Path);
+    let cases: [(&str, Change); 5] = [
+        ("unsupported source", |root| {
+            append(
+                root,
+                "Cargo.lock",
+                "\n[[package]]\nname = \"ghost-git\"\nversion = \"1.0.0\"\nsource = \"git+https://example.invalid/repository#0000000000000000000000000000000000000000\"\n",
+            );
+        }),
+        ("unsupported source", |root| {
+            append(
+                root,
+                "Cargo.lock",
+                "\n[[package]]\nname = \"ghost-registry\"\nversion = \"1.0.0\"\nsource = \"registry+https://example.invalid/index\"\n",
+            );
+        }),
+        ("missing or different checksum", |root| {
+            replace(root, "Cargo.lock", "\nchecksum = ", "\nchecksum-missing = ");
+        }),
+        ("is not an active mirror or native identity", |root| {
+            append(
+                root,
+                "Cargo.lock",
+                "\n[[package]]\nname = \"ghost-absent\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+            );
+        }),
+        ("without a source is not a workspace member", |root| {
+            append(
+                root,
+                "Cargo.lock",
+                "\n[[package]]\nname = \"ghost-path\"\nversion = \"0.1.0\"\n",
+            );
+        }),
+    ];
+    for (expected, change) in cases {
+        let error = check_changed(change);
+        assert!(error.contains(expected), "{expected}: {error}");
+    }
+}
+
+#[test]
+fn native_lock_rule_refuses_an_identity_of_the_tag_itself() {
+    let temporary = fixtures::Temp::new("native-own-tag");
+    let (source, release, catalog) = fixture(temporary.path(), variant());
+    let state = RepositoryState::load(&catalog.root).unwrap();
+    let checksum = sha256_bytes(&catalog.curated["example-lib"]);
+    replace(
+        &release.root,
+        "Cargo.lock",
+        "name = \"example-lib\"\nversion = \"1.0.0\"\n",
+        &format!(
+            "name = \"example-lib\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = {checksum:?}\n"
+        ),
+    );
+    let cargo = crate::package::pinned_cargo(&fixtures::CARGO_VERSION.parse().unwrap()).unwrap();
+    let home = temporary.path().join("own-tag-home");
+    super::super::cargo::prepare_cargo_home(
+        &home,
+        super::super::cargo::RegistrySources::Local(source.root),
+    )
+    .unwrap();
+    let environment = ChildEnvironment::capture(&home, &cargo).unwrap();
+    let result = (|| -> Result<()> {
+        let workspace = super::super::workspace::Workspace::load(
+            &cargo,
+            &environment,
+            temporary.path(),
+            &release.root,
+            true,
+        )?;
+        let lock = LockIndex::load(&workspace.root.join("Cargo.lock"))?;
+        super::super::native::validate(
+            &workspace,
+            &lock,
+            &state.catalog,
+            &state.self_publish.unwrap().config,
+            fixtures::REPOSITORY,
+            &fixtures::tag(),
+            &environment,
+        )?;
+        Ok(())
+    })();
+    let error = format!("{:#}", result.unwrap_err());
+    assert!(
+        error.contains("is not an active mirror or native identity"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_native_tag_reads_the_lock_of_the_workspace_root_below_the_checkout() {
+    let temporary = fixtures::Temp::new("native-nested-lock");
+    let checkout = temporary.path().join("checkout");
+    let workspace = checkout.join("nested");
+    fs::create_dir_all(&workspace).unwrap();
+    // The decoy at the checkout root is a version-1 lock, which a native tag
+    // refuses; the lock at the workspace root is the one that counts.
+    fs::write(
+        checkout.join("Cargo.lock"),
+        "[[package]]\nname = \"decoy\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"example\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    let native = LockIndex::load(&super::super::release_lock_path(
+        true, &checkout, &workspace,
+    ))
+    .unwrap();
+    assert_eq!(native.version, 4);
+    let rewritten = LockIndex::load(&super::super::release_lock_path(
+        false, &checkout, &workspace,
+    ))
+    .unwrap();
+    assert_eq!(rewritten.version, 1);
 }

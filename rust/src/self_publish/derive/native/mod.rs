@@ -20,6 +20,8 @@ pub(super) fn validate(
     lock: &LockIndex,
     catalog: &CatalogSnapshot,
     config: &CratesIoConfig,
+    git: &str,
+    tag: &str,
     environment: &ChildEnvironment,
 ) -> Result<Vec<DerivedDependency>> {
     super::super::git::run(
@@ -65,7 +67,17 @@ pub(super) fn validate(
         );
         let identity = catalog.identity(&package.name, &package.version)
             .filter(|identity| !identity.removed)
-            .filter(|identity| identity.release.as_ref().is_none_or(|release| config.is_native(&release.git)))
+            .filter(|identity| match &identity.release {
+                // An identity of the tag being derived is not admitted: nothing
+                // rewrites a native tag, so its own crates reach the lock as
+                // path packages, and a sibling named from crates.io would be an
+                // archive other than the tag's.
+                Some(release) => {
+                    config.is_native(&release.git)
+                        && !(release.git == git && release.tag == tag)
+                }
+                None => true,
+            })
             .with_context(|| format!("native lock package {} {} is not an active mirror or native identity of the catalog", package.name, package.version))?;
         ensure!(
             package.checksum.as_deref() == Some(identity.crate_sha256.as_str()),

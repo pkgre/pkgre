@@ -497,10 +497,18 @@ pub(super) fn derive_release_in(
         &workspace.tag_members(),
     )?;
     ensure_release_members(&workspace, released, &release.tag)?;
-    let lock = LockIndex::load(&checkout.root.join("Cargo.lock"))?;
+    let lock = LockIndex::load(&release_lock_path(native, &checkout.root, &workspace.root))?;
     let published = published_crates(&workspace, released, config, &release.tag, &release.git)?;
     let (mut expectations, native_dependencies) = if native {
-        let dependencies = native::validate(&workspace, &lock, catalog, config, &environment)?;
+        let dependencies = native::validate(
+            &workspace,
+            &lock,
+            catalog,
+            config,
+            &release.git,
+            &release.tag,
+            &environment,
+        )?;
         git::ensure_clean_checkout(&checkout.root, &environment, allow_file)?;
         (None, dependencies)
     } else {
@@ -739,6 +747,19 @@ fn package_directory(
     } else {
         relative.to_path_buf()
     })
+}
+
+/// Returns the lock file of one release tag.
+///
+/// A crates.io-native tag commits its `Cargo.lock` at the workspace root that
+/// Cargo reports, which may sit below the checkout; a `pkgre`-mode tag keeps its
+/// lock at the checkout's root.
+fn release_lock_path(native: bool, checkout: &Path, workspace: &Path) -> PathBuf {
+    if native {
+        workspace.join("Cargo.lock")
+    } else {
+        checkout.join("Cargo.lock")
+    }
 }
 
 /// Requires the crates that the catalog publishes from the tag to be exactly

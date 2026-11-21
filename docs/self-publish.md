@@ -267,8 +267,8 @@ configuration covers; a symbolic link on the way is resolved too, since Cargo fo
 ### A crates.io-native release
 
 A repository whose `manifests` is `"crates-io"` derives its release differently, since the
-tag's own packaging is both registries' archive. In place of steps 3 to 6 above, the
-derivation:
+tag's own packaging is both registries' archive. Steps 1 and 7 stay as they are, step 2
+takes rule 3's released crates, and these items replace steps 3 to 6:
 
 1. requires every member to be released or to set `publish = false`, refuses a list of
    registries in `publish`, and takes the tag's publishable members, whose `publish` is
@@ -299,6 +299,11 @@ Cargo serves a crate of the tag to the crates that depend on it through the temp
 registry it builds from the archives of that one run, so a dependent's packaged lock names
 its siblings, and `--locked` proves that crates.io resolves the committed lock without a
 change.
+
+For a consumer a native crate behaves like a mirror: Cargo resolves it through the
+registry's index, and a plain `cargo vendor` of a project that takes it from `pkgre` as an
+alternative registry needs `pkgre-vendor`, which patches the vendored manifests from the
+lock, as it does for every mirror.
 
 ## Recording entries
 

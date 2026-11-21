@@ -31,6 +31,9 @@ fn native_missing_published_and_yanked_states_keep_one_archive() {
     assert_eq!(setup.tokens.reads(), 0);
     assert_eq!(setup.execute(true).unwrap().uploaded, 2);
     assert_eq!(setup.uploader.uploads(), [LIB, BIN]);
+    // A native tag is not rewritten, so the upload must not allow a dirty
+    // checkout.
+    assert_eq!(setup.uploader.allow_dirty(), [false, false]);
     let published = setup.execute(true).unwrap();
     assert_eq!(published.published, 2);
     assert_eq!(setup.tokens.reads(), 1);
