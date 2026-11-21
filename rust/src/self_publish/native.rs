@@ -155,6 +155,7 @@ impl NativeRepositories {
 mod tests {
     use super::*;
     use crate::package::TemporaryDirectory;
+    use semver::Version;
 
     /// The repository that the tests declare native.
     const REPOSITORY: &str = "https://example.invalid/example";
@@ -255,6 +256,68 @@ mod tests {
                 .catalog(&catalog, &[], "main", REPOSITORY, "v1.0.0")
                 .is_none(),
             "a repository without manifests = \"crates-io\" keeps pkgre manifests"
+        );
+    }
+
+    /// Returns one active identity that a tag of `REPOSITORY` publishes, in
+    /// `registry`, as a catalog locks it.
+    fn native_tag_approval(registry: &str, name: &str, tag: &str) -> Approval {
+        Approval {
+            registry: registry.to_owned(),
+            category: format!("{registry}/pkgre").parse().unwrap(),
+            name: name.to_owned(),
+            version: Version::parse("1.0.0").unwrap(),
+            archive_sha256: "01".repeat(32),
+            index_record_sha256: "02".repeat(32),
+            index_row_sha256: "03".repeat(32),
+            admission_sha256: None,
+            admitted_at: crate::update::time::UtcTimestamp::parse("2026-01-01T00:00:00Z").unwrap(),
+            state: PackageState::Active,
+            source: Source::GitTag {
+                repository: REPOSITORY.to_owned(),
+                tag: tag.to_owned(),
+                tag_oid: "11".repeat(20),
+                commit: "22".repeat(20),
+                package: name.to_owned(),
+                subdir: std::path::PathBuf::from("."),
+                cargo_version: Version::parse("1.95.0").unwrap(),
+            },
+            declared_in: std::path::PathBuf::from("main.lock"),
+        }
+    }
+
+    #[test]
+    fn a_native_catalog_names_only_the_identities_of_its_own_registry() {
+        let temporary = TemporaryDirectory::new("pkgre-native-registry-filter").unwrap();
+        let catalog = temporary.path().join("catalog");
+        fs::create_dir_all(&catalog).unwrap();
+        write_config(
+            &catalog,
+            &format!(
+                "schema = 1\nowners = [\"example\"]\n\n[[repositories]]\ngit = {REPOSITORY:?}\ntag-prefix = \"v\"\nmanifests = \"crates-io\"\n"
+            ),
+        );
+        // Both are earlier releases of the repository, so both are identities
+        // the tag's lock rule may name, and only the registry separates them.
+        let approvals = [
+            native_tag_approval("main", "native-main", "v0.9.0"),
+            native_tag_approval("staging", "native-staging", "v0.9.0"),
+        ];
+
+        let repositories = NativeRepositories::load_beside(&catalog).unwrap();
+        let native = repositories
+            .catalog(&catalog, &approvals, "main", REPOSITORY, "v1.0.0")
+            .unwrap();
+        let names = native
+            .identities
+            .iter()
+            .map(|identity| identity.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            ["native-main"],
+            "an identity of another registry is not one the tag's lock rule may name"
         );
     }
 }
