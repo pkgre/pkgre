@@ -268,7 +268,7 @@ configuration covers; a symbolic link on the way is resolved too, since Cargo fo
 
 A repository whose `manifests` is `"crates-io"` derives its release differently, since the
 tag's own packaging is both registries' archive. Steps 1 and 7 stay as they are, step 2
-takes rule 3's released crates, and these items replace steps 3 to 6:
+takes the released crates of item 1 below, and these items replace steps 3 to 6:
 
 1. requires every member to be released or to set `publish = false`, refuses a list of
    registries in `publish`, and takes the tag's publishable members, whose `publish` is

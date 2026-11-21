@@ -461,7 +461,8 @@ impl RegistryIndex for FakeRegistry {
     }
 }
 
-/// Records the routine's log output on this thread, and marks a fake adds.
+/// Records the routine's log output on this thread, and the marks that the fake
+/// token source adds to it.
 #[derive(Clone, Default)]
 struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
@@ -487,11 +488,72 @@ impl std::io::Write for Capture {
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
-    type Writer = Capture;
+thread_local! {
+    /// The capture of the test that runs on this thread, while it records the
+    /// routine's log output.
+    static THREAD_CAPTURE: std::cell::RefCell<Option<Capture>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Writes the routine's log output into the capture of the test on the current
+/// thread, if it records one, and drops it otherwise.
+#[derive(Clone, Copy)]
+struct ThreadCapture;
+
+impl std::io::Write for ThreadCapture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        THREAD_CAPTURE.with(|slot| {
+            if let Some(capture) = slot.borrow_mut().as_mut() {
+                capture.write_all(bytes)?;
+            }
+            Ok(bytes.len())
+        })
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ThreadCapture {
+    type Writer = ThreadCapture;
 
     fn make_writer(&'a self) -> Self::Writer {
-        self.clone()
+        *self
+    }
+}
+
+/// Records the routine's log output on this thread into `capture` until the
+/// returned guard is dropped.
+///
+/// One global subscriber, installed by the first call, serves every test of the
+/// binary. A subscriber scoped to one thread would not do: tests on other
+/// threads reach the same callsites while it comes and goes, and the interest
+/// that `tracing` caches for a callsite can then leave it disabled for that
+/// subscriber. Rebuilding the cache once the global subscriber is in place
+/// settles every callsite registered before it.
+fn record_logs(capture: &Capture) -> RecordingLogs {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(ThreadCapture)
+            .without_time()
+            .with_target(false)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("install the tests' log subscriber");
+    });
+    tracing::callsite::rebuild_interest_cache();
+    THREAD_CAPTURE.with(|slot| *slot.borrow_mut() = Some(capture.clone()));
+    RecordingLogs
+}
+
+/// Stops recording the routine's log output on this thread when dropped.
+struct RecordingLogs;
+
+impl Drop for RecordingLogs {
+    fn drop(&mut self) {
+        THREAD_CAPTURE.with(|slot| *slot.borrow_mut() = None);
     }
 }
 
@@ -1825,32 +1887,22 @@ fn the_token_line_is_logged_once_after_the_comparison_and_before_the_token() {
     let capture = Capture::default();
     let mut setup = Setup::new(temporary.path());
     setup.tokens = FakeTokens::with_token_and_capture(capture.clone());
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(capture.clone())
-        .without_time()
-        .with_target(false)
-        .finish();
-    tracing::subscriber::with_default(subscriber, || {
-        setup.dry_run().expect("the dry run passes");
-    });
+    let recording = record_logs(&capture);
+    setup.dry_run().expect("the dry run passes");
+    drop(recording);
     assert!(
         !capture.text().contains(TOKEN_LINE),
         "a dry run logs no token line: {}",
         capture.text()
     );
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(capture.clone())
-        .without_time()
-        .with_target(false)
-        .finish();
-    tracing::subscriber::with_default(subscriber, || {
-        setup.execute(true).expect("the upload passes");
-    });
+    let recording = record_logs(&capture);
+    setup.execute(true).expect("the upload passes");
+    drop(recording);
     let text = capture.text();
     assert_eq!(text.matches(TOKEN_LINE).count(), 1, "{text}");
     let line = text.find(TOKEN_LINE).expect("the token line is logged");
     let compared = text
-        .find("checked the package that cargo publish would upload")
+        .rfind("checked the package that cargo publish would upload")
         .expect("step 6 logs the comparison");
     assert!(compared < line, "{text}");
     let read = text.find("TOKEN-READ").expect("the token was read");

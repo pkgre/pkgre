@@ -15,6 +15,11 @@ use super::{DerivedDependency, cargo, cargo_lock::LockIndex, workspace::Workspac
 
 /// Checks the manifests and the entire committed lock without changing either.
 /// The resulting dependencies are the exact archives crates.io must serve.
+///
+/// These checks repeat, on the derivation's own metadata, the native contract
+/// and the lock rule that `lock` applies when it packages the tag
+/// (`validate_native_dependencies` and `ensure_native_lock_rule` in
+/// `package.rs`); a change to one must be made to the other.
 pub(super) fn validate(
     workspace: &Workspace,
     lock: &LockIndex,

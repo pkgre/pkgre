@@ -260,7 +260,8 @@ fn rehearsal_config(git: &str, prefix: &str) -> CratesIoConfig {
     .expect("parse the rehearsal's self-publishing config")
 }
 
-/// Returns rule 3's released crates of the tag, read from its workspace.
+/// Returns the released crates of the tag, those whose `publish` is absent or
+/// `true`, read from its workspace.
 fn released_members(repository: &Path, root: &Path) -> Result<BTreeSet<String>> {
     let (cargo, environment, work) = crates_io_environment(root, "members")?;
     let workspace =
