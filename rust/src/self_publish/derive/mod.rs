@@ -357,8 +357,15 @@ impl DerivedWorkspace {
         ensure_no_cargo_configuration(&self.work)?;
         let manifest = if self.native {
             let copy = self.root().join("verified-checkout");
+            #[cfg(test)]
+            super::test_hooks::run(
+                super::test_hooks::Point::BeforeVerifiedCopy,
+                &self.workspace,
+            );
             git::ensure_clean_checkout(&self.workspace, &self.environment, false)?;
             native::copy_checkout(&self.workspace, &copy)?;
+            #[cfg(test)]
+            super::test_hooks::run(super::test_hooks::Point::VerifiedCopy, &copy);
             git::ensure_clean_checkout(&copy, &self.environment, false)?;
             copy.join("Cargo.toml")
         } else {
@@ -509,6 +516,11 @@ pub(super) fn derive_release_in(
             &release.tag,
             &environment,
         )?;
+        #[cfg(test)]
+        super::test_hooks::run(
+            super::test_hooks::Point::AfterNativeContract,
+            &checkout.root,
+        );
         git::ensure_clean_checkout(&checkout.root, &environment, allow_file)?;
         (None, dependencies)
     } else {
@@ -545,6 +557,8 @@ pub(super) fn derive_release_in(
         &members,
         !native,
     )?;
+    #[cfg(test)]
+    super::test_hooks::run(super::test_hooks::Point::AfterPackaging, &checkout.root);
     if native {
         git::ensure_clean_checkout(&checkout.root, &environment, allow_file)?;
     }
@@ -660,6 +674,8 @@ pub(super) fn derive_release_in(
     let dependencies = expectations.map_or(native_dependencies, |expected| expected.dependencies());
     let siblings = sibling_dependencies(&workspace, &published);
     let targets = root.join("targets");
+    #[cfg(test)]
+    super::test_hooks::record_checkout(&checkout.root);
     Ok(Derivation {
         packages,
         dependencies,

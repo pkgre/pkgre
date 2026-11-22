@@ -825,6 +825,17 @@ fn derive_workspace(
     curated: &BTreeMap<String, Vec<u8>>,
     source: &Path,
 ) -> (super::Derivation, fixtures::Temp) {
+    try_derive_workspace(release, state, curated, source).expect("derive the fixture release")
+}
+
+/// Derives the fixture release as [`derive_workspace`] does, and reports a
+/// refusal.
+fn try_derive_workspace(
+    release: &Release,
+    state: &RepositoryState,
+    curated: &BTreeMap<String, Vec<u8>>,
+    source: &Path,
+) -> Result<(super::Derivation, fixtures::Temp)> {
     let self_publish = state
         .self_publish
         .as_ref()
@@ -855,9 +866,23 @@ fn derive_workspace(
         &self_publish.config,
         &self_publish.lock,
         Sources::local(&release.root, Some(source), working.path()),
-    )
-    .expect("derive the fixture release");
-    (derivation, working)
+    )?;
+    Ok((derivation, working))
+}
+
+/// Returns the crates.io name and version of each derived package, as one
+/// packaging call takes them.
+fn derived_members(derivation: &super::Derivation) -> Vec<(String, Version)> {
+    derivation
+        .packages
+        .iter()
+        .map(|package| {
+            (
+                package.entry.crates_io_name.clone(),
+                package.entry.version.clone(),
+            )
+        })
+        .collect()
 }
 
 #[test]

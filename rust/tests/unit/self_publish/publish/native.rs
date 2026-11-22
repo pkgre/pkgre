@@ -107,6 +107,31 @@ fn native_dirty_checkout_after_verification_is_refused_by_cargo() {
 }
 
 #[test]
+fn native_an_upload_that_changes_a_dependent_stops_before_the_dependent() {
+    let temporary = fixtures::Temp::new("native-changed-dependent");
+    let setup = setup(temporary.path());
+    let library = setup.fixture.entry(LIB);
+    let binary = setup.fixture.entry(BIN);
+    setup
+        .uploader
+        .change_dependent_after(&library.crates_io_name);
+    let error = refusal(setup.execute(true));
+    assert!(
+        error.contains(&format!(
+            "check the package that cargo publish would upload for crate {} {}",
+            binary.name, binary.version
+        )),
+        "{error}"
+    );
+    assert_eq!(
+        setup.uploader.uploads().as_slice(),
+        std::slice::from_ref(&library.crates_io_name),
+        "the dependent is not uploaded"
+    );
+    assert_eq!(setup.tokens.reads(), 1, "one read, before the uploads");
+}
+
+#[test]
 fn native_verified_checksum_must_match_the_record() {
     let temporary = fixtures::Temp::new("native-verification");
     let setup = setup(temporary.path());

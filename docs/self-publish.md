@@ -287,9 +287,10 @@ takes the released crates of item 1 below, and these items replace steps 3 to 6:
    is a workspace member. A lock of version 1 or 2, a Git source, another registry, a
    removed identity, or another checksum is refused;
 4. packages every released crate as one group against crates.io, `cargo package
-   --no-verify --locked` without `--allow-dirty`, in a fresh Cargo home that uses plain
-   crates.io, from a working directory outside the checkout, twice, requiring identical
-   bytes, and requires the checkout to stay clean;
+   --no-verify --locked` without `--allow-dirty`, in a fresh Cargo home without source
+   replacement (it also declares the `pkgre` registry, which the lock rule keeps out of
+   every package), from a working directory outside the checkout, twice, requiring
+   identical bytes, and requires the checkout to stay clean;
 5. requires each archive to equal the archive that the catalog retains, byte for byte,
    since nothing rewrites the tag;
 6. records the result; the entry checks require `crates-io-name` to equal `name` and
@@ -520,11 +521,14 @@ For one release, a run:
    the environment of that one process alone. A crate of the release is published after the
    crates it depends on, and name order decides among crates that do not depend on each other,
    so a release whose crates do not depend on each other uploads in name order, as it always
-   did. `--no-verify` keeps package code from
-   running while the token is present, and the routine starts no package code between the
-   comparison and the upload. A process that step 5's package code detached could still change
-   the workspace before `cargo publish` packages it again (see the residual risk below); step 7
-   then finds crates.io's checksum differing from the record, after the upload.
+   did. Just before a dependent's `cargo publish`, the routine packages that crate again alone
+   in the upload's Cargo home and requires its archive's SHA-256 to equal the `crates-io.lock`
+   entry, so a checkout that changed while its siblings uploaded is refused before the upload.
+   `--no-verify` keeps package code from running while the token is present, and the routine
+   starts no package code between the comparison and the upload. A process that step 5's package
+   code detached could still change the workspace between the re-check and the packaging by
+   `cargo publish` (see the residual risk below); step 7 then finds crates.io's checksum
+   differing from the record, after the upload.
 7. waits, with a bound, until crates.io's index shows each uploaded crate with the recorded
    checksum, and reports every crate version of the release.
 

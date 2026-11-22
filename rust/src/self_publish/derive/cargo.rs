@@ -347,6 +347,8 @@ fn package_once(
         arguments.push(OsString::from("--package"));
         arguments.push(OsString::from(name));
     }
+    #[cfg(test)]
+    super::super::test_hooks::record_arguments(&arguments);
     run_build(cargo, environment, work, arguments, options.build)
 }
 
