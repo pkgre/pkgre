@@ -28,6 +28,8 @@ mod native;
 mod network;
 mod publish;
 mod state;
+#[cfg(test)]
+pub(crate) mod test_hooks;
 
 pub use check::{SelfPublishCheckSummary, check_repository};
 pub use lock_command::{SelfPublishLockEntry, SelfPublishLockSummary, self_publish_lock};

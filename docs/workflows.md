@@ -187,7 +187,7 @@ The flake check `release-metadata`, run by CI on every pull request, refuses a p
 
 A release of a self-publishing repository also reaches crates.io, locally, from a checkout of this repository: a dry run first, then the upload. [`self-publish.md`](self-publish.md) describes the state, the checks and the routine in full.
 
-A crates.io-native release keeps its manifests, so the archive the catalog serves is also its crates.io package. Its release pull request is the same one: the tag's declarations and `lock`. `lock` packages the tag offline from the catalog's own objects; the crates.io side of the release is packaged by the derivation as one group against crates.io and will be required to give the same bytes. CI's `reproduce-git-tags` reproduces each native tag a change adds offline, crate by crate in dependency order, from the rows in the candidate catalog's objects, and refuses an archive or a source row that differs from the one the candidate locks.
+A crates.io-native release keeps its manifests, so the archive the catalog serves is also its crates.io package. Its release pull request is the same one: the tag's declarations and `lock`. `lock` packages the tag offline from the catalog's own objects; the crates.io side of the release is packaged by the derivation as one group against crates.io and is required to give the same bytes. CI's `reproduce-git-tags` reproduces each native tag a change adds offline, crate by crate in dependency order, from the rows in the candidate catalog's objects, and refuses an archive or a source row that differs from the one the candidate locks.
 
 ```console
 git -C /path/to/pkgre/rust fetch origin main

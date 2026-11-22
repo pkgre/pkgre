@@ -1,6 +1,9 @@
 //! Native contract and retained-byte checks on local fixtures.
 
+use std::ffi::{OsStr, OsString};
+
 use super::*;
+use crate::self_publish::test_hooks;
 
 fn variant() -> Variant {
     Variant {
@@ -216,6 +219,66 @@ fn native_verified_build_uses_an_independent_clean_copy() {
     );
 }
 
+/// Requires that each recorded packaging command carries `flag` exactly when
+/// `expected` says so.
+fn require_flag(recorded: &[&[OsString]], flag: &str, expected: bool) {
+    assert!(!recorded.is_empty(), "no packaging command was recorded");
+    for arguments in recorded {
+        let carries = arguments
+            .iter()
+            .any(|argument| argument == OsStr::new(flag));
+        assert_eq!(
+            carries,
+            expected,
+            "{flag} in {:?}",
+            arguments
+                .iter()
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Splits the recorded packaging commands into the derivation's group
+/// packaging, which does not verify, and step 5's verified packaging.
+fn by_build(recorded: Vec<Vec<OsString>>) -> (Vec<Vec<OsString>>, Vec<Vec<OsString>>) {
+    recorded.into_iter().partition(|arguments| {
+        arguments
+            .iter()
+            .any(|argument| argument == OsStr::new("--no-verify"))
+    })
+}
+
+#[test]
+fn the_tag_packaging_allows_a_dirty_checkout_only_for_a_rewritten_workspace() {
+    for (label, variant, allow_dirty) in [
+        ("native", variant(), false),
+        ("rewritten", Variant::default(), true),
+    ] {
+        let temporary = fixtures::Temp::new(&format!("{label}-packaging-arguments"));
+        let (source, release, catalog) = fixture(temporary.path(), variant);
+        let state = RepositoryState::load(&catalog.root).unwrap();
+        test_hooks::clear();
+        let (derivation, _working) =
+            derive_workspace(&release, &state, &catalog.curated, &source.root);
+        let (group, verified) = by_build(test_hooks::take_arguments());
+        assert_eq!(group.len(), 2, "{label}: the derivation packages twice");
+        assert!(verified.is_empty(), "{label}: step 5 has not run yet");
+        let commands = group.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        require_flag(&commands, "--allow-dirty", allow_dirty);
+        let members = derived_members(&derivation);
+        derivation
+            .workspace
+            .verified_archives(&members)
+            .expect("verify the packaged release");
+        let (group, verified) = by_build(test_hooks::take_arguments());
+        assert!(group.is_empty(), "{label}: only step 5 packaged");
+        assert_eq!(verified.len(), 1, "{label}: step 5 packages once");
+        let commands = verified.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        require_flag(&commands, "--allow-dirty", allow_dirty);
+    }
+}
+
 #[test]
 fn native_contract_refuses_other_dependency_sources() {
     let cases: [(&str, &str, &str, &str); 5] = [
@@ -401,4 +464,124 @@ fn a_native_tag_reads_the_lock_of_the_workspace_root_below_the_checkout() {
     ))
     .unwrap();
     assert_eq!(rewritten.version, 1);
+}
+
+/// Changes the fixture binary's source in `checkout`, as a process that a
+/// package of the run started could.
+fn change_source(checkout: &Path) {
+    fs::write(
+        checkout.join("bin/src/main.rs"),
+        "fn main() { println!(\"changed during the run\"); }\n",
+    )
+    .expect("change the binary's source");
+}
+
+/// Returns the recorded error of a derivation that a hook changed at `point`.
+fn changed_during(point: test_hooks::Point, temporary: &fixtures::Temp) -> String {
+    let (source, release, catalog) = fixture(temporary.path(), variant());
+    let state = RepositoryState::load(&catalog.root).unwrap();
+    test_hooks::clear();
+    test_hooks::on(point, change_source);
+    let error = try_derive_workspace(&release, &state, &catalog.curated, &source.root)
+        .err()
+        .expect("a checkout changed during the derivation is refused");
+    format!("{error:#}")
+}
+
+#[test]
+fn the_native_derivation_refuses_a_checkout_changed_after_the_native_contract() {
+    let temporary = fixtures::Temp::new("native-changed-after-contract");
+    let error = changed_during(test_hooks::Point::AfterNativeContract, &temporary);
+    assert!(error.contains("release tag checkout is dirty"), "{error}");
+}
+
+#[test]
+fn the_native_derivation_refuses_a_checkout_changed_while_it_packaged() {
+    let temporary = fixtures::Temp::new("native-changed-while-packaging");
+    let error = changed_during(test_hooks::Point::AfterPackaging, &temporary);
+    assert!(error.contains("release tag checkout is dirty"), "{error}");
+}
+
+#[test]
+fn the_verified_packaging_refuses_a_checkout_changed_before_its_copy() {
+    let temporary = fixtures::Temp::new("native-changed-before-copy");
+    let (source, release, catalog) = fixture(temporary.path(), variant());
+    let state = RepositoryState::load(&catalog.root).unwrap();
+    test_hooks::clear();
+    let (derivation, _working) = derive_workspace(&release, &state, &catalog.curated, &source.root);
+    let members = derived_members(&derivation);
+    test_hooks::on(test_hooks::Point::BeforeVerifiedCopy, change_source);
+    let error = derivation
+        .workspace
+        .verified_archives(&members)
+        .expect_err("a changed checkout is not copied for step 5");
+    let error = format!("{error:#}");
+    assert!(error.contains("release tag checkout is dirty"), "{error}");
+    assert!(
+        !derivation
+            .workspace
+            .root()
+            .join("verified-checkout")
+            .exists(),
+        "the copy is made only from a clean checkout"
+    );
+}
+
+#[test]
+fn the_verified_packaging_refuses_a_changed_copy() {
+    let temporary = fixtures::Temp::new("native-changed-copy");
+    let (source, release, catalog) = fixture(temporary.path(), variant());
+    let state = RepositoryState::load(&catalog.root).unwrap();
+    test_hooks::clear();
+    let (derivation, _working) = derive_workspace(&release, &state, &catalog.curated, &source.root);
+    let members = derived_members(&derivation);
+    test_hooks::on(test_hooks::Point::VerifiedCopy, change_source);
+    let error = derivation
+        .workspace
+        .verified_archives(&members)
+        .expect_err("a changed copy is not packaged");
+    assert!(
+        format!("{error:#}").contains("release tag checkout is dirty"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_workspace_root_outside_the_checkout_is_refused() {
+    let temporary = fixtures::Temp::new("native-workspace-root");
+    let checkout = temporary.path().join("checkout");
+    let outside = temporary.path().join("outside");
+    fs::create_dir_all(checkout.join("src")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(
+        checkout.join("Cargo.toml"),
+        "[package]\nname = \"example\"\nversion = \"1.0.0\"\nedition = \"2021\"\nworkspace = \"../outside\"\n",
+    )
+    .unwrap();
+    fs::write(checkout.join("src/lib.rs"), "").unwrap();
+    fs::write(
+        outside.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"../checkout\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    fs::write(
+        outside.join("Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"example\"\nversion = \"1.0.0\"\n",
+    )
+    .unwrap();
+    let cargo = crate::package::pinned_cargo(&fixtures::CARGO_VERSION.parse().unwrap()).unwrap();
+    let home = temporary.path().join("workspace-root-home");
+    super::super::cargo::prepare_cargo_home(&home, super::super::cargo::RegistrySources::CratesIo)
+        .unwrap();
+    let environment = ChildEnvironment::capture(&home, &cargo).unwrap();
+    let work = temporary.path().join("work");
+    fs::create_dir(&work).unwrap();
+    let error =
+        super::super::workspace::Workspace::load(&cargo, &environment, &work, &checkout, true)
+            .err()
+            .expect("the derivation refuses a workspace root outside the checkout");
+    assert!(
+        format!("{error:#}").contains("outside the release checkout"),
+        "{error:#}"
+    );
 }

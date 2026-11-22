@@ -30,6 +30,7 @@ use super::super::network::{
     ReleaseRepository, ReleaseTag, Services as NetworkServices,
 };
 use super::super::state::LOCK_FILE;
+use super::super::test_hooks;
 use super::{
     ReleaseCrate, SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary, Services, Token,
     TokenSource, UploadEnvironment, UploadRequest, Uploader, Verification, WaitPolicy, live,
@@ -573,6 +574,8 @@ struct FakeUploader {
     checksums: BTreeMap<String, String>,
     /// How many uploads succeed before the fake fails.
     fail_after: Cell<usize>,
+    /// The crates.io name whose upload changes the dependent's source, if any.
+    change_after: RefCell<Option<String>>,
     /// The crates.io names the fake uploaded.
     uploads: RefCell<Vec<String>>,
     /// Whether each upload's environment allowed a dirty checkout.
@@ -630,6 +633,7 @@ impl FakeUploader {
             dependencies,
             checksums,
             fail_after: Cell::new(usize::MAX),
+            change_after: RefCell::new(None),
             uploads: RefCell::new(Vec::new()),
             allow_dirty: RefCell::new(Vec::new()),
             tokens: RefCell::new(Vec::new()),
@@ -646,6 +650,12 @@ impl FakeUploader {
         self.uploads.borrow_mut().clear();
         self.allow_dirty.borrow_mut().clear();
         self.tokens.borrow_mut().clear();
+    }
+
+    /// Makes the fake change the dependent's source in the derived checkout
+    /// once it uploaded `name`, as a package of an earlier upload could.
+    fn change_dependent_after(&self, name: &str) {
+        *self.change_after.borrow_mut() = Some(name.to_owned());
     }
 
     /// Returns whether each upload's environment allowed a dirty checkout.
@@ -705,6 +715,15 @@ impl Uploader for FakeUploader {
                 &checksum,
                 dependencies,
             );
+        }
+        if self.change_after.borrow().as_deref() == Some(request.crates_io_name) {
+            let checkout = test_hooks::checkout()
+                .expect("the routine derived the checkout that the fake changes");
+            fs::write(
+                checkout.join("bin/src/main.rs"),
+                "fn main() { println!(\"changed by an upload\"); }\n",
+            )
+            .expect("change the dependent's source");
         }
         Ok(())
     }
@@ -990,6 +1009,34 @@ fn uploads_a_sibling_before_the_crate_that_depends_on_it() {
             SelfPublishCrateState::Uploaded
         );
     }
+}
+
+#[test]
+fn an_upload_that_changes_a_dependent_stops_before_the_dependent() {
+    let temporary = fixtures::Temp::new("pkgre-publish-changed-dependent");
+    let setup = Setup::with_variant(temporary.path(), &[], sibling_release());
+    let library = setup.fixture.entry(LIB);
+    let binary = setup.fixture.entry(BIN);
+    setup
+        .uploader
+        .change_dependent_after(&library.crates_io_name);
+    let error = refusal(setup.execute(true));
+    assert!(
+        error.contains(&format!(
+            "check the package that cargo publish would upload for crate {} {}",
+            binary.name, binary.version
+        )),
+        "{error}"
+    );
+    assert!(
+        error.contains(&binary.crate_sha256),
+        "the re-check refuses the changed package: {error}"
+    );
+    assert_eq!(
+        setup.uploader.uploads().as_slice(),
+        std::slice::from_ref(&library.crates_io_name),
+        "the dependent is not uploaded"
+    );
 }
 
 #[test]
