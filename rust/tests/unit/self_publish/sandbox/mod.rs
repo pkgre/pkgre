@@ -936,7 +936,7 @@ impl Drop for KeyringKey {
 
 /// Runs the keyring control: a child of the test that searches the caller's
 /// session keyring for the dummy key.
-fn run_keyring_helper() -> std::process::Output {
+fn run_keyring_helper(name: &str) -> std::process::Output {
     let mut command = Command::new(std::env::current_exe().expect("the test binary"));
     command
         .args([
@@ -945,6 +945,7 @@ fn run_keyring_helper() -> std::process::Output {
             "--nocapture",
         ])
         .env("PKGRE_SANDBOX_TEST_KEYRING", "1")
+        .env("PKGRE_SANDBOX_TEST_KEYRING_KEY", name)
         .output()
         .expect("run the keyring control")
 }
@@ -954,8 +955,10 @@ fn keyring_helper() {
     if std::env::var_os("PKGRE_SANDBOX_TEST_KEYRING").is_none() {
         return;
     }
+    let name = std::env::var("PKGRE_SANDBOX_TEST_KEYRING_KEY")
+        .unwrap_or_else(|_| "pkgre-sandbox-dummy".to_owned());
     let status = Command::new("keyctl")
-        .args(["search", "@s", "user", "pkgre-sandbox-dummy"])
+        .args(["search", "@s", "user", &name])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -963,9 +966,9 @@ fn keyring_helper() {
     println!(
         "{}",
         if status.success() {
-            "FOUND"
+            "KEY-FOUND"
         } else {
-            "NOT-FOUND"
+            "KEY-MISSING"
         }
     );
 }
@@ -1320,12 +1323,21 @@ fn build_reaches_nothing() {
     let _key = KeyringKey(String::from_utf8_lossy(&output.stdout).trim().to_owned());
     // A control: a child of this test inherits the session keyring and finds
     // the key, so a process without a session keyring cannot pass vacuously.
-    let control = run_keyring_helper();
+    let control = run_keyring_helper("pkgre-sandbox-dummy");
     let control_stdout = String::from_utf8_lossy(&control.stdout);
     assert!(
-        control_stdout.contains("FOUND"),
+        control_stdout.contains("KEY-FOUND"),
         "the control finds the caller's key: {control_stdout}{}",
         String::from_utf8_lossy(&control.stderr)
+    );
+    // And a name that is not there is missing, so the assertion above fails
+    // when the helper cannot see the key.
+    let missing = run_keyring_helper("pkgre-sandbox-absent");
+    let missing_stdout = String::from_utf8_lossy(&missing.stdout);
+    assert!(
+        missing_stdout.contains("KEY-MISSING") && !missing_stdout.contains("KEY-FOUND"),
+        "a missing key is not found: {missing_stdout}{}",
+        String::from_utf8_lossy(&missing.stderr)
     );
     // A descriptor that the caller leaves open without close-on-exec must not
     // reach the build sandbox.
