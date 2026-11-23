@@ -554,9 +554,10 @@ fn check_owners(crates_io_name: &str, expected: &BTreeSet<String>, owners: &[Own
 /// Returns an error naming the crate, the version, the rule, and what the crate
 /// has instead: a missing or too long description, a missing license, too many
 /// keywords or a keyword that crates.io refuses, too many categories or one
-/// that crates.io does not know, an archive over crates.io's upload limit, or a
-/// homepage, documentation, or repository URL that crates.io would refuse. The
-/// SPDX license expression itself is not checked.
+/// that crates.io does not know, an archive over crates.io's upload limit, a
+/// dependency whose requirement is the wildcard `*`, or a homepage,
+/// documentation, or repository URL that crates.io would refuse. The SPDX
+/// license expression itself is not checked.
 fn check_crates_io_rules(
     name: &str,
     version: &Version,
@@ -605,6 +606,11 @@ fn check_crates_io_rules(
             "crate {name} {version} has the keyword {keyword:?}, which crates.io refuses: a keyword starts with an ASCII alphanumeric and continues with ASCII alphanumerics, `-`, `_` or `+`"
         );
     }
+    ensure!(
+        facts.wildcard_dependencies.is_empty(),
+        "crate {name} {version} requires {:?} with the wildcard requirement \"*\", which crates.io refuses: a dependency requirement must name a version range",
+        facts.wildcard_dependencies
+    );
     ensure!(
         archive_bytes <= MAX_ARCHIVE_BYTES,
         "crate {name} {version} has a crates.io archive of {archive_bytes} bytes, but crates.io takes at most {MAX_ARCHIVE_BYTES}"

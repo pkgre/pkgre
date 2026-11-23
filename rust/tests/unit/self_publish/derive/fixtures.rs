@@ -186,6 +186,8 @@ pub(crate) struct Variant {
     /// Let the unpublished server depend on a first-party identity that
     /// `crates-io.lock` does not record.
     pub(crate) server_needs_first_party: bool,
+    /// Let the released binary require its mirror with the wildcard `*`.
+    pub(crate) wildcard_dependency: bool,
     /// The categories that the released library declares, when it declares any.
     pub(crate) library_categories: Option<&'static str>,
     /// The repository-relative Gitlink that the tag records, when it records one.
@@ -445,6 +447,16 @@ pub(crate) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
     fs::create_dir_all(root.join("bin/src")).expect("create the binary");
     fs::create_dir_all(root.join("serve/src")).expect("create the server");
     write_manifests(&root, variant);
+    if variant.wildcard_dependency {
+        let path = root.join("bin/Cargo.toml");
+        let text = fs::read_to_string(&path)
+            .expect("read the binary manifest")
+            .replace(
+                "mirrored-dep = { version = \"0.3\"",
+                "mirrored-dep = { version = \"*\"",
+            );
+        fs::write(&path, text).expect("write the binary manifest");
+    }
     if variant.native {
         for relative in [
             "Cargo.toml",

@@ -150,6 +150,10 @@ pub(super) struct MemberFacts {
     pub(super) keywords: Vec<String>,
     /// The `categories` field.
     pub(super) categories: Vec<String>,
+    /// The dependencies whose requirement is the wildcard `*`, by the crate
+    /// name crates.io records, sorted; the derivation reads them from the
+    /// packaged manifest, which is the one crates.io reads.
+    pub(super) wildcard_dependencies: Vec<String>,
 }
 
 /// What the derivation writes for one crate.
@@ -639,6 +643,13 @@ pub(super) fn derive_release_in(
                 package.version
             );
         }
+        let mut facts = workspace
+            .member(&package.name)
+            .expect("every released crate is a member of the tag's workspace")
+            .facts
+            .clone();
+        facts.wildcard_dependencies =
+            packaged_wildcard_dependencies(&crates_io_name, &package.version, archive)?;
         packages.push(DerivedPackage {
             entry: CratesIoPackage {
                 name: package.name.clone(),
@@ -652,11 +663,7 @@ pub(super) fn derive_release_in(
                 cargo_version: release.cargo_version.clone(),
             },
             archive: archive.clone(),
-            facts: workspace
-                .member(&package.name)
-                .expect("every released crate is a member of the tag's workspace")
-                .facts
-                .clone(),
+            facts,
         });
     }
     packages.sort_by(|left, right| {
@@ -853,6 +860,31 @@ fn published_crates(
         published.insert(package.name.clone(), crates_io_name);
     }
     Ok(published)
+}
+
+/// Returns the dependencies whose requirement crates.io refuses as a wildcard.
+///
+/// The rule reads the manifest that the crates.io archive holds, which is the
+/// manifest crates.io itself reads, so a dependency that Cargo left out of the
+/// archive is not one of them.
+///
+/// # Errors
+///
+/// Returns an error when the archive cannot be read, holds no manifest, or
+/// holds one that cannot be parsed.
+fn packaged_wildcard_dependencies(
+    crates_io_name: &str,
+    version: &Version,
+    archive: &[u8],
+) -> Result<Vec<String>> {
+    let context = || format!("read the packaged manifest of {crates_io_name} {version}");
+    let read = crate::update::read_crate_archive(crates_io_name, version, archive, &["Cargo.toml"])
+        .with_context(context)?;
+    let Some(manifest) = read.contents.get("Cargo.toml") else {
+        bail!("the crates.io archive of {crates_io_name} {version} holds no Cargo.toml");
+    };
+    let manifest = std::str::from_utf8(manifest).with_context(context)?;
+    workspace::wildcard_dependencies(manifest).with_context(context)
 }
 
 /// Reads the curated archive that the catalog retains for one identity.
