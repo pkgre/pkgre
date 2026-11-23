@@ -198,9 +198,9 @@ nix develop -c ./target/release/pkgre-rust self-publish /path/to/pkgre/rust rust
 nix develop -c ./target/release/pkgre-rust self-publish /path/to/pkgre/rust rust/v0.5.0 --upload
 ```
 
-Run the built executable rather than `cargo run`: a `cargo run` process waits beside the launcher and holds the same standard input, so it could read a piped token.
+Run the built executable rather than `cargo run`: a `cargo run` process waits beside the launcher and holds the same standard input, so it could read a piped token, as another process of the same user could through `bubblewrap`'s descriptor.
 
-The development shell provides the pinned Cargo that the routine packages with (it sets `PKGRE_CARGO`) and the `bubblewrap` that makes the sandboxes (it sets `PKGRE_BWRAP`). `TMPDIR` may lie below a home whose `~/.cargo/config.toml` covers it: the run sandbox does not show the home, and the routine refuses only a Cargo configuration visible in the build root's working directory. The other commands that run Cargo, such as `lock` and `self-publish-lock`, still refuse a working directory that such a configuration covers, with a message that names the file it found.
+The development shell provides the pinned Cargo that the routine packages with (it sets `PKGRE_CARGO`) and the `bubblewrap` that makes the sandboxes (it sets `PKGRE_BWRAP`). `TMPDIR` may lie below a home whose `~/.cargo/config.toml` covers it: the run sandbox does not show the home, and the routine checks the build root's working directory and the derivation's own, refusing one that a configuration covers. The other commands that run Cargo, such as `lock` and `self-publish-lock`, still refuse a working directory that such a configuration covers, with a message that names the file it found.
 
 The routine is supported on Linux only, for a dry run too: it needs `bubblewrap` 0.12.0 or later and unprivileged user namespaces, and `PKGRE_CARGO` must name the pinned Cargo. The development shell meets both variables. Where user namespaces are restricted, as AppArmor restricts them on Ubuntu 23.10 and later, the host must allow them first.
 

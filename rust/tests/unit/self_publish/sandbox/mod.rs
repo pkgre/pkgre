@@ -922,6 +922,54 @@ fn relative_repository_helper_body() {
     println!("{}", repository.display());
 }
 
+/// Removes one key from the caller's session keyring when it goes out of
+/// scope, also when the test fails.
+struct KeyringKey(String);
+
+impl Drop for KeyringKey {
+    fn drop(&mut self) {
+        let _ = Command::new("keyctl")
+            .args(["unlink", &self.0, "@s"])
+            .status();
+    }
+}
+
+/// Runs the keyring control: a child of the test that searches the caller's
+/// session keyring for the dummy key.
+fn run_keyring_helper() -> std::process::Output {
+    let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+    command
+        .args([
+            "--exact",
+            "self_publish::sandbox::tests::keyring_helper",
+            "--nocapture",
+        ])
+        .env("PKGRE_SANDBOX_TEST_KEYRING", "1")
+        .output()
+        .expect("run the keyring control")
+}
+
+#[test]
+fn keyring_helper() {
+    if std::env::var_os("PKGRE_SANDBOX_TEST_KEYRING").is_none() {
+        return;
+    }
+    let status = Command::new("keyctl")
+        .args(["search", "@s", "user", "pkgre-sandbox-dummy"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run keyctl search");
+    println!(
+        "{}",
+        if status.success() {
+            "FOUND"
+        } else {
+            "NOT-FOUND"
+        }
+    );
+}
+
 /// Serializes the ignored sandbox tests: each marks the test process's
 /// descriptors close-on-exec, so a descriptor another test opens meanwhile must
 /// not reach the sandbox.
@@ -1257,7 +1305,8 @@ fn write_later_helper() {
 fn build_reaches_nothing() {
     let _guard = sandbox_test_lock();
     // A key in a session keyring of the caller's own must not reach the build
-    // sandbox; the routine joins a fresh session keyring of its own.
+    // sandbox; the routine joins a fresh session keyring of its own. The guard
+    // removes the key afterwards, also when the test fails.
     let arguments = ["add", "user", "pkgre-sandbox-dummy", "a dummy value", "@s"];
     let output = Command::new("keyctl")
         .args(arguments)
@@ -1267,6 +1316,16 @@ fn build_reaches_nothing() {
         output.status.success(),
         "keyctl {arguments:?}: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    let _key = KeyringKey(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+    // A control: a child of this test inherits the session keyring and finds
+    // the key, so a process without a session keyring cannot pass vacuously.
+    let control = run_keyring_helper();
+    let control_stdout = String::from_utf8_lossy(&control.stdout);
+    assert!(
+        control_stdout.contains("FOUND"),
+        "the control finds the caller's key: {control_stdout}{}",
+        String::from_utf8_lossy(&control.stderr)
     );
     // A descriptor that the caller leaves open without close-on-exec must not
     // reach the build sandbox.
@@ -2157,7 +2216,7 @@ for argument in "$@"; do
   previous=$argument
 done
 if [ -n "$FAKE_BWRAP_ORPHAN" ]; then
-  ( sleep 1; touch "$FAKE_BWRAP_ORPHAN" ) &
+  ( if [ -n "$status_fd" ]; then eval "exec $status_fd>&-"; fi; sleep 1; touch "$FAKE_BWRAP_ORPHAN" ) >/dev/null 2>&1 &
 fi
 if [ -n "$FAKE_BWRAP_STATUS" ]; then
   eval "printf '%s' '$FAKE_BWRAP_STATUS' >&$status_fd"
@@ -2287,6 +2346,26 @@ exit 1
     assert!(
         orphan.exists(),
         "the orphan ended before the launcher returned"
+    );
+    // A control: the same fake bubblewrap without the launcher's reap returns
+    // before its orphan ends, so the assertions above fail when the reap is
+    // missing.
+    let control_orphan = temporary.path().join("control-orphan");
+    let status = Command::new(&fake)
+        .arg("control")
+        .env("FAKE_BWRAP_ORPHAN", &control_orphan)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("run the fake bubblewrap without the launcher");
+    assert!(
+        !control_orphan.exists(),
+        "the control returned after its orphan ended ({status})"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1300));
+    assert!(
+        control_orphan.exists(),
+        "the control's orphan ran and wrote its marker"
     );
 }
 

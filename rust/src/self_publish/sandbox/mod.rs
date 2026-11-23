@@ -447,12 +447,13 @@ fn cargo_home() -> Option<PathBuf> {
 ///
 /// Returns an error when neither names a directory that resolves.
 fn home_directory() -> Result<PathBuf> {
-    home_directory_from(
-        std::env::var_os("HOME").map(PathBuf::from),
-        nix::unistd::User::from_uid(nix::unistd::getuid())
-            .context("read the user's password entry")?
-            .map(|user| user.dir),
-    )
+    if let Some(home) = std::env::var_os("HOME") {
+        return home_directory_from(Some(PathBuf::from(home)), None);
+    }
+    let entry = nix::unistd::User::from_uid(nix::unistd::getuid())
+        .context("read the user's password entry")?
+        .map(|user| user.dir);
+    home_directory_from(None, entry)
 }
 
 /// Decides [`home_directory`] from `HOME` and the password entry, which a test

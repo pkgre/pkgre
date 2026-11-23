@@ -514,9 +514,8 @@ For one release, a run:
    build alone runs in the build sandbox, from those files, with its target directory outside
    the copy. The missing crates are packaged in one run, so a crate whose sibling crates.io
    does not have yet is packaged against that sibling of the same run. It requires each
-   archive's SHA-256 to equal its
-   `crates-io.lock` entry, and the archive reader refuses a symbolic link at the target, at
-   `target/package` and at an archive. This is the only step in which package code, such as a
+   archive's SHA-256 to equal its `crates-io.lock` entry, and the archive reader refuses a
+   symbolic link at the target, at `target/package` and at an archive. This is the only step in which package code, such as a
    build script or a proc macro, runs, and it happens while no token is in reach. The build
    sandbox has its own namespaces including the network, no further user namespaces, only the
    build root writable and Cargo as PID 1; when its `bubblewrap` returns, the kernel has ended
@@ -563,7 +562,8 @@ a run sandbox, where it is the routine that runs the steps above.
 The launcher marks every descriptor above 2 close-on-exec, so that nothing the caller left open
 reaches a sandbox. It finds `bubblewrap` (`PKGRE_BWRAP`, an absolute path, or `bwrap` on
 `PATH`), requires a regular file that is not setuid and a `bubblewrap --version` of 0.12.0 or
-later, and requires `PKGRE_CARGO`, an absolute path to the pinned Cargo. It makes
+later, and requires `PKGRE_CARGO`, an absolute path to the pinned Cargo. It refuses a
+toolchain root that holds Cargo credentials or is the Cargo home. It makes
 `<repository>` absolute and canonical, and refuses a checkout whose Git directory or common Git
 directory lies outside it, as a linked worktree's does, and one that borrows objects through
 `objects/info/alternates`. It refuses a bind source that is the home directory or one of its
