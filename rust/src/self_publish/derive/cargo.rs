@@ -4,15 +4,10 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
 use std::fs;
-use std::io::Read;
-use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::thread::JoinHandle;
+use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail, ensure};
-use nix::sys::signal::{Signal, killpg};
-use nix::unistd::Pid;
 use semver::Version;
 use tracing::debug;
 
@@ -206,21 +201,26 @@ pub(super) fn prepare_upload_cargo_home(
         .with_context(|| format!("write isolated Cargo config {}", path.display()))
 }
 
-/// How one packaging run builds the crates it packages.
+/// How one packaging run packages.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Build {
-    /// Package only, as `cargo publish` does, which runs no package code.
-    Package,
-    /// Package and build, which runs the package code of the release.
-    Verify,
+pub(super) enum Package {
+    /// Package without verifying, as `cargo publish` does: no package code runs.
+    WithoutVerification,
+    /// Package and build the crates from their packages, offline, which runs
+    /// the package code of the release and of its dependencies.
+    Verified,
 }
 
-/// The flags of one packaging run: whether it builds, and whether it may
-/// package a checkout whose manifests the derivation rewrote.
-#[derive(Clone, Copy)]
-pub(super) struct Options {
-    pub(super) build: Build,
-    pub(super) allow_dirty: bool,
+/// How step 5 runs its build: in a build sandbox, as every run does, or, in a
+/// test, in the routine's own process.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Runner {
+    /// In a build sandbox nested in the run sandbox.
+    Sandbox,
+    /// Directly, which only a test may choose: a build sandbox cannot be made
+    /// from outside a run sandbox on every host.
+    #[cfg(test)]
+    Direct,
 }
 
 /// Packages the named members of one checkout twice and returns the archives by
@@ -262,10 +262,7 @@ pub(super) fn package_members(
             &target,
             &manifest_path,
             members,
-            Options {
-                build: Build::Package,
-                allow_dirty,
-            },
+            allow_dirty,
         )?;
         for (name, bytes) in read_archives(&target, members)? {
             match archives.get(&name) {
@@ -296,7 +293,7 @@ pub(super) fn package_group(
     target: &Path,
     manifest_path: &Path,
     members: &[(String, Version)],
-    options: Options,
+    allow_dirty: bool,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     package_once(
         cargo,
@@ -305,7 +302,7 @@ pub(super) fn package_group(
         target,
         manifest_path,
         members,
-        options,
+        allow_dirty,
     )?;
     read_archives(target, members)
 }
@@ -327,8 +324,32 @@ fn package_once(
     target: &Path,
     manifest_path: &Path,
     members: &[(String, Version)],
-    options: Options,
+    allow_dirty: bool,
 ) -> Result<()> {
+    let arguments = package_arguments(
+        manifest_path,
+        target,
+        members,
+        allow_dirty,
+        Package::WithoutVerification,
+    );
+    #[cfg(test)]
+    super::super::test_hooks::record_arguments(&arguments);
+    run_cargo(cargo, environment, work, arguments).map(|_| ())
+}
+
+/// Returns the arguments of one packaging command.
+///
+/// The upload's own packaging runs without verification, since it runs no
+/// package code; step 5's build is verified and offline, from the packages that
+/// a fetch before it brought into the build root's Cargo home.
+pub(super) fn package_arguments(
+    manifest_path: &Path,
+    target: &Path,
+    members: &[(String, Version)],
+    allow_dirty: bool,
+    package: Package,
+) -> Vec<OsString> {
     let mut arguments = vec![
         OsString::from("package"),
         OsString::from("--locked"),
@@ -337,37 +358,22 @@ fn package_once(
         OsString::from("--target-dir"),
         target.as_os_str().to_owned(),
     ];
-    if options.allow_dirty {
-        arguments.push(OsString::from("--allow-dirty"));
+    match package {
+        Package::WithoutVerification => {
+            arguments.insert(1, OsString::from("--no-verify"));
+        }
+        Package::Verified => {
+            arguments.push(OsString::from("--offline"));
+        }
     }
-    if options.build == Build::Package {
-        arguments.insert(1, OsString::from("--no-verify"));
+    if allow_dirty {
+        arguments.push(OsString::from("--allow-dirty"));
     }
     for (name, _) in members {
         arguments.push(OsString::from("--package"));
         arguments.push(OsString::from(name));
     }
-    #[cfg(test)]
-    super::super::test_hooks::record_arguments(&arguments);
-    run_build(cargo, environment, work, arguments, options.build)
-}
-
-/// Runs one packaging command, in its own process group when it builds.
-///
-/// # Errors
-///
-/// Returns an error when the command cannot be started or exits unsuccessfully.
-fn run_build(
-    cargo: &Path,
-    environment: &ChildEnvironment,
-    work: &Path,
-    arguments: Vec<OsString>,
-    build: Build,
-) -> Result<()> {
-    match build {
-        Build::Package => run_cargo(cargo, environment, work, arguments).map(|_| ()),
-        Build::Verify => run_cargo_grouped(cargo, environment, work, arguments).map(|_| ()),
-    }
+    arguments
 }
 
 /// Returns the archives that one packaging run wrote, by package name.
@@ -376,26 +382,49 @@ fn run_build(
 ///
 /// Returns an error for an archive that is missing, not a regular file, or too
 /// large.
-fn read_archives(
+pub(crate) fn read_archives(
     target: &Path,
     members: &[(String, Version)],
 ) -> Result<BTreeMap<String, Vec<u8>>> {
+    let directory = real_directory(&target.join("package"))?;
     let mut archives = BTreeMap::new();
     for (name, version) in members {
-        let archive = target
-            .join("package")
-            .join(format!("{name}-{version}.crate"));
+        let archive = directory.join(format!("{name}-{version}.crate"));
         ensure!(
             fs::symlink_metadata(&archive)
                 .with_context(|| format!("inspect Cargo archive {}", archive.display()))?
                 .file_type()
                 .is_file(),
-            "Cargo did not produce a regular archive at {}",
+            "Cargo did not produce a regular archive at {}: it is a symbolic link or not a regular file",
             archive.display()
         );
         archives.insert(name.clone(), read_bounded_archive(&archive)?);
     }
     Ok(archives)
+}
+
+/// Returns a directory of a build that no symbolic link leads to, so that a
+/// package of the build cannot lend another one its archives.
+///
+/// # Errors
+///
+/// Returns an error when the path or one of its parents is a symbolic link or
+/// no directory.
+fn real_directory(path: &Path) -> Result<PathBuf> {
+    // Each prefix is inspected in place, so that a symbolic link anywhere on
+    // the way is named as the link it is rather than followed.
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        let metadata = fs::symlink_metadata(&prefix)
+            .with_context(|| format!("inspect Cargo's directory {}", prefix.display()))?;
+        ensure!(
+            metadata.file_type().is_dir(),
+            "Cargo's directory {} is a symbolic link or not a directory, so the archives below it are not the ones this build wrote",
+            prefix.display()
+        );
+    }
+    Ok(path.to_path_buf())
 }
 
 /// Runs one Cargo command in the isolated environment and returns its output.
@@ -417,77 +446,6 @@ pub(super) fn run_cargo(
     debug!(?command, "running isolated Cargo command");
     let output = command.output().context("start the pinned Cargo")?;
     require_success(output)
-}
-
-/// Runs one Cargo command that executes package code in a process group of its
-/// own, and ends whatever the package code left in that group.
-///
-/// The command gets a null standard input, so that a token piped to the routine
-/// cannot be read through Cargo's own `/proc` entry, and its output is captured:
-/// Cargo runs fresh and dumpable, and its environment is what the packages
-/// build with. Both pipes are read on their own threads, so that a process the
-/// package code left holding one of them cannot keep the routine from ending
-/// the group.
-///
-/// A build script or a proc macro can start a process that keeps running after
-/// Cargo returns. Such a process would still see the environment of the upload
-/// that follows, so the run ends the group here rather than leaving it to the
-/// end of the routine. A process that detaches itself from the group is out of
-/// reach, which the security model records as a residual risk.
-///
-/// # Errors
-///
-/// Returns an error when the command cannot be started or exits unsuccessfully;
-/// the error carries the last bytes of the captured output.
-pub(super) fn run_cargo_grouped(
-    cargo: &Path,
-    environment: &ChildEnvironment,
-    work: &Path,
-    arguments: impl IntoIterator<Item = OsString>,
-) -> Result<Vec<u8>> {
-    let mut command = cargo_command(cargo, environment, work, arguments);
-    command
-        .process_group(0)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    debug!(
-        ?command,
-        "running isolated Cargo command in its own process group"
-    );
-    let mut child = command.spawn().context("start the pinned Cargo")?;
-    let group = i32::try_from(child.id()).context("a child process ID is out of range")?;
-    let stdout = child
-        .stdout
-        .take()
-        .context("the pinned Cargo has no standard output")?;
-    let stderr = child
-        .stderr
-        .take()
-        .context("the pinned Cargo has no standard error")?;
-    let stdout = read_on_thread(stdout);
-    let stderr = read_on_thread(stderr);
-    let status = child.wait().context("wait for the pinned Cargo")?;
-    // Whatever the package code started stays in the child's group, which is
-    // now empty of Cargo itself. The readers are joined afterwards, so that a
-    // process still holding a pipe cannot delay the kill.
-    if let Err(error) = killpg(Pid::from_raw(group), Signal::SIGKILL) {
-        debug!(%error, "the process group of the packaging had already ended");
-    }
-    require_success(Output {
-        status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
-    })
-}
-
-/// Reads one stream of a child process on its own thread.
-fn read_on_thread(mut stream: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> {
-    std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stream.read_to_end(&mut bytes);
-        bytes
-    })
 }
 
 /// Builds one Cargo command in the isolated environment.
@@ -537,4 +495,203 @@ fn bounded_lossy(bytes: &[u8]) -> String {
     const LIMIT: usize = 16 * 1024;
     let start = bytes.len().saturating_sub(LIMIT);
     String::from_utf8_lossy(&bytes[start..]).into_owned()
+}
+
+/// Writes the config of the Cargo home that step 5's fetches use.
+///
+/// The home configures plain crates.io and nothing else, so that the fetch reads
+/// the index and the archives that the offline build resolves from. A test
+/// points crates.io at a local Git index, as the derivation's own home does.
+///
+/// # Errors
+///
+/// Returns an error for a home that already exists, or for a config that cannot
+/// be written.
+#[cfg_attr(not(test), allow(unused_variables))]
+pub(super) fn prepare_fetch_cargo_home(cargo_home: &Path, sources: &RegistrySources) -> Result<()> {
+    if let Err(error) = fs::create_dir(cargo_home) {
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(error).with_context(|| {
+                format!("create the build's Cargo home {}", cargo_home.display())
+            });
+        }
+    }
+    #[cfg_attr(not(test), allow(unused_mut))]
+    let mut text = String::new();
+    #[cfg(test)]
+    if sources.local_root().is_some() {
+        text.push_str("[registries.crates-io]\nprotocol = \"git\"\n");
+    }
+    let path = cargo_home.join("config.toml");
+    fs::write(&path, text)
+        .with_context(|| format!("write the build's Cargo config {}", path.display()))
+}
+
+/// Copies one workspace into a build root.
+///
+/// Every directory is kept, empty ones included, so that a gitlink's directory
+/// stays and a clean checkout stays clean; every regular file is copied with its
+/// mode; and any other entry is refused, since a symbolic link could lead a
+/// build out of the copy.
+///
+/// # Errors
+///
+/// Returns an error when an entry of the workspace is neither a directory nor a
+/// regular file, or cannot be copied.
+pub(crate) fn copy_workspace(source: &Path, destination: &Path) -> Result<()> {
+    if let Err(error) = fs::create_dir(destination) {
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(error).with_context(|| {
+                format!(
+                    "create the build root's workspace copy {}",
+                    destination.display()
+                )
+            });
+        }
+    }
+    for entry in fs::read_dir(source)
+        .with_context(|| format!("read the workspace to copy {}", source.display()))?
+    {
+        let entry = entry.with_context(|| format!("read the workspace {}", source.display()))?;
+        let target = destination.join(entry.file_name());
+        let kind = entry
+            .file_type()
+            .with_context(|| format!("inspect the workspace entry {}", entry.path().display()))?;
+        if kind.is_dir() {
+            copy_workspace(&entry.path(), &target)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &target).with_context(|| {
+                format!(
+                    "copy the workspace file {} to {}",
+                    entry.path().display(),
+                    target.display()
+                )
+            })?;
+        } else {
+            bail!(
+                "the workspace copy refuses {}: a copy is made of directories and regular files alone, so that no link leads a build out of the copy",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Fetches the crate versions that crates.io already has and that the missing
+/// crates depend on, into a build root's Cargo home.
+///
+/// A run that resumes a partial upload packages a crate whose sibling an earlier
+/// run uploaded: the workspace's lock names that sibling as a path package, so
+/// the offline build lacks it until this fetch brings it in. The generated
+/// manifest requires each published sibling under its crates.io name at exactly
+/// its version, holds an empty `[workspace]` table so that Cargo never looks
+/// above it for an enclosing workspace, and starts from the workspace's own
+/// `Cargo.lock`, so that the fetch keeps the lock's versions of the siblings'
+/// dependencies where they fit.
+///
+/// # Errors
+///
+/// Returns an error when the manifest cannot be written, or when the fetch
+/// fails; a published sibling that crates.io has since yanked fails it.
+pub(super) fn fetch_published(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    directory: &Path,
+    lock: &Path,
+    published: &[(String, Version)],
+) -> Result<()> {
+    fs::create_dir(directory).with_context(|| {
+        format!(
+            "create the directory of the published siblings {}",
+            directory.display()
+        )
+    })?;
+    fs::create_dir(directory.join("src")).with_context(|| {
+        format!(
+            "create the source directory of the published siblings {}",
+            directory.display()
+        )
+    })?;
+    fs::write(directory.join("src").join("lib.rs"), "")
+        .context("write the source file of the published siblings")?;
+    let mut manifest = String::from(
+        "[package]\nname = \"published-siblings\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\n",
+    );
+    for (name, version) in published {
+        writeln!(manifest, "{name:?} = \"={version}\"").expect("writing to a string");
+    }
+    manifest.push_str("\n[workspace]\n");
+    let path = directory.join("Cargo.toml");
+    fs::write(&path, manifest).with_context(|| {
+        format!(
+            "write the manifest of the published siblings {}",
+            path.display()
+        )
+    })?;
+    if lock.is_file() {
+        fs::copy(lock, directory.join("Cargo.lock")).with_context(|| {
+            format!("start the published siblings' lock from {}", lock.display())
+        })?;
+    }
+    run_cargo(
+        cargo,
+        environment,
+        work,
+        [
+            OsString::from("fetch"),
+            OsString::from("--manifest-path"),
+            path.into_os_string(),
+        ],
+    )
+    .context("fetch the published siblings of the release")?;
+    Ok(())
+}
+
+/// Packages the named crates with Cargo's verification and returns their
+/// archives by crates.io name, in a build sandbox or, in a test, directly.
+///
+/// The build runs offline, from the packages that the fetches brought into the
+/// build root's Cargo home, with the target directory outside the workspace's
+/// copy. The sandbox ends every process that the build starts before this
+/// returns.
+///
+/// # Errors
+///
+/// Returns an error when the build fails or exits unsuccessfully, or when an
+/// archive is missing, not a regular file, or too large.
+#[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(test), allow(unused_variables))]
+pub(super) fn step5_package(
+    cargo: &Path,
+    environment: &ChildEnvironment,
+    work: &Path,
+    target: &Path,
+    manifest_path: &Path,
+    members: &[(String, Version)],
+    allow_dirty: bool,
+    runner: Runner,
+    build_root: &Path,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let arguments = package_arguments(
+        manifest_path,
+        target,
+        members,
+        allow_dirty,
+        Package::Verified,
+    );
+    #[cfg(test)]
+    super::super::test_hooks::record_arguments(&arguments);
+    match runner {
+        Runner::Sandbox => {
+            let mut command = vec![cargo.as_os_str().to_owned()];
+            command.extend(arguments);
+            super::super::sandbox::run_build(build_root, &command).map(|_| ())?;
+        }
+        #[cfg(test)]
+        Runner::Direct => {
+            run_cargo(cargo, environment, work, arguments).map(|_| ())?;
+        }
+    }
+    read_archives(target, members)
 }

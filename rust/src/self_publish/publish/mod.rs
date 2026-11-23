@@ -32,12 +32,13 @@ use tracing::{info, warn};
 use super::catalog::{CatalogIdentity, CatalogSnapshot, self_published_identities};
 use super::check::check_state;
 use super::config::{CratesIoConfig, normalized_git};
-use super::derive::{Derivation, DerivedDependency, DerivedWorkspace};
+use super::derive::{Derivation, DerivedDependency, DerivedWorkspace, Runner, VerifiedPackages};
 use super::isolation::ChildEnvironment;
 use super::lock::CratesIoPackage;
 use super::network::{
     self, Abandoned, CratesIoState, RegistryIndex, Services as NetworkServices, same_version,
 };
+use super::sandbox;
 use super::state::{RepositoryState, SelfPublishState};
 use crate::artifact::sha256_bytes;
 use crate::policy::validate_git_tag;
@@ -142,13 +143,39 @@ impl SelfPublishCrateState {
 /// package differs from `crates-io.lock`, when the token is empty, when an
 /// upload fails, or when crates.io's index does not show an uploaded crate
 /// within the bound.
+///
+/// The command is both the launcher and the routine. Started by a caller, it
+/// makes a run sandbox and returns the exit status of the copy that it starts
+/// inside it, which logs the reports; the copy returns the summary.
 pub fn self_publish(
     repository: &Path,
     tag: &str,
     upload: bool,
     git: Option<&str>,
-) -> Result<SelfPublishSummary> {
-    run(repository, tag, upload, git, &Services::live())
+) -> Result<Option<SelfPublishSummary>> {
+    refuse_token_environment(
+        &std::env::vars_os()
+            .filter_map(|(name, _)| name.into_string().ok())
+            .collect::<Vec<_>>(),
+    )
+    .context("the routine must start without a Cargo registry token")?;
+    if let Some(marker) = sandbox::marker() {
+        // The copy that the launcher started inside the run sandbox.
+        sandbox::enter(&marker)?;
+        return run(repository, tag, upload, git, &Services::live()).map(Some);
+    }
+    if upload {
+        // A token could be in reach: the launcher holds the standard input, so
+        // no other process of this user may open its `/proc` files.
+        hide_process()?;
+    }
+    let status = sandbox::launch(repository, tag, upload, git)?;
+    if status == 0 {
+        return Ok(None);
+    }
+    // The routine inside has logged its own failure; the launcher ends with its
+    // status, as the command does without a sandbox.
+    std::process::exit(status);
 }
 
 /// The services that one run reads, and how long it waits for an upload.
@@ -159,6 +186,11 @@ pub(crate) struct Services<'a> {
     pub(crate) registry: &'a dyn RegistryIndex,
     /// How the run builds the crates it would upload.
     pub(crate) verification: Verification,
+    /// The start-up probe of the build sandbox, before the run reads anything.
+    pub(crate) probe: Probe,
+    /// The check that the run sandbox holds no process but its init and the
+    /// routine, after step 5 and before the token.
+    pub(crate) check: &'a dyn ProcessCheck,
     /// The upload of one crate version.
     pub(crate) uploader: &'a dyn Uploader,
     /// The crates.io token of an upload.
@@ -181,6 +213,8 @@ impl Services<'static> {
             network: NetworkServices::live(),
             registry: &LIVE_REGISTRY,
             verification: verified_archives,
+            probe: sandbox::probe,
+            check: &sandbox::ALONE,
             uploader: &LIVE_UPLOADER,
             tokens: &LIVE_TOKENS,
             wait: WaitPolicy::live(),
@@ -197,7 +231,24 @@ impl Services<'static> {
 /// macro, so a run does it only while no token is in reach. A production run
 /// names [`verified_archives`]; a test names a function of its own.
 pub(crate) type Verification =
-    fn(&DerivedWorkspace, &[(String, Version)]) -> Result<BTreeMap<String, Vec<u8>>>;
+    fn(&DerivedWorkspace, &VerifiedPackages) -> Result<BTreeMap<String, Vec<u8>>>;
+
+/// Runs the start-up probe that proves that this host can make a build sandbox.
+pub(crate) type Probe = fn() -> Result<()>;
+
+/// Checks that the run sandbox holds no process but its init and the routine.
+///
+/// The routine runs the check after step 5 and again immediately before it reads
+/// a token, so that no process that package code started can see the token. A
+/// fake records the check in the tests of the routine's order.
+pub(crate) trait ProcessCheck {
+    /// Requires the run sandbox to hold no process but its init and the routine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming every process that the check found.
+    fn check(&self) -> Result<()>;
+}
 
 /// Builds the named crate versions with Cargo's verification and returns their
 /// archives by crates.io name.
@@ -208,9 +259,9 @@ pub(crate) type Verification =
 /// Cargo fails, or when an archive is missing or too large.
 fn verified_archives(
     workspace: &DerivedWorkspace,
-    packages: &[(String, Version)],
+    packages: &VerifiedPackages,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
-    workspace.verified_archives(packages)
+    workspace.verified_archives(packages, Runner::Sandbox)
 }
 
 /// How long a run waits for crates.io's index to show an uploaded crate.
@@ -364,6 +415,9 @@ fn run(
         // may open the routine's `/proc` files, its standard input among them.
         hide_process()?;
     }
+    (services.probe)().context(
+        "the start-up probe: the pinned Cargo must run in a build sandbox before the run reads anything",
+    )?;
     checkout::require_clean_merged_checkout(repository)
         .context("step 1: the checkout must be clean and merged into origin/main")?;
     let state = RepositoryState::load(repository)?;
@@ -471,6 +525,9 @@ fn run(
         verify_packages(&derivation, &classified, &missing, services)
             .context("step 5: the verified packages must reproduce crates-io.lock")?;
     }
+    services.check.check().context(
+        "the process check after step 5: the sandbox must hold no process but its init and the routine",
+    )?;
     let order = upload_order(&classified, &missing, &derivation.siblings)
         .context("the crates of the release must be publishable in dependency order")?;
     if upload && !missing.is_empty() {
@@ -479,6 +536,7 @@ fn run(
             "step 6: the packages that cargo publish would upload must be the recorded ones",
         )?;
         if let Err(error) = upload_missing(
+            tag,
             &environment,
             &derivation.workspace,
             &mut classified,
@@ -734,16 +792,19 @@ fn verify_packages(
     missing: &[usize],
     services: &Services<'_>,
 ) -> Result<()> {
-    let packages = missing
-        .iter()
-        .map(|position| {
-            let (crate_, _) = classified[*position];
-            (
-                crate_.entry.crates_io_name.clone(),
-                crate_.identity.version.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let packages = VerifiedPackages {
+        missing: missing
+            .iter()
+            .map(|position| {
+                let (crate_, _) = classified[*position];
+                (
+                    crate_.entry.crates_io_name.clone(),
+                    crate_.identity.version.clone(),
+                )
+            })
+            .collect(),
+        published: published_siblings(classified, missing, &derivation.siblings),
+    };
     let archives = (services.verification)(&derivation.workspace, &packages)?;
     for position in missing {
         let (crate_, _) = classified[*position];
@@ -772,6 +833,44 @@ fn verify_packages(
     Ok(())
 }
 
+/// Returns the crate versions of the release that crates.io already has and
+/// that a missing crate depends on, by crates.io name and in name order.
+///
+/// A run that resumes a partial upload packages a missing crate whose sibling an
+/// earlier run uploaded, and the workspace's lock names that sibling as a path
+/// package, so step 5's offline build needs it fetched from crates.io first.
+fn published_siblings(
+    classified: &[(ReleaseCrate<'_>, SelfPublishCrateState)],
+    missing: &[usize],
+    siblings: &BTreeMap<String, BTreeSet<String>>,
+) -> Vec<(String, Version)> {
+    let mut published = BTreeMap::new();
+    for position in missing {
+        let name = &classified[*position].0.identity.name;
+        let Some(dependencies) = siblings.get(name) else {
+            continue;
+        };
+        for dependency in dependencies {
+            let Some((crate_, state)) = classified
+                .iter()
+                .find(|(other, _)| other.identity.name == *dependency)
+            else {
+                continue;
+            };
+            if matches!(
+                state,
+                SelfPublishCrateState::Published | SelfPublishCrateState::PublishedYanked
+            ) {
+                published.insert(
+                    crate_.entry.crates_io_name.clone(),
+                    crate_.identity.version.clone(),
+                );
+            }
+        }
+    }
+    published.into_iter().collect()
+}
+
 /// Uploads the missing crate versions, one process each, and waits until
 /// crates.io's index shows every one of them with the recorded checksum.
 ///
@@ -785,6 +884,7 @@ fn verify_packages(
 /// other, which leaves a release without such dependencies uploading as it
 /// always did.
 fn upload_missing(
+    tag: &str,
     environment: &UploadEnvironment,
     workspace: &DerivedWorkspace,
     classified: &mut [(ReleaseCrate<'_>, SelfPublishCrateState)],
@@ -792,7 +892,16 @@ fn upload_missing(
     siblings: &BTreeMap<String, BTreeSet<String>>,
     services: &Services<'_>,
 ) -> Result<()> {
-    info!("waiting for the crates.io token on standard input");
+    // Nothing that package code started runs any more, and nothing starts
+    // between this check and the token's read.
+    services.check.check().context(
+        "the process check before the token: the sandbox must hold no process but its init and the routine",
+    )?;
+    info!(
+        tag,
+        crates = order.len(),
+        "waiting for the crates.io token on standard input"
+    );
     let token = services.tokens.read()?;
     for position in order.iter().copied() {
         let (crate_, _) = classified[position];

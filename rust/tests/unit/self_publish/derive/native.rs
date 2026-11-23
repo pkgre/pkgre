@@ -203,12 +203,29 @@ fn native_verified_build_uses_an_independent_clean_copy() {
         .iter()
         .map(|package| (package.entry.name.clone(), package.entry.version.clone()))
         .collect::<Vec<_>>();
-    let archives = derived.workspace.verified_archives(&members).unwrap();
+    // The copy and every process of the build go once step 5 ends, so a hook
+    // checks the copy while it exists and records where it was.
+    let copied = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let recorded = std::rc::Rc::clone(&copied);
+    test_hooks::clear();
+    test_hooks::on(test_hooks::Point::VerifiedCopy, move |copy| {
+        assert!(copy.join(".git/objects").is_dir());
+        *recorded.borrow_mut() = Some(copy.to_path_buf());
+    });
+    let archives = derived
+        .workspace
+        .verified_archives(&verified_packages(&members), super::Runner::Direct)
+        .unwrap();
     assert_eq!(archives, catalog.curated);
-    let copy = derived.workspace.root().join("verified-checkout");
-    assert!(copy.join(".git/objects").is_dir());
+    let copy = copied
+        .borrow()
+        .clone()
+        .expect("step 5 made its own copy of the checkout");
     assert_ne!(copy, derived.workspace.manifest().parent().unwrap());
-    fs::write(copy.join("bin/src/main.rs"), "not Rust").unwrap();
+    assert!(
+        !copy.exists(),
+        "the build root goes once the verified packaging ends"
+    );
     let upload = derived.workspace.upload_environment().unwrap();
     assert_eq!(
         derived
@@ -269,7 +286,7 @@ fn the_tag_packaging_allows_a_dirty_checkout_only_for_a_rewritten_workspace() {
         let members = derived_members(&derivation);
         derivation
             .workspace
-            .verified_archives(&members)
+            .verified_archives(&verified_packages(&members), super::Runner::Direct)
             .expect("verify the packaged release");
         let (group, verified) = by_build(test_hooks::take_arguments());
         assert!(group.is_empty(), "{label}: only step 5 packaged");
@@ -513,18 +530,25 @@ fn the_verified_packaging_refuses_a_checkout_changed_before_its_copy() {
     test_hooks::on(test_hooks::Point::BeforeVerifiedCopy, change_source);
     let error = derivation
         .workspace
-        .verified_archives(&members)
+        .verified_archives(&verified_packages(&members), super::Runner::Direct)
         .expect_err("a changed checkout is not copied for step 5");
     let error = format!("{error:#}");
     assert!(error.contains("release tag checkout is dirty"), "{error}");
     assert!(
-        !derivation
-            .workspace
-            .root()
-            .join("verified-checkout")
-            .exists(),
-        "the copy is made only from a clean checkout"
+        !left_a_build_root(derivation.workspace.root()),
+        "the build root goes even when the copy cannot be made"
     );
+}
+
+/// Returns whether a step 5 that failed left its build root behind.
+fn left_a_build_root(root: &Path) -> bool {
+    fs::read_dir(root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("build-")
+    })
 }
 
 #[test]
@@ -538,7 +562,7 @@ fn the_verified_packaging_refuses_a_changed_copy() {
     test_hooks::on(test_hooks::Point::VerifiedCopy, change_source);
     let error = derivation
         .workspace
-        .verified_archives(&members)
+        .verified_archives(&verified_packages(&members), super::Runner::Direct)
         .expect_err("a changed copy is not packaged");
     assert!(
         format!("{error:#}").contains("release tag checkout is dirty"),

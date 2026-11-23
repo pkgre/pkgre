@@ -477,11 +477,24 @@
               "rustfmt"
             ];
           };
+          # the pinned nixpkgs' bubblewrap predates the fix of a sandbox-setup
+          # flaw; the package builds the release that has it, from the sources
+          # of that release
+          bubblewrap = pkgs.bubblewrap.overrideAttrs (old: rec {
+            version = "0.13.1";
+            src = pkgs.fetchFromGitHub {
+              owner = "containers";
+              repo = "bubblewrap";
+              rev = "v${version}";
+              hash = "sha256-sgIATYiBYbHaftA+ShIqfxS3OScz7VurjPciL2WB1oQ=";
+            };
+          });
         in
         {
           default = pkgs.mkShell {
             packages = [
               rustToolchain
+              bubblewrap
               pkgs.curl
               pkgs.git
               pkgs.gnutar
@@ -489,6 +502,7 @@
               pkgs.nodejs_24
             ];
             PKGRE_CARGO = "${rustToolchain}/bin/cargo";
+            PKGRE_BWRAP = "${bubblewrap}/bin/bwrap";
           };
         }
       );

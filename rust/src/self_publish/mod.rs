@@ -27,6 +27,7 @@ mod name;
 mod native;
 mod network;
 mod publish;
+mod sandbox;
 mod state;
 #[cfg(test)]
 pub(crate) mod test_hooks;
