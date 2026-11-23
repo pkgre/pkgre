@@ -1659,3 +1659,91 @@ fn build_keeps_the_bytes_body() {
     }
     println!("BUILD-BYTES-OK");
 }
+
+#[test]
+fn the_run_sandbox_runs_the_routine_by_its_canonical_executable() {
+    let command = super::routine_command(
+        Path::new("/nix/store/example-pkgre/bin/pkgre-rust"),
+        Path::new("/work/catalog"),
+        "rust/v1.0.0",
+        true,
+        Some("https://github.com/example/workspace"),
+    );
+    assert_eq!(
+        command,
+        [
+            "/nix/store/example-pkgre/bin/pkgre-rust",
+            "self-publish",
+            "/work/catalog",
+            "rust/v1.0.0",
+            "--upload",
+            "--git=https://github.com/example/workspace",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>()
+    );
+    let dry = super::routine_command(
+        Path::new("/work/pkgre-rust"),
+        Path::new("/work/catalog"),
+        "v1.0.0",
+        false,
+        None,
+    );
+    assert_eq!(
+        dry,
+        [
+            "/work/pkgre-rust",
+            "self-publish",
+            "/work/catalog",
+            "v1.0.0"
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>(),
+        "a dry run names no upload and no git"
+    );
+}
+
+#[test]
+fn a_test_body_must_report_exactly_one_passed_test() {
+    let passed = Command::new("sh")
+        .arg("-c")
+        .arg("printf 'test result: ok. 1 passed; 0 failed\\n'")
+        .output()
+        .expect("run sh");
+    super::body_output(&passed).expect("one passed test");
+    let none = Command::new("sh")
+        .arg("-c")
+        .arg("printf 'test result: ok. 0 passed; 0 failed\\n'")
+        .output()
+        .expect("run sh");
+    let error = format!(
+        "{:#}",
+        super::body_output(&none).expect_err("a filter that matches nothing passes silently")
+    );
+    assert!(error.contains("did not run exactly one test"), "{error}");
+    let failed = Command::new("sh")
+        .arg("-c")
+        .arg("printf 'test result: ok. 1 passed\\n'; exit 1")
+        .output()
+        .expect("run sh");
+    let error = format!(
+        "{:#}",
+        super::body_output(&failed).expect_err("a failed body is reported")
+    );
+    assert!(error.contains("the test body failed"), "{error}");
+}
+
+#[test]
+fn the_tests_run_sandbox_binds_the_rehearsal_directories() {
+    for name in [
+        "PKGRE_REHEARSAL_CATALOG",
+        "PKGRE_NATIVE_REHEARSAL_REPOSITORY",
+    ] {
+        assert!(
+            super::REHEARSAL_BIND_VARIABLES.contains(&name),
+            "the run sandbox binds {name}"
+        );
+    }
+}

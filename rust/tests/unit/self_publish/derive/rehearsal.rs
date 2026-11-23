@@ -353,15 +353,39 @@ fn candidate_objects(
     Ok(candidate)
 }
 
+/// The environment variables that the native rehearsal forwards into its run
+/// sandbox.
+const NATIVE_REHEARSAL_VARIABLES: [&str; 5] = [
+    "PKGRE_REHEARSAL_CATALOG",
+    "PKGRE_NATIVE_REHEARSAL_SKIP_VERIFY",
+    "PKGRE_NATIVE_REHEARSAL_REPOSITORY",
+    "PKGRE_NATIVE_REHEARSAL_GIT",
+    "PKGRE_NATIVE_REHEARSAL_TAG",
+];
+
+/// Requires that the native rehearsal forwards the variables that its prepared
+/// repository needs, so that a wrapper change cannot silently drop them.
+#[test]
+fn the_native_rehearsal_forwards_its_prepared_repository() {
+    for name in [
+        "PKGRE_REHEARSAL_CATALOG",
+        "PKGRE_NATIVE_REHEARSAL_REPOSITORY",
+        "PKGRE_NATIVE_REHEARSAL_GIT",
+        "PKGRE_NATIVE_REHEARSAL_TAG",
+    ] {
+        assert!(
+            NATIVE_REHEARSAL_VARIABLES.contains(&name),
+            "the native rehearsal forwards {name}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "needs the network and PKGRE_REHEARSAL_CATALOG"]
 fn live_native_rehearsal_runs_lock_the_reproduction_and_the_routine() {
     crate::self_publish::sandbox::run_test_body(
         "self_publish::derive::tests::rehearsal::live_native_rehearsal_runs_lock_the_reproduction_and_the_routine_body",
-        &[
-            "PKGRE_REHEARSAL_CATALOG",
-            "PKGRE_NATIVE_REHEARSAL_SKIP_VERIFY",
-        ],
+        &NATIVE_REHEARSAL_VARIABLES,
     )
     .expect("the rehearsal runs inside a run sandbox");
 }

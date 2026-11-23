@@ -2062,7 +2062,7 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io_body() {
             clone.to_str().expect("the clone path is UTF-8"),
         ],
     );
-    fixtures::git(&clone, &["tag", "-a", "rust/v0.5.0", "-m", "pkgre 0.5.0"]);
+    retag(&clone, "rust/v0.5.0");
     let cargo_version =
         Version::parse(crate::policy::CARGO_VERSION).expect("parse the pinned Cargo version");
     let mut released = Vec::new();
@@ -2201,6 +2201,49 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io_body() {
             package.entry.pkgre_crate_sha256,
         );
     }
+}
+
+/// Gives a clone the release tag at its own commit, removing the tag that it
+/// may have inherited from the repository it was cloned from.
+fn retag(clone: &Path, tag: &str) {
+    if !fixtures::git(clone, &["tag", "-l", tag]).is_empty() {
+        fixtures::git(clone, &["tag", "-d", tag]);
+    }
+    fixtures::git(clone, &["tag", "-a", tag, "-m", "rehearsal"]);
+}
+
+/// Requires that a rehearsal's clone carries its tag at its own commit, whether
+/// or not the repository it was cloned from already had the tag.
+#[test]
+fn a_rehearsal_clone_gets_its_tag_at_its_own_commit() {
+    let temporary = fixtures::Temp::new("rehearsal-tag");
+    let clone = temporary.path().join("clone");
+    fs::create_dir(&clone).expect("make the clone's directory");
+    fixtures::git(&clone, &["init", "--quiet"]);
+    fs::write(clone.join("file"), "one\n").expect("write a file");
+    fixtures::git(&clone, &["add", "."]);
+    fixtures::git(&clone, &["commit", "--quiet", "-m", "first"]);
+    fixtures::git(&clone, &["tag", "-a", "rust/v0.5.0", "-m", "inherited"]);
+    fs::write(clone.join("file"), "two\n").expect("change the file");
+    fixtures::git(&clone, &["commit", "--quiet", "-am", "second"]);
+    retag(&clone, "rust/v0.5.0");
+    assert_eq!(
+        fixtures::git(&clone, &["rev-parse", "rust/v0.5.0^{commit}"]),
+        fixtures::git(&clone, &["rev-parse", "HEAD"]),
+        "the tag names the clone's own commit"
+    );
+    // A clone that never had the tag gets it too.
+    let fresh = temporary.path().join("fresh");
+    fs::create_dir(&fresh).expect("make the fresh directory");
+    fixtures::git(&fresh, &["init", "--quiet"]);
+    fs::write(fresh.join("file"), "one\n").expect("write a file");
+    fixtures::git(&fresh, &["add", "."]);
+    fixtures::git(&fresh, &["commit", "--quiet", "-m", "only"]);
+    retag(&fresh, "rust/v0.5.0");
+    assert_eq!(
+        fixtures::git(&fresh, &["rev-parse", "rust/v0.5.0^{commit}"]),
+        fixtures::git(&fresh, &["rev-parse", "HEAD"])
+    );
 }
 
 /// Wraps crate versions as one verified packaging of the tests, which have no

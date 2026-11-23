@@ -315,7 +315,7 @@ pub(super) fn launch(repository: &Path, tag: &str, upload: bool, git: Option<&st
     }
     let marker = process_namespace()?;
     let environment = run_environment(&marker, &run_root, &host);
-    let command = routine_arguments(&repository, tag, upload, git);
+    let command = routine_command(&executable, &repository, tag, upload, git);
     let (reader, writer) = status_pipe()?;
     let sandbox = RunSandbox {
         root: &run_root,
@@ -1394,6 +1394,21 @@ fn run_environment(marker: &OsStr, root: &Path, host: &Host) -> Vec<(OsString, O
     environment
 }
 
+/// Returns the command that the run sandbox runs: the routine's canonical
+/// executable, then its arguments, so that `bubblewrap` starts the binary that
+/// the launcher found rather than a name that its `PATH` might not hold.
+fn routine_command(
+    executable: &Path,
+    repository: &Path,
+    tag: &str,
+    upload: bool,
+    git: Option<&str>,
+) -> Vec<OsString> {
+    let mut command = vec![executable.as_os_str().to_owned()];
+    command.extend(routine_arguments(repository, tag, upload, git));
+    command
+}
+
 /// Returns the argument list with which the launcher starts the routine: the
 /// same executable and the same arguments, with the catalog checkout's canonical
 /// path.
@@ -1661,6 +1676,13 @@ fn bounded_lossy(bytes: &[u8]) -> String {
 /// The variable that marks a test body that runs inside a run sandbox.
 #[cfg(test)]
 pub(crate) const TEST_BODY_VARIABLE: &str = "PKGRE_SELF_PUBLISH_SANDBOX_TEST";
+/// The variables that name directories of the ignored live tests, which the
+/// tests' run sandbox binds read-only as the launcher binds the catalog.
+#[cfg(test)]
+const REHEARSAL_BIND_VARIABLES: [&str; 2] = [
+    "PKGRE_REHEARSAL_CATALOG",
+    "PKGRE_NATIVE_REHEARSAL_REPOSITORY",
+];
 
 /// Runs one test body inside a run sandbox made from the launcher's arguments,
 /// so that the ignored tests of step 5 against crates.io run as production does.
@@ -1698,10 +1720,12 @@ pub(crate) fn run_test_body(body: &str, forwarded: &[&str]) -> Result<()> {
             outside.push(common);
         }
     }
-    if let Some(catalog) = std::env::var_os("PKGRE_REHEARSAL_CATALOG") {
-        let catalog = fs::canonicalize(&catalog).context("resolve the rehearsal catalog")?;
-        if !outside.iter().any(|path| path == &catalog) {
-            outside.push(catalog);
+    for name in REHEARSAL_BIND_VARIABLES {
+        if let Some(path) = std::env::var_os(name) {
+            let path = fs::canonicalize(&path).with_context(|| format!("resolve {name}"))?;
+            if !outside.iter().any(|bound| bound == &path) {
+                outside.push(path);
+            }
         }
     }
     let binds = RunBinds {
@@ -1754,7 +1778,7 @@ pub(crate) fn run_test_body(body: &str, forwarded: &[&str]) -> Result<()> {
         .context("wait for the run sandbox")?;
     let documents = read_status_documents(reader)?;
     let status = interpret_status(&documents, output.status)?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let body = body_output(&output)?;
     if let Err(error) = remove_tree(&root) {
         debug!(%error, "the test run root is removed later");
     }
@@ -1763,9 +1787,37 @@ pub(crate) fn run_test_body(body: &str, forwarded: &[&str]) -> Result<()> {
     }
     ensure!(
         status == 0,
-        "the test body failed in its run sandbox (status {status}):\n{stderr}"
+        "the test body failed in its run sandbox (status {status}):\n{body}"
     );
     Ok(())
+}
+
+/// Prints one test body's output to the outer test's own output and requires
+/// that it ran exactly one test and passed.
+///
+/// A filter that matches no test exits successfully with `0 passed`, so the
+/// status alone would let a renamed body pass silently.
+///
+/// # Errors
+///
+/// Returns an error when the output does not report exactly one passed test, or
+/// when the body failed; the error carries the output.
+#[cfg(test)]
+fn body_output(output: &Output) -> Result<String> {
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    print!("{stdout}");
+    eprint!("{stderr}");
+    ensure!(
+        stdout.contains("test result: ok. 1 passed"),
+        "the test body did not run exactly one test, so its filter matched nothing: {stdout}{stderr}"
+    );
+    ensure!(
+        output.status.success(),
+        "the test body failed ({}): {stdout}{stderr}",
+        output.status
+    );
+    Ok(format!("{stdout}{stderr}"))
 }
 
 #[cfg(test)]
