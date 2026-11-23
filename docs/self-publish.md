@@ -506,13 +506,15 @@ For one release, a run:
    than refused, since Cargo accepts a yanked version that a lock file pins.
 5. builds the missing crates with Cargo's verification, `cargo package --locked --offline
    --allow-dirty` for a rewritten `pkgre` workspace and `cargo package --locked --offline` for a
-   copy of a native release's clean checkout, in a build sandbox nested in the run sandbox: it
+   copy of a native release's clean checkout, in a build sandbox nested in the run sandbox. The
+   copy, the Cargo home and both fetches are made in the run sandbox, which has the network: it
    makes a fresh copy of the workspace below a build root, writes a Cargo home there, fetches
-   the workspace's own lock into it (and, for a run that resumes a partial upload, a generated
-   manifest of the published siblings that the missing crates depend on), and builds offline
-   from those files, with its target directory outside the copy. The missing crates are
-   packaged in one run, so a crate whose sibling crates.io does not have yet is packaged
-   against that sibling of the same run. It requires each archive's SHA-256 to equal its
+   the workspace's own lock into it, and for a run that resumes a partial upload fetches a
+   generated manifest of the published siblings that the missing crates depend on. The offline
+   build alone runs in the build sandbox, from those files, with its target directory outside
+   the copy. The missing crates are packaged in one run, so a crate whose sibling crates.io
+   does not have yet is packaged against that sibling of the same run. It requires each
+   archive's SHA-256 to equal its
    `crates-io.lock` entry, and the archive reader refuses a symbolic link at the target, at
    `target/package` and at an archive. This is the only step in which package code, such as a
    build script or a proc macro, runs, and it happens while no token is in reach. The build
@@ -588,11 +590,11 @@ view. Its environment is cleared and holds `PATH` with canonical entries, `TMPDI
 root), `PKGRE_CARGO`, `PKGRE_BWRAP`, the certificate variables and the marker that names the
 launcher's process namespace. A dry run's standard input is null; an upload's is the caller's.
 
-The routine refuses to run when the marker is missing, when it names the routine's own process
-namespace, when its parent is not PID 1, or when `/proc/1/exe` is not the `bubblewrap` that the
-launcher found; a marker set by hand is refused for the same reason. It marks its own
-descriptors close-on-exec, joins a fresh anonymous session keyring, and becomes a child
-subreaper.
+Without the marker the command acts as the launcher. The routine refuses to run when the
+marker names its own process namespace, when its parent is not PID 1, or when `/proc/1/exe` is
+not the `bubblewrap` that the launcher found; a marker set by hand is refused for the same
+reason. It marks its own descriptors close-on-exec, joins a fresh anonymous session keyring,
+and becomes a child subreaper.
 
 Step 5's build sandbox has every namespace including the network, no further user namespaces, a
 new session, `--die-with-parent` and `--as-pid-1`, and only the build root writable; it shows
@@ -642,33 +644,42 @@ The token is created by the person who uploads, as described in
 limited to the crate names this workflow publishes, with a short expiry. The routine reads it
 only with `--upload`, and only after every check passed and the process check before the token:
 from a prompt that does not echo when standard input is a terminal, otherwise from one line of
-standard input. A token piped on standard input waits in the standard input that the routine
-reads, which no package code can reach; it is best written once the line
-`waiting for the crates.io token on standard input` appears in the log. It is never read from
-the routine's environment, its command line, or a file, and an empty token is refused.
+standard input. The prompt is the recommended way to give it; a token piped on standard input
+waits in the standard input that the routine reads, which no package code can reach, and is
+best written once the line `waiting for the crates.io token on standard input` appears in the
+log. It is never read from the routine's environment, its command line, or a file, and an empty
+token is refused.
 
 The routine refuses to start, before any other work and for a dry run too, while
 `CARGO_REGISTRY_TOKEN` or any `CARGO_REGISTRIES_<NAME>_TOKEN` is set in its own environment: it
 names the variable and never its value, since a child process could otherwise inherit it.
 With `--upload`, the routine makes its own process non-dumpable (`PR_SET_DUMPABLE`, 0) before
-it starts any child, so that no other process of the same user can open its `/proc` files, its
-standard input among them, while a token could be in reach. That still holds inside the run
-sandbox, but the sandbox is not a boundary against the person's own processes: the run
-sandbox's user namespace belongs to that user, so a process of theirs that joins it has the
-sandbox's capabilities and can attach to the routine there. Every child process starts from an empty environment
-with the allowlist of the derivation (`PATH`, `TMPDIR`, the certificate variables, an isolated
-`CARGO_HOME`, and the `rustc` beside the pinned `cargo`), and only the upload process also gets
-the token. The token is never printed, logged, written to a file, or placed in an error, and
+it starts any child, so that no other process of the same user can open the routine's `/proc`
+files while a token could be in reach. Only the routine's own files stay closed: `bubblewrap`'s
+monitor and the run sandbox's init hold the same standard input and are dumpable, so a process
+of the same user can read a piped token through their `/proc/<pid>/fd/0` before the routine
+reads it, and it can attach to the routine in the sandbox, whose user namespace belongs to that
+user. The sandbox is not a boundary against the person's own processes; a dedicated build user,
+who owns neither the routine nor its sandbox, is the measure against that. Every child process
+starts from an empty environment with the allowlist of the derivation (`PATH`, `TMPDIR`, the
+certificate variables, an isolated `CARGO_HOME`, and the `rustc` beside the pinned `cargo`),
+and only the upload process also gets the token. The build sandbox's own command gets `PATH`,
+`TMPDIR` and `CARGO_HOME` in the build root, `RUSTC`, `CARGO_TERM_COLOR=never`,
+`CARGO_NET_GIT_FETCH_WITH_CLI=false` and `CARGO_NET_OFFLINE=true`, and no certificate
+variables. The token is never printed, logged, written to a file, or placed in an error, and
 any output of the upload process that the routine relays has every occurrence of it replaced;
 it is dropped once the uploads finish.
 
 The residual risk is what the sandboxes do not cover. A process of the same user on the host
-can join the run sandbox, as its user namespace belongs to that user, and attach to the routine
-there; it can read the token once the routine has read it, and it can change the workspace or
-the upload's Cargo home after step 6's comparison, so that `cargo publish` uploads other bytes
-than the recorded ones, which step 7 detects only after the upload. A fault of the kernel or of
-`bubblewrap` would undo the isolation. Package code itself does not outlive its build sandbox,
-and the check before the token requires the run sandbox to hold only its init and the routine.
+can read a piped token through `bubblewrap`'s descriptors before the routine reads it, as "The
+token" describes, and it can join the run sandbox, as its user namespace belongs to that user,
+to attach to the routine and read the token once the routine has read it; it can also change
+the workspace or the upload's Cargo home after step 6's comparison, so that `cargo publish`
+uploads other bytes than the recorded ones, which step 7 detects only after the upload. A
+dedicated build user, who owns neither the routine nor its sandbox, is the measure against
+this. A fault of the kernel or of `bubblewrap` would undo the isolation. Package code itself
+does not outlive its build sandbox, and the check before the token requires the run sandbox to
+hold only its init and the routine.
 
 An interrupt during step 5 ends the run sandbox, and the kernel ends Cargo and every process
 that the package code started; the launcher restores the terminal and removes the run root. A
