@@ -951,6 +951,16 @@ fn run_in_run_sandbox(
     RunSandboxProcess::start(body, action, extra).finish()
 }
 
+/// Runs one test body inside a run sandbox with the given standard input.
+fn run_in_run_sandbox_with_stdin(
+    body: &str,
+    action: &str,
+    extra: &[(&str, OsString)],
+    stdin: Stdio,
+) -> (std::process::Output, i32) {
+    RunSandboxProcess::start_with_stdin(body, action, extra, stdin).finish()
+}
+
 /// One run sandbox whose launcher is this test process.
 struct RunSandboxProcess {
     /// The `bubblewrap` that makes the sandbox.
@@ -967,6 +977,17 @@ struct RunSandboxProcess {
 impl RunSandboxProcess {
     /// Makes the run root and starts the sandbox with the given body.
     fn start(body: &str, action: &str, extra: &[(&str, OsString)]) -> Self {
+        Self::start_with_stdin(body, action, extra, Stdio::null())
+    }
+
+    /// Makes the run root and starts the sandbox with the given body and
+    /// standard input.
+    fn start_with_stdin(
+        body: &str,
+        action: &str,
+        extra: &[(&str, OsString)],
+        stdin: Stdio,
+    ) -> Self {
         let host = Host::detect().expect("bubblewrap and the pinned Cargo");
         let repository = Temporary::new("repository");
         let root = Temporary::new("run-root");
@@ -1014,7 +1035,7 @@ impl RunSandboxProcess {
         let arguments = sandbox.arguments();
         let child = Command::new(&host.bwrap)
             .args(&arguments)
-            .stdin(Stdio::null())
+            .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1928,6 +1949,67 @@ fn in_build_sandbox() -> bool {
 }
 
 #[test]
+fn the_toolchain_bind_keeps_the_libraries_and_refuses_credentials() {
+    let temporary = Temporary::new("toolchain");
+    let root = temporary.path().join("toolchain");
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).expect("make the toolchain's bin");
+    fs::create_dir_all(root.join("lib/rustlib")).expect("make the toolchain's libraries");
+    let cargo = bin.join("cargo");
+    write_executable(&cargo, "#!/bin/sh\nexit 0\n");
+    assert_eq!(
+        super::toolchain_directory(&cargo, None).expect("a Rust toolchain root"),
+        root
+    );
+    let plain = temporary.path().join("plain/bin");
+    fs::create_dir_all(&plain).expect("make a plain bin directory");
+    let plain_cargo = plain.join("cargo");
+    write_executable(&plain_cargo, "#!/bin/sh\nexit 0\n");
+    assert_eq!(
+        super::toolchain_directory(&plain_cargo, None).expect("a program without a toolchain"),
+        plain
+    );
+    fs::write(root.join("credentials.toml"), "token = \"one\"\n").expect("write credentials");
+    let error = format!(
+        "{:#}",
+        super::toolchain_directory(&cargo, None).expect_err("credentials are refused")
+    );
+    assert!(error.contains("Cargo credentials"), "{error}");
+    fs::remove_file(root.join("credentials.toml")).expect("remove the credentials");
+    let error = format!(
+        "{:#}",
+        super::toolchain_directory(&cargo, Some(&root)).expect_err("the Cargo home is refused")
+    );
+    assert!(error.contains("is the Cargo home"), "{error}");
+}
+
+#[test]
+fn a_nonexistent_home_is_used_as_given() {
+    let nonexistent = PathBuf::from("/nonexistent-home-of-a-test");
+    assert_eq!(
+        super::home_directory_from(Some(nonexistent.clone()), None)
+            .expect("a HOME that does not exist is still the home"),
+        nonexistent
+    );
+}
+
+#[test]
+fn the_launcher_names_the_sandbox_it_ended() {
+    use std::os::unix::process::ExitStatusExt as _;
+    super::LAUNCHER_ENDED.store(true, Ordering::Relaxed);
+    let status = std::process::ExitStatus::from_raw(nix::libc::SIGKILL);
+    let error = format!(
+        "{:#}",
+        super::interpret_status(&[], status).expect_err("the launcher ended the sandbox")
+    );
+    super::LAUNCHER_ENDED.store(false, Ordering::Relaxed);
+    assert!(
+        error.contains("the launcher ended the run sandbox"),
+        "{error}"
+    );
+}
+
+#[test]
 fn a_root_is_made_with_its_owner_mode_in_one_step() {
     let root = super::make_root(&std::env::temp_dir(), "pkgre-test-root").expect("make a root");
     assert_eq!(
@@ -2074,6 +2156,9 @@ for argument in "$@"; do
   if [ "$previous" = "--json-status-fd" ]; then status_fd=$argument; fi
   previous=$argument
 done
+if [ -n "$FAKE_BWRAP_ORPHAN" ]; then
+  ( sleep 1; touch "$FAKE_BWRAP_ORPHAN" ) &
+fi
 if [ -n "$FAKE_BWRAP_STATUS" ]; then
   eval "printf '%s' '$FAKE_BWRAP_STATUS' >&$status_fd"
   exit 0
@@ -2121,6 +2206,7 @@ exit 1
             tag,
             upload,
             status,
+            None,
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2174,6 +2260,34 @@ exit 1
             .count();
         assert_eq!(leftovers, 0, "the launcher removed its run root");
     }
+    // A child that the fake bubblewrap leaves behind must have ended before the
+    // launcher returns, and the launcher, as the subreaper, reaps it.
+    let orphan = temporary.path().join("orphan");
+    let started = std::time::Instant::now();
+    let output = run_launch_helper(
+        &repository,
+        &temp,
+        &home,
+        &fake,
+        &cargo,
+        tag,
+        false,
+        Some(r#"{"child-pid": 1, "exit-code": 0}"#),
+        Some(&orphan),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(900),
+        "the launcher waited for the orphan"
+    );
+    assert!(
+        orphan.exists(),
+        "the orphan ended before the launcher returned"
+    );
 }
 
 /// Runs the launcher's helper once with the given sandbox inputs.
@@ -2187,6 +2301,7 @@ fn run_launch_helper(
     tag: &str,
     upload: bool,
     status: Option<&str>,
+    orphan: Option<&Path>,
 ) -> std::process::Output {
     let mut command = Command::new(std::env::current_exe().expect("the test binary"));
     command
@@ -2209,6 +2324,9 @@ fn run_launch_helper(
     }
     if let Some(status) = status {
         command.env("FAKE_BWRAP_STATUS", status);
+    }
+    if let Some(orphan) = orphan {
+        command.env("FAKE_BWRAP_ORPHAN", orphan);
     }
     let mut child = command.spawn().expect("start the launcher helper");
     let stdin = child.stdin.take();
@@ -2299,10 +2417,15 @@ fn pipe_child_helper() {
 #[ignore = "needs bubblewrap and unprivileged user namespaces"]
 fn build_gets_no_standard_input() {
     let _guard = sandbox_test_lock();
-    let (output, status) = run_in_run_sandbox(
+    let temporary = Temporary::new("stdin");
+    let input = temporary.path().join("standard-input");
+    fs::write(&input, "a token on standard input\n").expect("write the standard input");
+    let stdin = Stdio::from(fs::File::open(&input).expect("open the standard input"));
+    let (output, status) = run_in_run_sandbox_with_stdin(
         "self_publish::sandbox::tests::build_gets_no_standard_input_body",
         "build-stdin",
         &[],
+        stdin,
     );
     require_body(&output, status, "BUILD-STDIN-OK");
 }
@@ -2327,13 +2450,32 @@ fn build_gets_no_standard_input_body() {
         stdout.contains("STDIN-EMPTY"),
         "the build sandbox's command gets a null standard input: {stdout}"
     );
+    // A control: the same probe with this process's standard input reads the
+    // bytes, so the check would fail if run_build inherited it.
+    let mut control = Command::new(std::env::current_exe().expect("the test binary"));
+    control
+        .args([
+            "--exact",
+            "self_publish::sandbox::tests::stdin_helper",
+            "--nocapture",
+        ])
+        .env("PKGRE_SANDBOX_TEST_STDIN", "1")
+        .stdin(Stdio::inherit());
+    let output = control.output().expect("run the control");
+    let control_stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        control_stdout.contains("STDIN-CONTENT"),
+        "the control reads the inherited standard input: {control_stdout}"
+    );
     build.remove();
     println!("BUILD-STDIN-OK");
 }
 
 #[test]
 fn stdin_helper() {
-    if !in_build_sandbox() {
+    let in_build = in_build_sandbox();
+    let control = std::env::var_os("PKGRE_SANDBOX_TEST_STDIN").is_some();
+    if !in_build && !control {
         return;
     }
     let mut bytes = Vec::new();

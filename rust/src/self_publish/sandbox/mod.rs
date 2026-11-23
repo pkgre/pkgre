@@ -84,6 +84,9 @@ static SANDBOX_BWRAP: AtomicI32 = AtomicI32::new(0);
 /// Set when a termination signal arrives before the launcher stored its
 /// `bubblewrap`'s process ID, so that the launcher ends it once it has.
 static PENDING_TERMINATION: AtomicBool = AtomicBool::new(false);
+/// Set when the launcher itself kills its `bubblewrap` after a termination
+/// signal.
+static LAUNCHER_ENDED: AtomicBool = AtomicBool::new(false);
 
 /// Returns the marker's value when this process is the routine inside a run
 /// sandbox, and `None` when it is the launcher.
@@ -291,11 +294,7 @@ pub(super) fn launch(repository: &Path, tag: &str, upload: bool, git: Option<&st
     let executable =
         fs::canonicalize(std::env::current_exe().context("find the running executable")?)
             .context("resolve the running executable")?;
-    let toolchain = host
-        .cargo
-        .parent()
-        .with_context(|| format!("the pinned Cargo {} has no directory", host.cargo.display()))
-        .map(toolchain_directory)?;
+    let toolchain = toolchain_directory(&host.cargo, cargo_home().as_deref())?;
     let binds = RunBinds {
         store: host.store.clone(),
         system: host.system.clone(),
@@ -394,15 +393,51 @@ impl Drop for RunRoot {
     }
 }
 
-/// Returns the directory to bind for a toolchain: the directory above its
-/// `bin` directory when it has one, so that the toolchain's libraries come
-/// with it.
-fn toolchain_directory(bin: &Path) -> &Path {
-    if bin.file_name() == Some(OsStr::new("bin")) {
+/// Returns the directory to bind for one Cargo program.
+///
+/// A Rust toolchain's root is the directory above its `bin` directory when that
+/// holds `lib/rustlib`, so that `rustc` finds its libraries too. A root that
+/// holds Cargo credentials, or that is the Cargo home, is refused rather than
+/// shown in a sandbox.
+///
+/// # Errors
+///
+/// Returns an error when the program has no directory, or when the toolchain
+/// root must not be bound.
+fn toolchain_directory<'a>(cargo: &'a Path, cargo_home: Option<&Path>) -> Result<&'a Path> {
+    let bin = cargo
+        .parent()
+        .with_context(|| format!("{} has no directory", cargo.display()))?;
+    let root = if bin.file_name() == Some(OsStr::new("bin"))
+        && bin
+            .parent()
+            .is_some_and(|root| root.join("lib").join("rustlib").is_dir())
+    {
         bin.parent().unwrap_or(bin)
     } else {
         bin
+    };
+    for credentials in ["credentials.toml", "credentials"] {
+        ensure!(
+            !root.join(credentials).is_file(),
+            "the toolchain root {} holds Cargo credentials ({}), so a sandbox does not show it; point PKGRE_CARGO at a toolchain that holds none",
+            root.display(),
+            credentials
+        );
     }
+    ensure!(
+        cargo_home != Some(root),
+        "the toolchain root {} is the Cargo home, so a sandbox does not show it; point PKGRE_CARGO at the toolchain outside the Cargo home",
+        root.display()
+    );
+    Ok(root)
+}
+
+/// Returns the Cargo home: `CARGO_HOME`, or the user's `~/.cargo`.
+fn cargo_home() -> Option<PathBuf> {
+    std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_directory().ok().map(|home| home.join(".cargo")))
 }
 
 /// Returns the home directory that a sandbox must not bind: `HOME`,
@@ -433,8 +468,9 @@ fn home_directory_from(home: Option<PathBuf>, entry: Option<PathBuf>) -> Result<
             nix::unistd::getuid()
         );
     };
-    fs::canonicalize(&home)
-        .with_context(|| format!("resolve the home directory {}", home.display()))
+    // A home that does not resolve hides nothing, but it is still compared as
+    // the caller gave it; only an unset HOME falls back to the password entry.
+    Ok(fs::canonicalize(&home).unwrap_or(home))
 }
 
 /// Starts one `bubblewrap` with the launcher's arguments, so that the child
@@ -499,9 +535,7 @@ pub(super) fn run_build(root: &Path, command: &[OsString]) -> Result<Vec<u8>> {
     let program = command
         .first()
         .context("a build sandbox runs one command, and none was given")?;
-    let toolchain = Path::new(program)
-        .parent()
-        .with_context(|| format!("{} has no directory", Path::new(program).display()))?;
+    let toolchain = toolchain_directory(Path::new(program), cargo_home().as_deref())?;
     let outside = host.outside(&[toolchain]);
     let sandbox = BuildSandbox {
         store: host.store.as_deref(),
@@ -1616,6 +1650,12 @@ fn interpret_status(documents: &[Value], status: std::process::ExitStatus) -> Re
             describe_exit(status)
         );
     }
+    if LAUNCHER_ENDED.swap(false, Ordering::Relaxed) {
+        bail!(
+            "the launcher ended the run sandbox after a termination signal: {}",
+            describe_exit(status)
+        );
+    }
     bail!(
         "the run sandbox was never made: {} and named no child process. A host makes unprivileged user namespaces only where they are enabled and unrestricted: Ubuntu 23.10 and later restrict them through AppArmor's kernel.apparmor_restrict_unprivileged_userns, and older systems through user.max_user_namespaces or kernel.unprivileged_userns_clone. bubblewrap's own message above says what it found",
         describe_exit(status)
@@ -1701,6 +1741,7 @@ extern "C" fn end_sandbox(_signal: nix::libc::c_int) {
 /// Ends one `bubblewrap` with `SIGKILL`; only async-signal-safe calls belong
 /// here, since a handler calls it.
 fn end_the_sandbox(pid: i32) {
+    LAUNCHER_ENDED.store(true, Ordering::Relaxed);
     let _ = nix::sys::signal::kill(
         nix::unistd::Pid::from_raw(pid),
         nix::sys::signal::Signal::SIGKILL,
