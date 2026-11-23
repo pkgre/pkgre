@@ -684,6 +684,53 @@ fn refuses_an_unknown_category() {
 }
 
 #[test]
+fn refuses_a_wildcard_requirement() {
+    let temporary = fixtures::Temp::new("pkgre-network-wildcard");
+    let fixture = fixture_with_derivation(
+        temporary.path(),
+        Variant {
+            wildcard_dependency: true,
+            ..Variant::default()
+        },
+    );
+    let crates_io =
+        FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
+    let error = error_text(check(&fixture, &crates_io, &repositories));
+    let version = fixture.release.version(BIN);
+    assert!(
+        error.contains(&format!("crate {BIN} {version} requires")),
+        "{error}"
+    );
+    assert!(error.contains("mirrored-dep"), "{error}");
+    assert!(error.contains("wildcard"), "{error}");
+}
+
+#[test]
+fn refuses_a_wildcard_requirement_of_a_native_release() {
+    let temporary = fixtures::Temp::new("pkgre-network-wildcard-native");
+    let fixture = fixture_with_derivation(
+        temporary.path(),
+        Variant {
+            native: true,
+            wildcard_dependency: true,
+            ..Variant::default()
+        },
+    );
+    let crates_io =
+        FakeCratesIo::missing(&[fixtures::LIB_CRATES_IO_NAME, fixtures::BIN_CRATES_IO_NAME]);
+    let repositories = FakeRepository::of(release_tag(&fixture, true, true));
+    let error = error_text(check(&fixture, &crates_io, &repositories));
+    let version = fixture.release.version(BIN);
+    assert!(
+        error.contains(&format!("crate {BIN} {version} requires")),
+        "{error}"
+    );
+    assert!(error.contains("mirrored-dep"), "{error}");
+    assert!(error.contains("wildcard"), "{error}");
+}
+
+#[test]
 fn accepts_a_category_that_crates_io_knows() {
     let temporary = fixtures::Temp::new("pkgre-network-category-known");
     let fixture = fixture_with_derivation(
@@ -834,6 +881,7 @@ fn valid_facts() -> MemberFacts {
         repository: Some("https://example.invalid/example/project".to_owned()),
         keywords: vec!["example".to_owned()],
         categories: Vec::new(),
+        wildcard_dependencies: Vec::new(),
     }
 }
 

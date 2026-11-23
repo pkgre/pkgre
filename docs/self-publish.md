@@ -434,13 +434,21 @@ something. For each added release, one repository and tag, and each of its crate
   `license-file`, at most 5 keywords of at most 20 bytes each and of the characters crates.io
   accepts, at most 5 categories, a `homepage`, `documentation` and `repository` that are
   `http` or `https` URLs with an authority, a derived archive of at most 10 MB, and the
-  categories above. The license expression itself is not validated as SPDX: crates.io refuses
-  an expression it cannot parse, and that refusal reaches the upload, not the checks.
-- The derivation of the release, exactly as `self-publish-lock` runs it: the catalog
-  publishes exactly the tag's publishable members, the manifests and the lock file are
-  rewritten, the crates are packaged twice with the pinned Cargo, every derived archive is
-  compared with the archive the catalog retains, and the derived `crate-sha256` is the one
-  `crates-io.lock` records.
+  categories above. No dependency of the packaged manifest may require the wildcard `*`,
+  which crates.io refuses at the upload: the rule reads every dependency table of the
+  packaged manifest, the normal, build, dev and target-specific ones, and counts a
+  dependency without a version as `*`, as crates.io does. The license expression itself is
+  not validated as SPDX: crates.io refuses an expression it cannot parse, and that refusal
+  reaches the upload, not the checks.
+- The derivation of the release, exactly as `self-publish-lock` runs it. In the `pkgre`
+  manifest mode the catalog publishes exactly the tag's publishable members, the manifests
+  and the lock file are rewritten, the crates are packaged twice with the pinned Cargo,
+  every derived archive is compared with the archive the catalog retains, and the derived
+  `crate-sha256` is the one `crates-io.lock` records. In the `crates-io` manifest mode
+  nothing is rewritten, the tag's own crates are packaged twice against crates.io, each
+  derived archive must equal the retained archive byte for byte, and each entry records the
+  crate's own name as its crates.io name. "A crates.io-native release" gives the native mode
+  in full.
 
 Every request is a read over HTTPS with a fixed user agent that names this repository, no
 proxy or token variable, and the empty environment of the workflow's child processes.

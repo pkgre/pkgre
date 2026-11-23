@@ -196,6 +196,7 @@ impl Workspace {
                         repository: package.repository,
                         keywords: package.keywords.unwrap_or_default(),
                         categories: package.categories.unwrap_or_default(),
+                        wildcard_dependencies: Vec::new(),
                     },
                     dependencies: package
                         .dependencies
@@ -832,4 +833,73 @@ fn dependency_requirement(item: &Item) -> Option<&str> {
             .and_then(|entry| entry.get("version"))
             .and_then(Item::as_str)
     })
+}
+
+/// Returns the dependencies whose requirement crates.io refuses as a wildcard.
+///
+/// `manifest` is the manifest that a crates.io archive holds, which is the one
+/// crates.io reads: Cargo has already normalized it, so a path dependency
+/// without a version is gone from it, and a dependency without a version reads
+/// as `*` there, as it does for crates.io.
+///
+/// # Errors
+///
+/// Returns an error when the manifest cannot be parsed.
+pub(super) fn wildcard_dependencies(manifest: &str) -> Result<Vec<String>> {
+    let document = manifest
+        .parse::<DocumentMut>()
+        .context("parse the packaged manifest")?;
+    let mut dependencies = Vec::new();
+    collect_wildcard_dependencies(document.as_table(), &mut dependencies);
+    dependencies.sort();
+    dependencies.dedup();
+    Ok(dependencies)
+}
+
+/// Adds the wildcard dependencies of one table, and of its target tables, to
+/// `dependencies`.
+fn collect_wildcard_dependencies(table: &dyn TableLike, dependencies: &mut Vec<String>) {
+    for (key, item) in table.iter() {
+        if is_dependency_table_name(key) {
+            let Some(entries) = item.as_table_like() else {
+                continue;
+            };
+            for (name, entry) in entries.iter() {
+                if is_wildcard_requirement(dependency_requirement(entry)) {
+                    dependencies.push(dependency_crate_name(name, entry));
+                }
+            }
+            continue;
+        }
+        if key == "target"
+            && let Some(targets) = item.as_table_like()
+        {
+            for (_, target) in targets.iter() {
+                if let Some(target) = target.as_table_like() {
+                    collect_wildcard_dependencies(target, dependencies);
+                }
+            }
+        }
+    }
+}
+
+/// Returns whether one requirement is the wildcard that crates.io refuses.
+///
+/// crates.io parses the requirement and compares it with semver's wildcard,
+/// which spells `*`, `x` and `X` alike, and reads a dependency that declares no
+/// version as `*`.
+fn is_wildcard_requirement(requirement: Option<&str>) -> bool {
+    requirement.is_none_or(|requirement| {
+        VersionReq::parse(requirement).is_ok_and(|requirement| requirement == VersionReq::STAR)
+    })
+}
+
+/// Returns the crate name that crates.io records for one dependency entry.
+fn dependency_crate_name(key: &str, entry: &Item) -> String {
+    entry
+        .as_table_like()
+        .and_then(|entry| entry.get("package"))
+        .and_then(Item::as_str)
+        .unwrap_or(key)
+        .to_owned()
 }
