@@ -912,7 +912,7 @@ fn the_upload_packaging_of_a_dependent_reproduces_the_recorded_archive() {
         &lib.entry.crates_io_name,
         &lib.entry.version.to_string(),
         &lib.archive,
-        &fixtures::derived_dependencies("example-lib"),
+        &fixtures::derived_dependencies("example-lib", fixtures::LIB_CRATES_IO_NAME),
     );
     let environment = derivation
         .workspace
@@ -1105,7 +1105,7 @@ fn the_upload_packaging_check_refuses_another_archive() {
         &lib.entry.crates_io_name,
         &lib.entry.version.to_string(),
         &lib.archive,
-        &fixtures::derived_dependencies("example-lib"),
+        &fixtures::derived_dependencies("example-lib", fixtures::LIB_CRATES_IO_NAME),
     );
     let environment = derivation
         .workspace

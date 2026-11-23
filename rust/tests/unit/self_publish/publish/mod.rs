@@ -590,7 +590,7 @@ struct FakeUploader {
     archives: BTreeMap<String, Vec<u8>>,
     /// The dependencies that each published crate declares, as its index row
     /// names them.
-    dependencies: BTreeMap<String, Vec<(&'static str, &'static str)>>,
+    dependencies: BTreeMap<String, Vec<(String, &'static str, &'static str)>>,
     /// The checksum that the fake publishes for each crates.io name.
     checksums: BTreeMap<String, String>,
     /// How many uploads succeed before the fake fails.
@@ -608,15 +608,22 @@ struct FakeUploader {
 impl FakeUploader {
     /// Returns a fake that never fails, publishing into `crates_io`.
     fn new(fixture: &Fixture, crates_io: FakeCratesIo) -> Self {
-        let checksums = [BIN, LIB]
-            .into_iter()
+        let names = if fixture.three_crates {
+            vec![BIN, LIB, SERVE]
+        } else {
+            vec![BIN, LIB]
+        };
+        let checksums = names
+            .iter()
+            .copied()
             .map(|name| {
                 let entry = fixture.entry(name);
                 (entry.crates_io_name, entry.crate_sha256)
             })
             .collect();
-        let archives = [BIN, LIB]
-            .into_iter()
+        let archives = names
+            .iter()
+            .copied()
             .filter_map(|name| {
                 let entry = fixture.entry(name);
                 fixture
@@ -624,23 +631,26 @@ impl FakeUploader {
                     .map(|archive| (entry.crates_io_name, archive))
             })
             .collect();
-        let dependencies = [BIN, LIB]
-            .into_iter()
+        let lib = fixture.entry(LIB).crates_io_name;
+        let dependencies = names
+            .iter()
+            .copied()
             .map(|name| {
                 (
                     fixture.entry(name).crates_io_name,
-                    fixtures::derived_dependencies(name)
+                    fixtures::derived_dependencies(name, &lib)
                         .into_iter()
-                        .map(|(dependency, requirement)| {
+                        .map(|(dependency, requirement, kind)| {
                             (
                                 if fixture.entry(LIB).crates_io_name == LIB
                                     && dependency == fixtures::EARLIER_CRATES_IO_NAME
                                 {
-                                    "earlier-lib"
+                                    "earlier-lib".to_owned()
                                 } else {
                                     dependency
                                 },
                                 requirement,
+                                kind,
                             )
                         })
                         .collect(),
@@ -996,7 +1006,7 @@ impl Setup {
             &entry.crates_io_name,
             &entry.version.to_string(),
             &archive,
-            &fixtures::derived_dependencies(name),
+            &fixtures::derived_dependencies(name, &self.fixture.entry(LIB).crates_io_name),
         );
     }
 
@@ -1189,24 +1199,105 @@ fn three_crates_release() -> Variant {
 }
 
 #[test]
-fn a_mixed_resumed_run_refuses_a_dependent_whose_sibling_upload_changes_its_bytes() {
+fn a_mixed_resumed_run_uploads_a_dependent_whose_siblings_are_published_and_uploaded() {
     let temporary = fixtures::Temp::new("pkgre-publish-mixed");
     let setup = Setup::with_variant(temporary.path(), &[], three_crates_release());
     // An earlier run uploaded the library and stopped before the binary and the
-    // server, which depends on both. Step 5 packages the binary and the server
-    // together, so the server's archive is the recorded one; once the binary is
-    // on crates.io, the server's own archive changes, so the re-check before
-    // the server's upload refuses it.
+    // server, which depends on both.
     setup.publish(LIB);
-    let error = refusal(setup.execute(true));
-    assert!(
-        error.contains("check the package that cargo publish would upload for crate example-serve"),
-        "{error}"
+    let summary = setup.execute(true).expect("the resumed upload passes");
+    assert_eq!(summary.published, 1);
+    assert_eq!(summary.uploaded, 2);
+    assert_eq!(
+        Setup::record(&summary, LIB).state,
+        SelfPublishCrateState::Published
     );
+    for name in [BIN, SERVE] {
+        assert_eq!(
+            Setup::record(&summary, name).state,
+            SelfPublishCrateState::Uploaded
+        );
+    }
     assert_eq!(
         setup.uploader.uploads(),
-        vec![setup.fixture.entry(BIN).crates_io_name],
-        "the binary is uploaded before the server is refused"
+        vec![
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the binary is uploaded before the server that depends on it"
+    );
+}
+
+#[test]
+fn a_fresh_run_uploads_a_three_crate_release_in_dependency_order() {
+    let temporary = fixtures::Temp::new("pkgre-publish-fresh-three");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_release());
+    let summary = setup.execute(true).expect("the upload passes");
+    assert_eq!(summary.published, 0);
+    assert_eq!(summary.uploaded, 3);
+    for name in [BIN, LIB, SERVE] {
+        assert_eq!(
+            Setup::record(&summary, name).state,
+            SelfPublishCrateState::Uploaded
+        );
+    }
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(LIB).crates_io_name,
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the library, then the binary, then the server"
+    );
+}
+
+/// The native variant of the three-crate release: its manifests stay as the
+/// tag commits them.
+fn three_crates_native() -> Variant {
+    Variant {
+        native: true,
+        sibling: Sibling::Inherited,
+        three_crates: true,
+        ..Variant::default()
+    }
+}
+
+#[test]
+fn a_fresh_native_run_uploads_a_three_crate_release_in_dependency_order() {
+    let temporary = fixtures::Temp::new("pkgre-publish-fresh-native-three");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_native());
+    let summary = setup.execute(true).expect("the native upload passes");
+    assert_eq!(summary.published, 0);
+    assert_eq!(summary.uploaded, 3);
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(LIB).crates_io_name,
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the library, then the binary, then the server"
+    );
+}
+
+#[test]
+fn a_mixed_native_resumed_run_uploads_a_dependent_whose_siblings_are_both_kinds() {
+    let temporary = fixtures::Temp::new("pkgre-publish-mixed-native-three");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_native());
+    setup.publish(LIB);
+    let summary = setup
+        .execute(true)
+        .expect("the native resumed upload passes");
+    assert_eq!(summary.published, 1);
+    assert_eq!(summary.uploaded, 2);
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the binary is uploaded before the server that depends on it"
     );
 }
 

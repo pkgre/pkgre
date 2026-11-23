@@ -341,7 +341,7 @@ impl LocalSource {
         name: &str,
         version: &str,
         archive: &[u8],
-        dependencies: &[(&str, &str)],
+        dependencies: &[(String, &'static str, &'static str)],
     ) {
         let checksum = sha256_bytes(archive);
         self.checksums
@@ -355,14 +355,14 @@ impl LocalSource {
             "vers": version,
             "deps": dependencies
                 .iter()
-                .map(|(name, req)| serde_json::json!({
+                .map(|(name, req, kind)| serde_json::json!({
                     "name": name,
                     "req": req,
                     "features": [],
                     "optional": false,
                     "default_features": true,
                     "target": null,
-                    "kind": "normal",
+                    "kind": kind,
                     "registry": null,
                     "package": null,
                 }))
@@ -380,10 +380,26 @@ impl LocalSource {
 
 /// Returns the dependencies that one released crate of the fixture declares, as
 /// its crates.io index row names them.
-pub(crate) fn derived_dependencies(name: &str) -> Vec<(&'static str, &'static str)> {
+pub(crate) fn derived_dependencies(
+    name: &str,
+    lib: &str,
+) -> Vec<(String, &'static str, &'static str)> {
     match name {
-        "example-lib" => vec![("mirrored-dep", "0.3"), ("other-mirror", "0.2")],
-        "example-bin" => vec![("mirrored-dep", "0.3"), (EARLIER_CRATES_IO_NAME, "0.9")],
+        "example-lib" => vec![
+            ("mirrored-dep".to_owned(), "0.3", "normal"),
+            ("other-mirror".to_owned(), "0.2", "normal"),
+        ],
+        "example-bin" => vec![
+            ("mirrored-dep".to_owned(), "0.3", "normal"),
+            (EARLIER_CRATES_IO_NAME.to_owned(), "0.9", "build"),
+            (lib.to_owned(), "=1.0.0", "normal"),
+        ],
+        "example-serve" => vec![
+            ("earlier-lib".to_owned(), "0.9", "build"),
+            ("other-mirror".to_owned(), "0.2", "normal"),
+            ("example-bin".to_owned(), "=1.0.0", "normal"),
+            (lib.to_owned(), "=1.0.0", "normal"),
+        ],
         _ => Vec::new(),
     }
 }
@@ -1303,7 +1319,7 @@ pub(crate) fn publish_archive(
     version: &str,
     archive: &[u8],
     checksum: &str,
-    dependencies: &[(&str, &str)],
+    dependencies: &[(String, &'static str, &'static str)],
 ) {
     fs::write(
         root.join("crates").join(format!("{name}-{version}.crate")),
@@ -1315,14 +1331,14 @@ pub(crate) fn publish_archive(
         "vers": version,
         "deps": dependencies
             .iter()
-            .map(|(name, req)| serde_json::json!({
+            .map(|(name, req, kind)| serde_json::json!({
                 "name": name,
                 "req": req,
                 "features": [],
                 "optional": false,
                 "default_features": true,
                 "target": null,
-                "kind": "normal",
+                "kind": kind,
                 "registry": null,
                 "package": null,
             }))
