@@ -199,6 +199,9 @@ pub(crate) struct Variant {
     /// The `[lib] path` that the released library's manifest names, when it
     /// names one.
     pub(crate) library_target_path: Option<&'static str>,
+    /// Release the server as a third crate, which depends on both the library
+    /// and the binary.
+    pub(crate) three_crates: bool,
 }
 
 /// A local registry that stands in for crates.io and the curated registry, so
@@ -494,10 +497,18 @@ pub(crate) fn release(parent: &Path, source: &LocalSource, variant: Variant) -> 
         &root,
         &["rev-parse", &format!("refs/tags/{}^{{commit}}", tag())],
     );
+    let server_version = if variant.three_crates {
+        VERSION
+    } else {
+        "0.2.0"
+    };
     let members = vec![
         ("example-bin".to_owned(), Version::parse(VERSION).unwrap()),
         ("example-lib".to_owned(), Version::parse(VERSION).unwrap()),
-        ("example-serve".to_owned(), Version::parse("0.2.0").unwrap()),
+        (
+            "example-serve".to_owned(),
+            Version::parse(server_version).unwrap(),
+        ),
     ];
     Release {
         root,
@@ -556,6 +567,7 @@ fn library_path_fields(root: &Path, variant: Variant) -> (String, String) {
 }
 
 /// Writes the workspace manifests of one fixture release.
+#[allow(clippy::too_many_lines)]
 fn write_manifests(root: &Path, variant: Variant) {
     let mirror = if variant.stale_package {
         "mirrored-dep = { version = \"0.3\", registry = \"pkgre\", package = \"mirrored-dep\" }\n"
@@ -646,13 +658,23 @@ fn write_manifests(root: &Path, variant: Variant) {
     fs::write(root.join("bin/Cargo.toml"), binary).expect("write the binary manifest");
     // The tag publishes the server in the variant whose sibling the catalog
     // publishes from another tag.
-    let publish = if variant.sibling == Sibling::OtherTag {
+    let publish = if variant.three_crates || variant.sibling == Sibling::OtherTag {
         "publish = [\"pkgre\"]"
     } else {
         "publish = false"
     };
+    let binary = if variant.three_crates {
+        "example-bin = { path = \"../bin\", version = \"=1.0.0\", registry = \"pkgre\" }\n"
+    } else {
+        ""
+    };
+    let version = if variant.three_crates {
+        VERSION
+    } else {
+        "0.2.0"
+    };
     let mut server = format!(
-        "[package]\nname = \"example-serve\"\ndescription = \"An example server\"\nversion = \"0.2.0\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n{publish}\n\n[dependencies]\nexample-lib = {{ path = \"../lib\" }}\nother-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n\n[build-dependencies]\nearlier-lib = {{ version = \"0.9\", registry = \"pkgre\" }}\n"
+        "[package]\nname = \"example-serve\"\ndescription = \"An example server\"\nversion = \"{version}\"\nedition = \"2021\"\nlicense = \"MIT\"\nrepository = \"https://git.example.invalid/example/project\"\n{publish}\n\n[dependencies]\nexample-lib = {{ path = \"../lib\", version = \"=1.0.0\", registry = \"pkgre\" }}\n{binary}other-mirror = {{ version = \"0.2\", registry = \"pkgre\" }}\n\n[build-dependencies]\nearlier-lib = {{ version = \"0.9\", registry = \"pkgre\" }}\n"
     );
     if variant.server_needs_first_party {
         server.push_str("unknown-lib = { version = \"1.0\", registry = \"pkgre\" }\n");
@@ -827,15 +849,14 @@ pub(crate) fn catalog_at(
     fs::create_dir_all(registry.join("objects/crates")).expect("create the catalog");
     fs::create_dir_all(root.join("self-publish")).expect("create the self-publishing state");
     let curated = if released {
-        release_archives(
-            &release.root,
-            &source.root,
-            &[
-                ("example-bin", release.version("example-bin")),
-                ("example-lib", release.version("example-lib")),
-            ],
-            variant.native,
-        )
+        let mut members = vec![
+            ("example-bin", release.version("example-bin")),
+            ("example-lib", release.version("example-lib")),
+        ];
+        if variant.three_crates {
+            members.push(("example-serve", release.version("example-serve")));
+        }
+        release_archives(&release.root, &source.root, &members, variant.native)
     } else {
         BTreeMap::new()
     };
@@ -1040,7 +1061,14 @@ fn write_registry_file(path: &Path, variant: Variant, mirrors: &[(&str, &str)], 
             .expect("writing to a string");
         }
     }
-    if variant.sibling == Sibling::OtherTag {
+    if variant.three_crates {
+        write!(
+            text,
+            "\n[categories.pkgre.publish.example-serve]\ngit = \"{REPOSITORY}\"\ntags = [\"{}\"]\n",
+            tag()
+        )
+        .expect("writing to a string");
+    } else if variant.sibling == Sibling::OtherTag {
         write!(
             text,
             "\n[categories.pkgre.publish.example-serve]\ngit = \"{REPOSITORY}\"\ntags = [\"rust/v0.2.0\"]\n"
@@ -1185,26 +1213,31 @@ fn registry_lock(
             },
         });
     }
-    for name in ["example-bin", "example-lib"] {
+    let mut members = vec![("example-bin", "bin"), ("example-lib", "lib")];
+    if variant.three_crates {
+        members.push(("example-serve", "serve"));
+    }
+    for (name, path) in members {
         if !released {
             continue;
         }
         let archive = curated
             .get(name)
             .unwrap_or_else(|| panic!("the curated archive of {name} exists"));
+        let version = release.version(name).to_string();
         names.push(LockedName {
             name: name.to_owned(),
             category: "pkgre".to_owned(),
         });
         let dependencies = released_dependencies(name, variant);
-        let row = package_row(name, VERSION, &sha256_bytes(archive), &dependencies);
+        let row = package_row(name, &version, &sha256_bytes(archive), &dependencies);
         packages.push(LockedPackage {
             name: name.to_owned(),
             version: release.version(name),
             state: PackageState::Active,
             crate_sha256: sha256_bytes(archive),
             source_row_sha256: sha256_bytes(&row),
-            index_row_sha256: checksum("index", name, VERSION),
+            index_row_sha256: checksum("index", name, &version),
             admission_sha256: None,
             admitted_at: admitted_at(),
             source: LockedSource::GitTag {
@@ -1213,7 +1246,7 @@ fn registry_lock(
                 tag_oid: release.tag_oid.clone(),
                 commit: release.commit.clone(),
                 package: name.to_owned(),
-                path: PathBuf::from(if name == "example-bin" { "bin" } else { "lib" }),
+                path: PathBuf::from(path),
                 cargo_version: Version::parse(CARGO_VERSION).expect("parse the pinned version"),
             },
         });
@@ -1323,6 +1356,14 @@ pub(crate) fn released_dependencies(name: &str, variant: Variant) -> Vec<&'stati
             dependencies
         }
         "example-lib" => vec!["mirrored-dep", "other-mirror"],
+        "example-serve" => {
+            let mut dependencies = vec!["earlier-lib", "other-mirror"];
+            if variant.three_crates {
+                dependencies.push("example-bin");
+                dependencies.push("example-lib");
+            }
+            dependencies
+        }
         _ => Vec::new(),
     }
 }

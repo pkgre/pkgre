@@ -1235,6 +1235,18 @@ fn write_later_helper() {
 #[ignore = "needs bubblewrap and unprivileged user namespaces"]
 fn build_reaches_nothing() {
     let _guard = sandbox_test_lock();
+    // A key in a session keyring of the caller's own must not reach the build
+    // sandbox; the routine joins a fresh session keyring of its own.
+    let arguments = ["add", "user", "pkgre-sandbox-dummy", "a dummy value", "@s"];
+    let output = Command::new("keyctl")
+        .args(arguments)
+        .output()
+        .expect("run keyctl");
+    assert!(
+        output.status.success(),
+        "keyctl {arguments:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     // A descriptor that the caller leaves open without close-on-exec must not
     // reach the build sandbox.
     let (_reader, writer) = nix::unistd::pipe().expect("make a pipe");
@@ -1270,6 +1282,9 @@ fn build_reaches_nothing_body() {
     if std::env::var_os(BODY_VARIABLE).as_deref() != Some(OsStr::new("build-reach")) {
         return;
     }
+    // The routine joins a session keyring of its own before it builds.
+    let marker = std::env::var_os(MARKER_VARIABLE).expect("the launcher's marker");
+    super::enter(&marker).expect("the routine enters its run sandbox");
     let listener =
         std::net::TcpListener::bind("127.0.0.1:0").expect("listen on the run sandbox's loopback");
     let port = listener
@@ -1371,6 +1386,17 @@ fn reach_helper() {
     }
     if ("example.com", 443).to_socket_addrs().is_ok() {
         reached.push("name resolution");
+    }
+    // The routine joins a session keyring of its own, so the build's own
+    // session keyring does not hold the caller's key.
+    if Command::new("keyctl")
+        .args(["search", "@s", "user", "pkgre-sandbox-dummy"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        reached.push("a key of the caller's session keyring");
     }
     if fs::metadata(std::env::var_os("CARGO_HOME").expect("the build's Cargo home"))
         .is_ok_and(|metadata| metadata.is_dir())

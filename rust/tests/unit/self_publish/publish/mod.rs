@@ -44,6 +44,8 @@ use crate::self_publish::derive::DerivedWorkspace;
 const LIB: &str = "example-lib";
 /// The crate that the fixture gives the default crates.io name.
 const BIN: &str = "example-bin";
+/// The third released crate of the three-crate fixture.
+const SERVE: &str = "example-serve";
 /// The repository of the fixture.
 const REPOSITORY: &str = fixtures::REPOSITORY;
 /// The crates.io owner of the fixture release.
@@ -74,6 +76,9 @@ struct Fixture {
     /// The crates.io archives that the derivation packaged, by crate name, which
     /// crates.io serves once a run uploaded them.
     derived: BTreeMap<String, Vec<u8>>,
+    /// Whether the release has the third crate that depends on the library and
+    /// the binary.
+    three_crates: bool,
 }
 
 /// Builds the fixture of one variant, with the abandoned records that
@@ -105,6 +110,7 @@ fn build_with(parent: &Path, abandoned: &[(&str, &str, &str)], variant: Variant)
         catalog,
         work,
         derived: BTreeMap::new(),
+        three_crates: variant.three_crates,
     };
     fixture.derived = derived_archives(&fixture);
     fixture
@@ -118,7 +124,12 @@ fn derived_archives(fixture: &Fixture) -> BTreeMap<String, Vec<u8>> {
         .identity(LIB, &version)
         .and_then(|identity| identity.release.clone())
         .expect("the catalog holds the release");
-    let released = [LIB, BIN]
+    let names = if fixture.three_crates {
+        vec![LIB, BIN, SERVE]
+    } else {
+        vec![LIB, BIN]
+    };
+    let released = names
         .into_iter()
         .map(|name| {
             let archive = fixture.candidate.curated[name].clone();
@@ -241,7 +252,12 @@ impl Fixture {
 
     /// Returns the crates.io names of the released crates, in name order.
     fn crates_io_names(&self) -> Vec<String> {
-        [BIN, LIB]
+        let names = if self.three_crates {
+            vec![BIN, LIB, SERVE]
+        } else {
+            vec![BIN, LIB]
+        };
+        names
             .into_iter()
             .map(|name| self.entry(name).crates_io_name)
             .collect()
@@ -436,7 +452,12 @@ impl FakeRegistry {
     /// Serves every crate of the release, as the registry does after a merge.
     fn serving(fixture: &Fixture) -> Self {
         let registry = Self::default();
-        for name in [BIN, LIB] {
+        let names = if fixture.three_crates {
+            vec![BIN, LIB, SERVE]
+        } else {
+            vec![BIN, LIB]
+        };
+        for name in names {
             registry.set(
                 name,
                 Some(vec![published_version(
@@ -1154,6 +1175,38 @@ fn a_resumed_run_uploads_a_dependent_whose_sibling_is_published() {
         setup.uploader.uploads(),
         vec![setup.fixture.entry(BIN).crates_io_name],
         "only the binary is uploaded, and its package reproduces the recorded bytes"
+    );
+}
+
+/// The variant whose release has the server as a third crate, which depends on
+/// the binary and the library.
+fn three_crates_release() -> Variant {
+    Variant {
+        three_crates: true,
+        sibling: Sibling::Accepted,
+        ..Variant::default()
+    }
+}
+
+#[test]
+fn a_mixed_resumed_run_refuses_a_dependent_whose_sibling_upload_changes_its_bytes() {
+    let temporary = fixtures::Temp::new("pkgre-publish-mixed");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_release());
+    // An earlier run uploaded the library and stopped before the binary and the
+    // server, which depends on both. Step 5 packages the binary and the server
+    // together, so the server's archive is the recorded one; once the binary is
+    // on crates.io, the server's own archive changes, so the re-check before
+    // the server's upload refuses it.
+    setup.publish(LIB);
+    let error = refusal(setup.execute(true));
+    assert!(
+        error.contains("check the package that cargo publish would upload for crate example-serve"),
+        "{error}"
+    );
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![setup.fixture.entry(BIN).crates_io_name],
+        "the binary is uploaded before the server is refused"
     );
 }
 

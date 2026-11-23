@@ -498,6 +498,7 @@
               pkgs.curl
               pkgs.git
               pkgs.gnutar
+              pkgs.keyutils
               pkgs.nixfmt
               pkgs.nodejs_24
             ];

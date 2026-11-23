@@ -1273,6 +1273,25 @@ fn live_packaging_serves_a_sibling_to_its_dependent() {
 }
 
 #[test]
+fn the_three_crate_fixture_catalog_locks_the_server() {
+    let temporary = fixtures::Temp::new("three-crate-catalog");
+    let variant = Variant {
+        three_crates: true,
+        ..Variant::default()
+    };
+    let source = LocalSource::build(&temporary.path().join("local"));
+    let release = fixtures::release(temporary.path(), &source, variant);
+    let catalog = fixtures::catalog(temporary.path(), &source, &release, variant);
+    assert!(catalog.curated.contains_key("example-serve"));
+    let lock = fs::read_to_string(catalog.root.join("registry/main.lock"))
+        .expect("read the fixture registry lock");
+    assert!(
+        lock.contains("example-serve"),
+        "the three-crate fixture locks the server: {lock}"
+    );
+}
+
+#[test]
 fn refuses_a_sibling_dependency_that_is_not_the_tag_version() {
     let temporary = fixtures::Temp::new("pkgre-derive-sibling-requirement");
     let variant = Variant {
