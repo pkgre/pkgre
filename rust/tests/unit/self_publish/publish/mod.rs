@@ -1008,6 +1008,25 @@ fn direct_verified_archives(
     workspace.verified_archives(packages, Runner::Direct)
 }
 
+thread_local! {
+    /// Where a verification marks that it ran, while a test records the order.
+    static STEP5_CAPTURE: RefCell<Option<Capture>> = const { RefCell::new(None) };
+}
+
+/// Verifies the packages and marks `STEP-5` in the test's capture, so that a
+/// test can pin the process check after step 5.
+fn recording_verification(
+    workspace: &DerivedWorkspace,
+    packages: &VerifiedPackages,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    STEP5_CAPTURE.with(|slot| {
+        if let Some(capture) = slot.borrow().as_ref() {
+            writeln!(capture.clone(), "STEP-5").expect("record step 5");
+        }
+    });
+    direct_verified_archives(workspace, packages)
+}
+
 #[test]
 fn a_dry_run_reports_the_crates_that_crates_io_lacks() {
     let temporary = fixtures::Temp::new("pkgre-publish-missing");
@@ -2039,21 +2058,46 @@ fn the_process_check_runs_after_step_5_and_before_the_token() {
     let mut setup = Setup::new(temporary.path());
     setup.tokens = FakeTokens::with_token_and_capture(capture.clone());
     setup.check = FakeCheck::recording(capture.clone());
+    STEP5_CAPTURE.with(|slot| *slot.borrow_mut() = Some(capture.clone()));
     let recording = record_logs(&capture);
-    setup.dry_run().expect("the dry run passes");
+    run(
+        &setup.fixture.candidate.root,
+        &fixtures::tag(),
+        false,
+        None,
+        &setup.services(recording_verification),
+    )
+    .expect("the dry run passes");
     drop(recording);
     assert_eq!(setup.check.calls(), 1, "a dry run checks the sandbox once");
     assert_eq!(setup.tokens.reads(), 0);
     let recording = record_logs(&capture);
-    setup.execute(true).expect("the upload passes");
+    run(
+        &setup.fixture.candidate.root,
+        &fixtures::tag(),
+        true,
+        None,
+        &setup.services(recording_verification),
+    )
+    .expect("the upload passes");
     drop(recording);
+    STEP5_CAPTURE.with(|slot| *slot.borrow_mut() = None);
     assert_eq!(setup.check.calls(), 3, "the upload checks twice more");
     assert_eq!(setup.tokens.reads(), 1);
     let text = capture.text();
+    let steps = text
+        .match_indices("STEP-5")
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
     let checks = text
         .match_indices("CHECK")
         .map(|(position, _)| position)
         .collect::<Vec<_>>();
+    assert_eq!(
+        steps.len(),
+        2,
+        "each run verifies the packages once: {text}"
+    );
     assert_eq!(checks.len(), 3, "{text}");
     let compared = text
         .rfind("checked the package that cargo publish would upload")
@@ -2061,8 +2105,11 @@ fn the_process_check_runs_after_step_5_and_before_the_token() {
     let line = text.find(TOKEN_LINE).expect("the token line is logged");
     let read = text.find("TOKEN-READ").expect("the token was read");
     assert!(
-        checks[0] < checks[1] && checks[1] < compared,
-        "the dry run's check and the upload's check after step 5 precede step 6: {text}"
+        steps[0] < checks[0]
+            && checks[0] < steps[1]
+            && steps[1] < checks[1]
+            && checks[1] < compared,
+        "each check follows step 5 and the upload's check precedes step 6: {text}"
     );
     assert!(
         compared < checks[2] && checks[2] < line && line < read,

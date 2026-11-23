@@ -7,6 +7,9 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Read as _;
+use std::net::ToSocketAddrs as _;
+use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -172,6 +175,16 @@ fn the_run_sandbox_arguments_are_fixed() {
         !arguments.iter().any(|argument| argument == "--new-session"),
         "the routine shares the terminal's process group, so that its SIGINT reaches both"
     );
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let home = fs::canonicalize(&home).unwrap_or(home);
+        let home = home.to_string_lossy();
+        assert!(
+            !arguments
+                .iter()
+                .any(|argument| argument.to_string_lossy().contains(home.as_ref())),
+            "no argument names the home or one of its ancestors"
+        );
+    }
 }
 
 #[test]
@@ -502,6 +515,20 @@ fn checkout(root: &Path) {
     git(root, &["commit", "--quiet", "-m", "release"]);
 }
 
+/// Runs `check_bwrap` on a fake script that a concurrent fork may still hold
+/// open for writing in a build sandbox, and retries that one failure.
+fn checked_bwrap(path: &Path) -> anyhow::Result<PathBuf> {
+    for _ in 0..20 {
+        match super::check_bwrap(path) {
+            Err(error) if format!("{error:#}").contains("Text file busy") => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            result => return result,
+        }
+    }
+    super::check_bwrap(path)
+}
+
 #[test]
 fn the_launcher_refuses_a_bubblewrap_that_it_cannot_trust() {
     let temporary = Temporary::new("bwrap");
@@ -509,14 +536,14 @@ fn the_launcher_refuses_a_bubblewrap_that_it_cannot_trust() {
     let good = root.join("bwrap-0.13.1");
     write_executable(&good, "#!/bin/sh\necho 'bubblewrap 0.13.1'\n");
     assert_eq!(
-        check_bwrap(&good).expect("a current bubblewrap is accepted"),
+        checked_bwrap(&good).expect("a current bubblewrap is accepted"),
         fs::canonicalize(&good).expect("resolve the fake bubblewrap")
     );
     let old = root.join("bwrap-0.11.2");
     write_executable(&old, "#!/bin/sh\necho 'bubblewrap 0.11.2'\n");
     let error = format!(
         "{:#}",
-        check_bwrap(&old).expect_err("an old bubblewrap is refused")
+        checked_bwrap(&old).expect_err("an old bubblewrap is refused")
     );
     assert!(error.contains("older than the first release"), "{error}");
     let setuid = root.join("bwrap-setuid");
@@ -525,7 +552,7 @@ fn the_launcher_refuses_a_bubblewrap_that_it_cannot_trust() {
         Ok(()) => {
             let error = format!(
                 "{:#}",
-                check_bwrap(&setuid).expect_err("a setuid bubblewrap is refused")
+                checked_bwrap(&setuid).expect_err("a setuid bubblewrap is refused")
             );
             assert!(error.contains("setuid"), "{error}");
         }
@@ -540,17 +567,17 @@ fn the_launcher_refuses_a_bubblewrap_that_it_cannot_trust() {
     write_executable(&silent, "#!/bin/sh\nexit 0\n");
     let error = format!(
         "{:#}",
-        check_bwrap(&silent).expect_err("a bubblewrap without a version is refused")
+        checked_bwrap(&silent).expect_err("a bubblewrap without a version is refused")
     );
     assert!(error.contains("does not report a version"), "{error}");
     let error = format!(
         "{:#}",
-        check_bwrap(Path::new("bwrap")).expect_err("a relative path is refused")
+        checked_bwrap(Path::new("bwrap")).expect_err("a relative path is refused")
     );
     assert!(error.contains("absolute"), "{error}");
     let error = format!(
         "{:#}",
-        check_bwrap(&root.join("missing")).expect_err("a missing bubblewrap is refused")
+        checked_bwrap(&root.join("missing")).expect_err("a missing bubblewrap is refused")
     );
     assert!(error.contains("find bubblewrap"), "{error}");
 }
@@ -663,15 +690,24 @@ fn the_launcher_refuses_a_repository_that_a_sandbox_cannot_show_alone() {
 
 #[test]
 fn the_launcher_refuses_a_standard_input_below_a_bind() {
-    let sources = [PathBuf::from("/work/catalog")];
+    let temporary = Temporary::new("input");
+    let catalog = temporary.path().join("catalog");
+    fs::create_dir(&catalog).expect("make the catalog directory");
+    let pipe = catalog.join("stdin");
+    let status = Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .expect("run mkfifo");
+    assert!(status.success(), "mkfifo failed: {status}");
+    let sources = [catalog.clone()];
     let error = format!(
         "{:#}",
-        check_input_path(Some(Path::new("/work/catalog/stdin")), &sources)
-            .expect_err("a pipe below the checkout is refused")
+        check_input_path(Some(&pipe), &sources).expect_err("a pipe below the checkout is refused")
     );
     assert!(error.contains("lies below"), "{error}");
-    check_input_path(Some(Path::new("/run/user/1000/stdin")), &sources)
-        .expect("a pipe outside every bind is accepted");
+    let outside = temporary.path().join("outside");
+    fs::create_dir(&outside).expect("make a directory outside the bind");
+    check_input_path(Some(&outside), &sources).expect("a path outside every bind is accepted");
     check_input_path(None, &sources).expect("no standard input path needs no check");
 }
 
@@ -746,6 +782,10 @@ fn the_start_marks_descriptors_close_on_exec_and_resets_the_signal_handlers() {
         "a descriptor above 2 reached the child: {stdout}{stderr}"
     );
     assert!(
+        stdout.contains("SIGNALS-DEFAULT"),
+        "the child's SIGINT and SIGQUIT must be at their defaults: {stdout}{stderr}"
+    );
+    assert!(
         !stdout.contains("SIGINT-ALIVE"),
         "the child's SIGINT must be at its default: {stdout}{stderr}"
     );
@@ -774,7 +814,6 @@ fn start_helper() {
 
 /// The body of the process that starts the launcher's child.
 fn start_helper_body() {
-    use std::os::fd::AsRawFd as _;
     use std::os::unix::process::ExitStatusExt as _;
     // The shell ignored both signals, so raising them must return.
     nix::sys::signal::raise(nix::sys::signal::Signal::SIGINT).expect("raise SIGINT");
@@ -826,6 +865,27 @@ fn start_child_helper_body() {
         }
     }
     println!("{}", if open { "PIPE-OPEN" } else { "PIPE-CLOSED" });
+    // Both signals must be at their default: neither ignored nor caught.
+    let status = fs::read_to_string("/proc/self/status").expect("read the process status");
+    let mask = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|rest| u64::from_str_radix(rest.trim(), 16).ok())
+            .unwrap_or(0)
+    };
+    let ignored = mask("SigIgn:");
+    let caught = mask("SigCgt:");
+    let default =
+        |signal: u32| ignored & (1 << (signal - 1)) == 0 && caught & (1 << (signal - 1)) == 0;
+    println!(
+        "{}",
+        if default(2) && default(3) {
+            "SIGNALS-DEFAULT"
+        } else {
+            "SIGNALS-NOT-DEFAULT"
+        }
+    );
     nix::sys::signal::raise(nix::sys::signal::Signal::SIGINT).expect("raise SIGINT");
     println!("SIGINT-ALIVE");
 }
@@ -1143,7 +1203,7 @@ fn build_ends_every_process_body() {
 #[test]
 fn detach_helper() {
     // Only a build sandbox runs this: it has no /etc, and the test host has one.
-    if fs::metadata("/etc").is_ok() {
+    if !in_build_sandbox() {
         return;
     }
     let executable = std::env::current_exe().expect("the test binary");
@@ -1161,7 +1221,7 @@ fn detach_helper() {
 
 #[test]
 fn write_later_helper() {
-    if fs::metadata("/etc").is_ok() {
+    if !in_build_sandbox() {
         return;
     }
     std::thread::sleep(std::time::Duration::from_secs(3));
@@ -1175,11 +1235,33 @@ fn write_later_helper() {
 #[ignore = "needs bubblewrap and unprivileged user namespaces"]
 fn build_reaches_nothing() {
     let _guard = sandbox_test_lock();
+    // A descriptor that the caller leaves open without close-on-exec must not
+    // reach the build sandbox.
+    let (_reader, writer) = nix::unistd::pipe().expect("make a pipe");
+    let leftover = fs::read_link(format!("/proc/self/fd/{}", writer.as_raw_fd()))
+        .expect("read the pipe's link")
+        .to_string_lossy()
+        .into_owned();
+    let home = std::env::var_os("HOME").expect("a home directory");
+    let home_file = [".cargo", ".config", ".ssh"]
+        .into_iter()
+        .map(|name| PathBuf::from(&home).join(name))
+        .find(|path| path.exists())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let (output, status) = run_in_run_sandbox(
         "self_publish::sandbox::tests::build_reaches_nothing_body",
         "build-reach",
-        &[],
+        &[
+            (
+                "PKGRE_SANDBOX_TEST_LEFTOVER",
+                OsString::from(leftover.clone()),
+            ),
+            ("PKGRE_SANDBOX_TEST_HOME", home),
+            ("PKGRE_SANDBOX_TEST_HOME_FILE", OsString::from(home_file)),
+        ],
     );
+    drop((writer, leftover));
     require_body(&output, status, "BUILD-REACH-OK");
 }
 
@@ -1214,6 +1296,21 @@ fn build_reaches_nothing_body() {
         "the run sandbox\n",
     )
     .expect("write into the run root");
+    fs::write(
+        build.path().join("tmp/leftover"),
+        std::env::var("PKGRE_SANDBOX_TEST_LEFTOVER").expect("the leftover descriptor"),
+    )
+    .expect("write the leftover descriptor");
+    fs::write(
+        build.path().join("tmp/home"),
+        std::env::var("PKGRE_SANDBOX_TEST_HOME").expect("the home directory"),
+    )
+    .expect("write the home directory");
+    fs::write(
+        build.path().join("tmp/home-file"),
+        std::env::var("PKGRE_SANDBOX_TEST_HOME_FILE").expect("a file of the home"),
+    )
+    .expect("write a file of the home");
     let executable = std::env::current_exe().expect("the test binary");
     let command = vec![
         executable.into_os_string(),
@@ -1234,7 +1331,7 @@ fn build_reaches_nothing_body() {
 #[test]
 fn reach_helper() {
     // Only a build sandbox runs this: it has no /etc, and the test host has one.
-    if fs::metadata("/etc").is_ok() {
+    if !in_build_sandbox() {
         return;
     }
     let tmp = PathBuf::from(std::env::var_os("TMPDIR").expect("the build root's tmp"));
@@ -1257,6 +1354,23 @@ fn reach_helper() {
     }
     if fs::metadata(repository).is_ok() {
         reached.push("the catalog checkout");
+    }
+    let home_file = fs::read_to_string(tmp.join("home-file")).expect("read a file of the home");
+    if !home_file.is_empty() && fs::metadata(&home_file).is_ok() {
+        reached.push("the test's home");
+    }
+    let leftover = fs::read_to_string(tmp.join("leftover")).expect("read the leftover descriptor");
+    if fs::read_dir("/proc/self/fd")
+        .expect("list the descriptors")
+        .filter_map(std::result::Result::ok)
+        .any(|entry| {
+            fs::read_link(entry.path()).is_ok_and(|path| path.to_string_lossy() == leftover)
+        })
+    {
+        reached.push("the caller's descriptor");
+    }
+    if ("example.com", 443).to_socket_addrs().is_ok() {
+        reached.push("name resolution");
     }
     if fs::metadata(std::env::var_os("CARGO_HOME").expect("the build's Cargo home"))
         .is_ok_and(|metadata| metadata.is_dir())
@@ -1424,7 +1538,7 @@ fn die_with_parent_body() {
 
 #[test]
 fn sleep_with_writer_helper() {
-    if fs::metadata("/etc").is_ok() {
+    if !in_build_sandbox() {
         return;
     }
     let executable = std::env::current_exe().expect("the test binary");
@@ -1642,6 +1756,39 @@ fn build_keeps_the_bytes_body() {
                     .expect("run git");
                 assert!(status.success(), "git {arguments:?} failed");
             }
+            // A gitlink outside the released crates: the copy keeps its empty
+            // directory and Cargo packages the release without the dirty
+            // allowance.
+            fs::create_dir(workspace.join("extern")).expect("make the gitlink's directory");
+            let head = {
+                let output = Command::new("git")
+                    .current_dir(&workspace)
+                    .args(["rev-parse", "HEAD"])
+                    .output()
+                    .expect("run git");
+                assert!(output.status.success(), "git rev-parse failed");
+                String::from_utf8(output.stdout)
+                    .expect("git writes UTF-8")
+                    .trim()
+                    .to_owned()
+            };
+            let status = Command::new("git")
+                .current_dir(&workspace)
+                .args([
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("160000,{head},extern"),
+                ])
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git update-index failed");
+            let status = Command::new("git")
+                .current_dir(&workspace)
+                .args(["commit", "--quiet", "-m", "gitlink"])
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git commit failed");
         }
         let target = run_root.join(format!("reference-target-{label}"));
         let reference = reference_archives(&cargo, &workspace, &cargo_home, &target, !clean);
@@ -1746,4 +1893,433 @@ fn the_tests_run_sandbox_binds_the_rehearsal_directories() {
             "the run sandbox binds {name}"
         );
     }
+}
+
+/// Returns whether this process runs in a build sandbox, whose environment
+/// names no `/etc`.
+fn in_build_sandbox() -> bool {
+    std::env::var_os("CARGO_NET_OFFLINE").as_deref() == Some(OsStr::new("true"))
+}
+
+#[test]
+fn a_root_is_made_with_its_owner_mode_in_one_step() {
+    let root = super::make_root(&std::env::temp_dir(), "pkgre-test-root").expect("make a root");
+    assert_eq!(
+        fs::metadata(&root)
+            .expect("inspect the root")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700,
+        "the root is made with its owner's mode"
+    );
+    super::remove_tree(&root).expect("remove the root");
+}
+
+#[test]
+fn the_home_directory_prefers_home_and_falls_back_to_the_entry() {
+    let temporary = Temporary::new("home");
+    let home = temporary.path().join("home");
+    let entry = temporary.path().join("entry");
+    fs::create_dir(&home).expect("make the home");
+    fs::create_dir(&entry).expect("make the entry");
+    assert_eq!(
+        super::home_directory_from(Some(home.clone()), Some(entry.clone())).expect("HOME wins"),
+        fs::canonicalize(&home).expect("resolve the home")
+    );
+    assert_eq!(
+        super::home_directory_from(None, Some(entry.clone())).expect("the entry is the fallback"),
+        fs::canonicalize(&entry).expect("resolve the entry")
+    );
+    let error = format!(
+        "{:#}",
+        super::home_directory_from(None, None).expect_err("neither is a refusal")
+    );
+    assert!(error.contains("find the home directory"), "{error}");
+}
+
+#[test]
+fn a_finished_process_is_skipped_but_another_read_failure_is_not() {
+    use std::io::{Error, ErrorKind};
+    assert!(super::process_ended(&Error::from(ErrorKind::NotFound)));
+    assert!(super::process_ended(&Error::from_raw_os_error(
+        nix::libc::ESRCH
+    )));
+    assert!(!super::process_ended(&Error::from(
+        ErrorKind::PermissionDenied
+    )));
+}
+
+#[test]
+fn a_signal_names_the_end_of_the_sandbox() {
+    use std::os::unix::process::ExitStatusExt as _;
+    let killed = std::process::ExitStatus::from_raw(nix::libc::SIGKILL);
+    assert!(super::describe_exit(killed).contains("killed by signal 9"));
+    let exited = std::process::ExitStatus::from_raw(3 << 8);
+    assert!(super::describe_exit(exited).contains("exited with"));
+}
+
+#[test]
+fn a_failed_build_relays_its_output_indented() {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("printf 'out\\n'; printf 'err\\n' >&2; exit 1")
+        .output()
+        .expect("run sh");
+    let error = format!(
+        "{:#}",
+        super::require_sandbox_success(output).expect_err("a failed command is an error")
+    );
+    assert!(error.contains("stdout:\n    out"), "{error}");
+    assert!(error.contains("stderr:\n    err"), "{error}");
+}
+
+/// The variable that makes the missing-bubblewrap helper run.
+const FIND_BWRAP_VARIABLE: &str = "PKGRE_SANDBOX_TEST_FIND_BWRAP";
+
+#[test]
+fn the_launcher_says_when_no_bwrap_is_on_the_path() {
+    for path in ["/nonexistent", "relative"] {
+        let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+        command
+            .args([
+                "--exact",
+                "self_publish::sandbox::tests::find_bwrap_helper",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env("PATH", path)
+            .env(FIND_BWRAP_VARIABLE, "1");
+        let output = command.output().expect("run the helper");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("no bubblewrap found"),
+            "PATH {path:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn find_bwrap_helper() {
+    if std::env::var_os(FIND_BWRAP_VARIABLE).is_none() {
+        return;
+    }
+    match super::find_bwrap() {
+        Ok(path) => println!("FOUND {}", path.display()),
+        Err(error) => println!("NOT-FOUND {error:#}"),
+    }
+}
+
+/// The variable that makes the launcher test's helper run.
+const LAUNCH_VARIABLE: &str = "PKGRE_SANDBOX_TEST_LAUNCH";
+/// The variable that makes the launcher test an upload.
+const LAUNCH_UPLOAD_VARIABLE: &str = "PKGRE_SANDBOX_TEST_LAUNCH_UPLOAD";
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn the_launcher_starts_the_routine_and_leaves_nothing_behind() {
+    let temporary = Temporary::new("launch");
+    let repository = temporary.path().join("catalog");
+    fs::create_dir(&repository).expect("make the catalog checkout");
+    git(&repository, &["init", "--quiet"]);
+    fs::write(repository.join("file"), "a release\n").expect("write a file");
+    git(&repository, &["add", "."]);
+    git(&repository, &["commit", "--quiet", "-m", "release"]);
+    let repository = fs::canonicalize(&repository).expect("resolve the checkout");
+    let temp = temporary.path().join("tmp");
+    fs::create_dir(&temp).expect("make the launcher's temporary directory");
+    let home = temporary.path().join("home");
+    fs::create_dir(&home).expect("make the home directory");
+    let record = temporary.path().join("arguments");
+    let stdin_record = temporary.path().join("stdin");
+    let fake = temporary.path().join("bwrap");
+    write_executable(
+        &fake,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo 'bubblewrap 0.13.1'
+  exit 0
+fi
+printf '%s\n' "$@" > '{record}'
+readlink /proc/self/fd/0 > '{stdin}'
+previous=
+for argument in "$@"; do
+  if [ "$previous" = "--json-status-fd" ]; then status_fd=$argument; fi
+  previous=$argument
+done
+if [ -n "$FAKE_BWRAP_STATUS" ]; then
+  eval "printf '%s' '$FAKE_BWRAP_STATUS' >&$status_fd"
+  exit 0
+fi
+exit 1
+"#,
+            record = record.display(),
+            stdin = stdin_record.display()
+        ),
+    );
+    let toolchain_bin = temporary.path().join("toolchain/bin");
+    fs::create_dir_all(&toolchain_bin).expect("make the fake toolchain");
+    let cargo = toolchain_bin.join("cargo");
+    write_executable(&cargo, "#!/bin/sh\nexit 0\n");
+    // A concurrent fork can hold a just-written script open for a moment, which
+    // makes exec report "Text file busy"; let the writes settle first.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let executable = fs::canonicalize(std::env::current_exe().expect("the test binary"))
+        .expect("resolve the test binary");
+    let tag = "rust/v1.0.0";
+    for (upload, status, expected) in [
+        (
+            false,
+            Some(r#"{"child-pid": 1, "exit-code": 0}"#),
+            "LAUNCH-RETURNED 0",
+        ),
+        (false, None, "LAUNCH-REFUSED"),
+        (
+            false,
+            Some(r#"{"child-pid": 1, "exit-code": 3}"#),
+            "LAUNCH-RETURNED 3",
+        ),
+        (
+            true,
+            Some(r#"{"child-pid": 1, "exit-code": 0}"#),
+            "LAUNCH-RETURNED 0",
+        ),
+    ] {
+        let output = run_launch_helper(
+            &repository,
+            &temp,
+            &home,
+            &fake,
+            &cargo,
+            tag,
+            upload,
+            status,
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stdout}{stderr}");
+        assert!(
+            stdout.contains(expected),
+            "expected {expected}: {stdout}{stderr}"
+        );
+        if expected == "LAUNCH-REFUSED" {
+            assert!(stdout.contains("was never made"), "{stdout}{stderr}");
+        }
+        let arguments = fs::read_to_string(&record).expect("read the recorded arguments");
+        let arguments = arguments.lines().collect::<Vec<_>>();
+        let separator = arguments
+            .iter()
+            .position(|argument| *argument == "--")
+            .expect("the argument separator");
+        let command = &arguments[separator + 1..];
+        let mut expected_command = vec![
+            executable.to_str().expect("a UTF-8 executable"),
+            "self-publish",
+            repository.to_str().expect("a UTF-8 repository"),
+            tag,
+        ];
+        if upload {
+            expected_command.push("--upload");
+        }
+        assert_eq!(command, expected_command, "the run sandbox's command");
+        let stdin = fs::read_to_string(&stdin_record).expect("read the recorded standard input");
+        if upload {
+            assert!(
+                stdin.contains("pipe:"),
+                "an upload keeps the launcher's standard input: {stdin}"
+            );
+        } else {
+            assert_eq!(
+                stdin.trim(),
+                "/dev/null",
+                "a dry run gets a null standard input"
+            );
+        }
+        let leftovers = fs::read_dir(&temp)
+            .expect("read the temporary directory")
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("pkgre-self-publish-run-")
+            })
+            .count();
+        assert_eq!(leftovers, 0, "the launcher removed its run root");
+    }
+}
+
+/// Runs the launcher's helper once with the given sandbox inputs.
+#[allow(clippy::too_many_arguments)]
+fn run_launch_helper(
+    repository: &Path,
+    temp: &Path,
+    home: &Path,
+    fake: &Path,
+    cargo: &Path,
+    tag: &str,
+    upload: bool,
+    status: Option<&str>,
+) -> std::process::Output {
+    let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+    command
+        .args([
+            "--exact",
+            "self_publish::sandbox::tests::launch_helper",
+            "--nocapture",
+        ])
+        .env(LAUNCH_VARIABLE, tag)
+        .env(REPOSITORY_VARIABLE, repository)
+        .env("TMPDIR", temp)
+        .env("HOME", home)
+        .env("PKGRE_BWRAP", fake)
+        .env("PKGRE_CARGO", cargo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if upload {
+        command.env(LAUNCH_UPLOAD_VARIABLE, "1");
+    }
+    if let Some(status) = status {
+        command.env("FAKE_BWRAP_STATUS", status);
+    }
+    let mut child = command.spawn().expect("start the launcher helper");
+    let stdin = child.stdin.take();
+    let output = child
+        .wait_with_output()
+        .expect("wait for the launcher helper");
+    drop(stdin);
+    output
+}
+
+#[test]
+fn launch_helper() {
+    let Some(tag) = std::env::var_os(LAUNCH_VARIABLE) else {
+        return;
+    };
+    let repository = PathBuf::from(std::env::var_os(REPOSITORY_VARIABLE).expect("the repository"));
+    let upload = std::env::var_os(LAUNCH_UPLOAD_VARIABLE).is_some();
+    match super::launch(
+        &repository,
+        tag.to_str().expect("a UTF-8 tag"),
+        upload,
+        None,
+    ) {
+        Ok(status) => println!("LAUNCH-RETURNED {status}"),
+        Err(error) => println!("LAUNCH-REFUSED {error:#}"),
+    }
+}
+
+#[test]
+#[ignore = "needs bubblewrap and unprivileged user namespaces"]
+fn the_routine_enters_its_run_sandbox() {
+    let _guard = sandbox_test_lock();
+    let (output, status) =
+        run_in_run_sandbox("self_publish::sandbox::tests::enter_body", "enter", &[]);
+    require_body(&output, status, "ENTER-OK");
+}
+
+#[test]
+fn enter_body() {
+    if std::env::var_os(BODY_VARIABLE).as_deref() != Some(OsStr::new("enter")) {
+        return;
+    }
+    // enter marks the descriptors this process holds, joins a session keyring
+    // of its own and becomes a child subreaper; a refusal of any of them fails.
+    let (_reader, writer) = nix::unistd::pipe().expect("make a pipe");
+    let link = fs::read_link(format!("/proc/self/fd/{}", writer.as_raw_fd()))
+        .expect("read the pipe's link")
+        .to_string_lossy()
+        .into_owned();
+    let marker = std::env::var_os(MARKER_VARIABLE).expect("the launcher's marker");
+    super::enter(&marker).expect("the routine enters its run sandbox");
+    let mut command = Command::new(std::env::current_exe().expect("the test binary"));
+    command
+        .args([
+            "--exact",
+            "self_publish::sandbox::tests::pipe_child_helper",
+            "--nocapture",
+        ])
+        .env(PIPE_VARIABLE, link)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = super::spawn_command(command)
+        .expect("start the child")
+        .wait_with_output()
+        .expect("wait for the child");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("PIPE-CLOSED"),
+        "enter marks the descriptors: {stdout}"
+    );
+    println!("ENTER-OK");
+}
+
+#[test]
+fn pipe_child_helper() {
+    let Some(link) = std::env::var_os(PIPE_VARIABLE) else {
+        return;
+    };
+    let link = link.to_string_lossy().into_owned();
+    let open = fs::read_dir("/proc/self/fd")
+        .expect("list the descriptors")
+        .filter_map(std::result::Result::ok)
+        .any(|entry| fs::read_link(entry.path()).is_ok_and(|path| path.to_string_lossy() == link));
+    println!("{}", if open { "PIPE-OPEN" } else { "PIPE-CLOSED" });
+}
+
+#[test]
+#[ignore = "needs bubblewrap and unprivileged user namespaces"]
+fn build_gets_no_standard_input() {
+    let _guard = sandbox_test_lock();
+    let (output, status) = run_in_run_sandbox(
+        "self_publish::sandbox::tests::build_gets_no_standard_input_body",
+        "build-stdin",
+        &[],
+    );
+    require_body(&output, status, "BUILD-STDIN-OK");
+}
+
+#[test]
+fn build_gets_no_standard_input_body() {
+    if std::env::var_os(BODY_VARIABLE).as_deref() != Some(OsStr::new("build-stdin")) {
+        return;
+    }
+    let build = BuildRoot::make_in(&std::env::temp_dir(), "pkgre-sandbox-stdin")
+        .expect("make a build root");
+    let executable = std::env::current_exe().expect("the test binary");
+    let command = vec![
+        executable.into_os_string(),
+        OsString::from("--exact"),
+        OsString::from("self_publish::sandbox::tests::stdin_helper"),
+        OsString::from("--nocapture"),
+    ];
+    let stdout = run_build(build.path(), &command).expect("the build sandbox runs the command");
+    let stdout = String::from_utf8_lossy(&stdout);
+    assert!(
+        stdout.contains("STDIN-EMPTY"),
+        "the build sandbox's command gets a null standard input: {stdout}"
+    );
+    build.remove();
+    println!("BUILD-STDIN-OK");
+}
+
+#[test]
+fn stdin_helper() {
+    if !in_build_sandbox() {
+        return;
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut bytes)
+        .expect("read the standard input");
+    println!(
+        "{}",
+        if bytes.is_empty() {
+            "STDIN-EMPTY"
+        } else {
+            "STDIN-CONTENT"
+        }
+    );
 }

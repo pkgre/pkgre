@@ -35,4 +35,6 @@ pub(crate) mod test_hooks;
 pub use check::{SelfPublishCheckSummary, check_repository};
 pub use lock_command::{SelfPublishLockEntry, SelfPublishLockSummary, self_publish_lock};
 pub(crate) use native::NativeRepositories;
-pub use publish::{SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary, self_publish};
+pub use publish::{
+    SelfPublishCrate, SelfPublishCrateState, SelfPublishOutcome, SelfPublishSummary, self_publish,
+};

@@ -26,10 +26,10 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
 use std::os::fd::{AsRawFd as _, RawFd};
-use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -81,6 +81,9 @@ const PUBLISHED_DIRECTORY: &str = "published";
 /// The process ID of the launcher's `bubblewrap`, which a termination signal
 /// ends.
 static SANDBOX_BWRAP: AtomicI32 = AtomicI32::new(0);
+/// Set when a termination signal arrives before the launcher stored its
+/// `bubblewrap`'s process ID, so that the launcher ends it once it has.
+static PENDING_TERMINATION: AtomicBool = AtomicBool::new(false);
 
 /// Returns the marker's value when this process is the routine inside a run
 /// sandbox, and `None` when it is the launcher.
@@ -284,14 +287,15 @@ pub(super) fn launch(repository: &Path, tag: &str, upload: bool, git: Option<&st
     mark_descriptors().context("mark the launcher's descriptors close-on-exec")?;
     let host = Host::detect()?;
     let repository = check_repository(repository)?;
-    let run_root = make_root(&std::env::temp_dir(), RUN_ROOT_PREFIX)?;
+    let run_root = RunRoot::make(&std::env::temp_dir(), RUN_ROOT_PREFIX)?;
     let executable =
         fs::canonicalize(std::env::current_exe().context("find the running executable")?)
             .context("resolve the running executable")?;
     let toolchain = host
         .cargo
         .parent()
-        .with_context(|| format!("the pinned Cargo {} has no directory", host.cargo.display()))?;
+        .with_context(|| format!("the pinned Cargo {} has no directory", host.cargo.display()))
+        .map(toolchain_directory)?;
     let binds = RunBinds {
         store: host.store.clone(),
         system: host.system.clone(),
@@ -306,19 +310,17 @@ pub(super) fn launch(repository: &Path, tag: &str, upload: bool, git: Option<&st
         outside: host.outside(&[toolchain, &host.bwrap, &executable]),
     };
     let mut sources = binds.sources();
-    sources.push(run_root.clone());
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        check_binds(&home, &sources)?;
-    }
+    sources.push(run_root.path().to_path_buf());
+    check_binds(&home_directory()?, &sources)?;
     if upload {
         check_input_path(standard_input_path().as_deref(), &sources)?;
     }
     let marker = process_namespace()?;
-    let environment = run_environment(&marker, &run_root, &host);
+    let environment = run_environment(&marker, run_root.path(), &host);
     let command = routine_command(&executable, &repository, tag, upload, git);
     let (reader, writer) = status_pipe()?;
     let sandbox = RunSandbox {
-        root: &run_root,
+        root: run_root.path(),
         binds: &binds,
         environment: &environment,
         status_fd: writer.as_raw_fd(),
@@ -329,25 +331,110 @@ pub(super) fn launch(repository: &Path, tag: &str, upload: bool, git: Option<&st
     install_signal_handlers().context("install the launcher's signal handlers")?;
     nix::sys::prctl::set_child_subreaper(true).context("make the launcher a child subreaper")?;
     debug!(bwrap = %host.bwrap.display(), ?arguments, "starting the run sandbox");
-    let mut child = spawn_bwrap(&host.bwrap, &arguments)?;
-    SANDBOX_BWRAP.store(i32::try_from(child.id()).unwrap_or(0), Ordering::Relaxed);
+    let mut child = spawn_bwrap(
+        &host.bwrap,
+        &arguments,
+        if upload {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        },
+    )?;
+    let child_id = i32::try_from(child.id()).unwrap_or(0);
+    SANDBOX_BWRAP.store(child_id, Ordering::Relaxed);
+    if PENDING_TERMINATION.swap(false, Ordering::Relaxed) {
+        end_the_sandbox(child_id);
+    }
     drop(writer);
     let status = child.wait().context("wait for the run sandbox")?;
     SANDBOX_BWRAP.store(0, Ordering::Relaxed);
-    // The sandbox's init outlives `bwrap` by a moment: `--die-with-parent`'s
+    // The sandbox's init outlives `bubblewrap` by a moment: `--die-with-parent`'s
     // SIGKILL reaches it, and as the subreaper the launcher reaps it, so the
     // run namespace is empty before the run root goes.
     reap_children().context("wait for the last processes of the run sandbox")?;
     terminal.restore();
-    if let Err(error) = remove_tree(&run_root) {
-        warn!(
-            root = %run_root.display(),
-            error = %format_args!("{error:#}"),
-            "could not remove the run root"
-        );
-    }
     let documents = read_status_documents(reader)?;
     interpret_status(&documents, status)
+}
+
+/// A fresh run root, removed when it goes out of scope, so that a refusal after
+/// it was made leaves nothing in the caller's temporary directory.
+struct RunRoot {
+    /// The root itself.
+    path: PathBuf,
+}
+
+impl RunRoot {
+    /// Makes a fresh run root below `parent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the root cannot be made.
+    fn make(parent: &Path, prefix: &str) -> Result<Self> {
+        Ok(Self {
+            path: make_root(parent, prefix)?,
+        })
+    }
+
+    /// Returns the root itself.
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for RunRoot {
+    fn drop(&mut self) {
+        if let Err(error) = remove_tree(&self.path) {
+            warn!(
+                root = %self.path.display(),
+                error = %format_args!("{error:#}"),
+                "could not remove the run root"
+            );
+        }
+    }
+}
+
+/// Returns the directory to bind for a toolchain: the directory above its
+/// `bin` directory when it has one, so that the toolchain's libraries come
+/// with it.
+fn toolchain_directory(bin: &Path) -> &Path {
+    if bin.file_name() == Some(OsStr::new("bin")) {
+        bin.parent().unwrap_or(bin)
+    } else {
+        bin
+    }
+}
+
+/// Returns the home directory that a sandbox must not bind: `HOME`,
+/// canonicalized, or the user's password entry when `HOME` is unset.
+///
+/// # Errors
+///
+/// Returns an error when neither names a directory that resolves.
+fn home_directory() -> Result<PathBuf> {
+    home_directory_from(
+        std::env::var_os("HOME").map(PathBuf::from),
+        nix::unistd::User::from_uid(nix::unistd::getuid())
+            .context("read the user's password entry")?
+            .map(|user| user.dir),
+    )
+}
+
+/// Decides [`home_directory`] from `HOME` and the password entry, which a test
+/// gives directly.
+///
+/// # Errors
+///
+/// Returns an error when neither names a directory that resolves.
+fn home_directory_from(home: Option<PathBuf>, entry: Option<PathBuf>) -> Result<PathBuf> {
+    let Some(home) = home.or(entry) else {
+        bail!(
+            "find the home directory: set HOME, or give the user whose uid is {} a home directory in the password database",
+            nix::unistd::getuid()
+        );
+    };
+    fs::canonicalize(&home)
+        .with_context(|| format!("resolve the home directory {}", home.display()))
 }
 
 /// Starts one `bubblewrap` with the launcher's arguments, so that the child
@@ -356,9 +443,9 @@ pub(super) fn launch(repository: &Path, tag: &str, upload: bool, git: Option<&st
 /// # Errors
 ///
 /// Returns an error when `bubblewrap` cannot be started.
-fn spawn_bwrap(bwrap: &Path, arguments: &[OsString]) -> Result<std::process::Child> {
+fn spawn_bwrap(bwrap: &Path, arguments: &[OsString], stdin: Stdio) -> Result<std::process::Child> {
     let mut command = Command::new(bwrap);
-    command.args(arguments);
+    command.args(arguments).stdin(stdin);
     spawn_command(command)
 }
 
@@ -611,15 +698,14 @@ fn children_of_own() -> Result<Children> {
 fn sandbox_processes() -> Result<Vec<ProcessEntry>> {
     let mut entries = Vec::new();
     for entry in fs::read_dir("/proc").context("list the processes of the run sandbox")? {
-        let Ok(entry) = entry else {
-            continue;
-        };
+        let entry = entry.context("read one process of the run sandbox")?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
             continue;
         };
         // A process may end between the listing and the read; it is gone either
-        // way, and nothing of it can act.
-        if let Some(entry) = read_process(pid) {
+        // way, and nothing of it can act. Every other failure is a process the
+        // check must not ignore.
+        if let Some(entry) = read_process(pid)? {
             entries.push(entry);
         }
     }
@@ -629,26 +715,50 @@ fn sandbox_processes() -> Result<Vec<ProcessEntry>> {
 
 /// Returns what `/proc` says about one process, when it is still there.
 #[cfg(target_os = "linux")]
-fn read_process(pid: u32) -> Option<ProcessEntry> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+fn read_process(pid: u32) -> Result<Option<ProcessEntry>> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if process_ended(&error) => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read the state of PID {pid}"));
+        }
+    };
     // The command name may hold spaces and parentheses, so the state and the
     // parent follow the last closing parenthesis.
-    let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
-    let state = fields.next()?.chars().next()?;
-    let parent = fields.next()?.parse().ok()?;
-    let raw = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let parsed = (|| {
+        let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
+        let state = fields.next()?.chars().next()?;
+        let parent = fields.next()?.parse().ok()?;
+        Some((state, parent))
+    })();
+    let Some((state, parent)) = parsed else {
+        bail!("read the state of PID {pid}: /proc/{pid}/stat is not in the expected form");
+    };
+    let raw = match fs::read(format!("/proc/{pid}/cmdline")) {
+        Ok(raw) => raw,
+        Err(error) if process_ended(&error) => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read the command of PID {pid}"));
+        }
+    };
     let command = raw
         .split(|byte| *byte == 0)
         .filter(|part| !part.is_empty())
         .map(|part| String::from_utf8_lossy(part).into_owned())
         .collect::<Vec<_>>()
         .join(" ");
-    Some(ProcessEntry {
+    Ok(Some(ProcessEntry {
         pid,
         state,
         parent,
         command,
-    })
+    }))
+}
+
+/// Returns whether a `/proc` read failed because the process ended between the
+/// listing and the read.
+fn process_ended(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(nix::libc::ESRCH)
 }
 
 /// The directories of one build root, which only its build sandbox may write.
@@ -729,17 +839,14 @@ pub(super) fn make_root(parent: &Path, prefix: &str) -> Result<PathBuf> {
         .with_context(|| format!("resolve the temporary root {}", parent.display()))?;
     for sequence in 0..100u32 {
         let path = parent.join(format!("{prefix}-{}-{sequence}", std::process::id()));
-        match fs::create_dir(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+        match fs::DirBuilder::new().mode(0o700).create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => {
                 return Err(error)
                     .with_context(|| format!("make the directory {}", path.display()));
             }
         }
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("give the directory {} its owner's mode", path.display()))?;
-        return Ok(path);
     }
     bail!(
         "could not make a fresh directory below {} for a sandbox",
@@ -834,6 +941,14 @@ impl Host {
             }
             outside.push((*candidate).to_path_buf());
         }
+        // A bind inside another one would make bubblewrap create a path in a
+        // directory that the outer bind shows; keep the outer one.
+        let outer = outside.clone();
+        outside.retain(|path| {
+            !outer
+                .iter()
+                .any(|other| other != path && path.starts_with(other))
+        });
         outside
     }
 }
@@ -1084,6 +1199,7 @@ fn find_bwrap() -> Result<PathBuf> {
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
     let found = std::env::split_paths(&path)
+        .filter(|directory| directory.is_absolute())
         .map(|directory| directory.join("bwrap"))
         .find(|candidate| fs::metadata(candidate).is_ok_and(|metadata| metadata.is_file()));
     match found {
@@ -1439,28 +1555,17 @@ fn routine_arguments(
 /// # Errors
 ///
 /// Returns an error when the pipe cannot be made or its write end marked.
-#[allow(unsafe_code)]
 fn status_pipe() -> Result<(fs::File, fs::File)> {
-    let (reader, writer) =
-        nix::unistd::pipe().context("make the status pipe of the run sandbox")?;
+    let (reader, writer) = nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)
+        .context("make the status pipe of the run sandbox")?;
     // The read end goes with `bubblewrap`'s exec, so that the routine never
     // holds it, and the write end stays open across it, so that `bubblewrap`
     // can write the status documents.
-    // SAFETY: `fcntl` with `F_SETFD` changes one flag of one descriptor that
-    // this process owns and touches no memory.
-    unsafe {
-        if nix::libc::fcntl(
-            reader.as_raw_fd(),
-            nix::libc::F_SETFD,
-            nix::libc::FD_CLOEXEC,
-        ) < 0
-        {
-            return Err(Errno::last()).context("mark the status pipe's read end close-on-exec");
-        }
-        if nix::libc::fcntl(writer.as_raw_fd(), nix::libc::F_SETFD, 0) < 0 {
-            return Err(Errno::last()).context("let bubblewrap keep the status pipe");
-        }
-    }
+    nix::fcntl::fcntl(
+        &writer,
+        nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::empty()),
+    )
+    .context("let bubblewrap keep the status pipe")?;
     Ok((fs::File::from(reader), fs::File::from(writer)))
 }
 
@@ -1506,11 +1611,24 @@ fn interpret_status(documents: &[Value], status: std::process::ExitStatus) -> Re
         .iter()
         .any(|document| document.get("child-pid").is_some())
     {
-        bail!("the run sandbox ended without an exit status: bubblewrap exited with {status}");
+        bail!(
+            "the run sandbox ended without an exit status: {}",
+            describe_exit(status)
+        );
     }
     bail!(
-        "the run sandbox was never made: bubblewrap exited with {status} and named no child process. A host makes unprivileged user namespaces only where they are enabled and unrestricted: Ubuntu 23.10 and later restrict them through AppArmor's kernel.apparmor_restrict_unprivileged_userns, and older systems through user.max_user_namespaces or kernel.unprivileged_userns_clone. bubblewrap's own message above says what it found"
+        "the run sandbox was never made: {} and named no child process. A host makes unprivileged user namespaces only where they are enabled and unrestricted: Ubuntu 23.10 and later restrict them through AppArmor's kernel.apparmor_restrict_unprivileged_userns, and older systems through user.max_user_namespaces or kernel.unprivileged_userns_clone. bubblewrap's own message above says what it found",
+        describe_exit(status)
     )
+}
+
+/// Describes how one `bubblewrap` ended, naming a signal that killed it.
+fn describe_exit(status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt as _;
+    match status.signal() {
+        Some(signal) => format!("bubblewrap was killed by signal {signal}"),
+        None => format!("bubblewrap exited with {status}"),
+    }
 }
 
 /// Waits for every child of the launcher, so that the run namespace has ended
@@ -1569,17 +1687,24 @@ impl TerminalState {
 extern "C" fn keep_running(_signal: nix::libc::c_int) {}
 
 /// Ends the run sandbox on `SIGTERM` or `SIGHUP`, which ends every sandbox in it.
-#[allow(unsafe_code)]
 extern "C" fn end_sandbox(_signal: nix::libc::c_int) {
     let pid = SANDBOX_BWRAP.load(Ordering::Relaxed);
     if pid > 0 {
-        // Only async-signal-safe calls belong here.
-        // SAFETY: `kill` takes its arguments by value and sends one signal to
-        // one process, which the launcher started and whose ID it recorded.
-        unsafe {
-            nix::libc::kill(pid, nix::libc::SIGKILL);
-        }
+        end_the_sandbox(pid);
+    } else {
+        // The launcher has not stored `bubblewrap`'s process ID yet; it ends it
+        // once it has.
+        PENDING_TERMINATION.store(true, Ordering::Relaxed);
     }
+}
+
+/// Ends one `bubblewrap` with `SIGKILL`; only async-signal-safe calls belong
+/// here, since a handler calls it.
+fn end_the_sandbox(pid: i32) {
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGKILL,
+    );
 }
 
 /// Installs the launcher's signal handlers.
@@ -1821,5 +1946,5 @@ fn body_output(output: &Output) -> Result<String> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/self_publish/sandbox/mod.rs"]
+#[path = "../../../tests/unit/self_publish/sandbox/mod.rs"]
 mod tests;

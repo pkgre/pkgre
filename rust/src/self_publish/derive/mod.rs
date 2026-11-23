@@ -376,7 +376,6 @@ impl DerivedWorkspace {
         packages: &VerifiedPackages,
         runner: Runner,
     ) -> Result<BTreeMap<String, Vec<u8>>> {
-        ensure_no_cargo_configuration(&self.work)?;
         let build = sandbox::BuildRoot::make_in(self.root(), "build")?;
         let result = self.build_in(&build, packages, runner);
         build.remove();
@@ -395,6 +394,7 @@ impl DerivedWorkspace {
         packages: &VerifiedPackages,
         runner: Runner,
     ) -> Result<BTreeMap<String, Vec<u8>>> {
+        ensure_no_cargo_configuration(&build.work())?;
         let workspace = build.workspace();
         if self.native {
             #[cfg(test)]

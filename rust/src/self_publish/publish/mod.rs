@@ -152,7 +152,7 @@ pub fn self_publish(
     tag: &str,
     upload: bool,
     git: Option<&str>,
-) -> Result<Option<SelfPublishSummary>> {
+) -> Result<SelfPublishOutcome> {
     refuse_token_environment(
         &std::env::vars_os()
             .filter_map(|(name, _)| name.into_string().ok())
@@ -162,20 +162,24 @@ pub fn self_publish(
     if let Some(marker) = sandbox::marker() {
         // The copy that the launcher started inside the run sandbox.
         sandbox::enter(&marker)?;
-        return run(repository, tag, upload, git, &Services::live()).map(Some);
+        return run(repository, tag, upload, git, &Services::live())
+            .map(SelfPublishOutcome::Routine);
     }
     if upload {
         // A token could be in reach: the launcher holds the standard input, so
         // no other process of this user may open its `/proc` files.
         hide_process()?;
     }
-    let status = sandbox::launch(repository, tag, upload, git)?;
-    if status == 0 {
-        return Ok(None);
-    }
-    // The routine inside has logged its own failure; the launcher ends with its
-    // status, as the command does without a sandbox.
-    std::process::exit(status);
+    sandbox::launch(repository, tag, upload, git).map(SelfPublishOutcome::Launched)
+}
+
+/// What one `self-publish` invocation did.
+pub enum SelfPublishOutcome {
+    /// The routine ran and reported its release; the process exits successfully.
+    Routine(SelfPublishSummary),
+    /// The launcher started the routine inside the run sandbox; this is the
+    /// status that the process exits with, and zero after a successful run.
+    Launched(i32),
 }
 
 /// The services that one run reads, and how long it waits for an upload.
