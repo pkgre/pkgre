@@ -30,13 +30,41 @@ jobs:
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
       - name: Run reproducible checks
         run: nix flake check --print-build-logs
+  sandbox:
+    name: sandbox (${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64-linux
+            runner: ubuntu-24.04
+          - architecture: aarch64-linux
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - name: Lift the restriction on unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run the sandbox tests
+        env:
+          TMPDIR: /tmp/pkgre-sandbox
+        run: |
+          mkdir -p "$TMPDIR"
+          nix develop -c cargo test -p pkgre-rust --lib --locked -- --ignored self_publish::sandbox::tests::
   check:
-    needs: check-architecture
+    needs: [check-architecture, sandbox]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require every architecture
+      - name: Require every architecture and the sandbox tests
         env:
-          RESULT: ${{ needs.check-architecture.result }}
-        run: test "$RESULT" = success
+          ARCHITECTURE: ${{ needs.check-architecture.result }}
+          SANDBOX: ${{ needs.sandbox.result }}
+        run: test "$ARCHITECTURE" = success && test "$SANDBOX" = success

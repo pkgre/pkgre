@@ -26,6 +26,10 @@ const MAX_COMMAND_ERROR_BYTES: usize = 16 * 1024;
 /// `http.lowSpeedTime` end an HTTP transfer below 1000 bytes per second for 60
 /// seconds. Git has no overall time limit, so a transfer that keeps making
 /// progress is not interrupted.
+///
+/// Automatic maintenance is off, so that no `git gc` or `git maintenance` runs
+/// in the background after a fetch: such a process would outlive the command
+/// that started it.
 pub(super) fn command<I, S>(
     current_dir: Option<&Path>,
     arguments: I,
@@ -42,6 +46,10 @@ where
         .args([
             OsStr::new("-c"),
             OsStr::new("core.hooksPath=/dev/null"),
+            OsStr::new("-c"),
+            OsStr::new("gc.auto=0"),
+            OsStr::new("-c"),
+            OsStr::new("maintenance.auto=false"),
             OsStr::new("-c"),
             OsStr::new("protocol.allow=never"),
             OsStr::new("-c"),

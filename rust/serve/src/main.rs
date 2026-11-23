@@ -1,4 +1,5 @@
 //! `pkgre-rust-serve` binary entry point.
+#![forbid(unsafe_code)]
 
 use std::process::ExitCode;
 use std::sync::Arc;

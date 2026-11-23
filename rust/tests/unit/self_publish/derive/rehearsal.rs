@@ -16,7 +16,7 @@ use anyhow::{Context, Result, bail};
 use semver::Version;
 
 use super::fixtures;
-use super::{ReleasedCrate, Sources, derive_release_in};
+use super::{ReleasedCrate, Sources, derive_release_in, verified_packages};
 use crate::artifact::sha256_bytes;
 use crate::package::{FileTagRequest, GitTagMaterialization, NativeCatalog, PublishedPackage};
 use crate::schema::{Approval, Catalog, PackageState, Source};
@@ -353,10 +353,49 @@ fn candidate_objects(
     Ok(candidate)
 }
 
+/// The environment variables that the native rehearsal forwards into its run
+/// sandbox.
+const NATIVE_REHEARSAL_VARIABLES: [&str; 5] = [
+    "PKGRE_REHEARSAL_CATALOG",
+    "PKGRE_NATIVE_REHEARSAL_SKIP_VERIFY",
+    "PKGRE_NATIVE_REHEARSAL_REPOSITORY",
+    "PKGRE_NATIVE_REHEARSAL_GIT",
+    "PKGRE_NATIVE_REHEARSAL_TAG",
+];
+
+/// Requires that the native rehearsal forwards the variables that its prepared
+/// repository needs, so that a wrapper change cannot silently drop them.
+#[test]
+fn the_native_rehearsal_forwards_its_prepared_repository() {
+    for name in [
+        "PKGRE_REHEARSAL_CATALOG",
+        "PKGRE_NATIVE_REHEARSAL_REPOSITORY",
+        "PKGRE_NATIVE_REHEARSAL_GIT",
+        "PKGRE_NATIVE_REHEARSAL_TAG",
+    ] {
+        assert!(
+            NATIVE_REHEARSAL_VARIABLES.contains(&name),
+            "the native rehearsal forwards {name}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "needs the network and PKGRE_REHEARSAL_CATALOG"]
-#[allow(clippy::too_many_lines)]
 fn live_native_rehearsal_runs_lock_the_reproduction_and_the_routine() {
+    crate::self_publish::sandbox::run_test_body(
+        "self_publish::derive::tests::rehearsal::live_native_rehearsal_runs_lock_the_reproduction_and_the_routine_body",
+        &NATIVE_REHEARSAL_VARIABLES,
+    )
+    .expect("the rehearsal runs inside a run sandbox");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn live_native_rehearsal_runs_lock_the_reproduction_and_the_routine_body() {
+    if std::env::var_os(crate::self_publish::sandbox::TEST_BODY_VARIABLE).is_none() {
+        return;
+    }
     let given = PathBuf::from(
         std::env::var_os("PKGRE_REHEARSAL_CATALOG")
             .expect("set PKGRE_REHEARSAL_CATALOG to a checkout of the catalog repository"),
@@ -556,7 +595,7 @@ fn live_native_rehearsal_runs_lock_the_reproduction_and_the_routine() {
         Some(
             derived
                 .workspace
-                .verified_archives(&members)
+                .verified_archives(&verified_packages(&members), super::Runner::Sandbox)
                 .expect("verify the packages against live crates.io"),
         )
     };

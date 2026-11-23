@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The `pkgre` command-line tool.
 //!
 //! This module parses the arguments and turns the results of the commands

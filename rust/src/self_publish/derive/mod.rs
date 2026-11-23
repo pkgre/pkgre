@@ -26,9 +26,13 @@ use super::config::CratesIoConfig;
 use super::isolation::{ChildEnvironment, ensure_no_cargo_configuration};
 use super::lock::{CratesIoLock, CratesIoPackage};
 use super::name;
+use super::sandbox;
 use crate::artifact::sha256_bytes;
 use crate::package::{TemporaryDirectory, pinned_cargo, read_bounded_archive};
 use crate::policy::validate_tag_version;
+pub(super) use cargo::Runner;
+#[cfg(test)]
+pub(crate) use cargo::{copy_workspace, read_archives};
 use cargo_lock::LockIndex;
 use expectations::Expectations;
 
@@ -178,6 +182,21 @@ pub(super) struct DerivedDependency {
     pub(super) crate_sha256: String,
 }
 
+/// What one verified packaging of step 5 builds.
+///
+/// The crates of the release that crates.io lacks are packaged together, so that
+/// Cargo serves each of them to the crates of the same run that depend on it; a
+/// crate that depends on a sibling that an earlier run uploaded needs that
+/// sibling fetched from crates.io first, since the workspace's lock names it as a
+/// path package.
+pub(super) struct VerifiedPackages {
+    /// The crate versions that crates.io lacks, by crates.io name.
+    pub(super) missing: Vec<(String, Version)>,
+    /// The crate versions of the release that crates.io already has and that a
+    /// missing crate depends on, by crates.io name.
+    pub(super) published: Vec<(String, Version)>,
+}
+
 /// The derived crates.io packages of one release, with the workspace that
 /// packaged them.
 pub(super) struct Derivation {
@@ -209,8 +228,6 @@ pub(super) struct DerivedWorkspace {
     work: PathBuf,
     /// The rewritten checkout.
     workspace: PathBuf,
-    /// The target directory of the verified packaging.
-    targets: PathBuf,
     /// The registries that the checkout resolves from, which the upload's Cargo
     /// home mirrors.
     sources: cargo::RegistrySources,
@@ -302,10 +319,7 @@ impl DerivedWorkspace {
             &target,
             &manifest,
             packages,
-            cargo::Options {
-                build: cargo::Build::Package,
-                allow_dirty: !self.native,
-            },
+            !self.native,
         )
         .context("package the crates of the release as cargo publish would")
     }
@@ -341,51 +355,100 @@ impl DerivedWorkspace {
         Ok(())
     }
 
-    /// Packages the named crates with Cargo's verification, in the rewritten
-    /// workspace, and returns their archives by crates.io name.
+    /// Packages the named crates with Cargo's verification, offline, in a build
+    /// root of its own, and returns their archives by crates.io name.
     ///
-    /// The crates are packaged together, so that a crate of the release whose
-    /// sibling crates.io does not have yet is packaged against that sibling of
-    /// the same run. The packages are built after packaging, so package code
-    /// such as a build script or a proc macro runs; the caller must hold no
-    /// token.
+    /// Step 5 runs package code, so it runs in a build sandbox nested in the run
+    /// sandbox: the workspace goes into a fresh copy below the build root, a
+    /// Cargo home is written there and holds what the two fetches bring in, and
+    /// the verified build itself runs offline, with its target directory outside
+    /// the copy. The build root goes once the archives are read, since nothing of
+    /// the build can change it any more: `bwrap` returns only after the kernel
+    /// has ended every process of the build's namespace.
     ///
     /// # Errors
     ///
     /// Returns an error when Cargo configuration covers the working directory,
-    /// when Cargo fails, or when an archive is missing or too large.
+    /// when the copy, the fetches or the build fail, or when an archive is
+    /// missing or too large.
     pub(super) fn verified_archives(
         &self,
-        packages: &[(String, Version)],
+        packages: &VerifiedPackages,
+        runner: Runner,
     ) -> Result<BTreeMap<String, Vec<u8>>> {
-        ensure_no_cargo_configuration(&self.work)?;
-        let manifest = if self.native {
-            let copy = self.root().join("verified-checkout");
+        let build = sandbox::BuildRoot::make_in(self.root(), "build")?;
+        let result = self.build_in(&build, packages, runner);
+        build.remove();
+        result
+    }
+
+    /// Runs one verified packaging in a fresh build root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the copy, the fetches or the build fail, or when an
+    /// archive is missing or too large.
+    fn build_in(
+        &self,
+        build: &sandbox::BuildRoot,
+        packages: &VerifiedPackages,
+        runner: Runner,
+    ) -> Result<BTreeMap<String, Vec<u8>>> {
+        ensure_no_cargo_configuration(&build.work())?;
+        let workspace = build.workspace();
+        if self.native {
             #[cfg(test)]
             super::test_hooks::run(
                 super::test_hooks::Point::BeforeVerifiedCopy,
                 &self.workspace,
             );
             git::ensure_clean_checkout(&self.workspace, &self.environment, false)?;
-            native::copy_checkout(&self.workspace, &copy)?;
+            native::copy_checkout(&self.workspace, &workspace)?;
             #[cfg(test)]
-            super::test_hooks::run(super::test_hooks::Point::VerifiedCopy, &copy);
-            git::ensure_clean_checkout(&copy, &self.environment, false)?;
-            copy.join("Cargo.toml")
+            super::test_hooks::run(super::test_hooks::Point::VerifiedCopy, &workspace);
+            git::ensure_clean_checkout(&workspace, &self.environment, false)?;
         } else {
-            self.manifest()
-        };
-        cargo::package_group(
+            cargo::copy_workspace(&self.workspace, &workspace)?;
+        }
+        let manifest = workspace.join("Cargo.toml");
+        cargo::prepare_fetch_cargo_home(&build.cargo_home(), &self.sources)?;
+        let environment = ChildEnvironment::capture(&build.cargo_home(), &self.cargo)?;
+        #[cfg(test)]
+        let environment = cargo::with_test_crates_io(environment, &self.sources)?;
+        // The workspace's own lock, which runs no package code, brings in every
+        // package of the release that crates.io serves.
+        cargo::run_cargo(
             &self.cargo,
-            &self.environment,
-            &self.work,
-            &self.targets,
+            &environment,
+            &build.work(),
+            [
+                std::ffi::OsString::from("fetch"),
+                std::ffi::OsString::from("--locked"),
+                std::ffi::OsString::from("--manifest-path"),
+                manifest.as_os_str().to_owned(),
+            ],
+        )
+        .context("fetch the packages of the release's lock")?;
+        if !packages.published.is_empty() {
+            cargo::fetch_published(
+                &self.cargo,
+                &environment,
+                &build.work(),
+                &build.published(),
+                &workspace.join("Cargo.lock"),
+                &packages.published,
+            )?;
+        }
+        cargo::step5_package(
+            &self.cargo,
+            &environment,
+            &build.work(),
+            &build.target(),
             &manifest,
-            packages,
-            cargo::Options {
-                build: cargo::Build::Verify,
-                allow_dirty: !self.native,
-            },
+            &packages.missing,
+            !self.native,
+            runner,
+            build.path(),
         )
         .context("verify the crates.io packages of the release")
     }
@@ -680,7 +743,6 @@ pub(super) fn derive_release_in(
     });
     let dependencies = expectations.map_or(native_dependencies, |expected| expected.dependencies());
     let siblings = sibling_dependencies(&workspace, &published);
-    let targets = root.join("targets");
     #[cfg(test)]
     super::test_hooks::record_checkout(&checkout.root);
     Ok(Derivation {
@@ -693,7 +755,6 @@ pub(super) fn derive_release_in(
             environment,
             work,
             workspace: checkout.root,
-            targets,
             sources: registry_sources,
             native,
         },
@@ -920,3 +981,50 @@ pub(super) fn retained_crate(
 #[cfg(test)]
 #[path = "../../../tests/unit/self_publish/derive/mod.rs"]
 pub(crate) mod tests;
+
+/// Runs step 5 for a plain workspace in a build sandbox, with the fetches that
+/// production runs, so that the sandbox tests can exercise the real Cargo path.
+///
+/// # Errors
+///
+/// Returns an error when the copy, the fetch, the build or the archives fail.
+#[cfg(test)]
+pub(crate) fn step5_in_build_sandbox(
+    workspace: &Path,
+    cargo: &Path,
+    members: &[(String, Version)],
+    allow_dirty: bool,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let build = sandbox::BuildRoot::make_in(&std::env::temp_dir(), "test-step5")?;
+    let result = (|| {
+        cargo::copy_workspace(workspace, &build.workspace())?;
+        cargo::prepare_fetch_cargo_home(&build.cargo_home(), &cargo::RegistrySources::CratesIo)?;
+        let environment = ChildEnvironment::capture(&build.cargo_home(), cargo)?;
+        let manifest = build.workspace().join("Cargo.toml");
+        cargo::run_cargo(
+            cargo,
+            &environment,
+            &build.work(),
+            [
+                std::ffi::OsString::from("fetch"),
+                std::ffi::OsString::from("--locked"),
+                std::ffi::OsString::from("--manifest-path"),
+                manifest.as_os_str().to_owned(),
+            ],
+        )
+        .context("fetch the test workspace's lock")?;
+        cargo::step5_package(
+            cargo,
+            &environment,
+            &build.work(),
+            &build.target(),
+            &manifest,
+            members,
+            allow_dirty,
+            cargo::Runner::Sandbox,
+            build.path(),
+        )
+    })();
+    build.remove();
+    result
+}

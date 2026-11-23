@@ -19,7 +19,7 @@ use anyhow::{Context, Result, bail, ensure};
 const CARGO_CONFIGURATION_FILES: [&str; 2] = ["config.toml", "config"];
 
 /// The variables of the certification authorities a child may verify TLS with.
-const CERTIFICATE_VARIABLES: [&str; 7] = [
+pub(crate) const CERTIFICATE_VARIABLES: [&str; 7] = [
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
     "CURL_CA_BUNDLE",

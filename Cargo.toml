@@ -10,7 +10,7 @@ license = "Apache-2.0"
 repository = "https://github.com/pkgre/pkgre"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }

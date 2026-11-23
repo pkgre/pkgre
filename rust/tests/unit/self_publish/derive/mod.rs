@@ -18,7 +18,7 @@ use super::super::state::RepositoryState;
 use super::cargo_lock::LockIndex;
 use super::compare::{ArchiveToCompare, compare_archives};
 use super::expectations::Expectations;
-use super::{ReleasedCrate, Sources, derive_release_in, derive_release_with};
+use super::{ReleasedCrate, Runner, Sources, derive_release_in, derive_release_with};
 use crate::artifact::sha256_bytes;
 use crate::update::read_crate_archive;
 use fixtures::{LicenseFile, LocalSource, Readme, Release, Sibling, Variant};
@@ -912,7 +912,7 @@ fn the_upload_packaging_of_a_dependent_reproduces_the_recorded_archive() {
         &lib.entry.crates_io_name,
         &lib.entry.version.to_string(),
         &lib.archive,
-        &fixtures::derived_dependencies("example-lib"),
+        &fixtures::derived_dependencies("example-lib", fixtures::LIB_CRATES_IO_NAME),
     );
     let environment = derivation
         .workspace
@@ -1105,7 +1105,7 @@ fn the_upload_packaging_check_refuses_another_archive() {
         &lib.entry.crates_io_name,
         &lib.entry.version.to_string(),
         &lib.archive,
-        &fixtures::derived_dependencies("example-lib"),
+        &fixtures::derived_dependencies("example-lib", fixtures::LIB_CRATES_IO_NAME),
     );
     let environment = derivation
         .workspace
@@ -1237,42 +1237,58 @@ fn live_packaging_serves_a_sibling_to_its_dependent() {
         "generate-lockfile failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    for build in [super::cargo::Build::Package, super::cargo::Build::Verify] {
-        let archives = super::cargo::package_group(
-            &cargo,
-            &environment,
-            &work,
-            &temporary.path().join(format!("targets-{build:?}")),
-            &manifest,
-            &members,
-            super::cargo::Options {
-                build,
-                allow_dirty: true,
-            },
-        )
-        .expect("package the group against live crates.io");
-        assert_eq!(archives.len(), 2);
-        let packaged = crate::update::read_crate_archive(
-            bin,
-            &Version::parse("0.1.0").expect("parse a version"),
-            &archives[bin],
-            &["Cargo.lock"],
-        )
-        .expect("read the dependent's archive");
-        let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).expect("UTF-8");
-        assert!(
-            lock.contains(&format!("name = {lib:?}")),
-            "the dependent's lock names the sibling: {lock}"
-        );
-        assert!(
-            lock.contains("source = \"registry+https://github.com/rust-lang/crates.io-index\""),
-            "the sibling comes from crates.io: {lock}"
-        );
-        assert!(
-            lock.contains(&format!("checksum = \"{}\"", sha256_bytes(&archives[lib]))),
-            "the sibling's checksum is the archive of the same run: {lock}"
-        );
-    }
+    // The packaging without verification resolves the sibling from crates.io,
+    // as `cargo publish` does; it is the packaging whose lock this test reads.
+    let archives = super::cargo::package_group(
+        &cargo,
+        &environment,
+        &work,
+        &temporary.path().join("targets"),
+        &manifest,
+        &members,
+        true,
+    )
+    .expect("package the group against live crates.io");
+    assert_eq!(archives.len(), 2);
+    let packaged = crate::update::read_crate_archive(
+        bin,
+        &Version::parse("0.1.0").expect("parse a version"),
+        &archives[bin],
+        &["Cargo.lock"],
+    )
+    .expect("read the dependent's archive");
+    let lock = String::from_utf8(packaged.contents["Cargo.lock"].clone()).expect("UTF-8");
+    assert!(
+        lock.contains(&format!("name = {lib:?}")),
+        "the dependent's lock names the sibling: {lock}"
+    );
+    assert!(
+        lock.contains("source = \"registry+https://github.com/rust-lang/crates.io-index\""),
+        "the sibling comes from crates.io: {lock}"
+    );
+    assert!(
+        lock.contains(&format!("checksum = \"{}\"", sha256_bytes(&archives[lib]))),
+        "the sibling's checksum is the archive of the same run: {lock}"
+    );
+}
+
+#[test]
+fn the_three_crate_fixture_catalog_locks_the_server() {
+    let temporary = fixtures::Temp::new("three-crate-catalog");
+    let variant = Variant {
+        three_crates: true,
+        ..Variant::default()
+    };
+    let source = LocalSource::build(&temporary.path().join("local"));
+    let release = fixtures::release(temporary.path(), &source, variant);
+    let catalog = fixtures::catalog(temporary.path(), &source, &release, variant);
+    assert!(catalog.curated.contains_key("example-serve"));
+    let lock = fs::read_to_string(catalog.root.join("registry/main.lock"))
+        .expect("read the fixture registry lock");
+    assert!(
+        lock.contains("example-serve"),
+        "the three-crate fixture locks the server: {lock}"
+    );
 }
 
 #[test]
@@ -2035,8 +2051,20 @@ fn refuses_to_derive_a_removed_identity() {
 
 #[test]
 #[ignore = "needs the network and PKGRE_REHEARSAL_CATALOG"]
-#[allow(clippy::too_many_lines)]
 fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
+    crate::self_publish::sandbox::run_test_body(
+        "self_publish::derive::tests::rehearsal_derives_the_current_tooling_against_live_crates_io_body",
+        &["PKGRE_REHEARSAL_CATALOG"],
+    )
+    .expect("the rehearsal runs inside a run sandbox");
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn rehearsal_derives_the_current_tooling_against_live_crates_io_body() {
+    if std::env::var_os(crate::self_publish::sandbox::TEST_BODY_VARIABLE).is_none() {
+        return;
+    }
     let catalog_root = PathBuf::from(
         std::env::var_os("PKGRE_REHEARSAL_CATALOG")
             .expect("set PKGRE_REHEARSAL_CATALOG to a checkout of the catalog repository"),
@@ -2053,7 +2081,7 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
             clone.to_str().expect("the clone path is UTF-8"),
         ],
     );
-    fixtures::git(&clone, &["tag", "-a", "rust/v0.5.0", "-m", "pkgre 0.5.0"]);
+    retag(&clone, "rust/v0.5.0");
     let cargo_version =
         Version::parse(crate::policy::CARGO_VERSION).expect("parse the pinned Cargo version");
     let mut released = Vec::new();
@@ -2131,7 +2159,9 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
     assert_eq!(derived.packages.len(), 2);
     // Step 5 of the upload routine: package the missing crates with Cargo's
     // verification, against live crates.io, and require the archives that the
-    // derivation recorded. No token is read and nothing is uploaded.
+    // derivation recorded. No token is read and nothing is uploaded. The build
+    // sandbox needs a run sandbox, so this test runs in one, as the sandbox
+    // tests do.
     let packages = derived
         .packages
         .iter()
@@ -2144,7 +2174,7 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
         .collect::<Vec<_>>();
     let verified = derived
         .workspace
-        .verified_archives(&packages)
+        .verified_archives(&verified_packages(&packages), super::Runner::Sandbox)
         .expect("verify the release against live crates.io");
     for package in &derived.packages {
         let archive = verified
@@ -2189,6 +2219,58 @@ fn rehearsal_derives_the_current_tooling_against_live_crates_io() {
             package.entry.crate_sha256,
             package.entry.pkgre_crate_sha256,
         );
+    }
+}
+
+/// Gives a clone the release tag at its own commit, removing the tag that it
+/// may have inherited from the repository it was cloned from.
+fn retag(clone: &Path, tag: &str) {
+    if !fixtures::git(clone, &["tag", "-l", tag]).is_empty() {
+        fixtures::git(clone, &["tag", "-d", tag]);
+    }
+    fixtures::git(clone, &["tag", "-a", tag, "-m", "rehearsal"]);
+}
+
+/// Requires that a rehearsal's clone carries its tag at its own commit, whether
+/// or not the repository it was cloned from already had the tag.
+#[test]
+fn a_rehearsal_clone_gets_its_tag_at_its_own_commit() {
+    let temporary = fixtures::Temp::new("rehearsal-tag");
+    let clone = temporary.path().join("clone");
+    fs::create_dir(&clone).expect("make the clone's directory");
+    fixtures::git(&clone, &["init", "--quiet"]);
+    fs::write(clone.join("file"), "one\n").expect("write a file");
+    fixtures::git(&clone, &["add", "."]);
+    fixtures::git(&clone, &["commit", "--quiet", "-m", "first"]);
+    fixtures::git(&clone, &["tag", "-a", "rust/v0.5.0", "-m", "inherited"]);
+    fs::write(clone.join("file"), "two\n").expect("change the file");
+    fixtures::git(&clone, &["commit", "--quiet", "-am", "second"]);
+    retag(&clone, "rust/v0.5.0");
+    assert_eq!(
+        fixtures::git(&clone, &["rev-parse", "rust/v0.5.0^{commit}"]),
+        fixtures::git(&clone, &["rev-parse", "HEAD"]),
+        "the tag names the clone's own commit"
+    );
+    // A clone that never had the tag gets it too.
+    let fresh = temporary.path().join("fresh");
+    fs::create_dir(&fresh).expect("make the fresh directory");
+    fixtures::git(&fresh, &["init", "--quiet"]);
+    fs::write(fresh.join("file"), "one\n").expect("write a file");
+    fixtures::git(&fresh, &["add", "."]);
+    fixtures::git(&fresh, &["commit", "--quiet", "-m", "only"]);
+    retag(&fresh, "rust/v0.5.0");
+    assert_eq!(
+        fixtures::git(&fresh, &["rev-parse", "rust/v0.5.0^{commit}"]),
+        fixtures::git(&fresh, &["rev-parse", "HEAD"])
+    );
+}
+
+/// Wraps crate versions as one verified packaging of the tests, which have no
+/// published sibling to fetch.
+fn verified_packages(members: &[(String, Version)]) -> super::VerifiedPackages {
+    super::VerifiedPackages {
+        missing: members.to_vec(),
+        published: Vec::new(),
     }
 }
 
@@ -2313,162 +2395,6 @@ fn fake_cargo(root: &Path) -> (PathBuf, PathBuf) {
     fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
     (cargo, record)
 }
-
-#[test]
-fn the_verified_packaging_ends_the_process_group_it_started() {
-    let temporary = fixtures::Temp::new("pkgre-derive-group");
-    let (grouped, grouped_survived) = fake_background_cargo(temporary.path(), "grouped");
-    let (plain, plain_survived) = fake_background_cargo(temporary.path(), "plain");
-    let home = temporary.path().join("cargo-home");
-    fs::create_dir(&home).expect("create the Cargo home");
-    let work = temporary.path().join("work");
-    fs::create_dir(&work).expect("create the working directory");
-    let arguments = [std::ffi::OsString::from("--version")];
-    super::cargo::run_cargo_grouped(
-        &grouped,
-        &crate::isolation::ChildEnvironment::capture(&home, &grouped)
-            .expect("capture the allowlist"),
-        &work,
-        arguments.clone(),
-    )
-    .expect("run the grouped fake cargo");
-    // The same fake without a process group of its own, as a control.
-    super::cargo::run_cargo(
-        &plain,
-        &crate::isolation::ChildEnvironment::capture(&home, &plain).expect("capture the allowlist"),
-        &work,
-        arguments,
-    )
-    .expect("run the plain fake cargo");
-    // The control writes its file a moment after its fake Cargo returned; the
-    // grouped one never does, because its process group ended.
-    for _ in 0..100 {
-        if plain_survived.exists() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(
-        plain_survived.exists(),
-        "the fake without a process group leaves its process running"
-    );
-    assert!(
-        !grouped_survived.exists(),
-        "a process started by the package code outlived its process group"
-    );
-}
-
-/// Writes a fake `cargo` that starts a process which writes a file a moment
-/// later, and returns the fake with that file's path.
-fn fake_background_cargo(root: &Path, label: &str) -> (PathBuf, PathBuf) {
-    let toolchain = root.join(format!("toolchain-{label}"));
-    fs::create_dir_all(&toolchain).expect("create the fake toolchain");
-    let survived = root.join(format!("survived-{label}"));
-    let cargo = toolchain.join("cargo");
-    fixtures::write_executable(
-        &cargo,
-        &format!(
-            "#!/bin/sh\n( sleep 0.3; touch '{}' ) &\nexit 0\n",
-            survived.display()
-        ),
-    );
-    fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
-    (cargo, survived)
-}
-
-/// The environment variable that makes the standard-input helper run.
-const PACKAGING_STANDARD_INPUT: &str = "PKGRE_PACKAGING_STANDARD_INPUT";
-
-#[test]
-fn the_verified_packaging_gets_no_standard_input() {
-    let temporary = fixtures::Temp::new("pkgre-derive-standard-input");
-    let file = temporary.path().join("standard-input");
-    fs::write(&file, "a-token-on-standard-input").expect("write the standard input");
-    let executable = std::env::current_exe().expect("the test binary");
-    let output = std::process::Command::new(executable)
-        .args([
-            "--exact",
-            "self_publish::derive::tests::the_packaging_standard_input_helper",
-            "--nocapture",
-        ])
-        .env(PACKAGING_STANDARD_INPUT, "1")
-        .stdin(std::process::Stdio::from(
-            fs::File::open(&file).expect("open the standard input"),
-        ))
-        .output()
-        .expect("run this test binary with a token on its standard input");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stdout.contains("the packaging helper ran"),
-        "the helper did not run: {stdout}{stderr}"
-    );
-    assert!(
-        output.status.success(),
-        "the helper failed: {stdout}{stderr}"
-    );
-}
-
-#[test]
-fn the_packaging_standard_input_helper() {
-    if std::env::var_os(PACKAGING_STANDARD_INPUT).is_none() {
-        // The helper runs only when the test above re-runs this binary with a
-        // token on its standard input.
-        return;
-    }
-    println!("the packaging helper ran");
-    let temporary = fixtures::Temp::new("pkgre-derive-standard-input-helper");
-    let (cargo, seen) = fake_standard_input_cargo(temporary.path());
-    let home = temporary.path().join("cargo-home");
-    fs::create_dir(&home).expect("create the Cargo home");
-    let work = temporary.path().join("work");
-    fs::create_dir(&work).expect("create the working directory");
-    let environment =
-        crate::isolation::ChildEnvironment::capture(&home, &cargo).expect("capture the allowlist");
-    let stdout = super::cargo::run_cargo_grouped(
-        &cargo,
-        &environment,
-        &work,
-        [std::ffi::OsString::from("--version")],
-    )
-    .expect("run the fake cargo");
-    assert_eq!(stdout, b"to-stdout\n");
-    assert!(
-        fs::read(&seen)
-            .expect("read what the fake cargo read")
-            .is_empty(),
-        "the packaging inherited the standard input"
-    );
-    // The same fake started with an inherited standard input reads the token,
-    // which makes the assertion above meaningful.
-    std::process::Command::new(&cargo)
-        .arg("--version")
-        .status()
-        .expect("run the fake cargo directly");
-    assert_eq!(
-        fs::read(&seen).expect("read what the fake cargo read"),
-        b"a-token-on-standard-input"
-    );
-}
-
-/// Writes a fake `cargo` that copies its standard input to a file and prints to
-/// both streams, and returns it with that file's path.
-fn fake_standard_input_cargo(root: &Path) -> (PathBuf, PathBuf) {
-    let toolchain = root.join("toolchain");
-    fs::create_dir_all(&toolchain).expect("create the fake toolchain");
-    let seen = root.join("standard-input");
-    let cargo = toolchain.join("cargo");
-    fixtures::write_executable(
-        &cargo,
-        &format!(
-            "#!/bin/sh\ncat > '{}'\necho to-stdout\necho to-stderr >&2\nexit 0\n",
-            seen.display()
-        ),
-    );
-    fixtures::write_executable(&toolchain.join("rustc"), "#!/bin/sh\nexit 0\n");
-    (cargo, seen)
-}
-
 #[path = "native.rs"]
 mod native;
 

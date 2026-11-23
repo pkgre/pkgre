@@ -21,7 +21,7 @@ use semver::Version;
 use super::super::catalog::{CatalogIdentity, GitRelease};
 use super::super::config::CratesIoConfig;
 use super::super::derive::tests::fixtures::{self, LocalSource, Release, Sibling, Variant};
-use super::super::derive::{ReleasedCrate, Sources, derive_release_with};
+use super::super::derive::{ReleasedCrate, Runner, Sources, VerifiedPackages, derive_release_with};
 use super::super::isolation::ChildEnvironment;
 use super::super::lock::{CratesIoLock, CratesIoPackage};
 use super::super::lock_command::{LocalNetwork, self_publish_lock_in};
@@ -32,9 +32,9 @@ use super::super::network::{
 use super::super::state::LOCK_FILE;
 use super::super::test_hooks;
 use super::{
-    ReleaseCrate, SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary, Services, Token,
-    TokenSource, UploadEnvironment, UploadRequest, Uploader, Verification, WaitPolicy, live,
-    refuse_dependent_of_an_abandoned_sibling, run, token_variable, upload_order, verified_archives,
+    ProcessCheck, ReleaseCrate, SelfPublishCrate, SelfPublishCrateState, SelfPublishSummary,
+    Services, Token, TokenSource, UploadEnvironment, UploadRequest, Uploader, Verification,
+    WaitPolicy, live, refuse_dependent_of_an_abandoned_sibling, run, token_variable, upload_order,
 };
 use crate::artifact::sha256_bytes;
 use crate::self_publish::catalog::CatalogSnapshot;
@@ -44,6 +44,8 @@ use crate::self_publish::derive::DerivedWorkspace;
 const LIB: &str = "example-lib";
 /// The crate that the fixture gives the default crates.io name.
 const BIN: &str = "example-bin";
+/// The third released crate of the three-crate fixture.
+const SERVE: &str = "example-serve";
 /// The repository of the fixture.
 const REPOSITORY: &str = fixtures::REPOSITORY;
 /// The crates.io owner of the fixture release.
@@ -74,6 +76,9 @@ struct Fixture {
     /// The crates.io archives that the derivation packaged, by crate name, which
     /// crates.io serves once a run uploaded them.
     derived: BTreeMap<String, Vec<u8>>,
+    /// Whether the release has the third crate that depends on the library and
+    /// the binary.
+    three_crates: bool,
 }
 
 /// Builds the fixture of one variant, with the abandoned records that
@@ -105,6 +110,7 @@ fn build_with(parent: &Path, abandoned: &[(&str, &str, &str)], variant: Variant)
         catalog,
         work,
         derived: BTreeMap::new(),
+        three_crates: variant.three_crates,
     };
     fixture.derived = derived_archives(&fixture);
     fixture
@@ -118,7 +124,12 @@ fn derived_archives(fixture: &Fixture) -> BTreeMap<String, Vec<u8>> {
         .identity(LIB, &version)
         .and_then(|identity| identity.release.clone())
         .expect("the catalog holds the release");
-    let released = [LIB, BIN]
+    let names = if fixture.three_crates {
+        vec![LIB, BIN, SERVE]
+    } else {
+        vec![LIB, BIN]
+    };
+    let released = names
         .into_iter()
         .map(|name| {
             let archive = fixture.candidate.curated[name].clone();
@@ -241,7 +252,12 @@ impl Fixture {
 
     /// Returns the crates.io names of the released crates, in name order.
     fn crates_io_names(&self) -> Vec<String> {
-        [BIN, LIB]
+        let names = if self.three_crates {
+            vec![BIN, LIB, SERVE]
+        } else {
+            vec![BIN, LIB]
+        };
+        names
             .into_iter()
             .map(|name| self.entry(name).crates_io_name)
             .collect()
@@ -436,7 +452,12 @@ impl FakeRegistry {
     /// Serves every crate of the release, as the registry does after a merge.
     fn serving(fixture: &Fixture) -> Self {
         let registry = Self::default();
-        for name in [BIN, LIB] {
+        let names = if fixture.three_crates {
+            vec![BIN, LIB, SERVE]
+        } else {
+            vec![BIN, LIB]
+        };
+        for name in names {
             registry.set(
                 name,
                 Some(vec![published_version(
@@ -569,7 +590,7 @@ struct FakeUploader {
     archives: BTreeMap<String, Vec<u8>>,
     /// The dependencies that each published crate declares, as its index row
     /// names them.
-    dependencies: BTreeMap<String, Vec<(&'static str, &'static str)>>,
+    dependencies: BTreeMap<String, Vec<(String, &'static str, &'static str)>>,
     /// The checksum that the fake publishes for each crates.io name.
     checksums: BTreeMap<String, String>,
     /// How many uploads succeed before the fake fails.
@@ -587,15 +608,22 @@ struct FakeUploader {
 impl FakeUploader {
     /// Returns a fake that never fails, publishing into `crates_io`.
     fn new(fixture: &Fixture, crates_io: FakeCratesIo) -> Self {
-        let checksums = [BIN, LIB]
-            .into_iter()
+        let names = if fixture.three_crates {
+            vec![BIN, LIB, SERVE]
+        } else {
+            vec![BIN, LIB]
+        };
+        let checksums = names
+            .iter()
+            .copied()
             .map(|name| {
                 let entry = fixture.entry(name);
                 (entry.crates_io_name, entry.crate_sha256)
             })
             .collect();
-        let archives = [BIN, LIB]
-            .into_iter()
+        let archives = names
+            .iter()
+            .copied()
             .filter_map(|name| {
                 let entry = fixture.entry(name);
                 fixture
@@ -603,23 +631,26 @@ impl FakeUploader {
                     .map(|archive| (entry.crates_io_name, archive))
             })
             .collect();
-        let dependencies = [BIN, LIB]
-            .into_iter()
+        let lib = fixture.entry(LIB).crates_io_name;
+        let dependencies = names
+            .iter()
+            .copied()
             .map(|name| {
                 (
                     fixture.entry(name).crates_io_name,
-                    fixtures::derived_dependencies(name)
+                    fixtures::derived_dependencies(name, &lib)
                         .into_iter()
-                        .map(|(dependency, requirement)| {
+                        .map(|(dependency, requirement, kind)| {
                             (
                                 if fixture.entry(LIB).crates_io_name == LIB
                                     && dependency == fixtures::EARLIER_CRATES_IO_NAME
                                 {
-                                    "earlier-lib"
+                                    "earlier-lib".to_owned()
                                 } else {
                                     dependency
                                 },
                                 requirement,
+                                kind,
                             )
                         })
                         .collect(),
@@ -787,6 +818,66 @@ impl TokenSource for FakeTokens {
     }
 }
 
+/// A fake process check, which counts its calls, records each of them when a
+/// test captures the run's output, and can fail on one chosen call.
+struct FakeCheck {
+    /// How often the check ran.
+    calls: Cell<usize>,
+    /// The call that fails, counting from one.
+    fail_at: Cell<Option<usize>>,
+    /// Where a call marks itself, when a test records the run's output.
+    capture: Option<Capture>,
+}
+
+impl FakeCheck {
+    /// Returns a check that passes every time.
+    fn new() -> Self {
+        Self {
+            calls: Cell::new(0),
+            fail_at: Cell::new(None),
+            capture: None,
+        }
+    }
+
+    /// Returns a check that passes every time and marks each call in `capture`.
+    fn recording(capture: Capture) -> Self {
+        Self {
+            capture: Some(capture),
+            ..Self::new()
+        }
+    }
+
+    /// Returns how often the check ran.
+    fn calls(&self) -> usize {
+        self.calls.get()
+    }
+
+    /// Makes the check fail on its `call`th call, counting from one.
+    fn fail_at(&self, call: usize) {
+        self.fail_at.set(Some(call));
+    }
+}
+
+impl ProcessCheck for FakeCheck {
+    fn check(&self) -> Result<()> {
+        self.calls.set(self.calls.get() + 1);
+        if let Some(capture) = &self.capture {
+            writeln!(capture.clone(), "CHECK").expect("record the process check");
+        }
+        if self.fail_at.get() == Some(self.calls.get()) {
+            bail!("a process that package code started is still in the run sandbox");
+        }
+        Ok(())
+    }
+}
+
+/// A start-up probe which always passes, since the tests run step 5 in the
+/// routine's own process rather than in a build sandbox.
+#[allow(clippy::unnecessary_wraps)]
+fn no_probe() -> Result<()> {
+    Ok(())
+}
+
 /// One fixture release and the fakes that judge it.
 struct Setup {
     /// The fixture catalog.
@@ -801,6 +892,8 @@ struct Setup {
     uploader: FakeUploader,
     /// The token.
     tokens: FakeTokens,
+    /// The process check.
+    check: FakeCheck,
 }
 
 impl Setup {
@@ -834,6 +927,7 @@ impl Setup {
             registry,
             uploader,
             tokens: FakeTokens::with_token(),
+            check: FakeCheck::new(),
         }
     }
 
@@ -859,6 +953,8 @@ impl Setup {
             },
             registry: &self.registry,
             verification,
+            probe: no_probe,
+            check: &self.check,
             uploader: &self.uploader,
             tokens: &self.tokens,
             wait: WAIT,
@@ -873,7 +969,7 @@ impl Setup {
             &fixtures::tag(),
             upload,
             None,
-            &self.services(verified_archives),
+            &self.services(direct_verified_archives),
         )
     }
 
@@ -910,7 +1006,7 @@ impl Setup {
             &entry.crates_io_name,
             &entry.version.to_string(),
             &archive,
-            &fixtures::derived_dependencies(name),
+            &fixtures::derived_dependencies(name, &self.fixture.entry(LIB).crates_io_name),
         );
     }
 
@@ -931,6 +1027,35 @@ fn refusal<T>(result: Result<T>) -> String {
         Ok(_) => panic!("expected a refusal"),
         Err(error) => format!("{error:#}"),
     }
+}
+
+/// Verifies the packages in the routine's own process, which the tests do so
+/// that they need no namespace; a production run runs the same build in a build
+/// sandbox.
+fn direct_verified_archives(
+    workspace: &DerivedWorkspace,
+    packages: &VerifiedPackages,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    workspace.verified_archives(packages, Runner::Direct)
+}
+
+thread_local! {
+    /// Where a verification marks that it ran, while a test records the order.
+    static STEP5_CAPTURE: RefCell<Option<Capture>> = const { RefCell::new(None) };
+}
+
+/// Verifies the packages and marks `STEP-5` in the test's capture, so that a
+/// test can pin the process check after step 5.
+fn recording_verification(
+    workspace: &DerivedWorkspace,
+    packages: &VerifiedPackages,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    STEP5_CAPTURE.with(|slot| {
+        if let Some(capture) = slot.borrow().as_ref() {
+            writeln!(capture.clone(), "STEP-5").expect("record step 5");
+        }
+    });
+    direct_verified_archives(workspace, packages)
 }
 
 #[test]
@@ -1060,6 +1185,119 @@ fn a_resumed_run_uploads_a_dependent_whose_sibling_is_published() {
         setup.uploader.uploads(),
         vec![setup.fixture.entry(BIN).crates_io_name],
         "only the binary is uploaded, and its package reproduces the recorded bytes"
+    );
+}
+
+/// The variant whose release has the server as a third crate, which depends on
+/// the binary and the library.
+fn three_crates_release() -> Variant {
+    Variant {
+        three_crates: true,
+        sibling: Sibling::Accepted,
+        ..Variant::default()
+    }
+}
+
+#[test]
+fn a_mixed_resumed_run_uploads_a_dependent_whose_siblings_are_published_and_uploaded() {
+    let temporary = fixtures::Temp::new("pkgre-publish-mixed");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_release());
+    // An earlier run uploaded the library and stopped before the binary and the
+    // server, which depends on both.
+    setup.publish(LIB);
+    let summary = setup.execute(true).expect("the resumed upload passes");
+    assert_eq!(summary.published, 1);
+    assert_eq!(summary.uploaded, 2);
+    assert_eq!(
+        Setup::record(&summary, LIB).state,
+        SelfPublishCrateState::Published
+    );
+    for name in [BIN, SERVE] {
+        assert_eq!(
+            Setup::record(&summary, name).state,
+            SelfPublishCrateState::Uploaded
+        );
+    }
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the binary is uploaded before the server that depends on it"
+    );
+}
+
+#[test]
+fn a_fresh_run_uploads_a_three_crate_release_in_dependency_order() {
+    let temporary = fixtures::Temp::new("pkgre-publish-fresh-three");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_release());
+    let summary = setup.execute(true).expect("the upload passes");
+    assert_eq!(summary.published, 0);
+    assert_eq!(summary.uploaded, 3);
+    for name in [BIN, LIB, SERVE] {
+        assert_eq!(
+            Setup::record(&summary, name).state,
+            SelfPublishCrateState::Uploaded
+        );
+    }
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(LIB).crates_io_name,
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the library, then the binary, then the server"
+    );
+}
+
+/// The native variant of the three-crate release: its manifests stay as the
+/// tag commits them.
+fn three_crates_native() -> Variant {
+    Variant {
+        native: true,
+        sibling: Sibling::Inherited,
+        three_crates: true,
+        ..Variant::default()
+    }
+}
+
+#[test]
+fn a_fresh_native_run_uploads_a_three_crate_release_in_dependency_order() {
+    let temporary = fixtures::Temp::new("pkgre-publish-fresh-native-three");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_native());
+    let summary = setup.execute(true).expect("the native upload passes");
+    assert_eq!(summary.published, 0);
+    assert_eq!(summary.uploaded, 3);
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(LIB).crates_io_name,
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the library, then the binary, then the server"
+    );
+}
+
+#[test]
+fn a_mixed_native_resumed_run_uploads_a_dependent_whose_siblings_are_both_kinds() {
+    let temporary = fixtures::Temp::new("pkgre-publish-mixed-native-three");
+    let setup = Setup::with_variant(temporary.path(), &[], three_crates_native());
+    setup.publish(LIB);
+    let summary = setup
+        .execute(true)
+        .expect("the native resumed upload passes");
+    assert_eq!(summary.published, 1);
+    assert_eq!(summary.uploaded, 2);
+    assert_eq!(
+        setup.uploader.uploads(),
+        vec![
+            setup.fixture.entry(BIN).crates_io_name,
+            setup.fixture.entry(SERVE).crates_io_name,
+        ],
+        "the binary is uploaded before the server that depends on it"
     );
 }
 
@@ -1230,7 +1468,7 @@ fn an_upload_of_a_published_release_reads_no_token_and_uploads_nothing() {
     let tokens = FakeTokens::forbidden();
     let services = Services {
         tokens: &tokens,
-        ..setup.services(verified_archives)
+        ..setup.services(direct_verified_archives)
     };
     let summary = run(
         &setup.fixture.candidate.root,
@@ -1365,9 +1603,10 @@ fn skips_an_abandoned_version() {
 #[allow(clippy::unnecessary_wraps)]
 fn unrecorded_verification(
     _workspace: &DerivedWorkspace,
-    packages: &[(String, Version)],
+    packages: &VerifiedPackages,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(packages
+        .missing
         .iter()
         .map(|(name, _)| {
             (
@@ -1460,7 +1699,7 @@ fn refuses_an_empty_token_before_any_upload() {
     };
     let services = Services {
         tokens: &tokens,
-        ..setup.services(verified_archives)
+        ..setup.services(direct_verified_archives)
     };
     let error = refusal(run(
         &setup.fixture.candidate.root,
@@ -1493,7 +1732,7 @@ fn a_wait_that_never_sees_the_recorded_archive_is_an_error() {
     // crates.io does not have the crate at all.
     let error = refusal(super::wait_for_upload(
         &crate_,
-        &setup.services(verified_archives),
+        &setup.services(direct_verified_archives),
     ));
     assert!(error.contains("does not show"), "{error}");
     assert!(error.contains(&entry.crate_sha256), "{error}");
@@ -1509,7 +1748,7 @@ fn a_wait_that_never_sees_the_recorded_archive_is_an_error() {
     );
     let error = refusal(super::wait_for_upload(
         &crate_,
-        &setup.services(verified_archives),
+        &setup.services(direct_verified_archives),
     ));
     assert!(error.contains(&"d".repeat(64)), "{error}");
 }
@@ -1587,9 +1826,9 @@ fn uploads_the_rest_of_a_release_whose_abandoned_version_crates_io_holds() {
 /// release, as a build script of the release could.
 fn changed_after_verification(
     workspace: &DerivedWorkspace,
-    packages: &[(String, Version)],
+    packages: &VerifiedPackages,
 ) -> Result<BTreeMap<String, Vec<u8>>> {
-    let archives = workspace.verified_archives(packages)?;
+    let archives = workspace.verified_archives(packages, Runner::Direct)?;
     let manifest = workspace.manifest();
     let root = manifest.parent().expect("the workspace has a directory");
     fs::write(
@@ -1640,7 +1879,7 @@ fn a_failed_index_read_during_the_wait_is_retried() {
         identity: &identity,
         entry: &entry,
     };
-    super::wait_for_upload(&crate_, &setup.services(verified_archives))
+    super::wait_for_upload(&crate_, &setup.services(direct_verified_archives))
         .expect("the wait reads crates.io's index again within its bound");
 }
 
@@ -1656,7 +1895,7 @@ fn refuses_a_token_variable_in_the_routines_own_environment() {
             "PATH".to_owned(),
             "CARGO_REGISTRIES_EXAMPLE_TOKEN".to_owned(),
         ],
-        ..setup.services(verified_archives)
+        ..setup.services(direct_verified_archives)
     };
     let error = refusal(run(
         &setup.fixture.candidate.root,
@@ -1954,6 +2193,127 @@ fn the_token_line_is_logged_once_after_the_comparison_and_before_the_token() {
     assert!(compared < line, "{text}");
     let read = text.find("TOKEN-READ").expect("the token was read");
     assert!(line < read, "{text}");
+}
+
+#[test]
+fn the_process_check_runs_after_step_5_and_before_the_token() {
+    let temporary = fixtures::Temp::new("pkgre-publish-process-check");
+    let capture = Capture::default();
+    let mut setup = Setup::new(temporary.path());
+    setup.tokens = FakeTokens::with_token_and_capture(capture.clone());
+    setup.check = FakeCheck::recording(capture.clone());
+    STEP5_CAPTURE.with(|slot| *slot.borrow_mut() = Some(capture.clone()));
+    let recording = record_logs(&capture);
+    run(
+        &setup.fixture.candidate.root,
+        &fixtures::tag(),
+        false,
+        None,
+        &setup.services(recording_verification),
+    )
+    .expect("the dry run passes");
+    drop(recording);
+    assert_eq!(setup.check.calls(), 1, "a dry run checks the sandbox once");
+    assert_eq!(setup.tokens.reads(), 0);
+    let recording = record_logs(&capture);
+    run(
+        &setup.fixture.candidate.root,
+        &fixtures::tag(),
+        true,
+        None,
+        &setup.services(recording_verification),
+    )
+    .expect("the upload passes");
+    drop(recording);
+    STEP5_CAPTURE.with(|slot| *slot.borrow_mut() = None);
+    assert_eq!(setup.check.calls(), 3, "the upload checks twice more");
+    assert_eq!(setup.tokens.reads(), 1);
+    let text = capture.text();
+    let steps = text
+        .match_indices("STEP-5")
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    let checks = text
+        .match_indices("CHECK")
+        .map(|(position, _)| position)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        steps.len(),
+        2,
+        "each run verifies the packages once: {text}"
+    );
+    assert_eq!(checks.len(), 3, "{text}");
+    let compared = text
+        .rfind("checked the package that cargo publish would upload")
+        .expect("step 6 logs the comparison");
+    let line = text.find(TOKEN_LINE).expect("the token line is logged");
+    let read = text.find("TOKEN-READ").expect("the token was read");
+    assert!(
+        steps[0] < checks[0]
+            && checks[0] < steps[1]
+            && steps[1] < checks[1]
+            && checks[1] < compared,
+        "each check follows step 5 and the upload's check precedes step 6: {text}"
+    );
+    assert!(
+        compared < checks[2] && checks[2] < line && line < read,
+        "the check before the token follows step 6 and precedes the token: {text}"
+    );
+}
+
+#[test]
+fn a_failed_check_after_step_5_fails_a_run_before_the_token() {
+    let temporary = fixtures::Temp::new("pkgre-publish-check-failed");
+    let setup = Setup::new(temporary.path());
+    setup.check.fail_at(1);
+    let error = refusal(setup.dry_run());
+    assert!(error.contains("process check after step 5"), "{error}");
+    assert_eq!(setup.check.calls(), 1);
+    assert_eq!(setup.tokens.reads(), 0);
+    assert!(setup.uploader.uploads().is_empty());
+}
+
+#[test]
+fn a_failed_check_before_the_token_stops_an_upload() {
+    let temporary = fixtures::Temp::new("pkgre-publish-check-before-token");
+    let mut setup = Setup::new(temporary.path());
+    setup.tokens = FakeTokens::forbidden();
+    setup.check.fail_at(2);
+    let error = refusal(setup.execute(true));
+    assert!(error.contains("process check before the token"), "{error}");
+    assert_eq!(setup.check.calls(), 2, "the check after step 5 passes");
+    assert_eq!(setup.tokens.reads(), 0);
+    assert!(setup.uploader.uploads().is_empty());
+}
+
+/// A start-up probe which always fails, as a host without unprivileged user
+/// namespaces makes it fail.
+fn failing_probe() -> Result<()> {
+    bail!("this host cannot make a build sandbox")
+}
+
+#[test]
+fn a_failed_probe_stops_the_run_before_step_1() {
+    let temporary = fixtures::Temp::new("pkgre-publish-probe");
+    let setup = Setup::new(temporary.path());
+    // A dirty checkout, which the probe has to precede.
+    fs::write(setup.fixture.candidate.root.join("untracked.txt"), "one\n")
+        .expect("write an untracked file");
+    let services = Services {
+        probe: failing_probe,
+        ..setup.services(direct_verified_archives)
+    };
+    let error = refusal(run(
+        &setup.fixture.candidate.root,
+        &fixtures::tag(),
+        false,
+        None,
+        &services,
+    ));
+    assert!(error.contains("start-up probe"), "{error}");
+    assert!(!error.contains("untracked"), "{error}");
+    assert_eq!(setup.check.calls(), 0);
+    assert_eq!(setup.tokens.reads(), 0);
 }
 
 /// Writes a fake toolchain of a `cargo` that acts as `action` says, with a

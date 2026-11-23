@@ -192,18 +192,21 @@ A crates.io-native release keeps its manifests, so the archive the catalog serve
 ```console
 git -C /path/to/pkgre/rust fetch origin main
 # in a checkout of this repository, whose development shell builds the tool
+nix develop -c cargo build --locked --release -p pkgre-rust
 export TMPDIR="$(mktemp -d /tmp/pkgre-self-publish.XXXXXX)"
-nix develop -c cargo run --locked --release -p pkgre-rust -- self-publish /path/to/pkgre/rust rust/v0.5.0
-nix develop -c cargo run --locked --release -p pkgre-rust -- self-publish /path/to/pkgre/rust rust/v0.5.0 --upload
+nix develop -c ./target/release/pkgre-rust self-publish /path/to/pkgre/rust rust/v0.5.0
+nix develop -c ./target/release/pkgre-rust self-publish /path/to/pkgre/rust rust/v0.5.0 --upload
 ```
 
-The development shell provides the pinned Cargo that the routine packages with (it sets `PKGRE_CARGO`), and `TMPDIR` must name a directory that no Cargo configuration covers: the routine refuses to run Cargo below one, with a message that names the file it found, so a home that holds `~/.cargo/config.toml` needs a `TMPDIR` below `/tmp`, as above.
+Run the built executable rather than `cargo run`: a `cargo run` process waits beside the launcher and holds the same standard input, so it could read a piped token, as another process of the same user could through `bubblewrap`'s descriptor.
 
-The upload is supported on Linux only, where the routine makes its own process non-dumpable while a token can be in reach; a dry run runs on every system.
+The development shell provides the pinned Cargo that the routine packages with (it sets `PKGRE_CARGO`) and the `bubblewrap` that makes the sandboxes (it sets `PKGRE_BWRAP`). `TMPDIR` may lie below a home whose `~/.cargo/config.toml` covers it: the run sandbox does not show the home, and the routine checks the build root's working directory and the derivation's own, refusing one that a configuration covers. The other commands that run Cargo, such as `lock` and `self-publish-lock`, still refuse a working directory that such a configuration covers, with a message that names the file it found.
 
-The first command is the dry run: it checks everything an upload needs and reports what the upload would do, and it uploads nothing. The second adds `--upload`: it reads the crates.io token at a prompt (or from one line of standard input, though the prompt is recommended), uploads only the crates that crates.io still lacks, and waits until crates.io's index shows each of them.
+The routine is supported on Linux only, for a dry run too: it needs `bubblewrap` 0.12.0 or later and unprivileged user namespaces, and `PKGRE_CARGO` must name the pinned Cargo. The development shell meets both variables. Where user namespaces are restricted, as AppArmor restricts them on Ubuntu 23.10 and later, the host must allow them first.
 
-The dry run builds the crates with Cargo's verification, and so does step 5 of an upload, so both run the build scripts and proc macros of the release and of its dependencies, as the user who runs the command. Give the token at the prompt rather than piping it: a piped token waits in standard input while that code runs.
+The first command is the dry run: it checks everything an upload needs, in the run sandbox and with step 5 in a build sandbox, and reports what the upload would do; it uploads nothing. The second adds `--upload`: it reads the crates.io token at a prompt (the recommended way) or from one line of standard input, uploads only the crates that crates.io still lacks, and waits until crates.io's index shows each of them.
+
+The dry run builds the crates with Cargo's verification, and so does step 5 of an upload, in a build sandbox that has no network and no `/etc`; a build script or proc macro that needs either fails step 5. A piped token waits where no package code can reach it; write it once the line `waiting for the crates.io token on standard input` appears in the log.
 
 The checkout must be clean and its `HEAD` must be contained in the remote-tracking `origin/main`, so that only a merged release is published. The routine never fetches: when the containment check fails, run `git fetch origin main` first. `<tag>` is a release tag of a self-publishing repository, such as `rust/v0.5.0`; when two self-publishing repositories use the same tag, `--git=<url>` chooses one, and without it such a tag is refused.
 

@@ -29,7 +29,7 @@ fn main() -> ExitCode {
         .with_target(false)
         .init();
     match run(std::env::args_os().skip(1)) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(failure) => {
             error!(error = %format_args!("{failure:#}"), "command failed");
             ExitCode::FAILURE
@@ -37,34 +37,35 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<()> {
+fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<ExitCode> {
     let mut arguments = arguments.into_iter();
     let command = arguments.next().context(USAGE)?;
     let values = arguments.collect::<Vec<_>>();
     match command.to_str() {
-        Some("lock") => lock_catalog(&values),
-        Some("check") => check(&values),
-        Some("check-serve") => check_serve(&values),
-        Some("render") => render_site(&values),
-        Some("verify") => verify_site(&values),
-        Some("verify-monotonic") => verify_monotonic(&values),
-        Some("update-plan") => update_plan(&values),
-        Some("update-plan-exact") => update_plan_exact(&values),
-        Some("update-inspect") => update_inspect(&values),
-        Some("update-apply") => update_apply(&values),
-        Some("migrate-v4-to-v5") => migrate_v4_to_v5(&values),
-        Some("migrate-retained-delivery") => migrate_retained_delivery(&values),
-        Some("archive-inventory") => archive_inventory(&values),
-        Some("archive-import") => archive_import_command(&values),
-        Some("check-transition") => check_transition_command(&values),
-        Some("reproduce-git-tags") => reproduce_git_tags_command(&values),
-        Some("self-publish-check") => self_publish_check(&values),
-        Some("self-publish-lock") => self_publish_lock(&values),
-        Some("self-publish") => self_publish(&values),
+        Some("lock") => lock_catalog(&values)?,
+        Some("check") => check(&values)?,
+        Some("check-serve") => check_serve(&values)?,
+        Some("render") => render_site(&values)?,
+        Some("verify") => verify_site(&values)?,
+        Some("verify-monotonic") => verify_monotonic(&values)?,
+        Some("update-plan") => update_plan(&values)?,
+        Some("update-plan-exact") => update_plan_exact(&values)?,
+        Some("update-inspect") => update_inspect(&values)?,
+        Some("update-apply") => update_apply(&values)?,
+        Some("migrate-v4-to-v5") => migrate_v4_to_v5(&values)?,
+        Some("migrate-retained-delivery") => migrate_retained_delivery(&values)?,
+        Some("archive-inventory") => archive_inventory(&values)?,
+        Some("archive-import") => archive_import_command(&values)?,
+        Some("check-transition") => check_transition_command(&values)?,
+        Some("reproduce-git-tags") => reproduce_git_tags_command(&values)?,
+        Some("self-publish-check") => self_publish_check(&values)?,
+        Some("self-publish-lock") => self_publish_lock(&values)?,
+        Some("self-publish") => return self_publish(&values),
         Some("help" | "--help" | "-h") => bail!(USAGE),
         Some(value) => bail!("unknown command {value:?}\n{USAGE}"),
         None => bail!("command is not valid UTF-8\n{USAGE}"),
     }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn lock_catalog(arguments: &[OsString]) -> Result<()> {
@@ -478,7 +479,7 @@ fn self_publish_lock(arguments: &[OsString]) -> Result<()> {
     Ok(())
 }
 
-fn self_publish(arguments: &[OsString]) -> Result<()> {
+fn self_publish(arguments: &[OsString]) -> Result<ExitCode> {
     let mut positional = Vec::new();
     let mut upload = false;
     let mut git: Option<&str> = None;
@@ -507,8 +508,12 @@ fn self_publish(arguments: &[OsString]) -> Result<()> {
         .context("release tag is not valid UTF-8")?;
     // The routine logs one record per crate version and the summary, also when
     // it fails, so the command adds no report of its own.
-    pkgre_rust::self_publish::self_publish(repository, tag, upload, git)?;
-    Ok(())
+    match pkgre_rust::self_publish::self_publish(repository, tag, upload, git)? {
+        pkgre_rust::self_publish::SelfPublishOutcome::Routine(_summary) => Ok(ExitCode::SUCCESS),
+        pkgre_rust::self_publish::SelfPublishOutcome::Launched(status) => {
+            Ok(ExitCode::from(u8::try_from(status).unwrap_or(1)))
+        }
+    }
 }
 
 fn ensure_arity(arguments: &[OsString], expected: usize) -> Result<()> {
